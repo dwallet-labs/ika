@@ -9,7 +9,7 @@ use ika_move_packages::save_contracts_to_temp_dir;
 use ika_types::ika_coin::IKACoin;
 use ika_types::messages_dwallet_mpc::{
     DKG_FIRST_ROUND_PROTOCOL_FLAG, DKG_SECOND_ROUND_PROTOCOL_FLAG, FUTURE_SIGN_PROTOCOL_FLAG,
-    IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG, IkaPackagesConfig,
+    IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG, IkaNetworkConfig,
     MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG, PRESIGN_PROTOCOL_FLAG,
     RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG, SIGN_PROTOCOL_FLAG,
     SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG,
@@ -368,14 +368,15 @@ pub async fn init_ika_on_sui(
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-    let ika_config = IkaPackagesConfig {
+    let ika_config = IkaNetworkConfig::new(
         ika_package_id,
         ika_common_package_id,
         ika_dwallet_2pc_mpc_package_id,
         ika_system_package_id,
         ika_system_object_id,
         ika_dwallet_coordinator_object_id,
-    };
+    );
+
     std::env::set_current_dir(contract_paths.current_working_dir)?;
     let mut file = File::create("ika_config.json")?;
     let json = serde_json::to_string_pretty(&ika_config)?;

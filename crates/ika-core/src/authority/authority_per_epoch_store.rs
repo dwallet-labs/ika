@@ -58,7 +58,7 @@ use ika_types::messages_consensus::{
 use ika_types::messages_dwallet_checkpoint::{
     DWalletCheckpointMessage, DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
-use ika_types::messages_dwallet_mpc::IkaPackagesConfig;
+use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput};
 use ika_types::messages_system_checkpoints::{
     SystemCheckpointMessage, SystemCheckpointMessageKind, SystemCheckpointSequenceNumber,
@@ -266,7 +266,7 @@ pub struct AuthorityPerEpochStore {
     /// Chain identifier
     chain_identifier: ChainIdentifier,
 
-    pub(crate) packages_config: IkaPackagesConfig,
+    pub(crate) packages_config: IkaNetworkConfig,
     reconfig_state: RwLock<ReconfigState>,
     end_of_publish: Mutex<StakeAggregator<(), true>>,
 }
@@ -503,7 +503,7 @@ impl AuthorityPerEpochStore {
         metrics: Arc<EpochMetrics>,
         epoch_start_configuration: EpochStartConfiguration,
         chain_identifier: ChainIdentifier,
-        packages_config: IkaPackagesConfig,
+        packages_config: IkaNetworkConfig,
     ) -> IkaResult<Arc<Self>> {
         let current_time = Instant::now();
         let epoch_id = committee.epoch;

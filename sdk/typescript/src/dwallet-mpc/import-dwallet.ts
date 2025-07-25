@@ -93,17 +93,17 @@ export async function createSessionIdentifierMoveCall(
 ): Promise<SessionIdentifierRegisteredEvent> {
 	const tx = new Transaction();
 	const dwalletStateArg = tx.sharedObjectRef({
-		objectId: conf.ikaConfig.ika_dwallet_coordinator_object_id,
+		objectId: conf.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 		initialSharedVersion: await getInitialSharedVersion(
 			conf,
-			conf.ikaConfig.ika_dwallet_coordinator_object_id,
+			conf.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 		),
 		mutable: true,
 	});
 	const sessionIdentifier = await createSessionIdentifier(
 		tx,
 		dwalletStateArg,
-		conf.ikaConfig.ika_dwallet_2pc_mpc_package_id,
+		conf.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id,
 	);
 	tx.transferObjects([sessionIdentifier], conf.suiClientKeypair.toSuiAddress());
 	const result = await conf.client.signAndExecuteTransaction({
@@ -155,10 +155,10 @@ export async function verifyImportedDWalletMoveCall(
 	const emptyIKACoin = tx.moveCall({
 		target: `${SUI_PACKAGE_ID}::coin::zero`,
 		arguments: [],
-		typeArguments: [`${conf.ikaConfig.ika_package_id}::ika::IKA`],
+		typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
 	});
 	const cap = tx.moveCall({
-		target: `${conf.ikaConfig.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::request_imported_key_dwallet_verification`,
+		target: `${conf.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::request_imported_key_dwallet_verification`,
 		arguments: [
 			dwalletStateArg,
 			tx.pure.id(networkDecryptionKeyID),
@@ -176,7 +176,7 @@ export async function verifyImportedDWalletMoveCall(
 	tx.moveCall({
 		target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
 		arguments: [emptyIKACoin],
-		typeArguments: [`${conf.ikaConfig.ika_package_id}::ika::IKA`],
+		typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
 	});
 	tx.transferObjects([cap], conf.suiClientKeypair.toSuiAddress());
 	const result = await conf.client.signAndExecuteTransaction({

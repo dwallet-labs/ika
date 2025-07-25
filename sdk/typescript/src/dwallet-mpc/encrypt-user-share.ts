@@ -134,7 +134,7 @@ async function getActiveEncryptionKeyObjID(conf: Config, address: string): Promi
 	const tx = new Transaction();
 	const dwalletState = await getDWalletSecpState(conf);
 	tx.moveCall({
-		target: `${conf.ikaConfig.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::get_active_encryption_key`,
+		target: `${conf.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::get_active_encryption_key`,
 		arguments: [
 			tx.sharedObjectRef({
 				objectId: dwalletState.object_id,
@@ -184,7 +184,7 @@ async function registerEncryptionKey(
 
 	const dwalletState = await getDWalletSecpState(conf);
 	tx.moveCall({
-		target: `${conf.ikaConfig.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::register_encryption_key`,
+		target: `${conf.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::register_encryption_key`,
 		arguments: [
 			tx.sharedObjectRef({
 				objectId: dwalletState.object_id,
@@ -339,15 +339,15 @@ export async function transferEncryptedSecretShare(
 	const emptyIKACoin = tx.moveCall({
 		target: `${SUI_PACKAGE_ID}::coin::zero`,
 		arguments: [],
-		typeArguments: [`${sourceConf.ikaConfig.ika_package_id}::ika::IKA`],
+		typeArguments: [`${sourceConf.ikaConfig.packages.ika_package_id}::ika::IKA`],
 	});
 	const sessionIdentifier = await createSessionIdentifier(
 		tx,
 		dwalletStateArg,
-		sourceConf.ikaConfig.ika_dwallet_2pc_mpc_package_id,
+		sourceConf.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id,
 	);
 	tx.moveCall({
-		target: `${sourceConf.ikaConfig.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::request_re_encrypt_user_share_for`,
+		target: `${sourceConf.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::request_re_encrypt_user_share_for`,
 		arguments: [
 			dwalletStateArg,
 			dwalletIDArg,
@@ -363,7 +363,7 @@ export async function transferEncryptedSecretShare(
 	tx.moveCall({
 		target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
 		arguments: [emptyIKACoin],
-		typeArguments: [`${sourceConf.ikaConfig.ika_package_id}::ika::IKA`],
+		typeArguments: [`${sourceConf.ikaConfig.packages.ika_package_id}::ika::IKA`],
 	});
 
 	const result = await sourceConf.client.signAndExecuteTransaction({

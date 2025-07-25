@@ -25,7 +25,7 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData,
-    IkaPackagesConfig, MPCRequestInput, SessionIdentifier, SessionType,
+    IkaNetworkConfig, MPCRequestInput, SessionIdentifier, SessionType,
 };
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -53,7 +53,7 @@ pub(crate) struct DWalletMPCManager {
     /// mapping until the epoch advances.
     pub(crate) mpc_sessions: HashMap<SessionIdentifier, DWalletMPCSession>,
     pub(crate) epoch_id: EpochId,
-    pub(crate) packages_config: IkaPackagesConfig,
+    pub(crate) packages_config: IkaNetworkConfig,
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
@@ -90,7 +90,7 @@ impl DWalletMPCManager {
         validator_name: AuthorityPublicKeyBytes,
         committee: Arc<Committee>,
         epoch_id: EpochId,
-        packages_config: IkaPackagesConfig,
+        packages_config: IkaNetworkConfig,
         network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
         next_epoch_committee_receiver: Receiver<Committee>,
         node_config: NodeConfig,
@@ -121,7 +121,7 @@ impl DWalletMPCManager {
         validator_name: AuthorityPublicKeyBytes,
         committee: Arc<Committee>,
         epoch_id: EpochId,
-        packages_config: IkaPackagesConfig,
+        packages_config: IkaNetworkConfig,
         network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
         next_epoch_committee_receiver: watch::Receiver<Committee>,
         node_config: NodeConfig,

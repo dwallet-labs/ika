@@ -359,10 +359,10 @@ describe('Test dWallet MPC', () => {
 
 	it('should fetch all the validator operator cap ids from Sui', async () => {
 		const dynamicFields = await conf.client.getDynamicFields({
-			parentId: conf.ikaConfig.ika_system_object_id,
+			parentId: conf.ikaConfig.objects.ika_system_object_id,
 		});
 		const innerCoordinatorState = await conf.client.getDynamicFieldObject({
-			parentId: conf.ikaConfig.ika_system_object_id,
+			parentId: conf.ikaConfig.objects.ika_system_object_id,
 			name: dynamicFields.data[0].name,
 		});
 		const systemInner = innerCoordinatorState.data?.content;

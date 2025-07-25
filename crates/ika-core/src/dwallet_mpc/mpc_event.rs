@@ -321,7 +321,8 @@ impl DWalletMPCManager {
         events
             .into_iter()
             .filter_map(|event| {
-                if event.type_.address != *self.packages_config.ika_dwallet_2pc_mpc_package_id
+                if event.type_.address
+                    != *self.packages_config.packages.ika_dwallet_2pc_mpc_package_id
                     || event.type_.module != SESSIONS_MANAGER_MODULE_NAME.into()
                 {
                     error!(

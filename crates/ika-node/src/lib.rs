@@ -176,7 +176,7 @@ use ika_core::system_checkpoints::{
 };
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_sui_client::{SuiClient, SuiConnectorClient};
-use ika_types::messages_dwallet_mpc::{DWalletNetworkEncryptionKeyData, IkaPackagesConfig};
+use ika_types::messages_dwallet_mpc::{DWalletNetworkEncryptionKeyData, IkaNetworkConfig};
 #[cfg(msim)]
 pub use simulator::set_jwk_injector;
 #[cfg(msim)]
@@ -318,18 +318,16 @@ impl IkaNode {
         //     .expect("EpochStartConfiguration of the current epoch must exist");
 
         let epoch_options = default_db_options().optimize_db_for_write_throughput(4);
-        let packages_config = IkaPackagesConfig {
-            ika_package_id: config.sui_connector_config.ika_package_id,
-            ika_common_package_id: config.sui_connector_config.ika_common_package_id,
-            ika_dwallet_2pc_mpc_package_id: config
-                .sui_connector_config
-                .ika_dwallet_2pc_mpc_package_id,
-            ika_system_package_id: config.sui_connector_config.ika_system_package_id,
-            ika_system_object_id: config.sui_connector_config.ika_system_object_id,
-            ika_dwallet_coordinator_object_id: config
+        let packages_config = IkaNetworkConfig::new(
+            config.sui_connector_config.ika_package_id,
+            config.sui_connector_config.ika_common_package_id,
+            config.sui_connector_config.ika_dwallet_2pc_mpc_package_id,
+            config.sui_connector_config.ika_system_package_id,
+            config.sui_connector_config.ika_system_object_id,
+            config
                 .sui_connector_config
                 .ika_dwallet_coordinator_object_id,
-        };
+        );
 
         let dwallet_mpc_metrics = DWalletMPCMetrics::new(&registry_service.default_registry());
 

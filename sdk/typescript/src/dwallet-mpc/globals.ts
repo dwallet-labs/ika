@@ -14,13 +14,21 @@ export const DWALLET_NETWORK_VERSION = 0;
 export const SUI_PACKAGE_ID = '0x2';
 export const checkpointCreationTime = 2000;
 
-interface IkaConfig {
+export interface IkaPackageConfig {
 	ika_package_id: string;
 	ika_common_package_id: string;
 	ika_dwallet_2pc_mpc_package_id: string;
 	ika_system_package_id: string;
+}
+
+export interface IkaObjectsConfig {
 	ika_system_object_id: string;
 	ika_dwallet_coordinator_object_id: string;
+}
+
+export interface IkaConfig {
+	packages: IkaPackageConfig;
+	objects: IkaObjectsConfig;
 }
 
 export interface Config {
@@ -263,10 +271,10 @@ export async function getInitialSharedVersion(c: Config, objectID: string): Prom
 export async function getDWalletSecpState(c: Config): Promise<SharedObjectData> {
 	const initialSharedVersion = await getInitialSharedVersion(
 		c,
-		c.ikaConfig.ika_dwallet_coordinator_object_id,
+		c.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 	);
 	return {
-		object_id: c.ikaConfig.ika_dwallet_coordinator_object_id,
+		object_id: c.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 		initial_shared_version: initialSharedVersion,
 	};
 }
@@ -372,10 +380,10 @@ export async function getNetworkPublicParameters(c: Config): Promise<Uint8Array>
 
 export async function getNetworkDecryptionKeyID(c: Config): Promise<string> {
 	const dynamicFields = await c.client.getDynamicFields({
-		parentId: c.ikaConfig.ika_dwallet_coordinator_object_id,
+		parentId: c.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 	});
 	const coordinatorInner = await c.client.getDynamicFieldObject({
-		parentId: c.ikaConfig.ika_dwallet_coordinator_object_id,
+		parentId: c.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 		name: dynamicFields.data[DWALLET_NETWORK_VERSION].name,
 	});
 	if (!isCoordinatorInner(coordinatorInner.data?.content)) {
@@ -420,10 +428,10 @@ export function getCachedPublicParameters(key_id: string, epoch: number): Uint8A
 
 export async function getNetworkCurrentEpochNumber(c: Config): Promise<number> {
 	const dynamicFields = await c.client.getDynamicFields({
-		parentId: c.ikaConfig.ika_dwallet_coordinator_object_id,
+		parentId: c.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 	});
 	const innerSystemState = await c.client.getDynamicFieldObject({
-		parentId: c.ikaConfig.ika_dwallet_coordinator_object_id,
+		parentId: c.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 		name: dynamicFields.data[DWALLET_NETWORK_VERSION].name,
 	});
 	if (!isCoordinatorInner(innerSystemState.data?.content)) {

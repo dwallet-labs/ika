@@ -331,7 +331,7 @@ pub struct MPCSessionRequest {
 }
 
 pub trait DWalletSessionEventTrait {
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag;
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag;
 }
 
 /// The DWallet MPC session type
@@ -491,9 +491,9 @@ pub struct DWalletSessionEvent<E: DWalletSessionEventTrait> {
 impl<E: DWalletSessionEventTrait> DWalletSessionEventTrait for DWalletSessionEvent<E> {
     /// This function allows comparing this event with the Move event.
     /// It is used to detect [`DWalletSessionEvent`] events from the chain and initiate the MPC session.
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: DWALLET_SESSION_EVENT_STRUCT_NAME.to_owned(),
             module: SESSIONS_MANAGER_MODULE_NAME.to_owned(),
             type_params: vec![<E as DWalletSessionEventTrait>::type_(packages_config).into()],
@@ -545,9 +545,9 @@ pub struct EncryptedShareVerificationRequestEvent {
 }
 
 impl DWalletSessionEventTrait for EncryptedShareVerificationRequestEvent {
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: ident_str!("EncryptedShareVerificationRequestEvent").to_owned(),
             module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
             type_params: vec![],
@@ -571,9 +571,9 @@ pub struct FutureSignRequestEvent {
 }
 
 impl DWalletSessionEventTrait for FutureSignRequestEvent {
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: ident_str!("FutureSignRequestEvent").to_owned(),
             module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
             type_params: vec![],
@@ -611,9 +611,9 @@ impl DWalletSessionEventTrait for DWalletDKGSecondRoundRequestEvent {
     /// This function allows comparing this event with the Move event.
     /// It is used to detect [`DWalletDKGSecondRoundRequestEvent`] events from the chain
     /// and initiate the MPC session.
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: DWALLET_DKG_SECOND_ROUND_REQUEST_EVENT_STRUCT_NAME.to_owned(),
             module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
             type_params: vec![],
@@ -645,9 +645,9 @@ impl DWalletSessionEventTrait for PresignRequestEvent {
     /// This function allows comparing this event with the Move event.
     /// It is used to detect [`PresignRequestEvent`] events
     /// from the chain and initiate the MPC session.
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: PRESIGN_REQUEST_EVENT_STRUCT_NAME.to_owned(),
             module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
             type_params: vec![],
@@ -656,7 +656,39 @@ impl DWalletSessionEventTrait for PresignRequestEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct IkaPackagesConfig {
+pub struct IkaNetworkConfig {
+    pub packages: IkaPackageConfig,
+    pub objects: IkaObjectsConfig,
+}
+
+impl sui_config::Config for IkaNetworkConfig {}
+
+impl IkaNetworkConfig {
+    pub fn new(
+        ika_package_id: ObjectID,
+        ika_common_package_id: ObjectID,
+        ika_dwallet_2pc_mpc_package_id: ObjectID,
+        ika_system_package_id: ObjectID,
+        ika_system_object_id: ObjectID,
+        ika_dwallet_coordinator_object_id: ObjectID,
+    ) -> Self {
+        Self {
+            packages: IkaPackageConfig {
+                ika_package_id,
+                ika_common_package_id,
+                ika_dwallet_2pc_mpc_package_id,
+                ika_system_package_id,
+            },
+            objects: IkaObjectsConfig {
+                ika_system_object_id,
+                ika_dwallet_coordinator_object_id,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IkaPackageConfig {
     /// The move package id of ika (IKA) on sui.
     pub ika_package_id: ObjectID,
     /// The move package id of ika_common on sui.
@@ -665,13 +697,15 @@ pub struct IkaPackagesConfig {
     pub ika_dwallet_2pc_mpc_package_id: ObjectID,
     /// The move package id of ika_system on sui.
     pub ika_system_package_id: ObjectID,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IkaObjectsConfig {
     /// The object id of system on sui.
     pub ika_system_object_id: ObjectID,
     /// The object id of ika_dwallet_coordinator on sui.
     pub ika_dwallet_coordinator_object_id: ObjectID,
 }
-
-impl sui_config::Config for IkaPackagesConfig {}
 
 /// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletDKGFirstRoundRequestEvent`.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
@@ -686,9 +720,9 @@ pub struct DWalletDKGFirstRoundRequestEvent {
 impl DWalletSessionEventTrait for DWalletDKGFirstRoundRequestEvent {
     /// This function allows comparing this event with the Move event.
     /// It is used to detect [`DWalletDKGFirstRoundRequestEvent`] events from the chain and initiate the MPC session.
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: DWALLET_DKG_FIRST_ROUND_REQUEST_EVENT_STRUCT_NAME.to_owned(),
             module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
             type_params: vec![],
@@ -750,9 +784,9 @@ pub struct MakeDWalletUserSecretKeySharesPublicRequestEvent {
 impl DWalletSessionEventTrait for MakeDWalletUserSecretKeySharesPublicRequestEvent {
     /// This function allows comparing this event with the Move event.
     /// It is used to detect [`DWalletDKGFirstRoundRequestEvent`] events from the chain and initiate the MPC session.
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: DWALLET_MAKE_DWALLET_USER_SECRET_KEY_SHARES_PUBLIC_REQUEST_EVENT.to_owned(),
             module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
             type_params: vec![],
@@ -763,9 +797,9 @@ impl DWalletSessionEventTrait for MakeDWalletUserSecretKeySharesPublicRequestEve
 impl DWalletSessionEventTrait for DWalletImportedKeyVerificationRequestEvent {
     /// This function allows comparing this event with the Move event.
     /// It is used to detect [`DWalletDKGFirstRoundRequestEvent`] events from the chain and initiate the MPC session.
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: DWALLET_IMPORTED_KEY_VERIFICATION_REQUEST_EVENT.to_owned(),
             module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
             type_params: vec![],
@@ -805,9 +839,9 @@ impl DWalletSessionEventTrait for SignRequestEvent {
     /// This function allows comparing this event with the Move event.
     /// It is used to detect [`SignRequestEvent`]
     /// events from the chain and initiate the MPC session.
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: SIGN_REQUEST_EVENT_STRUCT_NAME.to_owned(),
             module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
             type_params: vec![],
@@ -827,9 +861,9 @@ impl DWalletSessionEventTrait for DWalletNetworkDKGEncryptionKeyRequestEvent {
     /// This function allows comparing this event with the Move event.
     /// It is used to detect [`DWalletNetworkDKGEncryptionKeyRequestEvent`] events from the chain and initiate the MPC session.
     /// It is used to trigger the start of the network DKG process.
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: START_NETWORK_DKG_EVENT_STRUCT_NAME.to_owned(),
             module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
             type_params: vec![],
@@ -874,9 +908,9 @@ pub struct DWalletEncryptionKeyReconfigurationRequestEvent {
 }
 
 impl DWalletSessionEventTrait for DWalletEncryptionKeyReconfigurationRequestEvent {
-    fn type_(packages_config: &IkaPackagesConfig) -> StructTag {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
-            address: *packages_config.ika_dwallet_2pc_mpc_package_id,
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
             name: ident_str!("DWalletEncryptionKeyReconfigurationRequestEvent").to_owned(),
             module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
             type_params: vec![],

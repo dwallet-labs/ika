@@ -1,0 +1,20 @@
+---
+envs:
+  mainnet:
+    packages:
+      ika_package_id: "0x1f26bb2f711ff82dcda4d02c77d5123089cb7f8418751474b9fb744ce031526a"
+      ika_common_package_id: "0x96fc75633b6665cf84690587d1879858ff76f88c10c945e299f90bf4e0985eb0"
+      ika_dwallet_2pc_mpc_package_id: "0xf02f5960c94fce1899a3795b5d11fd076bc70a8d0e20a2b19923d990ed490730"
+      ika_system_package_id: "0xae71e386fd4cff3a080001c4b74a9e485cd6a209fa98fb272ab922be68869148"
+    objects:
+      ika_system_object_id: "0x2172c6483ccd24930834e30102e33548b201d0607fb1fdc336ba3267d910dec6"
+      ika_dwallet_coordinator_object_id: "0x4d157b7415a298c56ec2cb1dcab449525fa74aec17ddba376a83a7600f2062fc"
+  testnet:
+    packages:
+      ika_package_id: "0x1f26bb2f711ff82dcda4d02c77d5123089cb7f8418751474b9fb744ce031526a"
+      ika_common_package_id: "0x96fc75633b6665cf84690587d1879858ff76f88c10c945e299f90bf4e0985eb0"
+      ika_dwallet_2pc_mpc_package_id: "0xf02f5960c94fce1899a3795b5d11fd076bc70a8d0e20a2b19923d990ed490730"
+      ika_system_package_id: "0xae71e386fd4cff3a080001c4b74a9e485cd6a209fa98fb272ab922be68869148"
+    objects:
+      ika_system_object_id: "0x2172c6483ccd24930834e30102e33548b201d0607fb1fdc336ba3267d910dec6"
+      ika_dwallet_coordinator_object_id: "0x4d157b7415a298c56ec2cb1dcab449525fa74aec17ddba376a83a7600f2062fc"

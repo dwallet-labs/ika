@@ -19,7 +19,7 @@ export async function makeDWalletUserSecretKeySharesPublicRequestEvent(
 	const emptyIKACoin = tx.moveCall({
 		target: `${SUI_PACKAGE_ID}::coin::zero`,
 		arguments: [],
-		typeArguments: [`${conf.ikaConfig.ika_package_id}::ika::IKA`],
+		typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
 	});
 	const dWalletStateData = await getDWalletSecpState(conf);
 	const dwalletStateArg = tx.sharedObjectRef({
@@ -30,10 +30,10 @@ export async function makeDWalletUserSecretKeySharesPublicRequestEvent(
 	const sessionIdentifier = await createSessionIdentifier(
 		tx,
 		dwalletStateArg,
-		conf.ikaConfig.ika_dwallet_2pc_mpc_package_id,
+		conf.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id,
 	);
 	tx.moveCall({
-		target: `${conf.ikaConfig.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::request_make_dwallet_user_secret_key_shares_public`,
+		target: `${conf.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::request_make_dwallet_user_secret_key_shares_public`,
 		arguments: [
 			dwalletStateArg,
 			tx.pure.id(dwallet_id),
@@ -47,7 +47,7 @@ export async function makeDWalletUserSecretKeySharesPublicRequestEvent(
 	tx.moveCall({
 		target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
 		arguments: [emptyIKACoin],
-		typeArguments: [`${conf.ikaConfig.ika_package_id}::ika::IKA`],
+		typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
 	});
 
 	await conf.client.signAndExecuteTransaction({
