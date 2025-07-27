@@ -660,8 +660,6 @@ public fun commit_upgrade(self: &mut DWalletCoordinator, upgrade_package_approve
 /// to migrate changes in the `coordinator_inner` object if needed.
 /// This function can be called immediately after the upgrade is committed.
 public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtocolCap) {
-    assert!(self.version < VERSION, EInvalidMigration);
-    assert!(self.new_package_id.is_some(), EInvalidMigration);
     self.try_migrate_impl();
 }
 
@@ -671,8 +669,6 @@ public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtoco
 /// to migrate changes in the `coordinator_inner` object if needed.
 /// Call this function after the migration epoch is reached.
 public fun try_migrate(self: &mut DWalletCoordinator) {
-    assert!(self.version < VERSION, EInvalidMigration);
-    assert!(self.new_package_id.is_some(), EInvalidMigration);
     assert!(self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e), EInvalidMigration);
     self.try_migrate_impl();
 }
@@ -682,6 +678,8 @@ public fun try_migrate(self: &mut DWalletCoordinator) {
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
 fun try_migrate_impl(self: &mut DWalletCoordinator) {
+    assert!(self.version < VERSION, EInvalidMigration);
+    assert!(self.new_package_id.is_some(), EInvalidMigration);
     // Move the old coordinator inner to the new version.
     let coordinator_inner: DWalletCoordinatorInner = dynamic_field::remove(&mut self.id, self.version);
     dynamic_field::add(&mut self.id, VERSION, coordinator_inner);
