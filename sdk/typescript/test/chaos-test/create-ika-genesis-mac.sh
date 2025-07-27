@@ -359,6 +359,8 @@ done
 # Wait for any remaining background jobs
 wait
 
+IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_CONFIG_FILE")
+
 # This is needed later for the publisher, in oder to update the ika_sui_config.yaml.
 $BINARY_NAME validator config-env \
     --ika-package-id "$IKA_PACKAGE_ID" \
@@ -366,6 +368,7 @@ $BINARY_NAME validator config-env \
     --ika-system-object-id "$IKA_SYSTEM_OBJECT_ID" \
     --ika-common-package-id "$IKA_COMMON_PACKAGE_ID" \
     --ika-dwallet-2pc-mpc-package-id "$IKA_DWALLET_2PC_MPC_PACKAGE_ID" \
+    --ika-dwallet-coordinator-object-id "$IKA_DWALLET_COORDINATOR_OBJECT_ID" \
 
 ############################
 # Become Validator Candidate (Max 5 Parallel Jobs)
