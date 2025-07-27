@@ -51,6 +51,8 @@ interface VerifiedPartialUserSignature {
 }
 
 async function call_mpc_sign_tx(tx: Transaction, emptyIKACoin: TransactionResult, conf: Config) {
+	const currentTimeInMs: number = Date.now();
+	console.log(`call_mpc_sign_tx(): ${currentTimeInMs}`);
 	tx.moveCall({
 		target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
 		arguments: [emptyIKACoin],
