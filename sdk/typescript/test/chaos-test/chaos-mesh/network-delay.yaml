@@ -1,0 +1,18 @@
+kind: NetworkChaos
+apiVersion: chaos-mesh.org/v1alpha1
+metadata:
+  namespace: ika
+  name: slow-network-conditions
+spec:
+  selector:
+    namespaces:
+      - ika
+    labelSelectors:
+      app: validator
+  mode: all
+  action: delay
+  delay:
+    latency: 2000ms
+    correlation: '0'
+    jitter: 0ms
+  direction: to
