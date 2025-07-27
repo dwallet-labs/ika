@@ -552,6 +552,14 @@ impl DWalletMPCManager {
                     for (key_id, res) in results {
                         match res {
                             Ok(key) => {
+                                if key.epoch != self.epoch_id {
+                                    warn!(
+                                        key_id=?key_id,
+                                        epoch=?key.epoch,
+                                        "Network key epoch does not match current epoch, ignoring"
+                                    );
+                                    continue;
+                                }
                                 info!(key_id=?key_id, "Updating (decrypting new shares) network key for key_id");
                                 if let Err(e) = self
                                     .network_keys
