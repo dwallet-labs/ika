@@ -6,25 +6,6 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Load environment variables from .env if not already set
-if [ -f .env ]; then
-  echo "Loading variables from .env"
-  while IFS='=' read -r key value; do
-    # Skip comments and empty lines
-    if [ -z "$key" ] || echo "$key" | grep -q '^#'; then
-      continue
-    fi
-
-    # Only export if not already set in environment
-    if [ -z "${!key}" ]; then
-      export "$key=$value"
-    fi
-  done < .env
-else
-  echo ".env file not found!"
-  exit 1
-fi
-
 # Check if jq is installed
 if ! command_exists jq; then
     echo "jq is not installed, installing..."
@@ -44,12 +25,13 @@ fi
 # Default values.
 # The prefix for the validator names (e.g. val1.devnet.ika.cloud, val2.devnet.ika.cloud, etc...).
 export VALIDATOR_PREFIX="val"
+# The number of validators to create.
+export VALIDATOR_NUM=4
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
 # The subdomain for Ika the network.
-# For local minikube cluster, use the .svc.cluster.local suffix
-export SUBDOMAIN="ika-dns-service.ika.svc.cluster.local"
-#export SUBDOMAIN="beta50.devnet.ika-network.net"
+#export SUBDOMAIN="localhost"
+export SUBDOMAIN="beta.devnet.ika-network.net"
 # The binary name to use.
 export BINARY_NAME="ika"
 # The directory to store the key pairs.
@@ -59,7 +41,25 @@ export KEY_PAIRS_DIR="key-pairs"
 ROOT_ADDR=""
 # The file containing the validators (separator: newline).
 export VALIDATORS_FILE=""
+# Validator Docker image name.
+export IMAGE_NAME="us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:devnet-v0.0.7-arm64"
+# SUI fullnode URL.
+export SUI_FULLNODE_RPC_URL="https://fullnode.sui.beta.devnet.ika-network.net"
+#export SUI_FULLNODE_RPC_URL="http://localhost:9000"
+# Sui Docker URL (only needed if you run Ika on Docker against localhost on non-linux).
+# If it's not against localhost, set it to the remote sui RPC.
+#export SUI_DOCKER_URL="http://docker.for.mac.localhost:9000"
+export SUI_DOCKER_URL="https://fullnode.sui.beta.devnet.ika-network.net"
+# SUI Faucet URL.
+export SUI_FAUCET_URL="https://faucet.sui.beta.devnet.ika-network.net/gas"
+#export SUI_FAUCET_URL="http://localhost:9123/gas"
+# Default Ika epoch duration time.
+# Day
+#export EPOCH_DURATION_TIME_MS=86400000
+# 40 minutes
 #export EPOCH_DURATION_TIME_MS=2400000
+# 1 hour
+export EPOCH_DURATION_TIME_MS=$((1000*60*45*1))
 # Sui chain identifier.
 export SUI_CHAIN_IDENTIFIER="custom"
 
@@ -78,6 +78,7 @@ show_help() {
     echo "  --key-pairs-dir <directory>         Set the directory for key pairs. Default: key-pairs"
     echo "  --root-addr <address>               Set the root address. Default: 0x3e..."
     echo "  --validators-file <file>            Specify a file with validators."
+    echo "  --image-name <image>                Specify the Docker image name. Default: $IMAGE_NAME"
     echo "  --sui-faucet-url <url>              Set the SUI faucet URL. Default: $SUI_FAUCET_URL"
     echo "  --epoch-duration-time <time>        Set the epoch duration time. Default: $EPOCH_DURATION_TIME_MS"
     echo "  -h, --help                        Display this help message and exit."
@@ -96,6 +97,7 @@ while [[ "$#" -gt 0 ]]; do
         --key-pairs-dir) KEY_PAIRS_DIR="$2"; shift ;;
         --root-addr) ROOT_ADDR="$2"; shift ;;
         --validators-file) VALIDATORS_FILE="$2"; shift ;;
+        --image-name) IMAGE_NAME="$2"; shift ;;
         --sui-faucet-url) SUI_FAUCET_URL="$2"; shift ;;
         --epoch-duration-time) EPOCH_DURATION_TIME_MS="$2"; shift ;;
         -h|--help) show_help; exit 0 ;;
@@ -108,7 +110,7 @@ done
 RUST_MIN_STACK=16777216
 
 RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
-cp ../../../../target/release/"$BINARY_NAME" .
+cp ../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
 VALIDATORS_ARRAY=()
@@ -247,7 +249,7 @@ done
 rm -rf "$SUI_CONFIG_PATH"
 
 cargo build --bin ika-swarm-config
-cp ../../../../../target/debug/ika-swarm-config .
+cp ../../../target/debug/ika-swarm-config .
 
 # Publish IKA Modules (Creates the publisher config).
 ./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL"
@@ -270,6 +272,7 @@ IKA_SYSTEM_PACKAGE_ID=$(jq -r '.ika_system_package_id' "$PUBLISHER_CONFIG_FILE")
 IKA_SYSTEM_OBJECT_ID=$(jq -r '.ika_system_object_id' "$PUBLISHER_CONFIG_FILE")
 IKA_COMMON_PACKAGE_ID=$(jq -r '.ika_common_package_id' "$PUBLISHER_CONFIG_FILE")
 IKA_DWALLET_2PC_MPC_PACKAGE_ID=$(jq -r '.ika_dwallet_2pc_mpc_package_id' "$PUBLISHER_CONFIG_FILE")
+
 
 # Print the values for verification.
 echo "Ika Package ID: $IKA_PACKAGE_ID"
@@ -300,8 +303,6 @@ request_and_generate_yaml() {
   yq e ".\"sui-connector-config\".\"sui-rpc-url\" = \"$SUI_DOCKER_URL\"" -i "$VALIDATOR_DIR/validator.yaml"
   yq e ".\"sui-connector-config\".\"sui-chain-identifier\" = \"$SUI_CHAIN_IDENTIFIER\"" -i "$VALIDATOR_DIR/validator.yaml"
   yq e ".\"sui-connector-config\".\"ika-package-id\" = \"$IKA_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
-  yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
-  yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
   yq e ".\"sui-connector-config\".\"ika-system-package-id\" = \"$IKA_SYSTEM_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
   yq e ".\"sui-connector-config\".\"ika-system-object-id\" = \"$IKA_SYSTEM_OBJECT_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
 
@@ -412,6 +413,7 @@ process_validator() {
     SUI_CONFIG_DIR="$LOCAL_SUI_CONFIG_DIR" \
     IKA_CONFIG_DIR="$LOCAL_IKA_CONFIG_DIR" \
     $BINARY_NAME validator become-candidate "$VALIDATOR_DIR/validator.info" --json > "$OUTPUT_FILE"
+#    $BINARY_NAME validator become-candidate "$VALIDATOR_DIR/validator.info" --json 2>&1 | tee "$OUTPUT_FILE"
 
     # Validate and extract IDs
     if jq empty "$OUTPUT_FILE" 2>/dev/null; then
@@ -518,6 +520,10 @@ done
 # IKA System Initialization
 #############################
 
+# sleep 30 seconds (needed for initialize)
+#sleep 30
+echo "sleeping for 30 seconds"
+
 # Copy publisher sui_config to SUI_CONFIG_PATH
 rm -rf "$SUI_CONFIG_PATH"
 mkdir -p "$SUI_CONFIG_PATH"
@@ -537,6 +543,8 @@ PUBLISHER_CONFIG_FILE="$PUBLISHER_DIR/ika_config.json"
 
 IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_CONFIG_FILE")
 
+echo "Ika dWallet Coordinator Object ID: placeholder"
+
 cat > locals.tf <<EOF
 locals {
   ika_chain_config = {
@@ -551,24 +559,6 @@ locals {
 }
 EOF
 
-update_coordinator_object_id() {
-  local entry="$1"
-  IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
-  local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
-
-  # Extract values from the validator.info file
-  local ACCOUNT_ADDRESS
-  ACCOUNT_ADDRESS=$(yq e '.account_address' "${VALIDATOR_DIR}/validator.info")
-  local P2P_ADDR
-  P2P_ADDR=$(yq e '.p2p_address' "${VALIDATOR_DIR}/validator.info")
-
-  # Replace placeholders using yq
-    yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
-}
-
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-  update_coordinator_object_id "$entry" &
-done
 
 ############################
 # Generate Seed Peers
@@ -613,15 +603,30 @@ cp ../fullnode.template.yaml "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"sui-rpc-url\" = \"$SUI_DOCKER_URL\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"sui-chain-identifier\" = \"$SUI_CHAIN_IDENTIFIER\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"ika-package-id\" = \"$IKA_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"ika-system-package-id\" = \"$IKA_SYSTEM_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"ika-system-object-id\" = \"$IKA_SYSTEM_OBJECT_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$FULLNODE_YAML_PATH"
 
 # Replace HOSTNAME in external-address
 yq e ".\"p2p-config\".\"external-address\" = \"/dns/fullnode.$SUBDOMAIN/udp/8084\"" -i "$FULLNODE_YAML_PATH"
 
 # Replace SEED_PEERS with actual array from seed_peers.yaml
 yq e '."p2p-config"."seed-peers" = load("seed_peers.yaml")' -i "$FULLNODE_YAML_PATH"
+
+############################
+# Prepare Docker Compose file.
+############################
+DOCKER_COMPOSE="docker-compose.yaml"
+DOCKER_COMPOSE_PATH="$DOCKER_COMPOSE"
+cp ../docker-compose.template.yaml "$DOCKER_COMPOSE_PATH"
+
+# Replace DOMAIN_NAME_HERE with the provided domain name.
+yq e -i ".services.*.container_name |= sub(\"DOMAIN_NAME_HERE\"; \"$SUBDOMAIN\")" "$DOCKER_COMPOSE_PATH"
+
+# Replace DOMAIN_NAME_HERE with the provided domain name in volume paths.
+yq e -i "(.services.*.volumes[] | select(test(\".*DOMAIN_NAME_HERE.*\"))) |= sub(\"DOMAIN_NAME_HERE\"; \"$SUBDOMAIN\")" "$DOCKER_COMPOSE_PATH"
+
+# Replace IMAGE_NAME with the provided image name.
+yq e -i ".services.*.image = \"$IMAGE_NAME\"" "$DOCKER_COMPOSE_PATH"
+
+echo "$DOCKER_COMPOSE file has been created successfully."
 
