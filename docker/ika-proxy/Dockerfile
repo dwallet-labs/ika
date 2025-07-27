@@ -35,7 +35,7 @@ RUN cargo build --profile ${PROFILE} --locked --bin ika-proxy
 # ==========================
 # Runtime stage
 # ==========================
-FROM debian:bookworm-slim AS runtime
+FROM debian:bullseye-slim AS runtime
 
 # CA certificates and other dependencies for debug.
 RUN apt update && apt install -y ca-certificate curl
