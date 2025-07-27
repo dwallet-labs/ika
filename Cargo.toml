@@ -22,7 +22,7 @@ members = [
     "crates/ika-swarm-config",
     "crates/ika-telemetry",
     "crates/ika-types",
-    "crates/ika-move-packages",
+    "crates/ika-move-contracts",
     "crates/ika-network",
     "crates/ika-archival",
 ]
@@ -298,7 +298,7 @@ ika-swarm = { path = "crates/ika-swarm" }
 ika-swarm-config = { path = "crates/ika-swarm-config" }
 ika-telemetry = { path = "crates/ika-telemetry" }
 ika-types = { path = "crates/ika-types" }
-ika-move-packages = { path = "crates/ika-move-packages" }
+ika-move-contracts = { path = "crates/ika-move-contracts" }
 ika-network = { path = "crates/ika-network" }
 ika-archival = { path = "crates/ika-archival" }
 

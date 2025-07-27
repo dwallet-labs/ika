@@ -1,4 +1,4 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! The SuiExecutor module handles executing transactions
@@ -754,14 +754,13 @@ where
             return Err(IkaError::SuiClientTxFailureGeneric(
                 tx_response.digest,
                 format!(
-                    "Transaction executed successfully, but it failed with an error: {:?}",
-                    error
+                    "Transaction executed successfully, but it failed with an error: {error:?}",
                 ),
             )
             .into());
         };
 
-        *last_submitted_tx_digest = Some(tx_response.digest.clone());
+        *last_submitted_tx_digest = Some(tx_response.digest);
         Ok(tx_response)
     }
 

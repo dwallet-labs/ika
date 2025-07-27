@@ -30,8 +30,8 @@ use tokio::runtime::Handle;
 use tokio::sync::{Mutex, broadcast, watch};
 use tokio::task::JoinSet;
 use tower::ServiceBuilder;
-use tracing::info;
 use tracing::{debug, warn};
+use tracing::{error, info};
 
 pub use handle::IkaNodeHandle;
 use ika_archival::reader::ArchiveReaderBalancer;
@@ -896,7 +896,8 @@ impl IkaNode {
         if let Err(e) =
             DWalletMPCService::verify_validator_keys(epoch_store.epoch_start_state(), config)
         {
-            panic!("Failed to verify validator keys: {}", e);
+            error!(error = ?e, "Failed to verify validator keys");
+            panic!("Failed to verify validator keys: {e}");
         };
 
         let mut dwallet_mpc_service = DWalletMPCService::new(

@@ -25,7 +25,7 @@ pub(crate) fn read_ika_sui_config_yaml(
     context: &WalletContext,
     config_path: &PathBuf,
 ) -> Result<IkaNetworkConfig, anyhow::Error> {
-    let config: IkaPackagesConfigFile = PersistedConfig::read(&config_path).map_err(|err| {
+    let config: IkaPackagesConfigFile = PersistedConfig::read(config_path).map_err(|err| {
         err.context(format!(
             "Cannot open Ika network config file at {config_path:?}"
         ))

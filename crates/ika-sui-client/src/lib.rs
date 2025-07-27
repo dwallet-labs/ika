@@ -6,7 +6,6 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use core::panic;
 use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
-use ika_move_packages::BuiltInIkaMovePackages;
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
@@ -37,7 +36,6 @@ use sui_types::clock::Clock;
 use sui_types::collection_types::{Entry, Table};
 use sui_types::dynamic_field::Field;
 use sui_types::gas_coin::GasCoin;
-use sui_types::move_package::MovePackage;
 use sui_types::object::Owner;
 use sui_types::transaction::ObjectArg;
 use sui_types::transaction::Transaction;
@@ -1417,37 +1415,37 @@ impl SuiClientInner for SuiSdkClient {
     async fn get_available_move_packages(
         &self,
         //chain: sui_protocol_config::Chain,
-        ika_package_id: ObjectID,
-        ika_system_package_id: ObjectID,
+        _ika_package_id: ObjectID,
+        _ika_system_package_id: ObjectID,
     ) -> Result<Vec<(ObjectID, MovePackageDigest)>, Self::Error> {
-        let mut results = vec![];
+        let results = vec![];
         //let protocol_config_response = self.read_api().get_protocol_config(None).await?;
         //let protocol_config = sui_protocol_config::ProtocolConfig::get_for_version(protocol_config_response.protocol_version, chain);
         //let binary_config = sui_types::execution_config_utils::to_binary_config(&protocol_config);
 
-        let ika_packages = vec![
-            ("ika".to_string(), ika_package_id),
-            ("ika_system".to_string(), ika_system_package_id),
-        ];
-        for (name, package_id) in ika_packages.clone() {
-            //let object_response = self.read_api().get_object_with_options(package_id, SuiObjectDataOptions::full_content()).await?;
-            //let object_data = object_response.data.expect("Package object should have data.");
-            //let object: Object = object_data.try_into().map_err(|e: anyhow::Error| Self::Error::DataError(e.to_string()))?;
-            let move_package = BuiltInIkaMovePackages::get_package_by_name(&name);
-            //let modules = move_package.modules_with_deps(ika_packages.clone().into_iter().collect()).map_err(|e: anyhow::Error| Self::Error::DataError(e.to_string()))?;
-            let bytes = move_package
-                .bytes_with_deps(ika_packages.clone().into_iter().collect())
-                .map_err(|e: anyhow::Error| Self::Error::DataError(e.to_string()))?;
-            let full_deps = move_package
-                .full_deps(ika_packages.clone().into_iter().collect())
-                .map_err(|e: anyhow::Error| Self::Error::DataError(e.to_string()))?;
-            let digest = MovePackage::compute_digest_for_modules_and_deps(
-                bytes.iter(),
-                full_deps.iter(),
-                true,
-            );
-            results.push((package_id, digest))
-        }
+        // let ika_packages = vec![
+        //     ("ika".to_string(), ika_package_id),
+        //     ("ika_system".to_string(), ika_system_package_id),
+        // ];
+        // for (name, package_id) in ika_packages.clone() {
+        //     //let object_response = self.read_api().get_object_with_options(package_id, SuiObjectDataOptions::full_content()).await?;
+        //     //let object_data = object_response.data.expect("Package object should have data.");
+        //     //let object: Object = object_data.try_into().map_err(|e: anyhow::Error| Self::Error::DataError(e.to_string()))?;
+        //     let move_package = BuiltInIkaMovePackages::get_package_by_name(&name);
+        //     //let modules = move_package.modules_with_deps(ika_packages.clone().into_iter().collect()).map_err(|e: anyhow::Error| Self::Error::DataError(e.to_string()))?;
+        //     let bytes = move_package
+        //         .bytes_with_deps(ika_packages.clone().into_iter().collect())
+        //         .map_err(|e: anyhow::Error| Self::Error::DataError(e.to_string()))?;
+        //     let full_deps = move_package
+        //         .full_deps(ika_packages.clone().into_iter().collect())
+        //         .map_err(|e: anyhow::Error| Self::Error::DataError(e.to_string()))?;
+        //     let digest = MovePackage::compute_digest_for_modules_and_deps(
+        //         bytes.iter(),
+        //         full_deps.iter(),
+        //         true,
+        //     );
+        //     results.push((package_id, digest))
+        // }
 
         Ok(results)
     }
@@ -1456,7 +1454,7 @@ impl SuiClientInner for SuiSdkClient {
         &self,
         tx: Transaction,
     ) -> Result<SuiTransactionBlockResponse, IkaError> {
-        let tx_digest = tx.digest().clone();
+        let tx_digest = *tx.digest();
         match self.quorum_driver_api().execute_transaction_block(
             tx,
             SuiTransactionBlockResponseOptions::new().with_effects().with_events(),

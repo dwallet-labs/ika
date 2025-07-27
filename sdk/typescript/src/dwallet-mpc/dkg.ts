@@ -1,4 +1,4 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd..
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 import {
 	create_dkg_centralized_output,
@@ -306,20 +306,20 @@ export async function launchDKGFirstRoundWithGivenCoins(
 	const ikaCoinArg = tx.object(ika_coin_id);
 	const suiCoinArg = tx.object(sui_coin_id);
 	const dwalletStateArg = tx.sharedObjectRef({
-		objectId: c.ikaConfig.ika_dwallet_coordinator_object_id,
+		objectId: c.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 		initialSharedVersion: await getInitialSharedVersion(
 			c,
-			c.ikaConfig.ika_dwallet_coordinator_object_id,
+			c.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 		),
 		mutable: true,
 	});
 	const sessionIdentifier = await createSessionIdentifier(
 		tx,
 		dwalletStateArg,
-		c.ikaConfig.ika_dwallet_2pc_mpc_package_id,
+		c.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id,
 	);
 	const dwalletCap = tx.moveCall({
-		target: `${c.ikaConfig.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::request_dwallet_dkg_first_round`,
+		target: `${c.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::request_dwallet_dkg_first_round`,
 		arguments: [
 			dwalletStateArg,
 			tx.pure.id(networkDecryptionKeyID),

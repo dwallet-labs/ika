@@ -1,4 +1,4 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! This module contains the DWalletMPCService struct.
@@ -932,8 +932,7 @@ impl DWalletMPCService {
             .find(|v| v.authority_name() == authority_name)
         else {
             return Err(DwalletMPCError::MPCManagerError(format!(
-                "Validator {} not found in the epoch start system state",
-                authority_name
+                "Validator {authority_name} not found in the epoch start system state"
             )));
         };
 

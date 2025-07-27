@@ -5813,7 +5813,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ika-move-packages"
+name = "ika-move-contracts"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -5941,7 +5941,7 @@ dependencies = [
  "dwallet-mpc-types",
  "fastcrypto",
  "ika-config",
- "ika-move-packages",
+ "ika-move-contracts",
  "ika-types",
  "itertools 0.14.0",
  "move-core-types",
@@ -5994,7 +5994,7 @@ dependencies = [
  "fastcrypto",
  "futures",
  "ika-config",
- "ika-move-packages",
+ "ika-move-contracts",
  "ika-protocol-config",
  "ika-types",
  "move-core-types",
