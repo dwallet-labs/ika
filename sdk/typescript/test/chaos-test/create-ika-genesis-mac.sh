@@ -219,7 +219,8 @@ for entry in "${VALIDATORS_ARRAY[@]}"; do
     # If we already have a class-groups.key, copy it into current dir before make-validator-info
     if [ "$CLASS_GROUPS_KEY_CREATED" -eq 1 ]; then
         echo "Copying existing class-groups.seed for validator '$VALIDATOR_NAME'"
-        cp ../class-groups.seed .
+        pwd
+        cp ../../class-groups.seed .
     fi
 
     # Now run make-validator-info
