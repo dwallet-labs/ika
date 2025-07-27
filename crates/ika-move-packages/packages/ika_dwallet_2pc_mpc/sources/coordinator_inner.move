@@ -30,15 +30,15 @@ module ika_dwallet_2pc_mpc::coordinator_inner;
 
 use ika::ika::IKA;
 use ika_common::address;
+use ika_common::advance_epoch_approver::AdvanceEpochApprover;
 use ika_common::bls_committee::{Self, BlsCommittee};
+use ika_common::protocol_cap::VerifiedProtocolCap;
+use ika_common::system_current_status_info::SystemCurrentStatusInfo;
+use ika_common::validator_cap::VerifiedValidatorOperationCap;
 use ika_dwallet_2pc_mpc::pricing::{PricingInfo, PricingInfoValue};
 use ika_dwallet_2pc_mpc::pricing_and_fee_manager::{Self, PricingAndFeeManager};
 use ika_dwallet_2pc_mpc::sessions_manager::{Self, SessionsManager, SessionIdentifier};
 use ika_dwallet_2pc_mpc::support_config::{Self, SupportConfig};
-use ika_system::advance_epoch_approver::AdvanceEpochApprover;
-use ika_system::protocol_cap::VerifiedProtocolCap;
-use ika_system::system_current_status_info::SystemCurrentStatusInfo;
-use ika_system::validator_cap::VerifiedValidatorOperationCap;
 use sui::bag::{Self, Bag};
 use sui::balance::{Self, Balance};
 use sui::bcs;
@@ -1651,6 +1651,15 @@ public(package) fun create(
     inner
 }
 
+/// Get a witness for the coordinator.
+public(package) fun dwallet_coordinator_witness(): DWalletCoordinatorWitness {
+    DWalletCoordinatorWitness {}
+}
+
+public(package) fun epoch(self: &DWalletCoordinatorInner): u64 {
+    self.current_epoch
+}
+
 /// Locks the last active session sequence number to prevent further updates.
 ///
 /// This function is called before epoch transitions to ensure session scheduling
@@ -1901,6 +1910,8 @@ public(package) fun respond_dwallet_network_encryption_key_reconfiguration(
             );
     } else {
         let state = if (is_last_chunk) {
+            self.epoch_dwallet_network_encryption_keys_reconfiguration_completed =
+                self.epoch_dwallet_network_encryption_keys_reconfiguration_completed + 1;
             let status = sessions_manager::create_success_status_event<
                 CompletedDWalletEncryptionKeyReconfigurationEvent,
                 RejectedDWalletEncryptionKeyReconfigurationEvent,
@@ -1974,9 +1985,6 @@ public(package) fun request_network_encryption_key_mid_epoch_reconfiguration(
     );
 
     let next_epoch = self.current_epoch + 1;
-
-    self.epoch_dwallet_network_encryption_keys_reconfiguration_completed =
-        self.epoch_dwallet_network_encryption_keys_reconfiguration_completed + 1;
 
     let dwallet_network_encryption_key = self.get_active_dwallet_network_encryption_key(
         dwallet_network_encryption_key_id,
@@ -2079,12 +2087,12 @@ public(package) fun advance_epoch(
 
     self.sessions_manager.advance_epoch();
 
-    self.current_epoch = self.current_epoch + 1;
+    self.current_epoch = advance_epoch_approver.new_epoch();
 
     self.active_committee = self.next_epoch_active_committee.extract();
 
     let balance = self.pricing_and_fee_manager.advance_epoch();
-    advance_epoch_approver.approve_advance_epoch_by_witness(DWalletCoordinatorWitness {}, balance);
+    advance_epoch_approver.approve_advance_epoch_by_witness(dwallet_coordinator_witness(), balance);
 }
 
 /// Gets an immutable reference to a dWallet by ID.
@@ -4673,6 +4681,36 @@ fun set_gas_fee_reimbursement_sui_system_call_value(
     event::emit(SetGasFeeReimbursementSuiSystemCallValueEvent {
         gas_fee_reimbursement_sui_system_call_value,
     });
+}
+
+
+/// This function is used to process a checkpoint message by cap.
+///
+/// ### Parameters
+/// - **`message`**: The message to process.
+/// - **`cap`**: The capability to use to process the message.
+///
+/// ### Returns
+/// The coin of SUI that was charged for the gas fee reimbursement system call.
+public(package) fun process_checkpoint_message_by_cap(
+    self: &mut DWalletCoordinatorInner,
+    message: vector<u8>,
+    _: &VerifiedProtocolCap,
+    ctx: &mut TxContext,
+): Coin<SUI> {
+    self.process_checkpoint_message(message, ctx)
+}
+
+/// Sets the gas fee reimbursement SUI system call value.
+///
+/// ### Parameters
+/// - **`gas_fee_reimbursement_sui_system_call_value`**: The gas fee reimbursement SUI system call value.
+public(package) fun set_gas_fee_reimbursement_sui_system_call_value_by_cap(
+    self: &mut DWalletCoordinatorInner,
+    gas_fee_reimbursement_sui_system_call_value: u64,
+    _: &VerifiedProtocolCap,
+) {
+    self.set_gas_fee_reimbursement_sui_system_call_value(gas_fee_reimbursement_sui_system_call_value);
 }
 
 /// Sets the supported curves, signature algorithms and hash schemes, and the default pricing.

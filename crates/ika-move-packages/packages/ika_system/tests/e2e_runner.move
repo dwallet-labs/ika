@@ -405,7 +405,7 @@ public fun initialize_committee_for_epoch_one(
                 validator.protocol_pubkey_bytes(),
                 validator.network_pubkey_bytes(),
                 validator.consensus_pubkey_bytes(),
-                validator.class_groups_public_key_and_proof(ctx),
+                validator.mpc_data(ctx),
                 validator.create_proof_of_possession(),
                 validator.network_address(),
                 validator.p2p_address(),

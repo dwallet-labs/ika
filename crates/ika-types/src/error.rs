@@ -80,6 +80,9 @@ pub enum IkaError {
     #[error("SuiError: {:?}", error)]
     SuiError { error: Box<SuiError> },
 
+    #[error("Sui SDK Error")]
+    SuiSDKError,
+
     #[error("There are too many transactions pending in consensus")]
     TooManyTransactionsPendingConsensus,
 
@@ -239,7 +242,10 @@ pub enum IkaError {
     BCSError(String),
 
     #[error("failed to receive data: {0}")]
-    ReveiverError(String),
+    ReceiverError(String),
+
+    #[error("dry run error failed: {0}")]
+    DryRunFailed(String),
 }
 
 pub type IkaResult<T = ()> = Result<T, IkaError>;

@@ -630,9 +630,7 @@ pub struct AuthorityState {
     /// The signature key of the authority.
     pub secret: StableSyncAuthoritySigner,
 
-    // todo(zeev): why is it here?
-    #[allow(dead_code)]
-    perpetual_tables: Arc<AuthorityPerpetualTables>,
+    pub(crate) perpetual_tables: Arc<AuthorityPerpetualTables>,
 
     epoch_store: ArcSwap<AuthorityPerEpochStore>,
 

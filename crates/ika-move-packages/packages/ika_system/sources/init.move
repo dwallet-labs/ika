@@ -4,8 +4,9 @@
 module ika_system::init;
 
 use ika::ika::IKA;
+use ika_common::protocol_cap::ProtocolCap;
+use ika_common::system_object_cap::SystemObjectCap;
 use ika_system::display;
-use ika_system::protocol_cap::ProtocolCap;
 use ika_system::protocol_treasury;
 use ika_system::system;
 use ika_system::validator_set;
@@ -47,6 +48,7 @@ fun init(otw: INIT, ctx: &mut TxContext) {
 /// This can only be called once, after which the `InitCap` is destroyed.
 public fun initialize(
     init_cap: InitCap,
+    system_object_cap: SystemObjectCap,
     ika_upgrade_cap: UpgradeCap,
     ika_system_upgrade_cap: UpgradeCap,
     protocol_treasury_cap: TreasuryCap<IKA>,
@@ -102,6 +104,7 @@ public fun initialize(
 
     let protocol_cap = system::create(
         ika_system_package_id,
+        system_object_cap,
         upgrade_caps,
         validators,
         protocol_version,
@@ -135,6 +138,7 @@ public fun init_for_testing(ctx: &mut TxContext) {
 /// as the package ID for an upgrade cap.
 public fun initialize_for_testing(
     init_cap: InitCap,
+    system_object_cap: SystemObjectCap,
     ika_upgrade_cap: UpgradeCap,
     ika_system_upgrade_cap: UpgradeCap,
     protocol_treasury_cap: TreasuryCap<IKA>,
@@ -176,6 +180,7 @@ public fun initialize_for_testing(
 
     let protocol_cap = system::create(
         ika_system_package_id,
+        system_object_cap,
         upgrade_caps,
         validators,
         protocol_version,

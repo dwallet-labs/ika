@@ -4,6 +4,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
 use ika_config::initiation::MIN_VALIDATOR_JOINING_STAKE_INKU;
@@ -50,9 +51,6 @@ pub struct ValidatorInitializationConfig {
 impl ValidatorInitializationConfig {
     pub fn to_validator_info(&self) -> ValidatorInfo {
         let name = self.name.clone().unwrap_or("".to_string());
-
-        let class_groups_public_key_and_proof =
-            ClassGroupsKeyPairAndProof::from_seed(&self.root_seed).encryption_key_and_proof();
         let protocol_public_key: AuthorityPublicKeyBytes = self.key_pair.public().into();
         let account_key: PublicKey = self.account_key_pair.public();
         let network_public_key: NetworkPublicKey = self.network_key_pair.public().clone();
@@ -61,9 +59,17 @@ impl ValidatorInitializationConfig {
         let current_epoch_consensus_address = self.current_epoch_consensus_address.clone();
         let _next_epoch_consensus_address = self.next_epoch_consensus_address.clone();
 
+        // It is okay to unwrap here because we are using ValidatorInitializationConfig only on swarm
+        let mpc_data = VersionedMPCData::V1(MPCDataV1 {
+            class_groups_public_key_and_proof: bcs::to_bytes(
+                &ClassGroupsKeyPairAndProof::from_seed(&self.root_seed).encryption_key_and_proof(),
+            )
+            .unwrap(),
+        });
+
         ValidatorInfo {
             name,
-            class_groups_public_key_and_proof,
+            mpc_data,
             protocol_public_key,
             consensus_public_key: worker_public_key,
             network_public_key,

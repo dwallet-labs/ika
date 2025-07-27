@@ -1,9 +1,10 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-module ika_system::system_current_status_info;
+module ika_common::system_current_status_info;
 
 use ika_common::bls_committee::BlsCommittee;
+use ika_common::system_object_cap::SystemObjectCap;
 
 // === Structs ===
 
@@ -15,14 +16,15 @@ public struct SystemCurrentStatusInfo has drop {
     next_epoch_active_committee: Option<BlsCommittee>,
 }
 
-// === Package Functions ===
+// === Public Functions ===
 
-public(package) fun create(
+public fun create(
     current_epoch: u64,
     is_mid_epoch_time: bool,
     is_end_epoch_time: bool,
     current_epoch_active_committee: BlsCommittee,
     next_epoch_active_committee: Option<BlsCommittee>,
+    _: &SystemObjectCap,
 ): SystemCurrentStatusInfo {
     SystemCurrentStatusInfo {
         current_epoch,
@@ -32,8 +34,6 @@ public(package) fun create(
         next_epoch_active_committee,
     }
 }
-
-// === Public Functions ===
 
 public fun current_epoch(self: &SystemCurrentStatusInfo): u64 {
     self.current_epoch

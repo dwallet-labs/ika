@@ -6,8 +6,8 @@ use crate::dwallet_mpc::dwallet_dkg::{
 };
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::dwallet_mpc::make_dwallet_user_secret_key_shares_public::verify_secret_share;
+use crate::dwallet_mpc::mpc_session::MPCRoundToMessagesHashMap;
 use crate::dwallet_mpc::mpc_session::PublicInput;
-use crate::dwallet_mpc::mpc_session::{MPCRoundToMessagesHashMap, MPCSessionLogger};
 use crate::dwallet_mpc::network_dkg::advance_network_dkg;
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
@@ -30,7 +30,7 @@ use ika_types::messages_dwallet_mpc::{
 };
 use itertools::Itertools;
 use message_digest::message_digest::message_digest;
-use mpc::{AsynchronousRoundGODResult, WeightedThresholdAccessStructure};
+use mpc::{GuaranteedOutputDeliveryRoundResult, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
@@ -84,7 +84,7 @@ impl ComputationRequest {
         computation_id: ComputationId,
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-    ) -> DwalletMPCResult<AsynchronousRoundGODResult> {
+    ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         let messages_skeleton = self
             .messages
             .iter()
@@ -107,13 +107,6 @@ impl ComputationRequest {
         );
         let session_id =
             CommitmentSizedNumber::from_le_slice(&computation_id.session_identifier.into_bytes());
-        let party_to_authority_map = self.committee.party_to_authority_map();
-        let mpc_protocol_name = self.request_input.to_string();
-
-        // Create a base logger with common parameters.
-        let base_logger = MPCSessionLogger::new()
-            .with_protocol_name(mpc_protocol_name.clone())
-            .with_party_to_authority_map(party_to_authority_map.clone());
 
         // Derive a one-time use, MPC protocol and round specific, deterministic random generator
         // from the private seed.
@@ -152,14 +145,13 @@ impl ComputationRequest {
                     self.messages,
                     public_input,
                     (),
-                    &base_logger,
                     rng,
                 )?;
                 match result {
-                    AsynchronousRoundGODResult::Advance { wrapped_message } => {
-                        Ok(AsynchronousRoundGODResult::Advance { wrapped_message })
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
                     }
-                    AsynchronousRoundGODResult::Finalize {
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
                         public_output_value,
                         malicious_parties,
                         private_output,
@@ -198,7 +190,7 @@ impl ComputationRequest {
                             &VersionedDWalletImportedKeyVerificationOutput::V1(public_output_value),
                         )?;
 
-                        Ok(AsynchronousRoundGODResult::Finalize {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,
                             private_output,
@@ -235,15 +227,14 @@ impl ComputationRequest {
                     self.messages,
                     public_input,
                     (),
-                    &base_logger,
                     rng,
                 )?;
 
                 match result {
-                    AsynchronousRoundGODResult::Advance { wrapped_message } => {
-                        Ok(AsynchronousRoundGODResult::Advance { wrapped_message })
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
                     }
-                    AsynchronousRoundGODResult::Finalize {
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
                         public_output_value,
                         malicious_parties,
                         private_output,
@@ -253,7 +244,7 @@ impl ComputationRequest {
                             &VersionedDwalletDKGFirstRoundPublicOutput::V1(public_output_value),
                         )?;
 
-                        Ok(AsynchronousRoundGODResult::Finalize {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,
                             private_output,
@@ -284,11 +275,10 @@ impl ComputationRequest {
                     self.messages,
                     public_input,
                     (),
-                    &base_logger,
                     rng,
                 )?;
 
-                if let AsynchronousRoundGODResult::Finalize {
+                if let GuaranteedOutputDeliveryRoundResult::Finalize {
                     public_output_value,
                     ..
                 } = &result
@@ -323,10 +313,10 @@ impl ComputationRequest {
                 }
 
                 match result {
-                    AsynchronousRoundGODResult::Advance { wrapped_message } => {
-                        Ok(AsynchronousRoundGODResult::Advance { wrapped_message })
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
                     }
-                    AsynchronousRoundGODResult::Finalize {
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
                         public_output_value,
                         malicious_parties,
                         private_output,
@@ -335,7 +325,7 @@ impl ComputationRequest {
                         let public_output_value = bcs::to_bytes(
                             &VersionedDwalletDKGSecondRoundPublicOutput::V1(public_output_value),
                         )?;
-                        Ok(AsynchronousRoundGODResult::Finalize {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,
                             private_output,
@@ -365,15 +355,14 @@ impl ComputationRequest {
                     self.messages,
                     public_input,
                     (),
-                    &base_logger,
                     rng,
                 )?;
 
                 match result {
-                    AsynchronousRoundGODResult::Advance { wrapped_message } => {
-                        Ok(AsynchronousRoundGODResult::Advance { wrapped_message })
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
                     }
-                    AsynchronousRoundGODResult::Finalize {
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
                         public_output_value,
                         malicious_parties,
                         private_output,
@@ -381,7 +370,7 @@ impl ComputationRequest {
                         // Wrap the public output with its version.
                         let public_output_value =
                             bcs::to_bytes(&VersionedPresignOutput::V1(public_output_value))?;
-                        Ok(AsynchronousRoundGODResult::Finalize {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,
                             private_output,
@@ -391,14 +380,6 @@ impl ComputationRequest {
             }
             MPCRequestInput::Sign(..) => {
                 if let Some(decryption_key_shares) = self.decryption_key_shares.clone() {
-                    let raw_decryption_key_shares = decryption_key_shares
-                        .iter()
-                        .map(|(party_id, share)| (*party_id, share.decryption_key_share))
-                        .collect::<HashMap<_, _>>();
-
-                    // Extend base logger with decryption key shares for Sign protocol
-                    let logger =
-                        base_logger.with_decryption_key_shares(raw_decryption_key_shares.clone());
                     let PublicInput::Sign(public_input) = &self.public_input else {
                         error!(
                             should_never_happen=?true,
@@ -432,15 +413,14 @@ impl ComputationRequest {
                         self.messages,
                         public_input,
                         decryption_key_shares,
-                        &logger,
                         rng,
                     )?;
 
                     match result {
-                        AsynchronousRoundGODResult::Advance { wrapped_message } => {
-                            Ok(AsynchronousRoundGODResult::Advance { wrapped_message })
+                        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
                         }
-                        AsynchronousRoundGODResult::Finalize {
+                        GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,
                             private_output,
@@ -449,7 +429,7 @@ impl ComputationRequest {
                             let public_output_value =
                                 bcs::to_bytes(&VersionedSignOutput::V1(public_output_value))?;
 
-                            Ok(AsynchronousRoundGODResult::Finalize {
+                            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                                 public_output_value,
                                 malicious_parties,
                                 private_output,
@@ -485,7 +465,6 @@ impl ComputationRequest {
                             .clone()
                             .ok_or(DwalletMPCError::MissingMPCPrivateInput)?,
                     )?,
-                    &base_logger,
                     rng,
                 )
             }
@@ -505,7 +484,7 @@ impl ComputationRequest {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
                 match verify_encrypted_share(&verification_data.event_data, public_input.clone()) {
-                    Ok(_) => Ok(AsynchronousRoundGODResult::Finalize {
+                    Ok(_) => Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                         public_output_value: vec![],
                         private_output: vec![],
                         malicious_parties: vec![],
@@ -519,7 +498,7 @@ impl ComputationRequest {
                         &event_data.event_data.message,
                         &event_data.event_data.hash_scheme.try_into().unwrap(),
                     )
-                    .map_err(|err| DwalletMPCError::TwoPCMPCError(err.to_string()))?,
+                    .map_err(|err| DwalletMPCError::MessageDigest(err.to_string()))?,
                 )?;
                 let PublicInput::PartialSignatureVerification(public_input) = &self.public_input
                 else {
@@ -544,7 +523,7 @@ impl ComputationRequest {
                     public_input,
                 )?;
 
-                Ok(AsynchronousRoundGODResult::Finalize {
+                Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                     public_output_value: vec![],
                     private_output: vec![],
                     malicious_parties: vec![],
@@ -573,10 +552,6 @@ impl ComputationRequest {
                         .map(|(party_id, share)| (*party_id, share.decryption_key_share))
                         .collect::<HashMap<_, _>>();
 
-                    // Extend base logger with decryption key shares for Reconfiguration protocol
-                    let logger =
-                        base_logger.with_decryption_key_shares(decryption_key_shares.clone());
-
                     let result = advance::<ReconfigurationSecp256k1Party>(
                         session_id,
                         self.party_id,
@@ -584,15 +559,14 @@ impl ComputationRequest {
                         self.messages,
                         public_input,
                         decryption_key_shares,
-                        &logger,
                         rng,
                     )?;
 
                     match result {
-                        AsynchronousRoundGODResult::Advance { wrapped_message } => {
-                            Ok(AsynchronousRoundGODResult::Advance { wrapped_message })
+                        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
                         }
-                        AsynchronousRoundGODResult::Finalize {
+                        GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,
                             private_output,
@@ -603,7 +577,7 @@ impl ComputationRequest {
                                     public_output_value,
                                 ))?;
 
-                            Ok(AsynchronousRoundGODResult::Finalize {
+                            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                                 public_output_value,
                                 malicious_parties,
                                 private_output,
@@ -646,7 +620,7 @@ impl ComputationRequest {
                     init_event.event_data.public_user_secret_key_shares.clone(),
                     init_event.event_data.public_output.clone(),
                 ) {
-                    Ok(..) => Ok(AsynchronousRoundGODResult::Finalize {
+                    Ok(..) => Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                         public_output_value: init_event
                             .event_data
                             .public_user_secret_key_shares
@@ -656,7 +630,7 @@ impl ComputationRequest {
                     }),
                     Err(err) => {
                         error!(
-                            ?err,
+                            error=?err,
                             session_identifier=?computation_id.session_identifier,
                             validator=?self.validator_name,
                             mpc_round=?computation_id.mpc_round,

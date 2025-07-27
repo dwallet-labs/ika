@@ -62,6 +62,9 @@ pub struct DWalletMPCMetrics {
     /// Records the average duration of computations for each MPC round.
     computation_duration_avg: IntGaugeVec,
 
+    /// Records the variance of the computation durations for each MPC round.
+    computation_duration_variance: IntGaugeVec,
+
     /// Tracks the number of MPC protocol sessions that have been started.
     session_start_count: IntGaugeVec,
 
@@ -88,6 +91,8 @@ pub struct DWalletMPCMetrics {
     pub number_of_expected_sign_sessions: IntGauge,
     /// The number of sign sessions in which less than a quorum of the expected decrypters has participated.
     pub number_of_unexpected_sign_sessions: IntGauge,
+    /// The last process MPC consensus round.
+    pub last_process_mpc_consensus_round: IntGauge,
 }
 
 impl DWalletMPCMetrics {
@@ -138,6 +143,13 @@ impl DWalletMPCMetrics {
                 registry
             )
             .unwrap(),
+            computation_duration_variance: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_computation_duration_variance",
+                "Variance of the duration of MPC computations in milliseconds",
+                &round_metric_labels,
+                registry
+            )
+            .unwrap(),
             computation_duration_avg: register_int_gauge_vec_with_registry!(
                 "dwallet_mpc_computation_duration_avg",
                 "Average duration of MPC computations in milliseconds",
@@ -175,6 +187,12 @@ impl DWalletMPCMetrics {
             number_of_expected_sign_sessions: register_int_gauge_with_registry!(
                 "dwallet_mpc_number_of_expected_sign_sessions",
                 "Number of expected sign sessions",
+                registry
+            )
+            .unwrap(),
+            last_process_mpc_consensus_round: register_int_gauge_with_registry!(
+                "last_process_mpc_consensus_round",
+                "Last process mpc consensus round",
                 registry
             )
             .unwrap(),
@@ -303,6 +321,44 @@ impl DWalletMPCMetrics {
                 &mpc_event_data.get_signature_algorithm(),
             ])
             .set(new_avg);
+        if advance_completions_count > 1 {
+            let current_variance = self
+                .computation_duration_variance
+                .with_label_values(&[
+                    &mpc_event_data.to_string(),
+                    &mpc_event_data.get_curve(),
+                    mpc_round,
+                    &mpc_event_data.get_hash_scheme(),
+                    &mpc_event_data.get_signature_algorithm(),
+                ])
+                .get();
+            let new_variance = update_variance(
+                current_avg,
+                new_avg,
+                current_variance,
+                duration_ms,
+                advance_completions_count,
+            );
+            self.computation_duration_variance
+                .with_label_values(&[
+                    &mpc_event_data.to_string(),
+                    &mpc_event_data.get_curve(),
+                    mpc_round,
+                    &mpc_event_data.get_hash_scheme(),
+                    &mpc_event_data.get_signature_algorithm(),
+                ])
+                .set(new_variance);
+        } else {
+            self.computation_duration_variance
+                .with_label_values(&[
+                    &mpc_event_data.to_string(),
+                    &mpc_event_data.get_curve(),
+                    mpc_round,
+                    &mpc_event_data.get_hash_scheme(),
+                    &mpc_event_data.get_signature_algorithm(),
+                ])
+                .set(0);
+        }
     }
 
     /// Sets the duration of the last completion for a specific MPC round.
@@ -329,5 +385,52 @@ impl DWalletMPCMetrics {
                 &mpc_event_data.get_signature_algorithm(),
             ])
             .set(duration_ms);
+    }
+}
+
+/// Calculating the variance using the Welford's method.
+/// Learn more in this [article](https://jonisalonen.com/2013/deriving-welfords-method-for-computing-variance/)
+fn update_variance(old_mean: i64, new_mean: i64, old_variance: i64, new_value: i64, n: i64) -> i64 {
+    // convert all the vars to f64 to avoid overflow
+    let old_mean = old_mean as f64;
+    let new_mean = new_mean as f64;
+    let old_variance = old_variance as f64;
+    let new_value = new_value as f64;
+    let n = n as f64;
+    let first = old_variance * (n - 2.0);
+    let second = (new_value - new_mean) * (new_value - old_mean);
+    let result = (first + second) / (n - 1.0);
+    result as i64
+}
+
+#[cfg(test)]
+mod tests {
+    // test the update variance function
+    #[test]
+    fn test_update_variance() {
+        let old_mean = 347;
+        let new_mean = 356;
+        let old_variance = 0;
+        let new_value = 365;
+        let n = 2; // number of values before adding new_value
+
+        let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
+        assert_eq!(updated_variance, 162);
+
+        let new_value = 70;
+        let old_mean = 55;
+        let new_mean = 60;
+        let old_variance = 50;
+        let n = 3;
+        let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
+        assert_eq!(updated_variance, 100);
+
+        let new_value = 60;
+        let old_mean = 50;
+        let new_mean = 55;
+        let old_variance = 0;
+        let n = 2;
+        let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
+        assert_eq!(updated_variance, 50);
     }
 }

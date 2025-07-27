@@ -19,14 +19,10 @@ fastcrypto.workspace = true
 rand = "0.8" # use old version for compatability with fastcrypto
 serde.workspace = true
 serde_with.workspace = true
-serde_yaml.workspace = true
 tempfile.workspace = true
-tracing.workspace = true
-prometheus.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
-move-bytecode-utils.workspace = true
 shared-crypto.workspace = true
 ika-config.workspace = true
 sui-macros.workspace = true
@@ -35,28 +31,19 @@ ika-types.workspace = true
 
 sui.workspace = true
 sui-config.workspace = true
-sui-faucet.workspace = true
-sui-indexer.workspace = true
-sui-graphql-rpc.workspace = true
 sui-keys.workspace = true
 sui-sdk.workspace = true
-sui-swarm.workspace = true
-sui-swarm-config.workspace = true
 sui-types.workspace = true
 ika-move-packages.workspace = true
-move-binary-format.workspace = true
 move-core-types.workspace = true
 clap.workspace = true
 serde_json.workspace = true
-flate2 = "1.0.35"
 move-package.workspace = true
+dwallet-mpc-types.workspace = true
 url.workspace = true
 
 [target.'cfg(msim)'.dependencies]
 sui-simulator.workspace = true
 
 [dev-dependencies]
-insta.workspace = true
 tempfile.workspace = true
-
-sui-execution.workspace = true

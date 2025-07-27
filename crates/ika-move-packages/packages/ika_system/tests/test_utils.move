@@ -19,7 +19,7 @@ use ika_system::{
     system_inner::SystemInner,
     validator::{Self, Validator},
     validator_info,
-    class_groups_public_key_and_proof,
+    mpc_data,
     validator_cap::{ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap},
     dwallet_pricing::{Self, DWalletPricing},
 };
@@ -144,7 +144,7 @@ public struct ValidatorBuilder has copy, drop {
     protocol_key_bytes: Option<vector<u8>>,
     network_pubkey_bytes: Option<vector<u8>>,
     consensus_pubkey_bytes: Option<vector<u8>>,
-    class_groups_pubkey_and_proof_bytes: Option<vector<u8>>,
+    mpc_data_bytes: Option<vector<u8>>,
     network_address: Option<String>,
     p2p_address: Option<String>,
     consensus_address: Option<String>,
@@ -173,7 +173,7 @@ public fun validator(): ValidatorBuilder {
         protocol_key_bytes: option::none(),
         network_pubkey_bytes: option::none(),
         consensus_pubkey_bytes: option::none(),
-        class_groups_pubkey_and_proof_bytes: option::none(),
+        mpc_data_bytes: option::none(),
         network_address: option::none(),
         p2p_address: option::none(),
         consensus_address: option::none(),
@@ -208,9 +208,9 @@ public fun consensus_pubkey_bytes(mut self: ValidatorBuilder, consensus_pubkey_b
     self
 }
 
-/// Sets the class groups public key and proof for the validator.
-public fun class_groups_pubkey_and_proof_bytes(mut self: ValidatorBuilder, class_groups_pubkey_and_proof_bytes: vector<u8>): ValidatorBuilder {
-    self.class_groups_pubkey_and_proof_bytes.fill(class_groups_pubkey_and_proof_bytes);
+/// Sets the MPC public data for the validator.
+public fun mpc_data_bytes(mut self: ValidatorBuilder, mpc_data_bytes: vector<u8>): ValidatorBuilder {
+    self.mpc_data_bytes.fill(mpc_data_bytes);
     self
 }
 
@@ -251,7 +251,7 @@ public fun build(self: ValidatorBuilder, itctx: &IkaTestContext, ctx: &mut TxCon
         protocol_key_bytes,
         network_pubkey_bytes,
         consensus_pubkey_bytes,
-        class_groups_pubkey_and_proof_bytes,
+        mpc_data_bytes,
         network_address,
         p2p_address,
         consensus_address,
@@ -266,10 +266,10 @@ public fun build(self: ValidatorBuilder, itctx: &IkaTestContext, ctx: &mut TxCon
         &protocol_key_bytes,
     );
 
-    let class_groups_pubkey_and_proof_bytes = class_groups_pubkey_and_proof_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab");
+    let mpc_data_bytes = mpc_data_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab");
 
-    let mut class_groups_public_key_and_proof = class_groups_public_key_and_proof::empty(ctx);
-    class_groups_public_key_and_proof.add_public_key_and_proof(class_groups_pubkey_and_proof_bytes, class_groups_pubkey_and_proof_bytes);
+    let mut mpc_data = mpc_data::empty(ctx);
+    mpc_data.add_public_key_and_proof(mpc_data_bytes, mpc_data_bytes);
 
     validator::new(
         itctx.epoch(),
@@ -277,7 +277,7 @@ public fun build(self: ValidatorBuilder, itctx: &IkaTestContext, ctx: &mut TxCon
         protocol_pubkey_bytes,
         network_pubkey_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab"),
         consensus_pubkey_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab"),
-        class_groups_public_key_and_proof.finish(ctx),
+        mpc_data.finish(ctx),
         proof_of_possession_bytes,
         network_address.destroy_with_default(b"/ip4/127.0.0.1/tcp/8080/http".to_string()),
         p2p_address.destroy_with_default(b"/ip4/127.0.0.1/udp/8084".to_string()),
@@ -297,7 +297,7 @@ public fun register(self: ValidatorBuilder, inner: &mut SystemInner, ctx: &mut T
         protocol_key_bytes,
         network_pubkey_bytes,
         consensus_pubkey_bytes,
-        class_groups_pubkey_and_proof_bytes,
+        mpc_data_bytes,
         network_address,
         p2p_address,
         consensus_address,
@@ -310,17 +310,17 @@ public fun register(self: ValidatorBuilder, inner: &mut SystemInner, ctx: &mut T
         &protocol_key_bytes,
     );
 
-    let class_groups_pubkey_and_proof_bytes = class_groups_pubkey_and_proof_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab");
+    let mpc_data_bytes = mpc_data_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab");
 
-    let mut class_groups_public_key_and_proof = class_groups_public_key_and_proof::empty(ctx);
-    class_groups_public_key_and_proof.add_public_key_and_proof(class_groups_pubkey_and_proof_bytes, class_groups_pubkey_and_proof_bytes);
+    let mut mpc_data = mpc_data::empty(ctx);
+    mpc_data.add_public_key_and_proof(mpc_data_bytes, mpc_data_bytes);
 
     inner.request_add_validator_candidate(
         name.destroy_with_default(b"pool".to_string()),
         protocol_pubkey_bytes,
         network_pubkey_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab"),
         consensus_pubkey_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab"),
-        class_groups_public_key_and_proof.finish(ctx),
+        mpc_data.finish(ctx),
         proof_of_possession_bytes,
         network_address.destroy_with_default(b"/ip4/127.0.0.1/tcp/8080/http".to_string()),
         p2p_address.destroy_with_default(b"/ip4/127.0.0.1/udp/8084".to_string()),

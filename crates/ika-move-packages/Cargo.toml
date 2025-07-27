@@ -11,10 +11,8 @@ publish = false
 bcs.workspace = true
 serde.workspace = true
 once_cell.workspace = true
-tracing.workspace = true
 
 sui-types.workspace = true
-sui-protocol-config.workspace = true
 
 move-binary-format.workspace = true
 anyhow.workspace = true

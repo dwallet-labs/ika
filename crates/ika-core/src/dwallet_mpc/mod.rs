@@ -7,8 +7,6 @@ use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::{Weight, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::vec::Vec;
 use sui_types::base_types::EpochId;
 use tracing::error;
@@ -29,7 +27,6 @@ pub(crate) use crytographic_computation::native_computations::{
 };
 
 pub const FIRST_EPOCH_ID: EpochId = 0;
-static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Convert an `authority_name` to the tangible party ID (`PartyID`) in the `committee`.
 pub(crate) fn authority_name_to_party_id_from_committee(
@@ -91,8 +88,7 @@ pub(crate) fn generate_access_structure_from_committee(
         .expect("should never have more than 2^16 parties");
 
     // TODO: use error directly
-    WeightedThresholdAccessStructure::new(threshold, party_to_weight)
-        .map_err(|e| DwalletMPCError::TwoPCMPCError(e.to_string()))
+    WeightedThresholdAccessStructure::new(threshold, party_to_weight).map_err(DwalletMPCError::from)
 }
 
 /// Convert a given `party_id` to it's corresponding authority name (address).

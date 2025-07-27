@@ -314,19 +314,6 @@ pub struct DWalletMPCMessage {
     /// The authority (Validator) that sent the message.
     pub authority: AuthorityName,
     pub session_identifier: SessionIdentifier,
-    /// The MPC round number starts from 0.
-    pub round_number: u64,
-}
-
-/// The message unique key in the consensus network.
-/// Used to make sure no message is being processed twice.
-#[derive(Clone, Debug, Serialize, Deserialize, Hash, PartialEq, Eq, Ord, PartialOrd)]
-pub struct DWalletMPCMessageKey {
-    /// The authority (Validator) that sent the message.
-    pub authority: AuthorityName,
-    pub session_identifier: SessionIdentifier,
-    /// The MPC round number starts from 0.
-    pub round_number: u64,
 }
 
 /// Holds information about the current MPC session.
@@ -432,8 +419,8 @@ impl fmt::Display for SessionIdentifier {
         write!(
             f,
             "SessionIdentifier {{ session_type: {session_type:?}, session_identifier_preimage: 0x{}, session_identifier: 0x{} }}",
-            hex::encode(&self.session_identifier_preimage),
-            hex::encode(&self.session_identifier)
+            hex::encode(self.session_identifier_preimage),
+            hex::encode(self.session_identifier)
         )
     }
 }
@@ -445,8 +432,8 @@ impl fmt::Debug for SessionIdentifier {
         write!(
             f,
             "SessionIdentifier {{ session_type: {session_type:?}, session_identifier_preimage: 0x{}, session_identifier: 0x{} }}",
-            hex::encode(&self.session_identifier_preimage),
-            hex::encode(&self.session_identifier)
+            hex::encode(self.session_identifier_preimage),
+            hex::encode(self.session_identifier)
         )
     }
 }
@@ -477,7 +464,7 @@ impl From<&SessionIdentifier> for [u8; SessionIdentifier::LENGTH] {
 
 impl PartialOrd for SessionIdentifier {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 

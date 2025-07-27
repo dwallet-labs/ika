@@ -36,7 +36,7 @@ RUN cargo build --profile ${PROFILE} --locked --bin ika-proxy
 # ==========================
 # Runtime stage
 # ==========================
-FROM debian:bullseye-slim AS runtime
+FROM debian:bookworm-slim AS runtime
 
 ARG PROFILE=release
 

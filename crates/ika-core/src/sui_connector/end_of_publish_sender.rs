@@ -42,7 +42,7 @@ impl EndOfPublishSender {
         loop {
             if *self.end_of_publish_receiver.borrow() == Some(self.epoch_id) {
                 if let Err(err) = self.send_end_of_publish().await {
-                    error!(?err, "failed to send `end of publish` message");
+                    error!(error=?err, "failed to send `end of publish` message");
                 }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;

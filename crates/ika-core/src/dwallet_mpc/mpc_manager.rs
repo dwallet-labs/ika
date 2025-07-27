@@ -35,7 +35,7 @@ use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -111,7 +111,7 @@ impl DWalletMPCManager {
             dwallet_mpc_metrics,
         )
         .unwrap_or_else(|err| {
-            error!(?err, "Failed to create DWalletMPCManager.");
+            error!(error=?err, "Failed to create DWalletMPCManager.");
             // We panic on purpose, this should not happen.
             panic!("DWalletMPCManager initialization failed: {err:?}");
         })
@@ -130,7 +130,7 @@ impl DWalletMPCManager {
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<Self> {
         let root_seed = node_config
-            .root_seed
+            .root_seed_key_pair
             .clone()
             .ok_or(DwalletMPCError::MissingRootSeed)?
             .root_seed()
@@ -143,20 +143,6 @@ impl DWalletMPCManager {
         let party_id = authority_name_to_party_id_from_committee(&committee, &validator_name)?;
 
         let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
-
-        // Verify that the validators local class-groups key is the
-        // same as stored in the system state object onchain.
-        // This makes sure the seed we are using is the same seed we used at setup
-        // to create the encryption key, and thus it assures we will generate the same decryption key too.
-        let onchain_class_groups_encryption_key_and_proof: ClassGroupsEncryptionKeyAndProof =
-            committee.class_groups_public_key_and_proof(&validator_name)?;
-        if onchain_class_groups_encryption_key_and_proof
-            != class_groups_key_pair.encryption_key_and_proof()
-        {
-            return Err(DwalletMPCError::MPCManagerError(
-                "validator's class-groups key does not match the one stored in the system state object".to_string(),
-            ));
-        }
 
         let validator_private_data = ValidatorPrivateDecryptionKeyData {
             party_id,
@@ -234,9 +220,10 @@ impl DWalletMPCManager {
         &mut self,
         consensus_round: u64,
         outputs: Vec<DWalletMPCOutput>,
-    ) -> Vec<DWalletCheckpointMessageKind> {
+    ) -> (Vec<DWalletCheckpointMessageKind>, Vec<SessionIdentifier>) {
         // Not let's move to process MPC outputs for the current round.
         let mut checkpoint_messages = vec![];
+        let mut completed_sessions = vec![];
         for output in &outputs {
             let session_identifier = output.session_identifier;
 
@@ -246,6 +233,7 @@ impl DWalletMPCManager {
                     self.complete_mpc_session(&session_identifier);
                     let output_digest = output_result.iter().map(|m| m.digest()).collect_vec();
                     checkpoint_messages.extend(output_result);
+                    completed_sessions.push(session_identifier);
                     info!(
                         ?output_digest,
                         consensus_round,
@@ -264,14 +252,42 @@ impl DWalletMPCManager {
                 }
             };
         }
-        checkpoint_messages
+
+        (checkpoint_messages, completed_sessions)
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.
     pub(crate) fn handle_message(&mut self, consensus_round: u64, message: DWalletMPCMessage) {
         let session_identifier = message.session_identifier;
         let sender_authority = message.authority;
-        let mpc_round_number = message.round_number;
+        let Some(mpc_round_number) = (match message.message.first() {
+            Some(0) => {
+                let serialized_mpc_round_number = &message.message[1..=8];
+                bcs::from_bytes::<u64>(serialized_mpc_round_number).ok()
+            }
+            Some(1) => {
+                warn!(
+                    session_identifier=?session_identifier,
+                    sender_authority=?sender_authority,
+                    receiver_authority=?self.validator_name,
+                    serialized_message=?message.message,
+                    "got a threshold not reached message, ignoring",
+                );
+
+                return;
+            }
+            _ => None,
+        }) else {
+            error!(
+                session_identifier=?session_identifier,
+                sender_authority=?sender_authority,
+                receiver_authority=?self.validator_name,
+                serialized_message=?message.message,
+                "got a short message, ignoring",
+            );
+
+            return;
+        };
 
         let Ok(sender_party_id) =
             authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
@@ -300,7 +316,7 @@ impl DWalletMPCManager {
             sender_authority=?sender_authority,
             receiver_authority=?self.validator_name,
             mpc_round_number=?mpc_round_number,
-            message=?message.message,
+            message_bytes=?message.message,
             "Received an MPC message for session with contents",
         );
 
@@ -337,7 +353,7 @@ impl DWalletMPCManager {
         };
 
         if session.status == MPCSessionStatus::Active {
-            session.add_message(consensus_round, sender_party_id, message);
+            session.add_message(consensus_round, mpc_round_number, sender_party_id, message);
         }
     }
 
@@ -391,10 +407,11 @@ impl DWalletMPCManager {
     /// Returns the completed computation results.
     pub(crate) async fn perform_cryptographic_computation(
         &mut self,
-    ) -> HashMap<ComputationId, DwalletMPCResult<mpc::AsynchronousRoundGODResult>> {
+    ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
         let mut ready_to_advance_sessions: Vec<_> = self
             .mpc_sessions
             .iter()
+            .filter(|(_, session)| session.status == MPCSessionStatus::Active)
             .filter_map(|(_, session)| {
                 // Only sessions with MPC event data should be advanced
                 session.mpc_event_data.clone().and_then(|mpc_event_data| {
@@ -470,7 +487,7 @@ impl DWalletMPCManager {
 
         let completed_computation_results = self
             .cryptographic_computations_orchestrator
-            .receive_completed_computations();
+            .receive_completed_computations(self.dwallet_mpc_metrics.clone());
         for (computation_id, computation_request) in computation_requests {
             let computation_executing = self
                 .cryptographic_computations_orchestrator
@@ -506,45 +523,49 @@ impl DWalletMPCManager {
                 }
             }
             Err(err) => {
-                error!(?err, "failed to check next epoch committee receiver");
+                error!(error=?err, "failed to check next epoch committee receiver");
             }
         }
 
         false
     }
 
-    pub(crate) fn maybe_update_network_keys(&mut self) -> Vec<ObjectID> {
+    pub(crate) async fn maybe_update_network_keys(&mut self) -> Vec<ObjectID> {
         match self.network_keys_receiver.has_changed() {
             Ok(has_changed) => {
                 if has_changed {
-                    let access_structure = &self.access_structure;
-                    let new_keys = self.network_keys_receiver.borrow_and_update();
+                    let new_keys = self.borrow_and_update_network_keys();
 
-                    let mut new_key_ids = vec![];
-                    for (key_id, key_data) in new_keys.iter() {
-                        match instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
+                    let mut results = vec![];
+                    for (key_id, key_data) in new_keys {
+                        let res = instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
                             key_data.current_epoch,
                             DWalletMPCNetworkKeyScheme::Secp256k1,
-                            access_structure,
-                            key_data.clone(),
-                        ) {
+                            self.access_structure.clone(),
+                            key_data,
+                        ).await;
+
+                        results.push((key_id, res))
+                    }
+
+                    let mut new_key_ids = vec![];
+                    for (key_id, res) in results {
+                        match res {
                             Ok(key) => {
                                 info!(key_id=?key_id, "Updating (decrypting new shares) network key for key_id");
                                 if let Err(e) = self
                                     .network_keys
-                                    .update_network_key(
-                                        *key_id,
-                                        &key,
-                                        &self.access_structure,
-                                    ) {
+                                    .update_network_key(key_id, &key, &self.access_structure)
+                                    .await
+                                {
                                     error!(error=?e, key_id=?key_id, "failed to update the network key");
                                 } else {
-                                    new_key_ids.push(*key_id);
+                                    new_key_ids.push(key_id);
                                 }
                             }
                             Err(err) => {
                                 error!(
-                                    ?err,
+                                    error=?err,
                                     key_id=?key_id,
                                     "failed to instantiate network decryption key shares from public output for"
                                 );
@@ -558,11 +579,23 @@ impl DWalletMPCManager {
                 }
             }
             Err(err) => {
-                error!(?err, "failed to check network keys receiver");
+                error!(error=?err, "failed to check network keys receiver");
 
                 vec![]
             }
         }
+    }
+
+    // This has to be a function to solve compilation errors with async.
+    fn borrow_and_update_network_keys(
+        &mut self,
+    ) -> HashMap<ObjectID, DWalletNetworkEncryptionKeyData> {
+        let new_keys = self.network_keys_receiver.borrow_and_update();
+
+        new_keys
+            .iter()
+            .map(|(&key_id, key_data)| (key_id, key_data.clone()))
+            .collect()
     }
 
     pub(crate) fn handle_output(
@@ -741,5 +774,24 @@ impl DWalletMPCManager {
             }
             session.clear_data();
         }
+    }
+
+    pub(crate) fn complete_computation_mpc_session_and_create_if_not_exists(
+        &mut self,
+        session_identifier: &SessionIdentifier,
+    ) {
+        let session = match self.mpc_sessions.entry(*session_identifier) {
+            Entry::Occupied(session) => session.into_mut(),
+            Entry::Vacant(_) => {
+                // This can happen if the session is not in the active sessions,
+                // but we still want to store the message.
+                // We will create a new session for it.
+                self.new_mpc_session(session_identifier, None);
+                // Safe to `unwrap()`: we just created the session.
+                self.mpc_sessions.get_mut(session_identifier).unwrap()
+            }
+        };
+
+        session.mark_mpc_session_as_computation_completed();
     }
 }

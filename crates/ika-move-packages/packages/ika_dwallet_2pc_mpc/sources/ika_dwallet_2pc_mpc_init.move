@@ -3,11 +3,11 @@
 
 module ika_dwallet_2pc_mpc::ika_dwallet_2pc_mpc_init;
 
+use ika_common::advance_epoch_approver::AdvanceEpochApprover;
+use ika_common::system_current_status_info::SystemCurrentStatusInfo;
 use ika_dwallet_2pc_mpc::coordinator;
 use ika_dwallet_2pc_mpc::ika_dwallet_2pc_mpc_display;
 use ika_dwallet_2pc_mpc::pricing::PricingInfo;
-use ika_system::advance_epoch_approver::AdvanceEpochApprover;
-use ika_system::system_current_status_info::SystemCurrentStatusInfo;
 use std::string::String;
 use std::type_name;
 use sui::address;

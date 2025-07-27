@@ -4,14 +4,12 @@ edition = "2024"
 version.workspace = true
 
 [dependencies]
-bcs.workspace = true
 serde.workspace = true
-move-core-types.workspace = true
-anyhow.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 schemars.workspace = true
 twopc_mpc.workspace = true
 class_groups.workspace = true
+enum_dispatch.workspace = true
+
 [lints]
 workspace = true

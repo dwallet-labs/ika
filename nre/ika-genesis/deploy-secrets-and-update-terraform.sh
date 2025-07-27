@@ -7,9 +7,9 @@ set -euo pipefail
 VALIDATOR_NUM=55
 TERRAFORM_WORKSPACES_FILE="../../../infra/tf-gcp/workspaces.tf"
 SUBDOMAIN=beta.devnet.ika-network.net
-GCP_PROJECT=devnet-449616
-ENV_PREFIX=ika-new-devnet
-TF_NETWORK_NAME=new-devnet
+GCP_PROJECT=mainnet-449616
+ENV_PREFIX=ika-devnet
+TF_NETWORK_NAME=devnet
 
 # Validate required parameters
 if [ -z "$SUBDOMAIN" ]; then
@@ -62,7 +62,7 @@ echo "🔐 Deploying validator keys to GCP secrets..."
 pushd "$SUBDOMAIN"
 
 # List of key files.
-KEY_FILES=("consensus.key" "network.key" "protocol.key" "class-groups.seed")
+KEY_FILES=("consensus.key" "network.key" "protocol.key" "root-seed.key")
 VALIDATOR_NAME_PREFIX="val"
 
 # Maximum parallel jobs

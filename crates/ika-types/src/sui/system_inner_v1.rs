@@ -50,12 +50,18 @@ pub struct UpgradeCap {
     pub version: u64,
     pub policy: u8,
 }
+/// Rust version of the Move ika_common::system_object_cap::SystemObjectCap.
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
+pub struct SystemObjectCap {
+    pub id: ObjectID,
+}
 
 /// Rust version of the Move ika::ika_system::SystemInner type
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct SystemInnerV1 {
     pub epoch: u64,
     pub epoch_start_tx_digest: Vec<u8>,
+    pub system_object_cap: SystemObjectCap,
     pub protocol_version: u64,
     pub next_protocol_version: Option<u64>,
     pub upgrade_caps: Vec<UpgradeCap>,

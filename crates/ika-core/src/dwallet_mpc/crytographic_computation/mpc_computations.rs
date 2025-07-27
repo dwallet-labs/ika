@@ -1,13 +1,14 @@
 // Copyright (c) dWallet Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_mpc::mpc_session::{MPCRoundToMessagesHashMap, MPCSessionLogger};
+use crate::dwallet_mpc::mpc_session::MPCRoundToMessagesHashMap;
 use commitment::CommitmentSizedNumber;
 use group::PartyID;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use itertools::Itertools;
 use mpc::{
-    AsynchronousRoundGODResult, AsynchronouslyAdvanceable, WeightedThresholdAccessStructure,
+    AsynchronouslyAdvanceable, GuaranteedOutputDeliveryParty, GuaranteedOutputDeliveryRoundResult,
+    WeightedThresholdAccessStructure,
 };
 use rand_chacha::ChaCha20Rng;
 use std::collections::hash_map::Entry::Vacant;
@@ -163,12 +164,8 @@ pub(crate) fn advance<P: AsynchronouslyAdvanceable>(
     serialized_messages: MPCRoundToMessagesHashMap,
     public_input: &P::PublicInput,
     private_input: P::PrivateInput,
-    logger: &MPCSessionLogger,
     mut rng: ChaCha20Rng,
-) -> DwalletMPCResult<AsynchronousRoundGODResult> {
-    // Update logger with malicious parties detected during deserialization.
-    logger.write_logs_to_disk(session_id, party_id, access_structure, &serialized_messages);
-
+) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     // When a `ThresholdNotReached` error is received, the system now waits for additional messages
     // (including those from previous rounds) and retries.
     match P::advance_with_guaranteed_output(
@@ -181,21 +178,10 @@ pub(crate) fn advance<P: AsynchronouslyAdvanceable>(
         &mut rng,
     ) {
         Ok(res) => Ok(res),
-        Err(e) => {
-            let general_error = DwalletMPCError::TwoPCMPCError(format!(
-                "MPC error in party {party_id} session {} at round #{} {:?}",
-                session_id,
-                serialized_messages.len() + 1,
-                e
-            ));
-            match e.into() {
-                // No threshold was reached, so we can't proceed.
-                mpc::Error::ThresholdNotReached => {
-                    Err(DwalletMPCError::TWOPCMPCThresholdNotReached)
-                }
-                _ => Err(general_error),
-            }
-        }
+        Err(e) => match e.into() {
+            mpc::Error::ThresholdNotReached => Err(mpc::Error::ThresholdNotReached)?,
+            e => Err(e)?,
+        },
     }
 }
 

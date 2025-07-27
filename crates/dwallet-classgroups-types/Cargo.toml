@@ -5,22 +5,12 @@ version.workspace = true
 
 [dependencies]
 dwallet-rng.workspace = true
-merlin.workspace = true
 class_groups = { workspace = true, features = ["parallel"] }
 group.workspace = true
-proof.workspace = true
 crypto-bigint.workspace = true
 serde.workspace = true
-anyhow.workspace = true
-bcs.workspace = true
-schemars.workspace = true
-serde_json.workspace = true
-serde_derive = "1.0.217"
 ika-types.workspace = true
-dwallet-mpc-types.workspace = true
 twopc_mpc.workspace = true
-flate2 = "1.0.35"
-rand.workspace = true
 
 [lints]
 workspace = true

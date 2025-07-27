@@ -96,7 +96,7 @@ fun validate_with_transport(addr: &String, transport: String): bool {
                 let quic = string::utf8(b"quic");
 
                 // If this is a protocol name, validate it
-                if (part == http || part == https || part == quic) {} else {
+                if (!(part == http || part == https || part == quic)) {
                     // This is either a resource path or an unknown protocol
                     // If it's a resource path, it can contain any valid URL characters
                     // If it's an unknown protocol, we should reject it

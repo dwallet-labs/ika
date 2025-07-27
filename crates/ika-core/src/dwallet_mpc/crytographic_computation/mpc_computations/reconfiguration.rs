@@ -96,9 +96,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationSecp256k1Party 
                     .clone(),
                 bcs::from_bytes(&network_dkg_public_output)?,
             )
-            .map_err(|e| {
-                DwalletMPCError::TwoPCMPCError(format!("failed to generate public input: {e:?}"))
-            })?;
+            .map_err(DwalletMPCError::from)?;
 
         Ok(public_input)
     }
@@ -151,7 +149,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 .default_decryption_key_share_public_parameters::<secp256k1::GroupElement>(
                     access_structure,
                 )
-                .map_err(|e| DwalletMPCError::ClassGroupsError(e.to_string()))?;
+                .map_err(DwalletMPCError::from)?;
 
             let protocol_public_parameters = ProtocolPublicParameters::new::<
                 { secp256k1::SCALAR_LIMBS },

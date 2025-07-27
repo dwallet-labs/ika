@@ -10,9 +10,9 @@ use ika_system::{
     validator_cap::{ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap},
     validator_metadata::{Self, ValidatorMetadata},
     validator_info,
-    class_groups_public_key_and_proof::{Self, ClassGroupsPublicKeyAndProof},
     staked_ika::StakedIka,
 };
+use sui::table_vec::{Self, TableVec};
 
 const DEFAULT_MIN_VALIDATOR_JOINING_STAKE: u64 = 30_000_000 * 1_000_000_000; // 30 million IKA (value is in INKU)
 
@@ -48,11 +48,11 @@ public fun consensus_pubkey_bytes(self: &TestValidator): vector<u8> {
     self.consensus_pubkey_bytes
 }
 
-public fun class_groups_public_key_and_proof(_self: &TestValidator, ctx: &mut TxContext): ClassGroupsPublicKeyAndProof {
-    let class_groups_pubkey_and_proof_bytes = x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab";
-    let mut class_groups_public_key_and_proof = class_groups_public_key_and_proof::empty(ctx);
-    class_groups_public_key_and_proof.add_public_key_and_proof(class_groups_pubkey_and_proof_bytes, class_groups_pubkey_and_proof_bytes);
-    class_groups_public_key_and_proof.finish(ctx)
+public fun mpc_data(_self: &TestValidator, ctx: &mut TxContext): TableVec<vector<u8>> {
+    let mpc_data_bytes = x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab";
+    let mut mpc_data = table_vec::empty(ctx);
+    mpc_data.push_back(mpc_data_bytes);
+    mpc_data
 }
 
 public fun create_proof_of_possession(self: &TestValidator): vector<u8> {

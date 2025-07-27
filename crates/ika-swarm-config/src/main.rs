@@ -121,6 +121,7 @@ struct PublishIkaConfig {
     pub protocol_cap_id: Option<ObjectID>,
     pub init_system_shared_version: Option<u64>,
     pub ika_dwallet_coordinator_object_id: Option<ObjectID>,
+    pub system_object_cap_id: ObjectID,
 }
 
 #[tokio::main]
@@ -156,7 +157,7 @@ async fn main() -> Result<()> {
             sleep(Duration::from_secs(2)).await;
 
             // Publish the "ika_common" package.
-            let (ika_common_package_id, ika_common_package_upgrade_cap_id) =
+            let (ika_common_package_id, system_object_cap_id, ika_common_package_upgrade_cap_id) =
                 publish_ika_common_package_to_sui(
                     &mut context,
                     contract_paths.ika_common_contract_path,
@@ -164,6 +165,7 @@ async fn main() -> Result<()> {
                 .await?;
             println!("Published IKA common package:");
             println!("  ika_common_package_id: {ika_common_package_id}");
+            println!("  system_object_cap_id: {system_object_cap_id}");
             println!("  ika_common_package_upgrade_cap_id: {ika_common_package_upgrade_cap_id}");
 
             sleep(Duration::from_secs(2)).await;
@@ -208,6 +210,7 @@ async fn main() -> Result<()> {
                 ika_common_package_id: Some(ika_common_package_id),
                 ika_common_package_upgrade_cap_id: Some(ika_common_package_upgrade_cap_id),
                 ika_system_package_id,
+                system_object_cap_id,
                 init_cap_id,
                 ika_system_package_upgrade_cap_id,
                 ika_dwallet_2pc_mpc_package_id: Some(ika_dwallet_2pc_mpc_package_id),
@@ -312,8 +315,10 @@ async fn main() -> Result<()> {
                     publisher_address,
                     &mut context,
                     client.clone(),
+                    publish_config.ika_common_package_id.unwrap(),
                     publish_config.ika_system_package_id,
                     publish_config.init_cap_id,
+                    publish_config.system_object_cap_id,
                     publish_config.ika_package_upgrade_cap_id,
                     publish_config.ika_system_package_upgrade_cap_id,
                     publish_config.treasury_cap_id,

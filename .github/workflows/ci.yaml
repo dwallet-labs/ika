@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - new-main
   pull_request:
   workflow_dispatch:
 
@@ -27,7 +26,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Configure git with personal access token
         run: |
@@ -81,30 +80,3 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run Clippy
         run: cargo clippy --all-features -- -D warnings
-#  This is disabled for now.
-#  snapshot:
-#    name: Snapshot
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout Repository
-#        uses: actions/checkout@v4
-#      - uses: dorny/paths-filter@v2
-#        id: changes
-#        with:
-#          filters: |
-#            ika-move-packages:
-#              - 'crates/ika-move-packages/**'
-#      - name: Configure git with personal access token
-#        if: steps.changes.outputs.ika-move-packages == 'true'
-#        run: |
-#          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
-#      - name: Install Rust 1.88
-#        if: steps.changes.outputs.ika-move-packages == 'true'
-#        uses: dtolnay/rust-toolchain@stable
-#        with:
-#          toolchain: 1.88
-#      - uses: Swatinem/rust-cache@v2
-#        if: steps.changes.outputs.ika-move-packages == 'true'
-#      - name: Run snapshot
-#        if: steps.changes.outputs.ika-move-packages == 'true'
-#        run: cargo test -p ika-move-packages --test build_ika_move_packages

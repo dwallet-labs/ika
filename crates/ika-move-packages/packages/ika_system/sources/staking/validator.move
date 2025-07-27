@@ -4,17 +4,18 @@
 module ika_system::validator;
 
 use ika::ika::IKA;
-use ika_common::class_groups_public_key_and_proof::ClassGroupsPublicKeyAndProof;
+use ika_common::system_object_cap::SystemObjectCap;
+use ika_common::validator_cap::{Self, ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap};
 use ika_system::pending_values::{Self, PendingValues};
 use ika_system::staked_ika::{Self, StakedIka};
 use ika_system::token_exchange_rate::{Self, TokenExchangeRate};
-use ika_system::validator_cap::{Self, ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap};
 use ika_system::validator_info::{Self, ValidatorInfo};
 use ika_system::validator_metadata::ValidatorMetadata;
 use std::string::String;
 use sui::bag::{Self, Bag};
 use sui::balance::{Self, Balance};
 use sui::table::{Self, Table};
+use sui::table_vec::TableVec;
 
 // === Constants ===
 
@@ -166,21 +167,30 @@ public(package) fun new(
     protocol_pubkey_bytes: vector<u8>,
     network_pubkey_bytes: vector<u8>,
     consensus_pubkey_bytes: vector<u8>,
-    class_groups_pubkey_and_proof_bytes: ClassGroupsPublicKeyAndProof,
+    mpc_data_bytes: TableVec<vector<u8>>,
     proof_of_possession_bytes: vector<u8>,
     network_address: String,
     p2p_address: String,
     consensus_address: String,
     commission_rate: u16,
     metadata: ValidatorMetadata,
+    system_object_cap: &SystemObjectCap,
     ctx: &mut TxContext,
 ): (Validator, ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap) {
     let id = object::new(ctx);
     let validator_id = id.to_inner();
 
-    let validator_cap = validator_cap::new_validator_cap(validator_id, ctx);
-    let validator_operation_cap = validator_cap::new_validator_operation_cap(validator_id, ctx);
-    let validator_commission_cap = validator_cap::new_validator_commission_cap(validator_id, ctx);
+    let validator_cap = validator_cap::new_validator_cap(validator_id, ctx, system_object_cap);
+    let validator_operation_cap = validator_cap::new_validator_operation_cap(
+        validator_id,
+        ctx,
+        system_object_cap,
+    );
+    let validator_commission_cap = validator_cap::new_validator_commission_cap(
+        validator_id,
+        ctx,
+        system_object_cap,
+    );
     let validator = Validator {
         id,
         validator_info: validator_info::new(
@@ -189,7 +199,7 @@ public(package) fun new(
             protocol_pubkey_bytes,
             network_pubkey_bytes,
             consensus_pubkey_bytes,
-            class_groups_pubkey_and_proof_bytes,
+            mpc_data_bytes,
             proof_of_possession_bytes,
             network_address,
             p2p_address,
@@ -601,16 +611,16 @@ public(package) fun set_next_epoch_consensus_pubkey_bytes(
     validator.validator_info.set_next_epoch_consensus_pubkey_bytes(consensus_pubkey_bytes);
 }
 
-public(package) fun set_next_epoch_class_groups_pubkey_and_proof_bytes(
+public(package) fun set_next_epoch_mpc_data_bytes(
     validator: &mut Validator,
-    class_groups_pubkey_and_proof_bytes: ClassGroupsPublicKeyAndProof,
+    mpc_data_bytes: TableVec<vector<u8>>,
     cap: &ValidatorOperationCap,
-) {
+): Option<TableVec<vector<u8>>> {
     validator.verify_operation_cap(cap);
 
     validator
         .validator_info
-        .set_next_epoch_class_groups_pubkey_and_proof_bytes(class_groups_pubkey_and_proof_bytes);
+        .set_next_epoch_mpc_data_bytes(mpc_data_bytes)
 }
 
 /// Destroy the validator if it is empty.
@@ -699,11 +709,16 @@ public(package) fun ika_balance_at_epoch(validator: &Validator, epoch: u64): u64
 public(package) fun rotate_operation_cap(
     self: &mut Validator,
     cap: &ValidatorCap,
+    system_object_cap: &SystemObjectCap,
     ctx: &mut TxContext,
 ): ValidatorOperationCap {
     let validator_id = cap.validator_id();
     self.verify_validator_cap(cap);
-    let operation_cap = validator_cap::new_validator_operation_cap(validator_id, ctx);
+    let operation_cap = validator_cap::new_validator_operation_cap(
+        validator_id,
+        ctx,
+        system_object_cap,
+    );
     self.operation_cap_id = object::id(&operation_cap);
     operation_cap
 }
@@ -713,11 +728,16 @@ public(package) fun rotate_operation_cap(
 public(package) fun rotate_commission_cap(
     self: &mut Validator,
     cap: &ValidatorCap,
+    system_object_cap: &SystemObjectCap,
     ctx: &mut TxContext,
 ): ValidatorCommissionCap {
     let validator_id = cap.validator_id();
     self.verify_validator_cap(cap);
-    let commission_cap = validator_cap::new_validator_commission_cap(validator_id, ctx);
+    let commission_cap = validator_cap::new_validator_commission_cap(
+        validator_id,
+        ctx,
+        system_object_cap,
+    );
     self.commission_cap_id = object::id(&commission_cap);
     commission_cap
 }
