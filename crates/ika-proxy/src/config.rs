@@ -64,10 +64,16 @@ pub struct DynamicPeerValidationConfig {
     pub private_key: Option<String>,
     /// The move package ID of ika (IKA) on sui.
     pub ika_package_id: ObjectID,
+    /// The move package ID of ika_common on sui.
+    pub ika_common_package_id: ObjectID,
+    /// The move package ID of ika_dwallet_2pc_mpc on sui.
+    pub ika_dwallet_2pc_mpc_package_id: ObjectID,
     /// The move package ID of `ika_system` on sui.
     pub ika_system_package_id: ObjectID,
     /// The object ID of ika_system_state on sui.
     pub ika_system_object_id: ObjectID,
+    /// The object ID of ika_dwallet_coordinator on sui.
+    pub ika_dwallet_coordinator_object_id: ObjectID,
 }
 
 /// StaticPeerValidationConfig, unlike the DynamicPeerValidationConfig, is not determined dynamically from rpc

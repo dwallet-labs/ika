@@ -42,9 +42,12 @@ dynamic-peers:
   url: http://127.0.0.1:9000
   interval: 60
   hostname: localhost
-  ika-package-id: 0xcd83e8a1938c389e37fc8e10913c1d3a3183a93428cb03b8e70e286ad6a7c9fc
-  ika-system-package-id: 0x7d2f220ce4c227dd4bcc7598851c3efb2ece079d61cd66e66985e6065a43e067
-  ika-system-object-id: 0x34d6d6c47872128a53708382092ad97e641a6482830160c80230a68330fc552d
+  ika-package-id: 0xf072acaf9052ad5697bd12f9c46e266df6bca67729562a53b581efc4f3d27e85
+  ika-common-package-id: 0xa88236a9ee6c0e45eaaa840b150f6de5d7281b0b7add542674f935b5110c7b14
+  ika-dwallet-2pc-mpc-package-id: 0x6285d1859304bb8630a5472e7ee988b8e9d97ffbcd623e68e1ad5eb95e8fe88c
+  ika-system-package-id: 0x6ea8ad06c1da7073253e57ba678032d86de692f550847863ab6153c9d3ef866b
+  ika-system-object-id: 0x77f91a4c43808619b9bdb3d65c988b5825d33febd9dbdcc8400b1d9b6bf18bca
+  ika-dwallet-coordinator-object-id: 0x784f3993a128a5935ef9c70878082d47df00eb91e6af589be3a435c0047df1e0
   certificate-file: /Users/zeevmanilovich/Dev/infra/tf-sui-validators/modules/ika-proxy/keys/proxy.crt
 #  certificate-file: /Users/zeevmanilovich/cert/localhost.crt
   private-key: /Users/zeevmanilovich/Dev/infra/tf-sui-validators/modules/ika-proxy/keys/proxy.key

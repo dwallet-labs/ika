@@ -91,8 +91,11 @@ async fn main() -> Result<()> {
         &config.dynamic_peers.url,
         sui_client_metrics,
         config.dynamic_peers.ika_package_id,
+        config.dynamic_peers.ika_common_package_id,
+        config.dynamic_peers.ika_dwallet_2pc_mpc_package_id,
         config.dynamic_peers.ika_system_package_id,
         config.dynamic_peers.ika_system_object_id,
+        config.dynamic_peers.ika_dwallet_coordinator_object_id,
     )
     .await?;
 
