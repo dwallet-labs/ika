@@ -17,7 +17,7 @@ members = [
     "crates/ika-sui-client",
     "crates/ika-protocol-config",
     "crates/ika-protocol-config-macros",
-    #"crates/ika-sdk",
+    "crates/ika-proxy",
     "crates/ika-swarm",
     "crates/ika-swarm-config",
     "crates/ika-telemetry",
@@ -114,6 +114,7 @@ byteorder = "1.4.3"
 bytes = { version = "1.5.0", features = ["serde"] }
 chrono = { version = "0.4.39", features = ["clock", "serde"] }
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
+const-str = "0.5.3"
 colored = "3.0.0"
 count-min-sketch = "0.1.7"
 criterion = { version = "0.6.0", features = [
@@ -139,6 +140,7 @@ governor = "0.6.0"
 hex = "0.4.3"
 http = "1"
 humantime = "2.1.0"
+hyper = "1"
 im = "15"
 indexmap = { version = "2.1.0", features = ["serde"] }
 indicatif = "0.18.0"
@@ -150,12 +152,14 @@ lru = "0.16.0"
 merlin = { version = "3", default-features = false }
 miette = { version = "7", features = ["fancy"] }
 mockall = "0.13.1"
+mime = "0.3"
 moka = { version = "0.12", default-features = false, features = [
     "sync",
     "atomic64",
 ] }
 more-asserts = "0.3.1"
 msim = { git = "https://github.com/MystenLabs/mysten-sim.git", rev = "2a170f4cd81c5cd10f5e4a5e810068f3045f41b6", package = "msim" }
+multiaddr = "0.17.0"
 nonempty = "0.11.0"
 num-bigint = "0.4.4"
 num_cpus = "1.15.0"
@@ -175,7 +179,10 @@ prometheus = "0.13.3"
 quote = "1.0.23"
 rand = "0.9"
 rand_chacha = "0.9"
+prost = "0.13"
+prost-build = "0.13"
 rayon = "1.5.3"
+protobuf = { version = "2.28", features = ["with-bytes"] }
 regex = "1.7.1"
 reqwest = { version = "0.12", default-features = false, features = [
     "http2",
@@ -184,10 +191,16 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 roaring = "0.11.1"
 rstest = "0.25.0"
+rustls-pemfile = "2"
 schemars = { version = "0.8.21", features = ["either"] }
 scopeguard = "1.1"
 serde = { version = "1.0.144", features = ["derive", "rc"] }
 serde-env = "0.2.0"
+rustls = { version = "0.23", default-features = false, features = [
+    "std",
+    "tls12",
+    "ring",
+] }
 serde-name = "0.2.1"
 serde-reflection = "0.5.0"
 serde_json = { version = "1.0.95", features = ["preserve_order"] }
@@ -198,6 +211,7 @@ signature = "3.0.0-rc.1"
 static_assertions = "1.1.0"
 strum = { version = "0.27.1", features = ["derive"] }
 strum_macros = "0.27.1"
+snap = "1.1.0"
 syn = { version = "2.0.104", features = ["full", "derive", "extra-traits"] }
 tap = "1.0.1"
 tempfile = "3.20.0"
@@ -221,6 +235,13 @@ tower = { version = "0.5", features = [
     "limit",
 ] }
 twox-hash = "2.1.1"
+tower-http = { version = "0.5", features = [
+    "cors",
+    "full",
+    "trace",
+    "set-header",
+    "propagate-header",
+] }
 tracing = "0.1.37"
 url = "2.3.1"
 zeroize = "1.6.0"
@@ -297,7 +318,7 @@ ika-config = { path = "crates/ika-config" }
 ika-core = { path = "crates/ika-core" }
 ika-node = { path = "crates/ika-node" }
 ika-sui-client = { path = "crates/ika-sui-client" }
-#ika-porxy = { path = "crates/ika-proxy" }
+ika-porxy = { path = "crates/ika-proxy" }
 ika-protocol-config = { path = "crates/ika-protocol-config" }
 ika-swarm = { path = "crates/ika-swarm" }
 ika-swarm-config = { path = "crates/ika-swarm-config" }
