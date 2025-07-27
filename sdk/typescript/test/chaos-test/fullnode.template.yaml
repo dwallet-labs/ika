@@ -13,6 +13,8 @@ sui-connector-config:
   sui-chain-identifier: SUI_CHAIN_IDENTITY
   ika-package-id: IKA_PACKAGE_ID
   ika-system-package-id: IKA_SYSTEM_PACKAGE_ID
+  ika-common-package-id: IKA_COMMON_PACKAGE_ID
+  ika-dwallet-2pc-mpc-package-id: IKA_DWALLET_2PC_MPC_PACKAGE_ID
   ika-system-object-id: IKA_SYSTEM_OBJECT_ID
   notifier-client-key-pair:
     path: /opt/ika/key-pairs/notifier.key

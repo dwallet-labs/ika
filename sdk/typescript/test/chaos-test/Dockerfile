@@ -1,7 +1,7 @@
 # ==========================
 # Build stage
 # ==========================
-FROM rust:1.85-bullseye AS builder
+FROM rust:1.88-bullseye AS builder
 
 # Arguments
 ARG PROFILE=release
@@ -24,7 +24,6 @@ WORKDIR ${WORKDIR}/ika
 # Copy Cargo manifests and crate folders for dependency resolution
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-COPY class-groups-keys-mock-files class-groups-keys-mock-files
 
 # Build dependencies first for better layer caching
 # --locked ensures you never accidentally change dependencies during a build.
@@ -32,7 +31,7 @@ COPY class-groups-keys-mock-files class-groups-keys-mock-files
 RUN cargo fetch --locked
 
 # Conditionally compile with the network DKG feature
-RUN cargo build --profile ${PROFILE} --locked --bin ika-node
+RUN cargo build --no-default-features --profile ${PROFILE} --locked --bin ika-node
 
 # ==========================
 # Runtime stage

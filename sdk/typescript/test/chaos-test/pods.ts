@@ -43,6 +43,10 @@ export async function createValidatorPod(
 							name: 'RUST_MIN_STACK',
 							value: '16777216',
 						},
+						{
+							name: 'RUST_BACKTRACE',
+							value: 'full',
+						},
 					],
 					command: ['/opt/ika/bin/ika-node', '--config-path', '/opt/ika/config/validator.yaml'],
 					name: 'ika-node',
@@ -50,8 +54,8 @@ export async function createValidatorPod(
 					volumeMounts: [
 						{
 							name: 'config-vol',
-							mountPath: '/opt/ika/key-pairs/class-groups.key',
-							subPath: 'class-groups.key',
+							mountPath: '/opt/ika/key-pairs/class-groups.seed',
+							subPath: 'class-groups.seed',
 						},
 						{
 							name: 'config-vol',
@@ -83,8 +87,8 @@ export async function createValidatorPod(
 						name: CONFIG_MAP_NAME,
 						items: [
 							{
-								key: `validator${validatorID}_class-groups.key`,
-								path: 'class-groups.key',
+								key: `validator${validatorID}_class-groups.seed`,
+								path: 'class-groups.seed',
 							},
 							{
 								key: `validator${validatorID}_consensus.key`,
@@ -106,7 +110,7 @@ export async function createValidatorPod(
 					},
 				},
 			],
-			restartPolicy: 'Always',
+			restartPolicy: 'Never',
 		},
 	};
 	await k8sApi.createNamespacedPod({
@@ -175,7 +179,7 @@ export async function createPods(kc: KubeConfig, namespaceName: string, numOfVal
 					},
 				},
 			],
-			restartPolicy: 'Always',
+			restartPolicy: 'Never',
 		},
 	};
 	await k8sApi.createNamespacedPod({

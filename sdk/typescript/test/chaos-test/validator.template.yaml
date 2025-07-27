@@ -1,5 +1,5 @@
-class-groups-key-pair-and-proof:
-  path: /opt/ika/key-pairs/class-groups.key
+root-seed:
+  path: /opt/ika/key-pairs/class-groups.seed
 protocol-key-pair:
   path: /opt/ika/key-pairs/protocol.key
 consensus-key-pair:
@@ -12,8 +12,11 @@ sui-connector-config:
   sui-rpc-url: SUI_RPC_URL
   sui-chain-identifier: SUI_CHAIN_IDENTITY
   ika-package-id: IKA_PACKAGE_ID
+  ika-common-package-id: IKA_COMMON_PACKAGE_ID
+  ika-dwallet-2pc-mpc-package-id: IKA_DWALLET_2PC_MPC_PACKAGE_ID
   ika-system-package-id: IKA_SYSTEM_PACKAGE_ID
   ika-system-object-id: IKA_SYSTEM_OBJECT_ID
+  ika-dwallet-coordinator-object-id: IKA_DWALLET_COORDINATOR_OBJECT_ID
 metrics-address: 0.0.0.0:9184
 admin-interface-port: 1337
 consensus-config:

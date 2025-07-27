@@ -20,10 +20,10 @@ export async function createConfigMap(
 	);
 	const validatorsConfig: Record<string, string> = {};
 	for (let i = 0; i < numOfValidators; i++) {
-		validatorsConfig[`validator${i + 1}_class-groups.key`] = fs.readFileSync(
+		validatorsConfig[`validator${i + 1}_class-groups.seed`] = fs.readFileSync(
 			path.resolve(
 				TEST_ROOT_DIR,
-				`${NETWORK_SERVICE_NAME}.${NAMESPACE_NAME}.svc.cluster.local/val${i + 1}.${NETWORK_SERVICE_NAME}.${NAMESPACE_NAME}.svc.cluster.local/key-pairs/class-groups.key`,
+				`${NETWORK_SERVICE_NAME}.${NAMESPACE_NAME}.svc.cluster.local/val${i + 1}.${NETWORK_SERVICE_NAME}.${NAMESPACE_NAME}.svc.cluster.local/key-pairs/class-groups.seed`,
 			),
 			'utf8',
 		);
