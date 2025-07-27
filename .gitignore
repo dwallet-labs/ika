@@ -77,3 +77,8 @@ lcov.info
 ika_config.json
 *.log
 *.seed
+
+# Chaos test auto-generated files
+sdk/typescript/test/chaos-test/ika-dns-service.ika.svc.cluster.local
+sdk/typescript/test/chaos-test/ika
+sdk/typescript/test/chaos-test/ika-swarm-config
