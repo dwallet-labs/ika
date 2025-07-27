@@ -118,7 +118,9 @@ describe('Test dWallet MPC', () => {
 	let conf: Config;
 
 	beforeEach(async () => {
-		conf = await createConfigFromJson('../../0x165109dbcf4d75a6cbd5f5f7f7f1a657fe29e4e166dde6b8d0680e7eb7f010b5.json');
+		conf = await createConfigFromJson(
+			'../../0x165109dbcf4d75a6cbd5f5f7f7f1a657fe29e4e166dde6b8d0680e7eb7f010b5.json',
+		);
 		await delay(2000);
 	});
 
