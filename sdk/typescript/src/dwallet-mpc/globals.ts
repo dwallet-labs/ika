@@ -117,6 +117,68 @@ interface CoordinatorInner {
 	};
 }
 
+export interface SystemInner {
+	fields: {
+		value: {
+			fields: {
+				validator_set: {
+					fields: {
+						validators: {
+							fields: {
+								id: {
+									id: string;
+								};
+								size: number;
+							};
+						};
+					};
+				};
+			};
+		};
+	};
+}
+
+export function isSystemInner(obj: any): obj is SystemInner {
+	return (
+		obj?.fields?.value?.fields?.validator_set?.fields?.validators?.fields?.id?.id !== undefined &&
+		obj?.fields?.value?.fields?.validator_set?.fields?.validators?.fields?.size !== undefined
+	);
+}
+
+export interface Validator {
+	operation_cap_id: string;
+}
+
+export function isValidator(obj: any): obj is Validator {
+	return obj?.operation_cap_id !== undefined;
+}
+
+export async function getAllChildObjectsIDs(c: Config, parentID: string): Promise<string[]> {
+	let cursor: string | null = null;
+	const sessionsIDs: string[] = [];
+	do {
+		const dynamicFieldPage = await c.client.getDynamicFields({
+			parentId: parentID,
+			cursor,
+		});
+		if (dynamicFieldPage.data.length === 0) {
+			break;
+		}
+		for (const field of dynamicFieldPage.data) {
+			const session = await c.client.getObject({
+				id: field.objectId,
+				options: { showContent: true },
+			});
+			if (!session.data) {
+				continue;
+			}
+			sessionsIDs.push(session?.data?.objectId);
+		}
+		cursor = dynamicFieldPage.nextCursor;
+	} while (cursor);
+	return sessionsIDs;
+}
+
 interface DWalletNetworkDecryptionKey {
 	fields: {
 		id: { id: string };

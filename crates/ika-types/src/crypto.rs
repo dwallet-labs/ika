@@ -6,7 +6,7 @@ use crate::error::{IkaError, IkaResult};
 use crate::ika_serde::IkaBitmap;
 use crate::intent::{Intent, IntentMessage, IntentScope};
 use anyhow::{Error, anyhow};
-use derive_more::{AsRef, From};
+use derive_more::AsRef;
 pub use enum_dispatch::enum_dispatch;
 use fastcrypto::bls12381::min_pk::{
     BLS12381AggregateSignature, BLS12381AggregateSignatureAsBytes, BLS12381KeyPair,

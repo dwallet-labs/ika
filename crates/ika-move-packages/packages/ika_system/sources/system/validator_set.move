@@ -5,13 +5,13 @@ module ika_system::validator_set;
 
 use ika::ika::IKA;
 use ika_common::bls_committee::{Self, BlsCommittee, new_bls_committee, new_bls_committee_member};
-use ika_common::class_groups_public_key_and_proof::ClassGroupsPublicKeyAndProof;
 use ika_common::extended_field::{Self, ExtendedField};
+use ika_common::system_object_cap::SystemObjectCap;
+use ika_common::validator_cap::{ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap};
 use ika_system::pending_active_set::{Self, PendingActiveSet};
 use ika_system::staked_ika::StakedIka;
 use ika_system::token_exchange_rate::TokenExchangeRate;
 use ika_system::validator::{Self, Validator};
-use ika_system::validator_cap::{ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap};
 use ika_system::validator_metadata::ValidatorMetadata;
 use std::string::String;
 use sui::bag::{Self, Bag};
@@ -22,6 +22,7 @@ use sui::object_table::{Self, ObjectTable};
 use sui::table::Table;
 use sui::vec_map::{Self, VecMap};
 use sui::vec_set::{Self, VecSet};
+use sui::table_vec::TableVec;
 
 // === Constants ===
 
@@ -57,6 +58,8 @@ const EInvalidCap: u64 = 10;
 const EProcessMidEpochOnlyAfterAdvanceEpoch: u64 = 11;
 /// Advance epoch can be called only after process mid epoch.
 const EAdvanceEpochOnlyAfterProcessMidEpoch: u64 = 12;
+/// Cannot set validator new info before next epoch if validator is in next epoch committee.
+const ECannotSetBeforeNextEpoch: u64 = 13;
 
 // === Structs ===
 
@@ -165,13 +168,14 @@ public(package) fun request_add_validator_candidate(
     protocol_pubkey_bytes: vector<u8>,
     network_pubkey_bytes: vector<u8>,
     consensus_pubkey_bytes: vector<u8>,
-    class_groups_pubkey_and_proof_bytes: ClassGroupsPublicKeyAndProof,
+    mpc_data_bytes: TableVec<vector<u8>>,
     proof_of_possession_bytes: vector<u8>,
     network_address: String,
     p2p_address: String,
     consensus_address: String,
     commission_rate: u16,
     metadata: ValidatorMetadata,
+    system_object_cap: &SystemObjectCap,
     ctx: &mut TxContext,
 ): (ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap) {
     let (validator, cap, operation_cap, commission_cap) = validator::new(
@@ -180,13 +184,14 @@ public(package) fun request_add_validator_candidate(
         protocol_pubkey_bytes,
         network_pubkey_bytes,
         consensus_pubkey_bytes,
-        class_groups_pubkey_and_proof_bytes,
+        mpc_data_bytes,
         proof_of_possession_bytes,
         network_address,
         p2p_address,
         consensus_address,
         commission_rate,
         metadata,
+        system_object_cap,
         ctx,
     );
 
@@ -288,6 +293,16 @@ public(package) fun assert_no_pending_or_active_duplicates(
     assert!(!self.is_duplicate_with_pending_validator(&validator), EDuplicateValidator);
 
     self.validators.add(validator_id, validator);
+}
+
+public(package) fun assert_validator_can_set_for_next_epoch(
+    self: &ValidatorSet,
+    validator_id: ID,
+) {
+    assert!(
+        !self.next_epoch_active_committee.is_some_and!(|c| c.contains(&validator_id)),
+        ECannotSetBeforeNextEpoch
+    );
 }
 
 /// Called by `ika_system`, to remove a validator.
@@ -404,10 +419,11 @@ public(package) fun withdraw_stake(
 public(package) fun rotate_operation_cap(
     self: &mut ValidatorSet,
     cap: &ValidatorCap,
+    system_object_cap: &SystemObjectCap,
     ctx: &mut TxContext,
 ): ValidatorOperationCap {
     let validator = self.get_validator_mut(cap.validator_id());
-    validator.rotate_operation_cap(cap, ctx)
+    validator.rotate_operation_cap(cap, system_object_cap, ctx)
 }
 
 /// Create a new `ValidatorCommissionCap` and registers it.
@@ -415,10 +431,11 @@ public(package) fun rotate_operation_cap(
 public(package) fun rotate_commission_cap(
     self: &mut ValidatorSet,
     cap: &ValidatorCap,
+    system_object_cap: &SystemObjectCap,
     ctx: &mut TxContext,
 ): ValidatorCommissionCap {
     let validator = self.get_validator_mut(cap.validator_id());
-    validator.rotate_commission_cap(cap, ctx)
+    validator.rotate_commission_cap(cap, system_object_cap, ctx)
 }
 
 public(package) fun collect_commission(
@@ -464,6 +481,7 @@ public(package) fun set_next_commission(
     current_epoch: u64,
 ) {
     let validator_id = cap.validator_id();
+    self.assert_validator_can_set_for_next_epoch(validator_id);
     let validator = self.get_validator_mut(validator_id);
     validator.set_next_commission(new_commission_rate, current_epoch, cap);
 }
@@ -474,6 +492,7 @@ public(package) fun set_next_epoch_network_address(
     cap: &ValidatorOperationCap,
 ) {
     let validator_id = cap.validator_id();
+    self.assert_validator_can_set_for_next_epoch(validator_id);
     let validator = self.get_validator_mut(validator_id);
     validator.set_next_epoch_network_address(network_address, cap);
     self.assert_no_pending_or_active_duplicates(validator_id);
@@ -485,6 +504,7 @@ public(package) fun set_next_epoch_p2p_address(
     cap: &ValidatorOperationCap,
 ) {
     let validator_id = cap.validator_id();
+    self.assert_validator_can_set_for_next_epoch(validator_id);
     let validator = self.get_validator_mut(validator_id);
     validator.set_next_epoch_p2p_address(p2p_address, cap);
     self.assert_no_pending_or_active_duplicates(validator_id);
@@ -496,6 +516,7 @@ public(package) fun set_next_epoch_consensus_address(
     cap: &ValidatorOperationCap,
 ) {
     let validator_id = cap.validator_id();
+    self.assert_validator_can_set_for_next_epoch(validator_id);
     let validator = self.get_validator_mut(validator_id);
     validator.set_next_epoch_consensus_address(consensus_address, cap);
     self.assert_no_pending_or_active_duplicates(validator_id);
@@ -509,6 +530,7 @@ public(package) fun set_next_epoch_protocol_pubkey_bytes(
     ctx: &TxContext,
 ) {
     let validator_id = cap.validator_id();
+    self.assert_validator_can_set_for_next_epoch(validator_id);
     let validator = self.get_validator_mut(validator_id);
     validator.set_next_epoch_protocol_pubkey_bytes(
         protocol_pubkey_bytes,
@@ -525,6 +547,7 @@ public(package) fun set_next_epoch_network_pubkey_bytes(
     cap: &ValidatorOperationCap,
 ) {
     let validator_id = cap.validator_id();
+    self.assert_validator_can_set_for_next_epoch(validator_id);
     let validator = self.get_validator_mut(validator_id);
     validator.set_next_epoch_network_pubkey_bytes(network_pubkey_bytes, cap);
     self.assert_no_pending_or_active_duplicates(validator_id);
@@ -536,23 +559,27 @@ public(package) fun set_next_epoch_consensus_pubkey_bytes(
     cap: &ValidatorOperationCap,
 ) {
     let validator_id = cap.validator_id();
+    self.assert_validator_can_set_for_next_epoch(validator_id);
     let validator = self.get_validator_mut(validator_id);
     validator.set_next_epoch_consensus_pubkey_bytes(consensus_pubkey_bytes, cap);
     self.assert_no_pending_or_active_duplicates(validator_id);
 }
 
-public(package) fun set_next_epoch_class_groups_pubkey_and_proof_bytes(
+public(package) fun set_next_epoch_mpc_data_bytes(
     self: &mut ValidatorSet,
-    class_groups_pubkey_and_proof_bytes: ClassGroupsPublicKeyAndProof,
+    mpc_data_bytes: TableVec<vector<u8>>,
     cap: &ValidatorOperationCap,
-) {
+): Option<TableVec<vector<u8>>> {
     let validator_id = cap.validator_id();
+    self.assert_validator_can_set_for_next_epoch(validator_id);
     let validator = self.get_validator_mut(validator_id);
-    validator.set_next_epoch_class_groups_pubkey_and_proof_bytes(
-        class_groups_pubkey_and_proof_bytes,
+    let previous_mpc_data_key = validator.set_next_epoch_mpc_data_bytes(
+        mpc_data_bytes,
         cap,
     );
     self.assert_no_pending_or_active_duplicates(validator_id);
+    previous_mpc_data_key
+
 }
 
 // ==== epoch change functions ====
@@ -574,7 +601,7 @@ public(package) fun initiate_mid_epoch_reconfiguration(self: &mut ValidatorSet) 
 public(package) fun advance_epoch(
     self: &mut ValidatorSet,
     new_epoch: u64,
-    total_reward: &mut Balance<IKA>,
+    total_rewards: &mut Balance<IKA>,
 ) {
     assert!(self.next_epoch_active_committee.is_some(), EAdvanceEpochOnlyAfterProcessMidEpoch);
 
@@ -583,7 +610,7 @@ public(package) fun advance_epoch(
     // Compute the reward distribution without taking into account the tallying rule slashing.
     let unadjusted_staking_reward_amounts = self.compute_unadjusted_reward_distribution(
         total_voting_power,
-        total_reward.value(),
+        total_rewards.value(),
     );
 
     // Use the tallying rule report records for the epoch to compute validators that will be
@@ -626,7 +653,7 @@ public(package) fun advance_epoch(
     self.distribute_reward(
         new_epoch,
         &adjusted_staking_reward_amounts,
-        total_reward,
+        total_rewards,
     );
 
     self.previous_committee = self.active_committee;
@@ -889,14 +916,14 @@ fun compute_slashed_validators(self: &mut ValidatorSet): vector<ID> {
 fun compute_unadjusted_reward_distribution(
     self: &ValidatorSet,
     total_voting_power: u64,
-    total_reward: u64,
+    total_rewards: u64,
 ): vector<u64> {
     let members = self.active_committee.members();
     let reward_amounts = members.map_ref!(|_| {
         // Integer divisions will truncate the results. Because of this, we expect that at the end
-        // there will be some reward remaining in `total_reward`.
+        // there will be some reward remaining in `total_rewards`.
         // Use u128 to avoid multiplication overflow.
-        let reward_amount = (total_reward as u128) / (total_voting_power as u128);
+        let reward_amount = (total_rewards as u128) / (total_voting_power as u128);
         reward_amount as u64
     });
     reward_amounts

@@ -1,5 +1,5 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
+use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
 use ika_types::crypto::{AuthorityPublicKeyBytes, AuthoritySignature, NetworkPublicKey};
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::SuiAddress;
@@ -9,7 +9,7 @@ use sui_types::multiaddr::Multiaddr;
 pub struct ValidatorInfo {
     pub name: String,
     #[serde(serialize_with = "as_base64", deserialize_with = "from_base64")]
-    pub class_groups_public_key_and_proof: ClassGroupsEncryptionKeyAndProof,
+    pub mpc_data: VersionedMPCData,
     pub account_address: SuiAddress,
     pub protocol_public_key: AuthorityPublicKeyBytes,
     pub consensus_public_key: NetworkPublicKey,
@@ -55,7 +55,7 @@ impl ValidatorInfo {
     }
 }
 
-fn as_base64<S>(bytes: &ClassGroupsEncryptionKeyAndProof, serializer: S) -> Result<S::Ok, S::Error>
+fn as_base64<S>(bytes: &VersionedMPCData, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
@@ -63,7 +63,7 @@ where
     serializer.serialize_str(&encoded)
 }
 
-fn from_base64<'de, D>(deserializer: D) -> Result<ClassGroupsEncryptionKeyAndProof, D::Error>
+fn from_base64<'de, D>(deserializer: D) -> Result<VersionedMPCData, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

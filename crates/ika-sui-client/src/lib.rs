@@ -5,9 +5,8 @@ use crate::metrics::SuiClientMetrics;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use core::panic;
-use dwallet_classgroups_types::{NUM_OF_CLASS_GROUPS_KEY_OBJECTS, SingleEncryptionKeyAndProof};
+use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
 use ika_move_packages::BuiltInIkaMovePackages;
-use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
@@ -17,7 +16,8 @@ use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartValidatorIn
 use ika_types::sui::staking::StakingPool;
 use ika_types::sui::system_inner_v1::{DWalletCoordinatorInnerV1, SystemInnerV1};
 use ika_types::sui::{
-    DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait, Validator,
+    DWalletCoordinator, DWalletCoordinatorInner, PricingInfoKey, PricingInfoValue, System,
+    SystemInner, SystemInnerTrait, Validator,
 };
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -34,7 +34,7 @@ use sui_sdk::{SuiClient as SuiSdkClient, SuiClientBuilder};
 use sui_types::TypeTag;
 use sui_types::base_types::{EpochId, ObjectRef};
 use sui_types::clock::Clock;
-use sui_types::collection_types::Table;
+use sui_types::collection_types::{Entry, Table};
 use sui_types::dynamic_field::Field;
 use sui_types::gas_coin::GasCoin;
 use sui_types::move_package::MovePackage;
@@ -50,6 +50,8 @@ use sui_types::{
 use tokio::sync::OnceCell;
 use tracing::{debug, error, info, warn};
 
+#[cfg(feature = "protocol-commands")]
+pub mod ika_protocol_transactions;
 pub mod ika_validator_transactions;
 pub mod metrics;
 
@@ -75,7 +77,7 @@ macro_rules! retry_with_max_elapsed_time {
                     }
                     Err(err) => {
                         // For simplicity we treat every error as transient so we can retry until max_elapsed_time
-                        error!(?err, "retrying with max elapsed time");
+                        error!(error=?err, "retrying with max elapsed time");
                         return Err(backoff::Error::transient(err));
                     }
                 }
@@ -140,6 +142,16 @@ impl<P> SuiClient<P>
 where
     P: SuiClientInner,
 {
+    pub async fn get_pricing_info(&self) -> Vec<Entry<PricingInfoKey, PricingInfoValue>> {
+        let coordinator_inner = self.must_get_dwallet_coordinator_inner().await;
+        let DWalletCoordinatorInner::V1(coordinator_inner) = coordinator_inner;
+        coordinator_inner
+            .pricing_and_fee_management
+            .current
+            .pricing_map
+            .contents
+    }
+
     pub async fn get_events_by_tx_digest(
         &self,
         tx_digest: TransactionDigest,
@@ -346,16 +358,17 @@ where
         })
     }
 
-    pub async fn get_class_groups_public_keys_and_proofs(
+    pub async fn get_mpc_data_from_validators_pool(
         &self,
         validators: &Vec<StakingPool>,
-    ) -> IkaResult<HashMap<ObjectID, ClassGroupsEncryptionKeyAndProof>> {
+        read_next_mpc_data: bool,
+    ) -> IkaResult<HashMap<ObjectID, VersionedMPCData>> {
         self.inner
-            .get_class_groups_public_keys_and_proofs(validators)
+            .get_mpc_data_from_validators_pool(validators, read_next_mpc_data)
             .await
             .map_err(|e| {
                 IkaError::SuiClientInternalError(format!(
-                    "Can't get_class_groups_public_keys_and_proofs: {e}"
+                    "Can't get_mpc_data_from_validators_pool: {e}"
                 ))
             })
     }
@@ -394,13 +407,13 @@ where
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
-                let validators_class_groups_public_key_and_proof = self
+                let validators_mpc_data = self
                     .inner
-                    .get_class_groups_public_keys_and_proofs(&validators)
+                    .get_mpc_data_from_validators_pool(&validators, false)
                     .await
                     .map_err(|e| {
                         IkaError::SuiClientInternalError(format!(
-                            "can't get_class_groups_public_keys_and_proofs: {e}"
+                            "can't get_mpc_data_from_validators_pool: {e}"
                         ))
                     })?;
 
@@ -423,10 +436,7 @@ where
                             protocol_pubkey: info.protocol_pubkey.clone(),
                             network_pubkey: info.network_pubkey.clone(),
                             consensus_pubkey: info.consensus_pubkey.clone(),
-                            class_groups_public_key_and_proof:
-                                validators_class_groups_public_key_and_proof
-                                    .get(&validator.id)
-                                    .cloned(),
+                            mpc_data: validators_mpc_data.get(&validator.id).cloned(),
                             network_address: info.network_address.clone(),
                             p2p_address: info.p2p_address.clone(),
                             consensus_address: info.consensus_address.clone(),
@@ -618,7 +628,7 @@ where
                         .with_label_values(&["must_get_system_inner_object"])
                         .inc();
                     warn!(
-                        ?err,
+                        error=?err,
                         "Received error from `get_system_inner()`. Retrying...",
                     );
                 }
@@ -628,7 +638,7 @@ where
                         .with_label_values(&["must_get_system_inner_object"])
                         .inc();
                     warn!(
-                        ?err,
+                        error=?err,
                         system_object_id=%self.ika_system_object_id,
                         "failed to get ika system inner object",
                     );
@@ -682,7 +692,7 @@ where
                         .with_label_values(&["must_get_dwallet_coordinator_inner"])
                         .inc();
                     warn!(
-                        ?err,
+                        error=?err,
                         "Received error from `get_dwallet_coordinator_inner()`. Retrying...",
                     );
                 }
@@ -692,7 +702,7 @@ where
                         .with_label_values(&["must_get_dwallet_coordinator_inner"])
                         .inc();
                     warn!(
-                        ?err,
+                        error=?err,
                         system_object_id=%self.ika_system_object_id,
                         "Failed to get dwallet coordinator inner object",
                     );
@@ -717,7 +727,7 @@ where
                         .with_label_values(&["must_get_epoch_start_system"])
                         .inc();
                     warn!(
-                        ?err,
+                        error=?err,
                         "Received error from `get_epoch_start_system()`. Retrying...",
                     );
                 }
@@ -727,7 +737,7 @@ where
                         .with_label_values(&["must_get_epoch_start_system"])
                         .inc();
                     warn!(
-                        ?err,
+                        error=?err,
                         "Received error from `get_epoch_start_system` retry wrapper. Retrying...",
                     );
                 }
@@ -771,10 +781,11 @@ pub trait SuiClientInner: Send + Sync {
     ) -> Result<Vec<u8>, Self::Error>;
 
     #[allow(clippy::ptr_arg)]
-    async fn get_class_groups_public_keys_and_proofs(
+    async fn get_mpc_data_from_validators_pool(
         &self,
         validators: &Vec<StakingPool>,
-    ) -> Result<HashMap<ObjectID, ClassGroupsEncryptionKeyAndProof>, self::Error>;
+        read_next_epoch_mpc_data: bool,
+    ) -> Result<HashMap<ObjectID, VersionedMPCData>, self::Error>;
 
     #[allow(clippy::ptr_arg)]
     async fn get_network_encryption_keys(
@@ -950,86 +961,52 @@ impl SuiClientInner for SuiSdkClient {
         Ok(events)
     }
 
-    async fn get_class_groups_public_keys_and_proofs(
+    async fn get_mpc_data_from_validators_pool(
         &self,
         validators: &Vec<StakingPool>,
-    ) -> Result<HashMap<ObjectID, ClassGroupsEncryptionKeyAndProof>, self::Error> {
-        let mut class_groups_public_keys_and_proofs: HashMap<
-            ObjectID,
-            ClassGroupsEncryptionKeyAndProof,
-        > = HashMap::new();
+        read_next_mpc_data: bool,
+    ) -> Result<HashMap<ObjectID, VersionedMPCData>, self::Error> {
+        let mut mpc_data_from_all_validators: HashMap<ObjectID, VersionedMPCData> = HashMap::new();
         for validator in validators {
             let info = validator.verified_validator_info();
-            let dynamic_fields = self
-                .read_api()
-                .get_dynamic_fields(
-                    info.class_groups_pubkey_and_proof_bytes.contents.id,
-                    None,
-                    None,
-                )
-                .await?;
-            let mut validator_class_groups_public_key_and_proof_bytes: [Vec<u8>;
-                NUM_OF_CLASS_GROUPS_KEY_OBJECTS] = Default::default();
-            if dynamic_fields.data.len() != NUM_OF_CLASS_GROUPS_KEY_OBJECTS {
-                warn!(
-                    validator_id=?validator.id,
-                    expected_num_of_class_groups_keys=NUM_OF_CLASS_GROUPS_KEY_OBJECTS,
-                    dynamic_fields_count=dynamic_fields.data.len(),
-                    "Validator class groups public key and proof length mismatch",
-                );
-                continue;
-            }
-            for df in dynamic_fields.data.iter() {
-                let object_id = df.object_id;
-                let dynamic_field_response = self
-                    .read_api()
-                    .get_object_with_options(object_id, SuiObjectDataOptions::bcs_lossless())
-                    .await?;
-                let resp = dynamic_field_response.into_object().map_err(|e| {
-                    Error::DataError(format!("can't get bcs of object {object_id:?}: {e:?}"))
-                })?;
-                let move_object = resp.bcs.ok_or(Error::DataError(format!(
-                    "object {object_id:?} has no bcs data"
-                )))?;
-                let raw_move_obj = move_object.try_into_move().ok_or(Error::DataError(format!(
-                    "object {object_id:?} is not a MoveObject"
-                )))?;
-                let key_slice = bcs::from_bytes::<Field<u64, Vec<u8>>>(&raw_move_obj.bcs_bytes)?;
-                validator_class_groups_public_key_and_proof_bytes[key_slice.name as usize] =
-                    key_slice.value.clone();
-            }
-            let validator_class_groups_public_key_and_proof: Result<
-                Vec<SingleEncryptionKeyAndProof>,
-                _,
-            > = validator_class_groups_public_key_and_proof_bytes
-                .into_iter()
-                .map(|v| bcs::from_bytes::<SingleEncryptionKeyAndProof>(&v))
-                .collect();
-
-            match validator_class_groups_public_key_and_proof {
-                Ok(validator_class_groups_public_key_and_proof) => {
-                    class_groups_public_keys_and_proofs.insert(
-                        validator.id,
-                        validator_class_groups_public_key_and_proof
-                            .try_into()
-                            .map_err(|e| {
-                                Error::DataError(format!(
-                                    "class groups key from Sui is invalid: {e:?}"
-                                ))
-                            })?,
+            let mpc_data_id = if read_next_mpc_data
+                && info.next_epoch_mpc_data_bytes.is_some()
+                && info.previous_mpc_data_bytes.is_none()
+            {
+                info.next_epoch_mpc_data_bytes.as_ref().unwrap().contents.id
+            } else {
+                if info.next_epoch_mpc_data_bytes.is_some()
+                    && info.previous_mpc_data_bytes.is_some()
+                {
+                    error!(
+                        validator_id=?validator.id,
+                        "This should never happen, validator can't have both previous and next epoch MPC data bytes, using current data from epoch",
                     );
+                }
+
+                info.mpc_data_bytes.contents.id
+            };
+
+            let mpc_data_bytes = self.read_table_vec_as_raw_bytes(mpc_data_id).await?;
+
+            let validator_mpc_data: bcs::Result<VersionedMPCData> =
+                bcs::from_bytes(&mpc_data_bytes);
+
+            match validator_mpc_data {
+                Ok(validator_mpc_data) => {
+                    mpc_data_from_all_validators.insert(validator.id, validator_mpc_data);
                 }
                 Err(e) => {
                     warn!(
                         validator_id=?validator.id,
                         error=?e,
-                        "Failed to deserialize class groups public key and proof for a validator"
+                        "Failed to deserialize MPC data for a validator"
                     );
                     continue;
                 }
             }
         }
-        Ok(class_groups_public_keys_and_proofs)
+        Ok(mpc_data_from_all_validators)
     }
 
     async fn get_network_encryption_keys(

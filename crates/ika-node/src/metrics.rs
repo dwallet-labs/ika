@@ -1,123 +1,35 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
-use mysten_network::metrics::MetricsCallbackProvider;
-use prometheus::{
-    HistogramVec, IntCounterVec, IntGaugeVec, Registry, register_histogram_vec_with_registry,
-    register_int_counter_vec_with_registry, register_int_gauge_vec_with_registry,
-};
-
-use ika_network::tonic::Code;
-use std::time::Duration;
+use prometheus::{IntGauge, Registry, register_int_gauge_with_registry};
 
 pub struct IkaNodeMetrics {
-    pub jwk_requests: IntCounterVec,
-    pub jwk_request_errors: IntCounterVec,
-
-    pub total_jwks: IntCounterVec,
-    pub invalid_jwks: IntCounterVec,
-    pub unique_jwks: IntCounterVec,
+    pub current_protocol_version: IntGauge,
+    pub binary_max_protocol_version: IntGauge,
+    pub configured_max_protocol_version: IntGauge,
 }
 
 impl IkaNodeMetrics {
     pub fn new(registry: &Registry) -> Self {
         Self {
-            jwk_requests: register_int_counter_vec_with_registry!(
-                "jwk_requests",
-                "Total number of JWK requests",
-                &["provider"],
+            current_protocol_version: register_int_gauge_with_registry!(
+                "ika_current_protocol_version",
+                "Current protocol version in this epoch",
                 registry,
             )
             .unwrap(),
-            jwk_request_errors: register_int_counter_vec_with_registry!(
-                "jwk_request_errors",
-                "Total number of JWK request errors",
-                &["provider"],
+            binary_max_protocol_version: register_int_gauge_with_registry!(
+                "ika_binary_max_protocol_version",
+                "Max protocol version supported by this binary",
                 registry,
             )
             .unwrap(),
-            total_jwks: register_int_counter_vec_with_registry!(
-                "total_jwks",
-                "Total number of JWKs",
-                &["provider"],
-                registry,
-            )
-            .unwrap(),
-            invalid_jwks: register_int_counter_vec_with_registry!(
-                "invalid_jwks",
-                "Total number of invalid JWKs",
-                &["provider"],
-                registry,
-            )
-            .unwrap(),
-            unique_jwks: register_int_counter_vec_with_registry!(
-                "unique_jwks",
-                "Total number of unique JWKs",
-                &["provider"],
+            configured_max_protocol_version: register_int_gauge_with_registry!(
+                "ika_configured_max_protocol_version",
+                "Max protocol version configured in the node config",
                 registry,
             )
             .unwrap(),
         }
-    }
-}
-
-#[derive(Clone)]
-pub struct GrpcMetrics {
-    inflight_grpc: IntGaugeVec,
-    grpc_requests: IntCounterVec,
-    grpc_request_latency: HistogramVec,
-}
-
-const LATENCY_SEC_BUCKETS: &[f64] = &[
-    0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1., 2.5, 5., 10., 20., 30., 60., 90.,
-];
-
-impl GrpcMetrics {
-    pub fn new(registry: &Registry) -> Self {
-        Self {
-            inflight_grpc: register_int_gauge_vec_with_registry!(
-                "inflight_grpc",
-                "Total in-flight GRPC requests per route",
-                &["path"],
-                registry,
-            )
-            .unwrap(),
-            grpc_requests: register_int_counter_vec_with_registry!(
-                "grpc_requests",
-                "Total GRPC requests per route",
-                &["path", "status"],
-                registry,
-            )
-            .unwrap(),
-            grpc_request_latency: register_histogram_vec_with_registry!(
-                "grpc_request_latency",
-                "Latency of GRPC requests per route",
-                &["path"],
-                LATENCY_SEC_BUCKETS.to_vec(),
-                registry,
-            )
-            .unwrap(),
-        }
-    }
-}
-
-impl MetricsCallbackProvider for GrpcMetrics {
-    fn on_request(&self, _path: String) {}
-
-    fn on_response(&self, path: String, latency: Duration, _status: u16, grpc_status_code: Code) {
-        self.grpc_requests
-            .with_label_values(&[path.as_str(), format!("{grpc_status_code:?}").as_str()])
-            .inc();
-        self.grpc_request_latency
-            .with_label_values(&[path.as_str()])
-            .observe(latency.as_secs_f64());
-    }
-
-    fn on_start(&self, path: &str) {
-        self.inflight_grpc.with_label_values(&[path]).inc();
-    }
-
-    fn on_drop(&self, path: &str) {
-        self.inflight_grpc.with_label_values(&[path]).dec();
     }
 }
 

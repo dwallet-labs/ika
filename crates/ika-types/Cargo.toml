@@ -41,21 +41,17 @@ class_groups.workspace = true
 mpc.workspace = true
 twopc_mpc.workspace = true
 ika-protocol-config.workspace = true
-shared-crypto.workspace = true
 mysten-network.workspace = true
 sui-macros.workspace = true
 
 fastcrypto = { workspace = true, features = ["copy_key"] }
-fastcrypto-zkp.workspace = true
 
 typed-store-error.workspace = true
 derive_more = { workspace = true, features = ["as_ref", "debug", "display", "from"] }
-sui-json-rpc-types.workspace = true
 sui-config.workspace = true
 
 sui-types.workspace = true
 serde_repr.workspace = true
-rand_chacha = "0.3" # use old version for compatability with fastcrypto
 base64.workspace = true
 hex.workspace = true
 
@@ -66,3 +62,4 @@ consensus-core.workspace = true
 [features]
 default = []
 test-utils = []
+test_helpers = []

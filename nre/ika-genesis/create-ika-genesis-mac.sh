@@ -168,7 +168,7 @@ pushd "$SUBDOMAIN"
 ## Create Validators
 ############################
 SUI_BACKUP_DIR="sui_backup"
-CLASS_GROUPS_KEY_CREATED=0  # Track if the class-groups.key has been created
+ROOT_SEED_CREATED=0  # Track if the root-seed.key has been created
 
 for entry in "${VALIDATORS_ARRAY[@]}"; do
     # Split the tuple "name:hostname" into VALIDATOR_NAME and VALIDATOR_HOSTNAME.
@@ -218,24 +218,24 @@ for entry in "${VALIDATORS_ARRAY[@]}"; do
     # Create Validator info.
     pushd "$VALIDATOR_DIR" > /dev/null
 
-    # If we already have a class-groups.key, copy it into current dir before make-validator-info
-    if [ "$CLASS_GROUPS_KEY_CREATED" -eq 1 ]; then
-        echo "Copying existing class-groups.seed for validator '$VALIDATOR_NAME'"
-        cp ../class-groups.seed .
+    # If we already have a root-seed.key, copy it into current dir before make-validator-info
+    if [ "$ROOT_SEED_CREATED" -eq 1 ]; then
+        echo "Copying existing root-seed.key for validator '$VALIDATOR_NAME'"
+        cp ../root-seed.key .
     fi
 
     # Now run make-validator-info
     RUST_MIN_STACK=$RUST_MIN_STACK $BINARY_NAME validator make-validator-info "$VALIDATOR_NAME" "$VALIDATOR_NAME" "" "" "$VALIDATOR_HOSTNAME" 0 "$SENDER_SUI_ADDR"
 
-    # After the first validator generates class-groups.key, save it globally
-    if [ "$CLASS_GROUPS_KEY_CREATED" -eq 0 ]; then
-        echo "Saving initial class-groups.seed after first validator"
-        cp class-groups.seed ../class-groups.seed
-        CLASS_GROUPS_KEY_CREATED=1
+    # After the first validator generates root-seed.key, save it globally
+    if [ "$ROOT_SEED_CREATED" -eq 0 ]; then
+        echo "Saving initial root-seed.key after first validator"
+        cp root-seed.key ../root-seed.key
+        ROOT_SEED_CREATED=1
     fi
 
     mkdir -p "$KEY_PAIRS_DIR"
-    mv ./*.key ./*.seed "$KEY_PAIRS_DIR"/
+    mv ./*.key "$KEY_PAIRS_DIR"/
 
     popd > /dev/null
 
@@ -520,6 +520,10 @@ done
 # IKA System Initialization
 #############################
 
+# sleep 30 seconds (needed for initialize)
+#sleep 30
+echo "sleeping for 30 seconds"
+
 # Copy publisher sui_config to SUI_CONFIG_PATH
 rm -rf "$SUI_CONFIG_PATH"
 mkdir -p "$SUI_CONFIG_PATH"
@@ -537,7 +541,7 @@ mv $PUBLISHER_DIR/ika_publish_config.json $PUBLISHER_DIR/ika_config.json
 PUBLISHER_CONFIG_FILE="$PUBLISHER_DIR/ika_config.json"
 
 
-IKA_DWALLET_2PC_MPC_PACKAGE_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_CONFIG_FILE")
+IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_CONFIG_FILE")
 
 echo "Ika dWallet Coordinator Object ID: placeholder"
 
@@ -550,7 +554,7 @@ locals {
     ika_package_id                    = "${IKA_PACKAGE_ID}"
     ika_system_package_id             = "${IKA_SYSTEM_PACKAGE_ID}"
     ika_system_object_id              = "${IKA_SYSTEM_OBJECT_ID}"
-    ika_dwallet_coordinator_object_id = "${IKA_DWALLET_2PC_MPC_PACKAGE_ID}"
+    ika_dwallet_coordinator_object_id = "${IKA_DWALLET_COORDINATOR_OBJECT_ID}"
   }
 }
 EOF

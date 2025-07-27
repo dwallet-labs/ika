@@ -27,8 +27,7 @@ use consensus_config::Committee as ConsensusCommittee;
 use consensus_core::CommitConsumerMonitor;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityName;
-use ika_types::digests::{ConsensusCommitDigest, MessageDigest};
-use ika_types::message::DWalletCheckpointMessageKind;
+use ika_types::digests::ConsensusCommitDigest;
 use ika_types::messages_consensus::{
     AuthorityIndex, ConsensusTransaction, ConsensusTransactionKey, ConsensusTransactionKind,
 };
@@ -434,7 +433,6 @@ pub struct SequencedConsensusTransaction {
 #[derive(Debug, Clone)]
 pub enum SequencedConsensusTransactionKind {
     External(ConsensusTransaction),
-    System(DWalletCheckpointMessageKind),
 }
 
 impl Serialize for SequencedConsensusTransactionKind {
@@ -458,7 +456,6 @@ impl<'de> Deserialize<'de> for SequencedConsensusTransactionKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum SerializableSequencedConsensusTransactionKind {
     External(ConsensusTransaction),
-    System(DWalletCheckpointMessageKind),
 }
 
 impl From<&SequencedConsensusTransactionKind> for SerializableSequencedConsensusTransactionKind {
@@ -466,9 +463,6 @@ impl From<&SequencedConsensusTransactionKind> for SerializableSequencedConsensus
         match kind {
             SequencedConsensusTransactionKind::External(ext) => {
                 SerializableSequencedConsensusTransactionKind::External(ext.clone())
-            }
-            SequencedConsensusTransactionKind::System(txn) => {
-                SerializableSequencedConsensusTransactionKind::System(txn.clone())
             }
         }
     }
@@ -480,9 +474,6 @@ impl From<SerializableSequencedConsensusTransactionKind> for SequencedConsensusT
             SerializableSequencedConsensusTransactionKind::External(ext) => {
                 SequencedConsensusTransactionKind::External(ext)
             }
-            SerializableSequencedConsensusTransactionKind::System(txn) => {
-                SequencedConsensusTransactionKind::System(txn)
-            }
         }
     }
 }
@@ -490,7 +481,6 @@ impl From<SerializableSequencedConsensusTransactionKind> for SequencedConsensusT
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Debug, Ord, PartialOrd)]
 pub enum SequencedConsensusTransactionKey {
     External(ConsensusTransactionKey),
-    System(MessageDigest),
 }
 
 impl SequencedConsensusTransactionKind {
@@ -499,16 +489,12 @@ impl SequencedConsensusTransactionKind {
             SequencedConsensusTransactionKind::External(ext) => {
                 SequencedConsensusTransactionKey::External(ext.key())
             }
-            SequencedConsensusTransactionKind::System(txn) => {
-                SequencedConsensusTransactionKey::System(txn.digest())
-            }
         }
     }
 
     pub fn get_tracking_id(&self) -> u64 {
         match self {
             SequencedConsensusTransactionKind::External(ext) => ext.get_tracking_id(),
-            SequencedConsensusTransactionKind::System(_txn) => 0,
         }
     }
 }
@@ -520,13 +506,6 @@ impl SequencedConsensusTransaction {
 
     pub fn key(&self) -> SequencedConsensusTransactionKey {
         self.transaction.key()
-    }
-
-    pub fn is_system(&self) -> bool {
-        matches!(
-            self.transaction,
-            SequencedConsensusTransactionKind::System(_)
-        )
     }
 }
 

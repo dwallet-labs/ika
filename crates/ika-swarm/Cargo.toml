@@ -16,8 +16,6 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["full"] }
 futures.workspace = true
 tempfile.workspace = true
-tonic-health.workspace = true
-tap.workspace = true
 prometheus.workspace = true
 rayon.workspace = true
 ika-config.workspace = true
@@ -31,10 +29,8 @@ sui-types.workspace = true
 # for `workspace.dependencies.ika-node`, this could become a hard error in the future.
 ika-node = { path = "../ika-node", default-features = false }
 ika-protocol-config.workspace = true
-sui-tls.workspace = true
 ika-types.workspace = true
 mysten-metrics.workspace = true
-mysten-network.workspace = true
 telemetry-subscribers.workspace = true
 
 [target.'cfg(msim)'.dependencies]

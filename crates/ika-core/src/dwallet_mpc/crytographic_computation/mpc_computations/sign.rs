@@ -58,7 +58,7 @@ fn generate_expected_decrypters(
     let mut seed_rng = rand_chacha::ChaCha20Rng::from_seed(session_identifier.into_bytes());
     let expected_decrypters = access_structure
         .random_subset_with_target_weight(expected_decrypters_weight, &mut seed_rng)
-        .map_err(|e| DwalletMPCError::TwoPCMPCError(e.to_string()))?;
+        .map_err(DwalletMPCError::from)?;
 
     Ok(expected_decrypters)
 }
@@ -244,15 +244,14 @@ pub(crate) fn verify_partial_signature(
                 bcs::from_bytes(&presign)?;
             let partial: <AsyncProtocol as twopc_mpc::sign::Protocol>::SignMessage =
                 bcs::from_bytes(&partially_signed_message)?;
+
             twopc_mpc::sign::decentralized_party::signature_partial_decryption_round::Party::verify_encryption_of_signature_parts_prehash_class_groups(
                 protocol_public_parameters,
                 dkg_output,
                 presign,
                 partial,
                 message,
-            ).map_err(|err| {
-                DwalletMPCError::TwoPCMPCError(format!("{err:?}"))
-            })
+            ).map_err(DwalletMPCError::from)
         }
     }
 }

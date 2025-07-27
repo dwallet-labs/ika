@@ -36,7 +36,7 @@ RUN cargo build --profile ${PROFILE} --locked --bin ika-node
 # ==========================
 # Runtime stage
 # ==========================
-FROM debian:bullseye-slim AS runtime
+FROM debian:stable-slim AS runtime
 
 ARG WORKDIR=/opt
 ARG BUILD_DATE

@@ -12,18 +12,12 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 bin-version.workspace = true
-bcs.workspace = true
 dwallet-rng.workspace = true
 dwallet-classgroups-types.workspace = true
 clap.workspace = true
-datatest-stable.workspace = true
 http.workspace = true
-insta.workspace = true
-miette.workspace = true
-rand.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-shlex.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 
@@ -31,16 +25,12 @@ ika-config.workspace = true
 ika-swarm-config.workspace = true
 ika-types.workspace = true
 ika-swarm.workspace = true
-shared-crypto.workspace = true
 
 fastcrypto.workspace = true
 
 colored.workspace = true
 
-tempfile.workspace = true
 telemetry-subscribers.workspace = true
-
-move-package.workspace = true
 
 sui.workspace = true
 sui-config.workspace = true
@@ -48,20 +38,15 @@ sui-config.workspace = true
 sui-keys.workspace = true
 sui-sdk.workspace = true
 sui-types.workspace = true
-ika-move-packages.workspace = true
 serde_yaml.workspace = true
 ika-sui-client.workspace = true
-hex.workspace = true
+bcs.workspace = true
+dwallet-mpc-types.workspace = true
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 jemalloc-ctl.workspace = true
 
 [dev-dependencies]
-fs_extra.workspace = true
-expect-test.workspace = true
-assert_cmd.workspace = true
-
-test-cluster.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(msim)'.dependencies]
@@ -69,3 +54,6 @@ msim.workspace = true
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["jemalloc-ctl"]
+
+[features]
+protocol-commands = ['ika-sui-client/protocol-commands']

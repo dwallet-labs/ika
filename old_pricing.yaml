@@ -1,0 +1,72 @@
+- key:
+    curve: 0
+    signature_algorithm: null
+    protocol: 0
+  value:
+    fee_ika: 0
+    gas_fee_reimbursement_sui: 0
+    gas_fee_reimbursement_sui_for_system_calls: 0
+- key:
+    curve: 0
+    signature_algorithm: null
+    protocol: 1
+  value:
+    fee_ika: 0
+    gas_fee_reimbursement_sui: 0
+    gas_fee_reimbursement_sui_for_system_calls: 0
+- key:
+    curve: 0
+    signature_algorithm: null
+    protocol: 2
+  value:
+    fee_ika: 0
+    gas_fee_reimbursement_sui: 0
+    gas_fee_reimbursement_sui_for_system_calls: 0
+- key:
+    curve: 0
+    signature_algorithm: null
+    protocol: 3
+  value:
+    fee_ika: 0
+    gas_fee_reimbursement_sui: 0
+    gas_fee_reimbursement_sui_for_system_calls: 0
+- key:
+    curve: 0
+    signature_algorithm: null
+    protocol: 4
+  value:
+    fee_ika: 0
+    gas_fee_reimbursement_sui: 0
+    gas_fee_reimbursement_sui_for_system_calls: 0
+- key:
+    curve: 0
+    signature_algorithm: 0
+    protocol: 5
+  value:
+    fee_ika: 0
+    gas_fee_reimbursement_sui: 0
+    gas_fee_reimbursement_sui_for_system_calls: 0
+- key:
+    curve: 0
+    signature_algorithm: 0
+    protocol: 6
+  value:
+    fee_ika: 0
+    gas_fee_reimbursement_sui: 0
+    gas_fee_reimbursement_sui_for_system_calls: 0
+- key:
+    curve: 0
+    signature_algorithm: 0
+    protocol: 7
+  value:
+    fee_ika: 0
+    gas_fee_reimbursement_sui: 0
+    gas_fee_reimbursement_sui_for_system_calls: 0
+- key:
+    curve: 0
+    signature_algorithm: 0
+    protocol: 8
+  value:
+    fee_ika: 0
+    gas_fee_reimbursement_sui: 0
+    gas_fee_reimbursement_sui_for_system_calls: 0

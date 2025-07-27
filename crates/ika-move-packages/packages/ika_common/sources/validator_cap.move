@@ -1,7 +1,9 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-module ika_system::validator_cap;
+module ika_common::validator_cap;
+
+use ika_common::system_object_cap::SystemObjectCap;
 
 // === Structs ===
 
@@ -38,9 +40,9 @@ public struct VerifiedValidatorCommissionCap has drop {
     validator_id: ID,
 }
 
-// === Package Functions ===
+// === Public Functions ===
 
-public(package) fun new_validator_cap(validator_id: ID, ctx: &mut TxContext): ValidatorCap {
+public fun new_validator_cap(validator_id: ID, ctx: &mut TxContext, _: &SystemObjectCap): ValidatorCap {
     ValidatorCap {
         id: object::new(ctx),
         validator_id,
@@ -49,9 +51,10 @@ public(package) fun new_validator_cap(validator_id: ID, ctx: &mut TxContext): Va
 
 /// Should be only called by the friend modules when adding a `Validator`
 /// or rotating an existing validator's `operation_cap_id`.
-public(package) fun new_validator_operation_cap(
+public fun new_validator_operation_cap(
     validator_id: ID,
     ctx: &mut TxContext,
+    _: &SystemObjectCap,
 ): ValidatorOperationCap {
     ValidatorOperationCap {
         id: object::new(ctx),
@@ -61,9 +64,10 @@ public(package) fun new_validator_operation_cap(
 
 /// Should be only called by the friend modules when adding a `Validator`
 /// or rotating an existing validator's `commission_cap_id`.
-public(package) fun new_validator_commission_cap(
+public fun new_validator_commission_cap(
     validator_id: ID,
     ctx: &mut TxContext,
+    _: &SystemObjectCap,
 ): ValidatorCommissionCap {
     ValidatorCommissionCap {
         id: object::new(ctx),
@@ -71,45 +75,45 @@ public(package) fun new_validator_commission_cap(
     }
 }
 
-public(package) fun create_verified_validator_cap(cap: &ValidatorCap): VerifiedValidatorCap {
+public fun create_verified_validator_cap(cap: &ValidatorCap, _: &SystemObjectCap): VerifiedValidatorCap {
     VerifiedValidatorCap {
         validator_id: cap.validator_id,
     }
 }
 
-public(package) fun create_verified_validator_operation_cap(
+public fun create_verified_validator_operation_cap(
     cap: &ValidatorOperationCap,
+    _: &SystemObjectCap,
 ): VerifiedValidatorOperationCap {
     VerifiedValidatorOperationCap {
         validator_id: cap.validator_id,
     }
 }
 
-public(package) fun create_verified_validator_commission_cap(
+public fun create_verified_validator_commission_cap(
     cap: &ValidatorCommissionCap,
+    _: &SystemObjectCap,
 ): VerifiedValidatorCommissionCap {
     VerifiedValidatorCommissionCap {
         validator_id: cap.validator_id,
     }
 }
 
-public(package) fun validator_id(cap: &ValidatorCap): ID {
+public fun validator_id(cap: &ValidatorCap): ID {
     cap.validator_id
 }
 
-public(package) fun validator_operation_cap_validator_id(cap: &ValidatorOperationCap): ID {
+public fun validator_operation_cap_validator_id(cap: &ValidatorOperationCap): ID {
     cap.validator_id
 }
 
 public use fun validator_operation_cap_validator_id as ValidatorOperationCap.validator_id;
 
-public(package) fun validator_commission_cap_validator_id(cap: &ValidatorCommissionCap): ID {
+public fun validator_commission_cap_validator_id(cap: &ValidatorCommissionCap): ID {
     cap.validator_id
 }
 
 public use fun validator_commission_cap_validator_id as ValidatorCommissionCap.validator_id;
-
-// === Public Functions ===
 
 public fun verified_validator_cap_validator_id(cap: &VerifiedValidatorCap): ID {
     cap.validator_id

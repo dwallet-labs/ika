@@ -1,1 +1,1 @@
-RUST_LOG=warn,ika=debug,ika_node=debug,ika_core=debug RUST_MIN_STACK=67108864 cargo run --release --bin ika -- start 2>&1 | tee debug_output.txt
+RUST_LOG=warn,ika=debug,ika_node=debug,ika_core=debug RUST_MIN_STACK=67108864 cargo run --release --no-default-features --bin ika -- start 2>&1 | tee debug_output.txt

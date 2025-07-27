@@ -6,9 +6,7 @@ use crate::message::DWalletCheckpointMessageKind;
 use crate::messages_dwallet_checkpoint::{
     DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
-use crate::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCMessageKey, DWalletMPCOutput, SessionIdentifier,
-};
+use crate::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
 use crate::messages_system_checkpoints::{
     SystemCheckpointSequenceNumber, SystemCheckpointSignatureMessage,
 };
@@ -48,7 +46,8 @@ pub enum ConsensusTransactionKey {
     DWalletCheckpointSignature(AuthorityName, DWalletCheckpointSequenceNumber),
     CapabilityNotification(AuthorityName, u64 /* generation */),
     EndOfPublish(AuthorityName),
-    DWalletMPCMessage(DWalletMPCMessageKey),
+    /// Authority that sent the message, the session identifier, and the message itself.
+    DWalletMPCMessage(AuthorityName, SessionIdentifier, Vec<u8>),
     // Placing the consensus message in the `key`, allows re-voting in case of disagreement.
     DWalletMPCOutput(
         AuthorityName,
@@ -76,8 +75,11 @@ impl Debug for ConsensusTransactionKey {
                 name.concise(),
                 generation
             ),
-            Self::DWalletMPCMessage(message) => {
-                write!(f, "DWalletMPCMessage({message:?})",)
+            Self::DWalletMPCMessage(authority, session_identifier, message) => {
+                write!(
+                    f,
+                    "DWalletMPCMessage({authority:?}, {session_identifier:?}, {message:?})"
+                )
             }
             Self::DWalletMPCOutput(
                 authority,
@@ -123,7 +125,7 @@ pub struct AuthorityCapabilitiesV1 {
 
     /// A list of package id to move package digest to
     /// determine whether to do a protocol upgrade on sui.
-    pub available_move_packages: Vec<(ObjectID, MovePackageDigest)>,
+    pub move_contracts_to_upgrade: Vec<(ObjectID, MovePackageDigest)>,
 }
 
 impl AuthorityCapabilitiesV1 {
@@ -131,7 +133,7 @@ impl AuthorityCapabilitiesV1 {
         authority: AuthorityName,
         chain: Chain,
         supported_protocol_versions: SupportedProtocolVersions,
-        available_move_packages: Vec<(ObjectID, MovePackageDigest)>,
+        move_contracts_to_upgrade: Vec<(ObjectID, MovePackageDigest)>,
     ) -> Self {
         let generation = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -147,7 +149,7 @@ impl AuthorityCapabilitiesV1 {
                     supported_protocol_versions,
                     chain,
                 ),
-            available_move_packages,
+            move_contracts_to_upgrade,
         }
     }
 }
@@ -161,7 +163,7 @@ impl Debug for AuthorityCapabilitiesV1 {
                 "supported_protocol_versions",
                 &self.supported_protocol_versions,
             )
-            .field("available_move_packages", &self.available_move_packages)
+            .field("move_contracts_to_upgrade", &self.move_contracts_to_upgrade)
             .finish()
     }
 }
@@ -192,20 +194,17 @@ impl ConsensusTransaction {
         authority: AuthorityName,
         session_identifier: SessionIdentifier,
         message: Vec<u8>,
-        round_number: u64,
     ) -> Self {
         let mut hasher = DefaultHasher::new();
         authority.hash(&mut hasher);
         session_identifier.hash(&mut hasher);
         message.hash(&mut hasher);
-        round_number.hash(&mut hasher);
         let tracking_id = hasher.finish().to_le_bytes();
         Self {
             tracking_id,
             kind: ConsensusTransactionKind::DWalletMPCMessage(DWalletMPCMessage {
                 message,
                 authority,
-                round_number,
                 session_identifier,
             }),
         }
@@ -263,13 +262,13 @@ impl ConsensusTransaction {
         }
     }
 
-    pub fn new_capability_notification_v1(data: AuthorityCapabilitiesV1) -> Self {
+    pub fn new_capability_notification_v1(capabilities: AuthorityCapabilitiesV1) -> Self {
         let mut hasher = DefaultHasher::new();
-        data.authority.hash(&mut hasher);
+        capabilities.hash(&mut hasher);
         let tracking_id = hasher.finish().to_le_bytes();
         Self {
             tracking_id,
-            kind: ConsensusTransactionKind::CapabilityNotificationV1(data),
+            kind: ConsensusTransactionKind::CapabilityNotificationV1(capabilities),
         }
     }
 
@@ -291,11 +290,11 @@ impl ConsensusTransaction {
                 ConsensusTransactionKey::CapabilityNotification(cap.authority, cap.generation)
             }
             ConsensusTransactionKind::DWalletMPCMessage(message) => {
-                ConsensusTransactionKey::DWalletMPCMessage(DWalletMPCMessageKey {
-                    authority: message.authority,
-                    session_identifier: message.session_identifier,
-                    round_number: message.round_number,
-                })
+                ConsensusTransactionKey::DWalletMPCMessage(
+                    message.authority,
+                    message.session_identifier,
+                    message.message.clone(),
+                )
             }
             ConsensusTransactionKind::DWalletMPCOutput(output) => {
                 ConsensusTransactionKey::DWalletMPCOutput(

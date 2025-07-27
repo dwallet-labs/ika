@@ -3,7 +3,6 @@
 
 module ika_system::validator_info;
 
-use ika_common::class_groups_public_key_and_proof::ClassGroupsPublicKeyAndProof;
 use ika_common::extended_field::{Self, ExtendedField};
 use ika_common::multiaddr;
 use ika_system::validator_metadata::ValidatorMetadata;
@@ -76,18 +75,21 @@ public struct ValidatorInfo has store {
     network_pubkey_bytes: vector<u8>,
     /// The public key bytes corresponding to the consensus
     consensus_pubkey_bytes: vector<u8>,
-    /// The validator's Class Groups public key and its associated proof.
+    /// The validator's MPC public data.
     /// This key is used for the network DKG process and for resharing the network MPC key
-    class_groups_pubkey_and_proof_bytes: TableVec<vector<u8>>,
+    /// Must always contain value 
+    mpc_data_bytes: Option<TableVec<vector<u8>>>,
     /// Next epoch configurations - only take effect in the next epoch
     /// If none, current value will stay unchanged.
     next_epoch_protocol_pubkey_bytes: Option<vector<u8>>,
     next_epoch_network_pubkey_bytes: Option<vector<u8>>,
     next_epoch_consensus_pubkey_bytes: Option<vector<u8>>,
-    next_epoch_class_groups_pubkey_and_proof_bytes: Option<ClassGroupsPublicKeyAndProof>,
+    next_epoch_mpc_data_bytes: Option<TableVec<vector<u8>>>,
     next_epoch_network_address: Option<String>,
     next_epoch_p2p_address: Option<String>,
     next_epoch_consensus_address: Option<String>,
+
+    previous_mpc_data_bytes: Option<TableVec<vector<u8>>>,
     /// Extended metadata field for additional validator information
     metadata: ExtendedField<ValidatorMetadata>,
 }
@@ -102,7 +104,7 @@ public(package) fun new(
     protocol_pubkey_bytes: vector<u8>,
     network_pubkey_bytes: vector<u8>,
     consensus_pubkey_bytes: vector<u8>,
-    class_groups_pubkey_and_proof_bytes: ClassGroupsPublicKeyAndProof,
+    mpc_data_bytes: TableVec<vector<u8>>,
     proof_of_possession_bytes: vector<u8>,
     network_address: String,
     p2p_address: String,
@@ -111,7 +113,6 @@ public(package) fun new(
     ctx: &mut TxContext,
 ): ValidatorInfo {
     let protocol_pubkey = g1_to_uncompressed_g1(&g1_from_bytes(&protocol_pubkey_bytes));
-    let class_groups_pubkey_and_proof_bytes = class_groups_pubkey_and_proof_bytes.destroy();
 
     // Verify proof of possession for protocol public key
     assert!(
@@ -131,17 +132,18 @@ public(package) fun new(
         protocol_pubkey,
         network_pubkey_bytes,
         consensus_pubkey_bytes,
-        class_groups_pubkey_and_proof_bytes,
+        mpc_data_bytes: option::some(mpc_data_bytes),
         network_address,
         p2p_address,
         consensus_address,
         next_epoch_protocol_pubkey_bytes: option::none(),
         next_epoch_network_pubkey_bytes: option::none(),
         next_epoch_consensus_pubkey_bytes: option::none(),
-        next_epoch_class_groups_pubkey_and_proof_bytes: option::none(),
+        next_epoch_mpc_data_bytes: option::none(),
         next_epoch_network_address: option::none(),
         next_epoch_p2p_address: option::none(),
         next_epoch_consensus_address: option::none(),
+        previous_mpc_data_bytes: option::none(),
         metadata: extended_field::new(metadata, ctx),
     };
     validator_info.validate();
@@ -227,18 +229,38 @@ public(package) fun set_next_epoch_consensus_pubkey_bytes(
     self.validate();
 }
 
-/// Sets class groups public key and proof for next epoch.
-public(package) fun set_next_epoch_class_groups_pubkey_and_proof_bytes(
+/// Sets the MPC public data for the next epoch.
+/// 
+/// - If `next_epoch_mpc_data_bytes` is already set, 
+///   this function returns its stored value and replaces it with the new value.
+/// - If it is not set, but `previous_mpc_data_bytes` is set, 
+///   this function returns the value from the previous field and replaces it with the new value.
+/// - If neither is set, the new value is simply stored, and the function returns `None`.
+/// 
+/// The validator must drop the returned value if it is not `None`.
+/// 
+/// Using `Option` for the MPC data helps avoid latency issues due to large data sizes.
+public(package) fun set_next_epoch_mpc_data_bytes(
     self: &mut ValidatorInfo,
-    class_groups_pubkey_and_proof: ClassGroupsPublicKeyAndProof,
-) {
-    let old_value = self
-        .next_epoch_class_groups_pubkey_and_proof_bytes
-        .swap_or_fill(class_groups_pubkey_and_proof);
-    old_value.destroy!(|v| {
-        v.drop();
-    });
-    self.validate();
+    mpc_data: TableVec<vector<u8>>,
+): Option<TableVec<vector<u8>>> {
+    if (self.next_epoch_mpc_data_bytes.is_some()) {
+        let next_epoch_mpc_data_bytes =
+            self.next_epoch_mpc_data_bytes.extract();
+        self.next_epoch_mpc_data_bytes.fill(mpc_data);
+        self.validate();
+        option::some(next_epoch_mpc_data_bytes)
+    } else if (self.previous_mpc_data_bytes.is_some()) {
+        let previous_mpc_data_bytes =
+            self.previous_mpc_data_bytes.extract();
+        self.next_epoch_mpc_data_bytes.fill(mpc_data);
+        self.validate();
+        option::some(previous_mpc_data_bytes)
+    } else {
+        self.next_epoch_mpc_data_bytes.fill(mpc_data);
+        self.validate();
+        option::none()
+    }
 }
 
 /// Effectuate all staged next epoch metadata for this validator.
@@ -276,14 +298,25 @@ public(package) fun rotate_next_epoch_info(self: &mut ValidatorInfo) {
         self.next_epoch_consensus_pubkey_bytes = option::none();
     };
 
-    if (self.next_epoch_class_groups_pubkey_and_proof_bytes.is_some()) {
-        let next_epoch_class_groups_pubkey_and_proof_bytes = self
-            .next_epoch_class_groups_pubkey_and_proof_bytes
-            .extract();
-        update_class_groups_key_and_proof(
-            &mut self.class_groups_pubkey_and_proof_bytes,
-            next_epoch_class_groups_pubkey_and_proof_bytes,
-        );
+    // `previous_mpc_data_bytes` cannot be set if `next_epoch_mpc_data_bytes` is already set.
+    // This situation should never occur. If it does, it is considered an error,
+    // so we ignore `next_epoch_mpc_data_bytes` and retain the current one.
+    if (self.next_epoch_mpc_data_bytes.is_some() 
+        && self.previous_mpc_data_bytes.is_none()
+    ) {
+        let next_epoch_mpc_data_bytes =
+            self.next_epoch_mpc_data_bytes.extract();
+
+        // At this point, we can assume that the current MPC public data bytes
+        // are set set, so we can safely swap them.
+        let previous_mpc_data_bytes = self.mpc_data_bytes
+            .swap(
+                next_epoch_mpc_data_bytes
+            );
+
+        // At this point, we can assume that the previous MPC public data bytes
+        // are not set, so we can safely fill them.
+        self.previous_mpc_data_bytes.fill(previous_mpc_data_bytes);
     };
 }
 
@@ -400,16 +433,32 @@ public(package) fun validate(self: &ValidatorInfo) {
 public(package) fun destroy(self: ValidatorInfo) {
     let ValidatorInfo {
         metadata,
-        mut class_groups_pubkey_and_proof_bytes,
-        next_epoch_class_groups_pubkey_and_proof_bytes,
+        mpc_data_bytes,
+        next_epoch_mpc_data_bytes,
+        previous_mpc_data_bytes,
         ..,
     } = self;
     metadata.destroy();
-    while (class_groups_pubkey_and_proof_bytes.length() != 0) {
-        class_groups_pubkey_and_proof_bytes.pop_back();
-    };
-    class_groups_pubkey_and_proof_bytes.destroy_empty();
-    next_epoch_class_groups_pubkey_and_proof_bytes.destroy!(|c| c.drop());
+        mpc_data_bytes.destroy!(|mut mpc_data_bytes| {
+        while (mpc_data_bytes.length() != 0) {
+            mpc_data_bytes.pop_back();
+        };
+        mpc_data_bytes.destroy_empty();
+    });
+
+    next_epoch_mpc_data_bytes.destroy!(|mut next_epoch_mpc_data_bytes| {
+        while (next_epoch_mpc_data_bytes.length() != 0) {
+            next_epoch_mpc_data_bytes.pop_back();
+        };
+        next_epoch_mpc_data_bytes.destroy_empty();
+    });
+
+    previous_mpc_data_bytes.destroy!(|mut previous_mpc_data_bytes| {
+        while (previous_mpc_data_bytes.length() != 0) {
+            previous_mpc_data_bytes.pop_back();
+        };
+        previous_mpc_data_bytes.destroy_empty();
+    });
 }
 
 public(package) fun is_duplicate(self: &ValidatorInfo, other: &ValidatorInfo): bool {
@@ -494,9 +543,9 @@ public fun consensus_pubkey_bytes(self: &ValidatorInfo): &vector<u8> {
     &self.consensus_pubkey_bytes
 }
 
-/// Returns the class groups public key and proof bytes
-public fun class_groups_pubkey_and_proof_bytes(self: &ValidatorInfo): &TableVec<vector<u8>> {
-    &self.class_groups_pubkey_and_proof_bytes
+/// Returns the MPC public data bytes
+public fun mpc_data_bytes(self: &ValidatorInfo): &Option<TableVec<vector<u8>>> {
+    &self.mpc_data_bytes
 }
 
 /// Returns the next epoch network address
@@ -529,11 +578,19 @@ public fun next_epoch_consensus_pubkey_bytes(self: &ValidatorInfo): &Option<vect
     &self.next_epoch_consensus_pubkey_bytes
 }
 
-/// Returns the next epoch class groups public key and proof
-public fun next_epoch_class_groups_pubkey_and_proof_bytes(
+/// Returns the next epoch MPC public data
+public fun next_epoch_mpc_data_bytes(
     self: &ValidatorInfo,
-): &Option<ClassGroupsPublicKeyAndProof> {
-    &self.next_epoch_class_groups_pubkey_and_proof_bytes
+): &Option<TableVec<vector<u8>>> {
+    &self.next_epoch_mpc_data_bytes
+}
+
+
+/// Returns the previous MPC public data
+public fun previous_mpc_data_bytes(
+    self: &ValidatorInfo,
+): &Option<TableVec<vector<u8>>> {
+    &self.previous_mpc_data_bytes
 }
 
 // === Private Functions ===
@@ -556,20 +613,6 @@ fun is_equal_some<T>(a: &Option<T>, b: &Option<T>): bool {
     }
 }
 
-/// Updates the class groups public key and proof with new values.
-fun update_class_groups_key_and_proof(
-    class_groups_pubkey_and_proof: &mut TableVec<vector<u8>>,
-    new_class_groups_key_and_proof: ClassGroupsPublicKeyAndProof,
-) {
-    let mut new_class_groups_key_and_proof = new_class_groups_key_and_proof.destroy();
-    let mut i = class_groups_pubkey_and_proof.length() - 1;
-    while (!new_class_groups_key_and_proof.is_empty()) {
-        *class_groups_pubkey_and_proof.borrow_mut(i) = new_class_groups_key_and_proof.pop_back();
-        i = i - 1;
-    };
-    new_class_groups_key_and_proof.destroy_empty();
-}
-
 // === Test Functions ===
 
 #[test_only]
@@ -584,7 +627,7 @@ public fun new_for_testing(public_key: vector<u8>): ValidatorInfo {
     let ctx = &mut tx_context::dummy();
     let validator_id = ctx.fresh_object_address().to_id();
     let protocol_pubkey = g1_to_uncompressed_g1(&g1_from_bytes(&public_key));
-    let class_groups_bytes = table_vec::empty(ctx);
+    let mpc_data_bytes = option::some(table_vec::empty<vector<u8>>(ctx));
 
     ValidatorInfo {
         validator_id,
@@ -596,14 +639,15 @@ public fun new_for_testing(public_key: vector<u8>): ValidatorInfo {
         protocol_pubkey,
         network_pubkey_bytes: vector[],
         consensus_pubkey_bytes: vector[],
-        class_groups_pubkey_and_proof_bytes: class_groups_bytes,
+        mpc_data_bytes: mpc_data_bytes,
         next_epoch_protocol_pubkey_bytes: option::none(),
         next_epoch_network_pubkey_bytes: option::none(),
         next_epoch_consensus_pubkey_bytes: option::none(),
-        next_epoch_class_groups_pubkey_and_proof_bytes: option::none(),
+        next_epoch_mpc_data_bytes: option::none(),
         next_epoch_network_address: option::none(),
         next_epoch_p2p_address: option::none(),
         next_epoch_consensus_address: option::none(),
+        previous_mpc_data_bytes: option::none(),
         metadata: extended_field::new(validator_metadata::default(), ctx),
     }
 }

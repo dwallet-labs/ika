@@ -12,6 +12,7 @@ use crate::crypto::{AuthorityName, AuthorityPublicKey, NetworkPublicKey};
 use anemo::PeerId;
 use anemo::types::{PeerAffinity, PeerInfo};
 use consensus_config::{Authority, Committee as ConsensusCommittee};
+use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
 use fastcrypto::bls12381;
 use fastcrypto::traits::{KeyPair, ToFromBytes};
 use ika_protocol_config::ProtocolVersion;
@@ -142,6 +143,11 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .active_validators
             .iter()
             .map(|validator| {
+                let class_groups_public_key_and_proof =
+                    validator.mpc_data.clone().and_then(|mpc_data| {
+                        bcs::from_bytes(&mpc_data.class_groups_public_key_and_proof()).ok()
+                    });
+
                 (
                     validator.authority_name(),
                     (
@@ -151,9 +157,7 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
                             network_address: validator.network_address.clone(),
                             consensus_address: validator.consensus_address.clone(),
                             network_public_key: Some(validator.network_pubkey.clone()),
-                            class_groups_public_key_and_proof: validator
-                                .class_groups_public_key_and_proof
-                                .clone(),
+                            class_groups_public_key_and_proof,
                         },
                     ),
                 )
@@ -173,14 +177,23 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .active_validators
             .iter()
             .filter_map(|validator| {
-                validator.class_groups_public_key_and_proof.clone().map(
-                    |class_groups_public_key_and_proof| {
-                        (
-                            validator.authority_name(),
-                            class_groups_public_key_and_proof,
-                        )
-                    },
-                )
+                validator.mpc_data.clone().and_then(|mpc_data| {
+                    let class_groups_public_key_and_proof =
+                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
+                            &mpc_data.class_groups_public_key_and_proof(),
+                        );
+
+                    match class_groups_public_key_and_proof {
+                        Ok(key_and_proof) => Some((validator.authority_name(), key_and_proof)),
+                        Err(e) => {
+                            error!(
+                                "Failed to deserialize class groups public key and proof: {}",
+                                e
+                            );
+                            None
+                        }
+                    }
+                })
             })
             .collect();
         Committee::new(
@@ -291,6 +304,8 @@ pub trait EpochStartValidatorInfoTrait {
     fn authority_name(&self) -> AuthorityName;
     fn get_name(&self) -> String;
     fn get_network_pubkey(&self) -> NetworkPublicKey;
+    fn get_consensus_pubkey(&self) -> NetworkPublicKey;
+    fn get_mpc_data(&self) -> Option<VersionedMPCData>;
 }
 
 #[enum_dispatch(EpochStartValidatorInfoTrait)]
@@ -304,7 +319,7 @@ pub struct EpochStartValidatorInfoV1 {
     pub protocol_pubkey: AuthorityPublicKey,
     pub network_pubkey: NetworkPublicKey,
     pub consensus_pubkey: NetworkPublicKey,
-    pub class_groups_public_key_and_proof: Option<ClassGroupsEncryptionKeyAndProof>,
+    pub mpc_data: Option<VersionedMPCData>,
     pub network_address: Multiaddr,
     pub p2p_address: Multiaddr,
     pub consensus_address: Multiaddr,
@@ -324,5 +339,13 @@ impl EpochStartValidatorInfoTrait for EpochStartValidatorInfoV1 {
 
     fn get_network_pubkey(&self) -> NetworkPublicKey {
         self.network_pubkey.clone()
+    }
+
+    fn get_consensus_pubkey(&self) -> NetworkPublicKey {
+        self.consensus_pubkey.clone()
+    }
+
+    fn get_mpc_data(&self) -> Option<VersionedMPCData> {
+        self.mpc_data.clone()
     }
 }

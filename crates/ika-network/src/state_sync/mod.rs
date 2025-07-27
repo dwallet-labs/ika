@@ -1630,7 +1630,7 @@ async fn sync_system_checkpoint_messages_from_archive<S>(
                 )
                 .await
             {
-                warn!(err=?err, "State sync from an archive failed with error");
+                warn!(error=?err, "State sync from an archive failed with error");
             } else {
                 info!(
                     system_checkpoints = system_checkpoint_counter.load(Ordering::Relaxed),

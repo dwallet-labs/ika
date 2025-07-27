@@ -9,7 +9,6 @@ group.workspace = true
 commitment.workspace = true
 mpc.workspace = true
 fastcrypto.workspace = true
-base64.workspace = true
 ika-types.workspace = true
 rand_chacha.workspace = true
 serde.workspace = true

@@ -11,27 +11,23 @@ workspace = true
 
 [dependencies]
 dwallet-rng.workspace = true
-dwallet-mpc-types.workspace = true
-dwallet-classgroups-types.workspace = true
 anemo.workspace = true
 anyhow = { workspace = true, features = ["backtrace"] }
 dirs.workspace = true
-fastcrypto.workspace = true
 once_cell.workspace = true
 rand = "0.8" # use old version for compatability with fastcrypto
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_with.workspace = true
-tracing.workspace = true
 prometheus.workspace = true
 bcs.workspace = true
 
 consensus-config.workspace = true
-sui-keys.workspace = true
 ika-types.workspace = true
 
 sui-types.workspace = true
 sui-config.workspace = true
 base64.workspace = true
+dwallet-mpc-types.workspace = true
 
 [dev-dependencies]
 sui-types = { workspace = true }

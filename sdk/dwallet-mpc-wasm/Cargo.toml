@@ -53,9 +53,6 @@ publish = false
 [dependencies]
 dwallet-mpc-centralized-party = { path = "../../crates/dwallet-mpc-centralized-party", features = ["wasm_js"] }
 anyhow = "1.0.95"
-getrandom = { version = "0.2.16", features = ["js"] } # TODO: idk why, but we need this, also this is old version
-group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["wasm_js"], rev = "ed85dfa"}
-
 wasm-bindgen = "0.2.100"
 serde-wasm-bindgen = "0.6.5"
 

@@ -4,8 +4,9 @@
 //! The SuiSyncer module handles synchronizing Events emitted
 //! on the Sui blockchain from concerned modules of `ika_system` package.
 use crate::sui_connector::metrics::SuiConnectorMetrics;
+use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
-use ika_types::committee::{Committee, StakeUnit};
+use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, StakeUnit};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
@@ -119,6 +120,7 @@ where
                 system_inner.epoch() + 1,
                 new_next_bls_committee.quorum_threshold,
                 new_next_bls_committee.validity_threshold,
+                true,
             )
             .await
             {
@@ -130,7 +132,7 @@ where
             };
             let committee_epoch = committee.epoch();
             if let Err(err) = next_epoch_committee_sender.send(committee) {
-                error!(?err, committee_epoch=?committee_epoch, "failed to send the next epoch committee to the channel");
+                error!(error=?err, committee_epoch=?committee_epoch, "failed to send the next epoch committee to the channel");
             } else {
                 info!(committee_epoch=?committee_epoch, "The next epoch committee was sent successfully");
             }
@@ -143,6 +145,7 @@ where
         epoch: u64,
         quorum_threshold: u64,
         validity_threshold: u64,
+        read_next_epoch_class_groups_keys: bool,
     ) -> DwalletMPCResult<Committee> {
         let validator_ids: Vec<_> = committee.iter().map(|(id, _)| *id).collect();
 
@@ -151,24 +154,33 @@ where
             .await
             .map_err(DwalletMPCError::IkaError)?;
 
-        let class_group_encryption_keys_and_proofs = sui_client
-            .get_class_groups_public_keys_and_proofs(&validators)
+        let committee_mpc_data = sui_client
+            .get_mpc_data_from_validators_pool(&validators, read_next_epoch_class_groups_keys)
             .await
             .map_err(DwalletMPCError::IkaError)?;
 
         let class_group_encryption_keys_and_proofs = committee
             .iter()
             .filter_map(|(id, (name, _))| {
-                let validator_class_groups_public_key_and_proof =
-                    class_group_encryption_keys_and_proofs.get(id);
+                let mpc_data = committee_mpc_data.get(id);
 
-                let validator_class_groups_public_key_and_proof =
-                    validator_class_groups_public_key_and_proof.cloned();
-                validator_class_groups_public_key_and_proof.map(
-                    |validator_class_groups_public_key_and_proof| {
-                        (*name, validator_class_groups_public_key_and_proof)
-                    },
-                )
+                mpc_data.and_then(|mpc_data| {
+                    let class_groups_public_key_and_proof =
+                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
+                            &mpc_data.class_groups_public_key_and_proof(),
+                        );
+
+                    match class_groups_public_key_and_proof {
+                        Ok(key_and_proof) => Some((*name, key_and_proof)),
+                        Err(e) => {
+                            error!(
+                                "Failed to deserialize class groups public key and proof: {}",
+                                e
+                            );
+                            None
+                        }
+                    }
+                })
             })
             .collect::<HashMap<_, _>>();
 
@@ -241,7 +253,7 @@ where
                         error!(
                             key=?key_id,
                             current_epoch=?current_epoch,
-                            err=?err,
+                            error=?err,
                             "failed to get network decryption key data, retrying...",
                         );
                         continue 'sync_network_keys;
@@ -249,7 +261,7 @@ where
                 }
             }
             if let Err(err) = network_keys_sender.send(Arc::new(all_fetched_network_keys_data)) {
-                error!(?err, "failed to send network keys data to the channel",);
+                error!(error=?err, "failed to send network keys data to the channel",);
             }
         }
     }
@@ -299,7 +311,7 @@ where
                     .is_none()
             {
                 if let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch)) {
-                    error!(?err, "failed to send end of publish epoch to the channel");
+                    error!(error=?err, "failed to send end of publish epoch to the channel");
                 }
             }
         }

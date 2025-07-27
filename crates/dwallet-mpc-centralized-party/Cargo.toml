@@ -6,7 +6,7 @@ version.workspace = true
 [dependencies]
 mpc.workspace = true
 twopc_mpc.workspace = true
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "ed85dfa" }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "cc502b28" }
 message-digest = { path = "../message-digest" }
 class_groups.workspace = true
 group.workspace = true
@@ -19,7 +19,6 @@ rand_core = { version = "0.9", default-features = false }
 rand_chacha = { version = "0.9", default-features = false }
 getrandom = { version = "0.2.16", features = ["js"], optional = true } # TODO: idk why, but we need this, also this is old version
 serde = { version = "1.0", features = ["derive"] }
-crypto-bigint.workspace = true
 
 [features]
 wasm_js = ["group/wasm_js", "dep:getrandom"]

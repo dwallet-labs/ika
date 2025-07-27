@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use super::container::Container;
 use anyhow::Result;
 use ika_config::NodeConfig;
 use ika_node::IkaNodeHandle;
@@ -9,8 +10,6 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use sui_types::base_types::ConciseableName;
 use tracing::info;
-
-use super::container::Container;
 
 #[allow(dead_code)]
 pub const IKA_VALIDATOR_SERVER_NAME: &str = "ika";

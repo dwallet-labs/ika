@@ -5,13 +5,13 @@ module ika_dwallet_2pc_mpc::pricing_and_fee_manager;
 
 use ika::ika::IKA;
 use ika_common::bls_committee::BlsCommittee;
+use ika_common::validator_cap::VerifiedValidatorOperationCap;
 use ika_dwallet_2pc_mpc::pricing::{
     Self,
     PricingInfo,
     PricingInfoValue,
     PricingInfoCalculationVotes
 };
-use ika_system::validator_cap::VerifiedValidatorOperationCap;
 use sui::balance::{Self, Balance};
 use sui::sui::SUI;
 use sui::table::{Self, Table};
@@ -186,7 +186,7 @@ public(package) fun get_pricing_value_for_protocol(
     protocol: u32,
 ): PricingInfoValue {
     let mut pricing_value = self
-        .default
+        .current
         .try_get_pricing_value(curve, signature_algorithm, protocol);
     assert!(pricing_value.is_some(), EMissingProtocolPricing);
     pricing_value.extract()

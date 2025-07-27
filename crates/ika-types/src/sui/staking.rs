@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use super::{ClassGroupsPublicKeyAndProof, Element, ExtendedField, PendingValues};
+use super::{Element, ExtendedField, PendingValues};
 use crate::crypto::{AuthorityPublicKey, AuthorityPublicKeyBytes, NetworkPublicKey};
 use fastcrypto::traits::ToFromBytes;
 use jsonrpsee::core::Serialize;
@@ -23,13 +23,14 @@ const E_METADATA_INVALID_P2P_ADDR: u64 = 5;
 const E_METADATA_INVALID_PRIMARY_ADDR: u64 = 6;
 #[allow(dead_code)]
 const E_METADATA_INVALID_WORKER_ADDR: u64 = 7;
+const E_METADATA_MPC_DATA_NOT_FOUND: u64 = 8;
 
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct VerifiedValidatorInfo {
     pub protocol_pubkey: AuthorityPublicKey,
     pub network_pubkey: NetworkPublicKey,
     pub consensus_pubkey: NetworkPublicKey,
-    pub class_groups_pubkey_and_proof_bytes: TableVec,
+    pub mpc_data_bytes: TableVec,
     pub name: String,
     pub network_address: Multiaddr,
     pub p2p_address: Multiaddr,
@@ -38,9 +39,10 @@ pub struct VerifiedValidatorInfo {
     pub next_epoch_network_pubkey: Option<NetworkPublicKey>,
     pub next_epoch_consensus_pubkey: Option<NetworkPublicKey>,
     pub next_epoch_network_address: Option<Multiaddr>,
-    pub next_epoch_class_groups_pubkey_and_proof_bytes: Option<ClassGroupsPublicKeyAndProof>,
+    pub next_epoch_mpc_data_bytes: Option<TableVec>,
     pub next_epoch_p2p_address: Option<Multiaddr>,
     pub next_epoch_consensus_address: Option<Multiaddr>,
+    pub previous_mpc_data_bytes: Option<TableVec>,
 }
 
 impl VerifiedValidatorInfo {
@@ -142,11 +144,16 @@ impl ValidatorInfo {
             }
         }?;
 
+        let mpc_data_bytes = self
+            .mpc_data_bytes
+            .clone()
+            .ok_or(E_METADATA_MPC_DATA_NOT_FOUND)?;
+
         Ok(VerifiedValidatorInfo {
             protocol_pubkey,
             network_pubkey,
             consensus_pubkey,
-            class_groups_pubkey_and_proof_bytes: self.class_groups_pubkey_and_proof_bytes.clone(),
+            mpc_data_bytes,
             name: self.name.clone(),
             network_address,
             p2p_address,
@@ -155,11 +162,10 @@ impl ValidatorInfo {
             next_epoch_network_pubkey,
             next_epoch_consensus_pubkey,
             next_epoch_network_address,
-            next_epoch_class_groups_pubkey_and_proof_bytes: self
-                .next_epoch_class_groups_pubkey_and_proof_bytes
-                .clone(),
+            next_epoch_mpc_data_bytes: self.next_epoch_mpc_datd_bytes.clone(),
             next_epoch_p2p_address,
             next_epoch_consensus_address,
+            previous_mpc_data_bytes: self.previous_mpc_data_bytes.clone(),
         })
     }
 }
@@ -183,14 +189,15 @@ pub struct ValidatorInfo {
     pub protocol_pubkey: Element,
     pub network_pubkey_bytes: Vec<u8>,
     pub consensus_pubkey_bytes: Vec<u8>,
-    pub class_groups_pubkey_and_proof_bytes: TableVec,
+    pub mpc_data_bytes: Option<TableVec>,
     pub next_epoch_protocol_pubkey_bytes: Option<Vec<u8>>,
     pub next_epoch_network_pubkey_bytes: Option<Vec<u8>>,
     pub next_epoch_consensus_pubkey_bytes: Option<Vec<u8>>,
-    pub next_epoch_class_groups_pubkey_and_proof_bytes: Option<ClassGroupsPublicKeyAndProof>,
+    pub next_epoch_mpc_datd_bytes: Option<TableVec>,
     pub next_epoch_network_address: Option<String>,
     pub next_epoch_p2p_address: Option<String>,
     pub next_epoch_consensus_address: Option<String>,
+    previous_mpc_data_bytes: Option<TableVec>,
     pub metadata: ExtendedField,
 }
 
@@ -229,7 +236,8 @@ pub enum PoolState {
 
 impl StakingPool {
     pub fn verified_validator_info(&self) -> &VerifiedValidatorInfo {
+        // Todo (#1298): Remove unwrap.
         self.verified_validator_info
-            .get_or_init(|| self.validator_info.verify().unwrap())
+            .get_or_init(|| self.validator_info.verify().unwrap()) // Why unwrap? this could fail
     }
 }

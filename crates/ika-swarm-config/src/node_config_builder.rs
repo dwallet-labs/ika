@@ -127,7 +127,7 @@ impl ValidatorConfigBuilder {
             ..Default::default()
         };
         NodeConfig {
-            root_seed: Some(RootSeedWithPath::new(validator.root_seed.clone())),
+            root_seed_key_pair: Some(RootSeedWithPath::new(validator.root_seed.clone())),
             protocol_key_pair: AuthorityKeyPairWithPath::new(validator.key_pair.copy()),
             network_key_pair: KeyPairWithPath::new(SuiKeyPair::Ed25519(
                 validator.network_key_pair.copy(),
@@ -337,7 +337,7 @@ impl FullnodeConfigBuilder {
         let notifier_client_key_pair = notifier_client_key_pair.map(KeyPairWithPath::new);
 
         NodeConfig {
-            root_seed: None,
+            root_seed_key_pair: None,
             protocol_key_pair: AuthorityKeyPairWithPath::new(validator_config.key_pair),
             account_key_pair: KeyPairWithPath::new(validator_config.account_key_pair),
             consensus_key_pair: KeyPairWithPath::new(SuiKeyPair::Ed25519(

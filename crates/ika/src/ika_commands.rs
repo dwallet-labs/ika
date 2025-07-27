@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use std::thread;
 use sui_config::{SUI_CLIENT_CONFIG, sui_config_dir};
 
+#[cfg(feature = "protocol-commands")]
+use crate::protocol_commands::IkaProtocolCommand;
 use crate::validator_commands::IkaValidatorCommand;
 use ika_swarm::memory::Swarm;
 use ika_swarm_config::network_config::NetworkConfig;
@@ -117,6 +119,22 @@ pub enum IkaCommand {
         #[clap(short = 'y', long = "yes")]
         accept_defaults: bool,
     },
+
+    #[cfg(feature = "protocol-commands")]
+    /// A tool for protocol governance operations.
+    #[clap(name = "protocol")]
+    Protocol {
+        /// Sets the file storing the state of our user accounts (an empty one will be created if missing)
+        #[clap(long = "client.config")]
+        config: Option<PathBuf>,
+        #[clap(subcommand)]
+        cmd: Option<IkaProtocolCommand>,
+        /// Return command outputs in JSON format.
+        #[clap(long, global = true)]
+        json: bool,
+        #[clap(short = 'y', long = "yes")]
+        accept_defaults: bool,
+    },
 }
 
 impl IkaCommand {
@@ -208,6 +226,27 @@ impl IkaCommand {
                     let mut app: Command = IkaCommand::command();
                     app.build();
                     app.find_subcommand_mut("validator").unwrap().print_help()?;
+                }
+                Ok(())
+            }
+            #[cfg(feature = "protocol-commands")]
+            IkaCommand::Protocol {
+                config, cmd, json, ..
+            } => {
+                let config_path = config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
+                let mut context = WalletContext::new(&config_path)?;
+                if let Some(cmd) = cmd {
+                    if let Ok(client) = context.get_client().await {
+                        if let Err(e) = client.check_api_version() {
+                            eprintln!("{}", format!("[warning] {e}").yellow().bold());
+                        }
+                    }
+                    cmd.execute(&mut context).await?.print(!json);
+                } else {
+                    // Print help
+                    let mut app: Command = IkaCommand::command();
+                    app.build();
+                    app.find_subcommand_mut("protocol").unwrap().print_help()?;
                 }
                 Ok(())
             }

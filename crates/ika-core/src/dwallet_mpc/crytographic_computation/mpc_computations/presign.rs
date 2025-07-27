@@ -71,6 +71,7 @@ impl PresignPartyPublicInputGenerator for PresignParty {
                     protocol_public_parameters,
                     dkg_output: bcs::from_bytes(&output)?,
                 };
+
                 Ok(pub_input)
             }
         }

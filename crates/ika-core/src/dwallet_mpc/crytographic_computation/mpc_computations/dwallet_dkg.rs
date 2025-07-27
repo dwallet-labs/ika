@@ -79,10 +79,10 @@ pub(crate) fn dwallet_dkg_second_party_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
+        epoch: deserialized_event.epoch,
         request_input: MPCRequestInput::DKGSecond(deserialized_event.clone()),
         requires_network_key_data: true,
         requires_next_active_committee: false,
-        epoch: deserialized_event.epoch,
     }
 }
 
@@ -133,13 +133,16 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
     ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
         let first_round_output_buf: VersionedCentralizedDKGPublicOutput =
             bcs::from_bytes(&first_round_output_buf).map_err(DwalletMPCError::BcsError)?;
+
         let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
             bcs::from_bytes(&centralized_party_public_key_share_buf)
                 .map_err(DwalletMPCError::BcsError)?;
+
         match first_round_output_buf {
             VersionedCentralizedDKGPublicOutput::V1(first_round_output) => {
                 let first_round_output: <DWalletDKGFirstParty as Party>::PublicOutput =
                     bcs::from_bytes(&first_round_output).map_err(DwalletMPCError::BcsError)?;
+
                 let centralized_party_public_key_share = match centralized_party_public_key_share {
                     VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
                         bcs::from_bytes(&centralized_party_public_key_share)
@@ -153,6 +156,7 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
                     centralized_party_public_key_share,
                 )
                     .into();
+
                 Ok(input)
             }
         }

@@ -9,7 +9,7 @@ use move_core_types::language_storage::TypeTag;
 use move_core_types::{ident_str, identifier::IdentStr, language_storage::StructTag};
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::ObjectID;
-use sui_types::collection_types::{TableVec, VecMap};
+use sui_types::collection_types::VecMap;
 use sui_types::versioned::Versioned;
 
 pub mod epoch_start_system;
@@ -28,12 +28,14 @@ use self::simtest_ika_system_state_inner::{
 
 /// Default computation price of 1000 NIka
 pub const DEFAULT_VALIDATOR_COMPUTATION_PRICE: u64 = 1000;
-/// Default commission rate of 2%
-pub const DEFAULT_COMMISSION_RATE: u16 = 200;
+/// Default commission rate of 10%
+pub const DEFAULT_COMMISSION_RATE: u16 = 1000;
 
 pub const INIT_CAP_STRUCT_NAME: &IdentStr = ident_str!("InitCap");
 pub const SYSTEM_STRUCT_NAME: &IdentStr = ident_str!("System");
 pub const VALIDATOR_CAP_STRUCT_NAME: &IdentStr = ident_str!("ValidatorCap");
+pub const VALIDATOR_OPERATION_STRUCT_NAME: &IdentStr = ident_str!("ValidatorOperationCap");
+pub const VALIDATOR_COMMISSION_STRUCT_NAME: &IdentStr = ident_str!("ValidatorCommissionCap");
 pub const PROTOCOL_CAP_STRUCT_NAME: &IdentStr = ident_str!("ProtocolCap");
 pub const DWALLET_COORDINATOR_STRUCT_NAME: &IdentStr = ident_str!("DWalletCoordinator");
 
@@ -49,9 +51,37 @@ pub const INITIALIZE_FUNCTION_NAME: &IdentStr = ident_str!("initialize");
 pub const REQUEST_ADD_VALIDATOR_CANDIDATE_FUNCTION_NAME: &IdentStr =
     ident_str!("request_add_validator_candidate");
 pub const REQUEST_ADD_VALIDATOR_FUNCTION_NAME: &IdentStr = ident_str!("request_add_validator");
+pub const REQUEST_REMOVE_VALIDATOR_CANDIDATE_FUNCTION_NAME: &IdentStr =
+    ident_str!("request_remove_validator_candidate");
 pub const REQUEST_ADD_STAKE_FUNCTION_NAME: &IdentStr = ident_str!("request_add_stake");
 pub const REQUEST_REMOVE_VALIDATOR_FUNCTION_NAME: &IdentStr =
     ident_str!("request_remove_validator");
+pub const SET_NEXT_COMMISSION_FUNCTION_NAME: &IdentStr = ident_str!("set_next_commission");
+pub const WITHDRAW_STAKE_FUNCTION_NAME: &IdentStr = ident_str!("withdraw_stake");
+pub const REQUEST_WITHDRAW_STAKE_FUNCTION_NAME: &IdentStr = ident_str!("request_withdraw_stake");
+pub const REPORT_VALIDATOR_FUNCTION_NAME: &IdentStr = ident_str!("report_validator");
+pub const UNDO_REPORT_VALIDATOR_FUNCTION_NAME: &IdentStr = ident_str!("undo_report_validator");
+pub const ROTATE_OPERATION_CAP_FUNCTION_NAME: &IdentStr = ident_str!("rotate_operation_cap");
+pub const ROTATE_COMMISSION_CAP_FUNCTION_NAME: &IdentStr = ident_str!("rotate_commission_cap");
+pub const COLLECT_COMMISSION_FUNCTION_NAME: &IdentStr = ident_str!("collect_commission");
+pub const SET_VALIDATOR_NAME_FUNCTION_NAME: &IdentStr = ident_str!("set_validator_name");
+pub const VALIDATOR_METADATA_FUNCTION_NAME: &IdentStr = ident_str!("validator_metadata");
+pub const SET_VALIDATOR_METADATA_FUNCTION_NAME: &IdentStr = ident_str!("set_validator_metadata");
+pub const SET_NEXT_EPOCH_NETWORK_ADDRESS_FUNCTION_NAME: &IdentStr =
+    ident_str!("set_next_epoch_network_address");
+pub const SET_NEXT_EPOCH_P2P_ADDRESS_FUNCTION_NAME: &IdentStr =
+    ident_str!("set_next_epoch_p2p_address");
+pub const SET_NEXT_EPOCH_CONSENSUS_ADDRESS_FUNCTION_NAME: &IdentStr =
+    ident_str!("set_next_epoch_consensus_address");
+pub const SET_NEXT_EPOCH_PROTOCOL_PUBKEY_BYTES_FUNCTION_NAME: &IdentStr =
+    ident_str!("set_next_epoch_protocol_pubkey_bytes");
+pub const SET_NEXT_EPOCH_NETWORK_PUBKEY_BYTES_FUNCTION_NAME: &IdentStr =
+    ident_str!("set_next_epoch_network_pubkey_bytes");
+pub const SET_NEXT_EPOCH_CONSENSUS_PUBKEY_BYTES_FUNCTION_NAME: &IdentStr =
+    ident_str!("set_next_epoch_consensus_pubkey_bytes");
+pub const VERIFY_VALIDATOR_CAP_FUNCTION_NAME: &IdentStr = ident_str!("verify_validator_cap");
+pub const VERIFY_OPERATION_CAP_FUNCTION_NAME: &IdentStr = ident_str!("verify_operation_cap");
+pub const VERIFY_COMMISSION_CAP_FUNCTION_NAME: &IdentStr = ident_str!("verify_commission_cap");
 pub const PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME: &IdentStr =
     ident_str!("process_checkpoint_message_by_quorum");
 pub const INITIATE_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME: &IdentStr =
@@ -67,18 +97,34 @@ pub const ADVANCE_EPOCH_FUNCTION_NAME: &IdentStr = ident_str!("advance_epoch");
 pub const REQUEST_DWALLET_NETWORK_DECRYPTION_KEY_DKG_BY_CAP_FUNCTION_NAME: &IdentStr =
     ident_str!("request_dwallet_network_encryption_key_dkg_by_cap");
 pub const SET_SUPPORTED_AND_PRICING: &IdentStr = ident_str!("set_supported_and_pricing");
-pub const SET_PAUSED_CURVES_AND_SIGNATURE_ALGORITHMS_FUNCTION_NAME: &IdentStr =
-    ident_str!("set_paused_curves_and_signature_algorithms");
+pub const SET_PRICING_VOTE_FUNCTION_NAME: &IdentStr = ident_str!("set_pricing_vote");
+pub const SET_NEXT_EPOCH_MPC_DATA_BYTES_FUNCTION_NAME: &IdentStr =
+    ident_str!("set_next_epoch_mpc_data_bytes");
 
 pub const NEW_VALIDATOR_METADATA_FUNCTION_NAME: &IdentStr = ident_str!("new");
 
-pub const CLASS_GROUPS_PUBLIC_KEY_AND_PROOF_MODULE_NAME: &IdentStr =
-    ident_str!("class_groups_public_key_and_proof");
-pub const CREATE_CLASS_GROUPS_PUBLIC_KEY_AND_PROOF_BUILDER_FUNCTION_NAME: &IdentStr =
-    ident_str!("empty");
-pub const ADD_PAIR_TO_CLASS_GROUPS_PUBLIC_KEY_AND_PROOF_FUNCTION_NAME: &IdentStr =
-    ident_str!("add_public_key_and_proof");
-pub const FINISH_CLASS_GROUPS_PUBLIC_KEY_AND_PROOF_FUNCTION_NAME: &IdentStr = ident_str!("finish");
+pub const TABLE_VEC_MODULE_NAME: &IdentStr = ident_str!("table_vec");
+pub const TABLE_VEC_STRUCT_NAME: &IdentStr = ident_str!("TableVec");
+pub const CREATE_BYTES_TABLE_VEC_FUNCTION_NAME: &IdentStr = ident_str!("empty");
+pub const PUSH_BACK_TO_TABLE_VEC_FUNCTION_NAME: &IdentStr = ident_str!("push_back");
+pub const DROP_TABLE_VEC_FUNCTION_NAME: &IdentStr = ident_str!("drop");
+
+pub const VECTOR_MODULE_NAME: &IdentStr = ident_str!("vector");
+pub const APPEND_VECTOR_FUNCTION_NAME: &IdentStr = ident_str!("append");
+
+pub const OPTION_MODULE_NAME: &IdentStr = ident_str!("option");
+pub const OPTION_DESTROY_NONE_FUNCTION_NAME: &IdentStr = ident_str!("destroy_none");
+pub const OPTION_DESTROY_SOME_FUNCTION_NAME: &IdentStr = ident_str!("destroy_some");
+
+pub const PRICING_MODULE_NAME: &IdentStr = ident_str!("pricing");
+pub const INSERT_OR_UPDATE_PRICING_FUNCTION_NAME: &IdentStr =
+    ident_str!("insert_or_update_pricing");
+
+pub const VEC_MAP_MODULE_NAME: &IdentStr = ident_str!("vec_map");
+pub const VEC_MAP_STRUCT_NAME: &IdentStr = ident_str!("VecMap");
+pub const VEC_MAP_NEW_FUNCTION_NAME: &IdentStr = ident_str!("empty");
+pub const VEC_MAP_INSERT_FUNCTION_NAME: &IdentStr = ident_str!("insert");
+pub const VEC_MAP_FROM_KEYS_VALUES_FUNCTION_NAME: &IdentStr = ident_str!("from_keys_values");
 
 #[cfg(msim)]
 pub const IKA_SYSTEM_STATE_SIM_TEST_V1: u64 = 18446744073709551605; // u64::MAX - 10
@@ -99,6 +145,7 @@ pub struct System {
     pub version: u64,
     pub package_id: ObjectID,
     pub new_package_id: Option<ObjectID>,
+    pub migration_epoch: Option<u64>,
 }
 
 /// Rust version of the Move DWalletCoordinator type
@@ -108,6 +155,7 @@ pub struct DWalletCoordinator {
     pub version: u64,
     pub package_id: ObjectID,
     pub new_package_id: Option<ObjectID>,
+    pub migration_epoch: Option<u64>,
 }
 
 impl System {
@@ -187,41 +235,6 @@ pub struct Element {
 pub struct Validator {
     pub id: ObjectID,
     pub inner: Versioned,
-}
-
-/// Rust representation of the Move `ika::class_groups::ClassGroupsPublicKeyAndProofBuilder` type.
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-pub struct ClassGroupsPublicKeyAndProofBuilder;
-
-impl ClassGroupsPublicKeyAndProofBuilder {
-    /// Return the Move struct tag for this type
-    pub fn type_(ika_system_package_address: AccountAddress) -> StructTag {
-        StructTag {
-            address: ika_system_package_address,
-            name: ident_str!("ClassGroupsPublicKeyAndProofBuilder").to_owned(),
-            module: CLASS_GROUPS_PUBLIC_KEY_AND_PROOF_MODULE_NAME.to_owned(),
-            type_params: vec![],
-        }
-    }
-}
-
-/// Rust version of the Move ika::class_groups::ClassGroupsPublicKeyAndProof type
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-pub struct ClassGroupsPublicKeyAndProof {
-    pub id: ObjectID,
-    pub public_keys_and_proofs: TableVec,
-}
-
-impl ClassGroupsPublicKeyAndProof {
-    /// Return the Move struct tag for this type
-    pub fn type_(ika_system_package_address: AccountAddress) -> StructTag {
-        StructTag {
-            address: ika_system_package_address,
-            name: ident_str!("ClassGroupsPublicKeyAndProof").to_owned(),
-            module: CLASS_GROUPS_PUBLIC_KEY_AND_PROOF_MODULE_NAME.to_owned(),
-            type_params: vec![],
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]

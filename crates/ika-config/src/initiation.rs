@@ -12,7 +12,7 @@ pub const MIN_VALIDATOR_COUNT: u64 = 4;
 
 /// Maximum number of active validators at any moment.
 /// We do not allow the number of validators in any epoch to go above this.
-pub const MAX_VALIDATOR_COUNT: u64 = 115;
+pub const MAX_VALIDATOR_COUNT: u64 = 102;
 
 /// Lower-bound on the amount of stake required to become a validator.
 /// 30 million IKA.
