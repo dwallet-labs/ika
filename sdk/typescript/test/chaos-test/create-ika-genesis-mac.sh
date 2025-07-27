@@ -228,7 +228,7 @@ for entry in "${VALIDATORS_ARRAY[@]}"; do
     # After the first validator generates class-groups.key, save it globally
     if [ "$CLASS_GROUPS_KEY_CREATED" -eq 0 ]; then
         echo "Saving initial class-groups.seed after first validator"
-        cp ../../class-groups.seed ../class-groups.seed
+        cp ../../class-groups.seed ./class-groups.seed
         CLASS_GROUPS_KEY_CREATED=1
     fi
 
