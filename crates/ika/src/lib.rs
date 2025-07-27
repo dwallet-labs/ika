@@ -30,6 +30,7 @@ pub(crate) fn read_ika_sui_config_yaml(
             "Cannot open Ika network config file at {config_path:?}"
         ))
     })?;
+    println!("Ika network config loaded from {config_path:?}");
     let sui_env = context.get_active_env()?.alias.clone();
     let config = config
         .envs

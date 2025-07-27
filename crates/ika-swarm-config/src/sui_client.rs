@@ -799,7 +799,7 @@ pub async fn ika_system_initialize(
     let object_changes = response.object_changes.unwrap();
 
     if response.errors.is_empty() {
-        println!("Transaction executed successfully.");
+        println!("Transaction executed successfully. {:?}", response.digest);
     } else {
         panic!(
             "Errors occurred during transaction execution: {:?}",
