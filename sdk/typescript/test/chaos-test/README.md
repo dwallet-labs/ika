@@ -3,12 +3,6 @@
 ### 1. Set chain values
 Copy the `.env.example` file to `.env` and set the variables in it with configuration of your choice.
 
-### 2. Update teh network's code with the new configuration
-Run the following command from this directory:
-```bash
-./change-committe.sh
-```
-
 ### 2. Build the Docker image
 Run the following command from this directory to build the ika-node docker image:
 ```bash
