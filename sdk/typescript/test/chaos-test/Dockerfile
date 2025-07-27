@@ -25,13 +25,7 @@ WORKDIR ${WORKDIR}/ika
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 
-# Build dependencies first for better layer caching
-# --locked ensures you never accidentally change dependencies during a build.
-# Build dependencies first for better layer caching
-RUN cargo fetch --locked
-
-# Conditionally compile with the network DKG feature
-RUN cargo build --no-default-features --profile ${PROFILE} --locked --bin ika-node
+RUN cargo build --no-default-features --profile ${PROFILE} --bin ika-node
 
 # ==========================
 # Runtime stage
