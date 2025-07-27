@@ -1076,7 +1076,7 @@ impl SuiClientInner for SuiSdkClient {
             info!(
                 key_id = ?key.id,
                 ?epoch,
-                "Reconfiguration public output for key is not ready for epoch",
+                "Network encryption key created at current epoch, getting key data from DKG output",
             );
         } else {
             let current_reconfiguration_public_output_id = self
@@ -1144,7 +1144,7 @@ impl SuiClientInner for SuiSdkClient {
             }
         }
         Err(Error::DataError(format!(
-            "Failed to load current reconfiguration public output for epoch {epoch_id:?} from table {table_id:?}"
+            "failed to load current reconfiguration public output for epoch {epoch_id:?} from table {table_id:?}"
         )))
     }
 
