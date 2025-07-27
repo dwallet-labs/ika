@@ -24,7 +24,6 @@ WORKDIR ${WORKDIR}/ika
 # Copy Cargo manifests and crate folders for dependency resolution
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-COPY class-groups-keys-mock-files class-groups-keys-mock-files
 
 # Build dependencies first for better layer caching
 # --locked ensures you never accidentally change dependencies during a build.
@@ -37,6 +36,9 @@ RUN cargo build --profile ${PROFILE} --locked --bin ika-proxy
 # Runtime stage
 # ==========================
 FROM debian:bookworm-slim AS runtime
+
+# CA certificates and other dependencies for debug.
+RUN apt update && apt install -y ca-certificate curl
 
 ARG PROFILE=release
 
