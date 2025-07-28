@@ -1243,6 +1243,8 @@ export FULLNODE_YAML_PATH="$PUBLISHER_DIR/fullnode.yaml"
 # Copy the template
 cp ../fullnode.template.yaml "$FULLNODE_YAML_PATH"
 
+echo doing this now ye "$FULLNODE_YAML_PATH"
+
 # Replace upper-case variables with real values using yq
 yq e ".\"sui-connector-config\".\"sui-rpc-url\" = \"$SUI_DOCKER_URL\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"sui-chain-identifier\" = \"$SUI_CHAIN_IDENTIFIER\"" -i "$FULLNODE_YAML_PATH"
@@ -1259,20 +1261,20 @@ yq e ".\"p2p-config\".\"external-address\" = \"/dns/fullnode.$SUBDOMAIN/udp/8084
 # Replace SEED_PEERS with actual array from seed_peers.yaml
 yq e '."p2p-config"."seed-peers" = load("seed_peers.yaml")' -i "$FULLNODE_YAML_PATH"
 
-############################
-# Prepare Docker Compose file.
-############################
-DOCKER_COMPOSE="docker-compose.yaml"
-DOCKER_COMPOSE_PATH="$DOCKER_COMPOSE"
-cp ../docker-compose.template.yaml "$DOCKER_COMPOSE_PATH"
-
-# Replace DOMAIN_NAME_HERE with the provided domain name.
-yq e -i ".services.*.container_name |= sub(\"DOMAIN_NAME_HERE\"; \"$SUBDOMAIN\")" "$DOCKER_COMPOSE_PATH"
-
-# Replace DOMAIN_NAME_HERE with the provided domain name in volume paths.
-yq e -i "(.services.*.volumes[] | select(test(\".*DOMAIN_NAME_HERE.*\"))) |= sub(\"DOMAIN_NAME_HERE\"; \"$SUBDOMAIN\")" "$DOCKER_COMPOSE_PATH"
-
-# Replace IMAGE_NAME with the provided image name.
-yq e -i ".services.*.image = \"$IMAGE_NAME\"" "$DOCKER_COMPOSE_PATH"
-
-echo "$DOCKER_COMPOSE file has been created successfully."
+#############################
+## Prepare Docker Compose file.
+#############################
+#DOCKER_COMPOSE="docker-compose.yaml"
+#DOCKER_COMPOSE_PATH="$DOCKER_COMPOSE"
+#cp ../docker-compose.template.yaml "$DOCKER_COMPOSE_PATH"
+#
+## Replace DOMAIN_NAME_HERE with the provided domain name.
+#yq e -i ".services.*.container_name |= sub(\"DOMAIN_NAME_HERE\"; \"$SUBDOMAIN\")" "$DOCKER_COMPOSE_PATH"
+#
+## Replace DOMAIN_NAME_HERE with the provided domain name in volume paths.
+#yq e -i "(.services.*.volumes[] | select(test(\".*DOMAIN_NAME_HERE.*\"))) |= sub(\"DOMAIN_NAME_HERE\"; \"$SUBDOMAIN\")" "$DOCKER_COMPOSE_PATH"
+#
+## Replace IMAGE_NAME with the provided image name.
+#yq e -i ".services.*.image = \"$IMAGE_NAME\"" "$DOCKER_COMPOSE_PATH"
+#
+#echo "$DOCKER_COMPOSE file has been created successfully."
