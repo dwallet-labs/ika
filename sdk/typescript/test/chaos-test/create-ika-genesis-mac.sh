@@ -86,7 +86,7 @@ done
 RUST_MIN_STACK=16777216
 
 RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
-cp ../../target/release/"$BINARY_NAME" .
+cp ../../../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
 VALIDATORS_ARRAY=()
@@ -225,7 +225,7 @@ done
 rm -rf "$SUI_CONFIG_PATH"
 
 cargo build --bin ika-swarm-config
-cp ../../../target/debug/ika-swarm-config .
+cp ../../../../target/debug/ika-swarm-config .
 
 # Publish IKA Modules (Creates the publisher config).
 ./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL"
@@ -717,7 +717,7 @@ done
 RUST_MIN_STACK=16777216
 
 RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
-cp ../../target/release/"$BINARY_NAME" .
+cp ../../../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
 VALIDATORS_ARRAY=()
@@ -856,7 +856,7 @@ done
 rm -rf "$SUI_CONFIG_PATH"
 
 cargo build --bin ika-swarm-config
-cp ../../../target/debug/ika-swarm-config .
+cp ../../../../target/debug/ika-swarm-config .
 
 # Publish IKA Modules (Creates the publisher config).
 ./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL"
