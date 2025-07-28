@@ -75,9 +75,6 @@ const EUnauthorizedProtocolCap: u64 = 5;
 const ECannotInitialize: u64 = 6;
 /// The system has not reached the mid epoch time.
 const EHaveNotReachedMidEpochTime: u64 = 7;
-const EInitTimeNotReached: u64 = 8;
-const EActiveCommitteeNotEmpty: u64 = 9;
-const EPendingSetTooSmall: u64 = 10;
 
 // === Structs ===
 
@@ -281,13 +278,12 @@ public(package) fun initialize(
 ): AdvanceEpochApprover {
     self.verify_protocol_cap_impl(cap);
     let now = clock.timestamp_ms();
-    assert!(now >= self.epoch_start_timestamp_ms, EInitTimeNotReached);
-    assert!(self.epoch == 0, ECannotInitialize);
-    assert!(self.active_committee().members().is_empty(), EActiveCommitteeNotEmpty);
+    assert!(self.epoch == 0 && now >= self.epoch_start_timestamp_ms, ECannotInitialize);
+    assert!(self.active_committee().members().is_empty(), ECannotInitialize);
     let pending_active_set = self.validator_set.pending_active_set();
     assert!(
         pending_active_set.size() >= pending_active_set.min_validator_count(),
-        EPendingSetTooSmall,
+        ECannotInitialize,
     );
     self.validator_set.set_max_validator_change_count(max_validator_change_count);
 
