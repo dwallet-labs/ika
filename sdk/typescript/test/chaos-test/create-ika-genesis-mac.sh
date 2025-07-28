@@ -1166,6 +1166,18 @@ cp -r $PUBLISHER_DIR/sui_config/* "$SUI_CONFIG_PATH"
 
 ./ika-swarm-config ika-system-initialize --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --ika-config-path $PUBLISHER_DIR/ika_publish_config.json
 
+IKA_COMMON_PACKAGE_ID=$(jq -r '.ika_common_package_id' "$PUBLISHER_CONFIG_FILE")
+IKA_DWALLET_2PC_MPC_PACKAGE_ID=$(jq -r '.ika_dwallet_2pc_mpc_package_id' "$PUBLISHER_CONFIG_FILE")
+IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_CONFIG_FILE")
+
+for entry in "${VALIDATORS_ARRAY[@]}"; do
+    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+    VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
+    yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
+    yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
+    yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
+done
+
 # This if the file name that the SDK is looking for.
 mv $PUBLISHER_DIR/ika_publish_config.json $PUBLISHER_DIR/ika_config.json
 
@@ -1174,9 +1186,6 @@ mv $PUBLISHER_DIR/ika_publish_config.json $PUBLISHER_DIR/ika_config.json
 ################################
 
 PUBLISHER_CONFIG_FILE="$PUBLISHER_DIR/ika_config.json"
-
-
-IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_CONFIG_FILE")
 
 echo "Ika dWallet Coordinator Object ID: placeholder"
 
