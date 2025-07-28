@@ -394,7 +394,7 @@ impl DWalletMPCService {
                     return events;
                 }
                 Err(err) => {
-                    error!(
+                    warn!(
                         error=?err,
                         current_epoch=?self.epoch_store.epoch(),
                          "failed to load missed events from Sui"
