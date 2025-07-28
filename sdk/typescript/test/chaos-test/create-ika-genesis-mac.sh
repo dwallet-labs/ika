@@ -493,7 +493,8 @@ done
 
 for tuple in "${VALIDATOR_TUPLES[@]}"; do
     IFS=":" read -r VALIDATOR_NAME VALIDATOR_ID VALIDATOR_CAP_ID <<< "$tuple"
-
+    LOCAL_SUI_CONFIG_DIR="/tmp/sui_config_${VALIDATOR_NAME}"
+    LOCAL_IKA_CONFIG_DIR="/tmp/ika_config_${VALIDATOR_NAME}"
     # Find the validator's hostname based on its name
     for entry in "${VALIDATORS_ARRAY[@]}"; do
         IFS=":" read -r NAME HOSTNAME <<< "$entry"
