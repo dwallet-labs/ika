@@ -271,6 +271,7 @@ IKA_SYSTEM_OBJECT_ID=$(jq -r '.ika_system_object_id' "$PUBLISHER_CONFIG_FILE")
 IKA_COMMON_PACKAGE_ID=$(jq -r '.ika_common_package_id' "$PUBLISHER_CONFIG_FILE")
 IKA_DWALLET_2PC_MPC_PACKAGE_ID=$(jq -r '.ika_dwallet_2pc_mpc_package_id' "$PUBLISHER_CONFIG_FILE")
 
+
 # Print the values for verification.
 echo "Ika Package ID: $IKA_PACKAGE_ID"
 echo "Ika System Package ID: $IKA_SYSTEM_PACKAGE_ID"
@@ -300,8 +301,6 @@ request_and_generate_yaml() {
   yq e ".\"sui-connector-config\".\"sui-rpc-url\" = \"$SUI_DOCKER_URL\"" -i "$VALIDATOR_DIR/validator.yaml"
   yq e ".\"sui-connector-config\".\"sui-chain-identifier\" = \"$SUI_CHAIN_IDENTIFIER\"" -i "$VALIDATOR_DIR/validator.yaml"
   yq e ".\"sui-connector-config\".\"ika-package-id\" = \"$IKA_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
-  yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
-  yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
   yq e ".\"sui-connector-config\".\"ika-system-package-id\" = \"$IKA_SYSTEM_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
   yq e ".\"sui-connector-config\".\"ika-system-object-id\" = \"$IKA_SYSTEM_OBJECT_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
 
@@ -493,8 +492,7 @@ done
 
 for tuple in "${VALIDATOR_TUPLES[@]}"; do
     IFS=":" read -r VALIDATOR_NAME VALIDATOR_ID VALIDATOR_CAP_ID <<< "$tuple"
-    LOCAL_SUI_CONFIG_DIR="/tmp/sui_config_${VALIDATOR_NAME}"
-    LOCAL_IKA_CONFIG_DIR="/tmp/ika_config_${VALIDATOR_NAME}"
+
     # Find the validator's hostname based on its name
     for entry in "${VALIDATORS_ARRAY[@]}"; do
         IFS=":" read -r NAME HOSTNAME <<< "$entry"
@@ -519,6 +517,10 @@ done
 #############################
 # IKA System Initialization
 #############################
+
+# sleep 30 seconds (needed for initialize)
+#sleep 30
+echo "sleeping for 30 seconds"
 
 # Copy publisher sui_config to SUI_CONFIG_PATH
 rm -rf "$SUI_CONFIG_PATH"
@@ -553,24 +555,6 @@ locals {
 }
 EOF
 
-update_coordinator_object_id() {
-  local entry="$1"
-  IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
-  local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
-
-  # Extract values from the validator.info file
-  local ACCOUNT_ADDRESS
-  ACCOUNT_ADDRESS=$(yq e '.account_address' "${VALIDATOR_DIR}/validator.info")
-  local P2P_ADDR
-  P2P_ADDR=$(yq e '.p2p_address' "${VALIDATOR_DIR}/validator.info")
-
-  # Replace placeholders using yq
-    yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
-}
-
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-  update_coordinator_object_id "$entry" &
-done
 
 ############################
 # Generate Seed Peers
@@ -615,11 +599,8 @@ cp ../fullnode.template.yaml "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"sui-rpc-url\" = \"$SUI_DOCKER_URL\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"sui-chain-identifier\" = \"$SUI_CHAIN_IDENTIFIER\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"ika-package-id\" = \"$IKA_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"ika-system-package-id\" = \"$IKA_SYSTEM_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"ika-system-object-id\" = \"$IKA_SYSTEM_OBJECT_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$FULLNODE_YAML_PATH"
 
 # Replace HOSTNAME in external-address
 yq e ".\"p2p-config\".\"external-address\" = \"/dns/fullnode.$SUBDOMAIN/udp/8084\"" -i "$FULLNODE_YAML_PATH"
