@@ -54,8 +54,8 @@ export async function createValidatorPod(
 					volumeMounts: [
 						{
 							name: 'config-vol',
-							mountPath: '/opt/ika/key-pairs/class-groups.seed',
-							subPath: 'class-groups.seed',
+							mountPath: '/opt/ika/key-pairs/root-seed.key',
+							subPath: 'root-seed.key',
 						},
 						{
 							name: 'config-vol',
@@ -87,8 +87,8 @@ export async function createValidatorPod(
 						name: CONFIG_MAP_NAME,
 						items: [
 							{
-								key: `validator${validatorID}_class-groups.seed`,
-								path: 'class-groups.seed',
+								key: `validator${validatorID}_root-seed.key`,
+								path: 'root-seed.key',
 							},
 							{
 								key: `validator${validatorID}_consensus.key`,

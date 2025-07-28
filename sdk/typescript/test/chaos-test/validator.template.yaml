@@ -1,5 +1,5 @@
 root-seed:
-  path: /opt/ika/key-pairs/class-groups.seed
+  path: /opt/ika/key-pairs/root-seed.key
 protocol-key-pair:
   path: /opt/ika/key-pairs/protocol.key
 consensus-key-pair:
