@@ -1249,6 +1249,9 @@ yq e ".\"sui-connector-config\".\"sui-chain-identifier\" = \"$SUI_CHAIN_IDENTIFI
 yq e ".\"sui-connector-config\".\"ika-package-id\" = \"$IKA_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"ika-system-package-id\" = \"$IKA_SYSTEM_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
 yq e ".\"sui-connector-config\".\"ika-system-object-id\" = \"$IKA_SYSTEM_OBJECT_ID\"" -i "$FULLNODE_YAML_PATH"
+yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
+yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
+yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$FULLNODE_YAML_PATH"
 
 # Replace HOSTNAME in external-address
 yq e ".\"p2p-config\".\"external-address\" = \"/dns/fullnode.$SUBDOMAIN/udp/8084\"" -i "$FULLNODE_YAML_PATH"
