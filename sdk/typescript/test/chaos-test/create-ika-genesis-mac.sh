@@ -2,6 +2,25 @@
 
 set -e
 
+# Load environment variables from .env if not already set
+if [ -f .env ]; then
+  echo "Loading variables from .env"
+  while IFS='=' read -r key value; do
+    # Skip comments and empty lines
+    if [ -z "$key" ] || echo "$key" | grep -q '^#'; then
+      continue
+    fi
+
+    # Only export if not already set in environment
+    if [ -z "${!key}" ]; then
+      export "$key=$value"
+    fi
+  done < .env
+else
+  echo ".env file not found!"
+  exit 1
+fi
+
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
