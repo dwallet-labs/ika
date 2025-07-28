@@ -25,8 +25,6 @@ fi
 # Default values.
 # The prefix for the validator names (e.g. val1.devnet.ika.cloud, val2.devnet.ika.cloud, etc...).
 export VALIDATOR_PREFIX="val"
-# The number of validators to create.
-export VALIDATOR_NUM=4
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
 # The subdomain for Ika the network.
@@ -41,26 +39,6 @@ export KEY_PAIRS_DIR="key-pairs"
 ROOT_ADDR=""
 # The file containing the validators (separator: newline).
 export VALIDATORS_FILE=""
-# Validator Docker image name.
-export IMAGE_NAME="us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:devnet-v0.0.7-arm64"
-# SUI fullnode URL.
-export SUI_FULLNODE_RPC_URL="https://fullnode.sui.beta.devnet.ika-network.net"
-#export SUI_FULLNODE_RPC_URL="http://localhost:9000"
-# Sui Docker URL (only needed if you run Ika on Docker against localhost on non-linux).
-# If it's not against localhost, set it to the remote sui RPC.
-#export SUI_DOCKER_URL="http://docker.for.mac.localhost:9000"
-export SUI_DOCKER_URL="https://fullnode.sui.beta.devnet.ika-network.net"
-# SUI Faucet URL.
-export SUI_FAUCET_URL="https://faucet.sui.beta.devnet.ika-network.net/gas"
-#export SUI_FAUCET_URL="http://localhost:9123/gas"
-# Default Ika epoch duration time.
-# Day
-#export EPOCH_DURATION_TIME_MS=86400000
-# 40 minutes
-#export EPOCH_DURATION_TIME_MS=2400000
-# 1 hour
-export EPOCH_DURATION_TIME_MS=$((1000*60*45*1))
-# Sui chain identifier.
 export SUI_CHAIN_IDENTIFIER="custom"
 
 # Function to display help message
@@ -78,7 +56,6 @@ show_help() {
     echo "  --key-pairs-dir <directory>         Set the directory for key pairs. Default: key-pairs"
     echo "  --root-addr <address>               Set the root address. Default: 0x3e..."
     echo "  --validators-file <file>            Specify a file with validators."
-    echo "  --image-name <image>                Specify the Docker image name. Default: $IMAGE_NAME"
     echo "  --sui-faucet-url <url>              Set the SUI faucet URL. Default: $SUI_FAUCET_URL"
     echo "  --epoch-duration-time <time>        Set the epoch duration time. Default: $EPOCH_DURATION_TIME_MS"
     echo "  -h, --help                        Display this help message and exit."
@@ -97,7 +74,6 @@ while [[ "$#" -gt 0 ]]; do
         --key-pairs-dir) KEY_PAIRS_DIR="$2"; shift ;;
         --root-addr) ROOT_ADDR="$2"; shift ;;
         --validators-file) VALIDATORS_FILE="$2"; shift ;;
-        --image-name) IMAGE_NAME="$2"; shift ;;
         --sui-faucet-url) SUI_FAUCET_URL="$2"; shift ;;
         --epoch-duration-time) EPOCH_DURATION_TIME_MS="$2"; shift ;;
         -h|--help) show_help; exit 0 ;;
