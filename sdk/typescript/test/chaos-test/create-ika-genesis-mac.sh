@@ -41,6 +41,8 @@ ROOT_ADDR=""
 export VALIDATORS_FILE=""
 export SUI_CHAIN_IDENTIFIER="custom"
 
+
+
 # Function to display help message
 show_help() {
     echo "Usage: $0 [options]"
@@ -228,6 +230,11 @@ cargo build --bin ika-swarm-config
 cp ../../../../../target/debug/ika-swarm-config .
 
 # Publish IKA Modules (Creates the publisher config).
+# echo the parameters to the next call
+echo "Publishing IKA modules with the following parameters:"
+echo "SUI_FULLNODE_RPC_URL: $SUI_FULLNODE_RPC_URL"
+echo "SUI_FAUCET_URL: $SUI_FAUCET_URL"
+
 ./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL"
 
 # Mint IKA Tokens
