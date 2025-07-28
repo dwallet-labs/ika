@@ -450,6 +450,7 @@ if [[ -f "$TUPLES_FILE" ]]; then
     done < "$TUPLES_FILE"
 else
     echo "[ERROR] Tuples file not found: $TUPLES_FILE"
+    exit 1
 fi
 
 # Summary

@@ -4,7 +4,7 @@
 import path from 'path';
 import { sample_dwallet_keypair, verify_secp_signature } from '@dwallet-network/dwallet-mpc-wasm';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
-import { requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
+import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -36,10 +36,10 @@ import {
 	verifySignWithPartialUserSignatures,
 } from '../../src/dwallet-mpc/sign';
 
-const SUI_FULLNODE_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
-const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
-// const SUI_FULLNODE_URL = getFullnodeUrl('localnet');
-// const SUI_FAUCET_HOST = getFaucetHost('localnet');
+// const SUI_FULLNODE_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
+// const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
+const SUI_FULLNODE_URL = getFullnodeUrl('localnet');
+const SUI_FAUCET_HOST = getFaucetHost('localnet');
 
 async function createConf(): Promise<Config> {
 	const keypair = Ed25519Keypair.generate();
@@ -383,6 +383,15 @@ describe('Test dWallet MPC', () => {
 		}
 		const validatorTableID =
 			systemInner.fields.value.fields.validator_set.fields.validators.fields.id.id;
+		const pendingValidatorSetID =
+			systemInner.fields.value.fields.validator_set.fields.pending_active_set.fields.id.id;
+		const df = await conf.client.getDynamicFields({
+			parentId: pendingValidatorSetID,
+		});
+		const validatorSet = await conf.client.getDynamicFieldObject({
+			parentId: pendingValidatorSetID,
+			name: df.data[0].name,
+		});
 		const allValidatorsIDs = await getAllChildObjectsIDs(conf, validatorTableID);
 		const operatorCapIDs = await Promise.all(
 			allValidatorsIDs.map(async (id) => {
@@ -422,10 +431,10 @@ describe('tests that do not require faucet requests', () => {
 		// eslint-disable-next-line no-constant-condition
 		while (true) {
 			const dynamicFields = await conf.client.getDynamicFields({
-				parentId: conf.ikaConfig.ika_dwallet_coordinator_object_id,
+				parentId: conf.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 			});
 			const coordinatorInner = await conf.client.getDynamicFieldObject({
-				parentId: conf.ikaConfig.ika_dwallet_coordinator_object_id,
+				parentId: conf.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 				name: dynamicFields.data[DWALLET_NETWORK_VERSION].name,
 			});
 			if (!isCoordinatorInner(coordinatorInner.data?.content)) {
