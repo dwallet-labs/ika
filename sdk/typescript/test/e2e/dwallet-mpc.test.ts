@@ -383,15 +383,6 @@ describe('Test dWallet MPC', () => {
 		}
 		const validatorTableID =
 			systemInner.fields.value.fields.validator_set.fields.validators.fields.id.id;
-		const pendingValidatorSetID =
-			systemInner.fields.value.fields.validator_set.fields.pending_active_set.fields.id.id;
-		const df = await conf.client.getDynamicFields({
-			parentId: pendingValidatorSetID,
-		});
-		const validatorSet = await conf.client.getDynamicFieldObject({
-			parentId: pendingValidatorSetID,
-			name: df.data[0].name,
-		});
 		const allValidatorsIDs = await getAllChildObjectsIDs(conf, validatorTableID);
 		const operatorCapIDs = await Promise.all(
 			allValidatorsIDs.map(async (id) => {

@@ -1,4 +1,3 @@
-;
 // Copyright (c) dWallet Labs, Ltd..
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 import * as fs from 'node:fs';
@@ -7,10 +6,6 @@ import type { SuiClient } from '@mysten/sui/client';
 import type { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import type { Transaction } from '@mysten/sui/transactions';
 import sha3 from 'js-sha3';
-
-
-
-
 
 export const DWALLET_COORDINATOR_MOVE_MODULE_NAME = 'coordinator';
 export const DWALLET_COORDINATOR_INNER_MOVE_MODULE_NAME = 'coordinator_inner';
@@ -145,7 +140,6 @@ export interface SystemInner {
 			fields: {
 				validator_set: {
 					fields: {
-						pending_active_set: any;
 						validators: {
 							fields: {
 								id: {
