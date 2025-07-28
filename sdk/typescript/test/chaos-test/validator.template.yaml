@@ -1,4 +1,4 @@
-root-seed:
+root-seed-key-pair:
   path: /opt/ika/key-pairs/root-seed.key
 protocol-key-pair:
   path: /opt/ika/key-pairs/protocol.key
