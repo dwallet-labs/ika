@@ -516,7 +516,7 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
     VAL_IKA_CONFIG_DIR="/tmp/ika_config_${VALIDATOR_NAME}"
     IKA_SUI_CONFIG_FILE="$VAL_IKA_CONFIG_DIR/ika_sui_config.yaml"
     $BINARY_NAME validator join-committee \
-        --validator-cap-id "$VALIDATOR_CAP_ID" ika-sui-config "$IKA_SUI_CONFIG_FILE"
+        --validator-cap-id "$VALIDATOR_CAP_ID" --ika-sui-config "$IKA_SUI_CONFIG_FILE"
 done
 
 #############################
