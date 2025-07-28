@@ -74,7 +74,7 @@ macro_rules! retry_with_max_elapsed_time {
                         return Ok(result);
                     }
                     Err(err) => {
-                        let  suiClientInternalErrorStr = "SuiClientInternalError";
+                        let suiClientInternalErrorStr = "SuiClientInternalError";
                         if err.to_string().contains(suiClientInternalErrorStr) {
                             warn!(error=?err, "retrying with max elapsed time");
                         } else {
