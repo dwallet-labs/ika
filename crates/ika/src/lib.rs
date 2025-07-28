@@ -31,17 +31,12 @@ pub(crate) fn read_ika_sui_config_yaml(
         ))
     })?;
     let sui_env = context.get_active_env()?.alias.clone();
-    let Some(config) = config.envs.get(&sui_env) else {
-        println!(
-            "Ika network config not found for Sui environment: {sui_env}, {:?}, {:?}, {:?}, {:?}",
-            config_path,
-            context.config.path(),
-            context.config.envs,
-            config.envs
-        );
-        return Err(anyhow::anyhow!(
-            "Ika network config not found for Sui environment: {sui_env}"
-        ));
-    };
-    Ok(config.clone())
+    let config = config
+        .envs
+        .get(&sui_env)
+        .ok_or_else(|| {
+            anyhow::anyhow!("Ika network config not found for Sui environment: {sui_env}")
+        })?
+        .clone();
+    Ok(config)
 }
