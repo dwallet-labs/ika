@@ -49,7 +49,7 @@ use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction};
 use tokio::sync::watch;
 use tokio::time::{self, Duration};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum StopReason {
