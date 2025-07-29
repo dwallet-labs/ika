@@ -534,8 +534,19 @@ cp -r $PUBLISHER_DIR/sui_config/* "$SUI_CONFIG_PATH"
 
 ./ika-swarm-config ika-system-initialize --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --ika-config-path $PUBLISHER_DIR/ika_publish_config.json
 
-# This if the file name that the SDK is looking for.
-mv $PUBLISHER_DIR/ika_publish_config.json $PUBLISHER_DIR/ika_config.json
+# Convert the publisher config file to the format the tests expect for.
+yq -o=json '. as $in | {
+  "packages": {
+    "ika_package_id": $in.ika_package_id,
+    "ika_common_package_id": $in.ika_common_package_id,
+    "ika_dwallet_2pc_mpc_package_id": $in.ika_dwallet_2pc_mpc_package_id,
+    "ika_system_package_id": $in.ika_system_package_id
+  },
+  "objects": {
+    "ika_system_object_id": $in.ika_system_object_id,
+    "ika_dwallet_coordinator_object_id": $in.ika_dwallet_coordinator_object_id
+  }
+}' "$PUBLISHER_DIR/ika_publish_config.json" > "$PUBLISHER_DIR/ika_config.json"
 
 ################################
 # Generate locals.tf
