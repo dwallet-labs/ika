@@ -311,7 +311,7 @@ impl DWalletMPCMetrics {
             ])
             .get();
         let new_avg = (current_avg * (advance_completions_count as f64 - 1.0) + duration_ms as f64)
-            / advance_completions_count as f64;
+            / (advance_completions_count as f64);
         self.computation_duration_avg
             .with_label_values(&[
                 &mpc_event_data.to_string(),
