@@ -244,6 +244,25 @@ wait
 VALIDATOR_TUPLES=()
 TMP_OUTPUT_DIR="/tmp/become_candidate_outputs"
 TUPLES_FILE="$TMP_OUTPUT_DIR/tuples.txt"
+rm -f "$TUPLES_FILE"
+
+# Launch jobs with a max concurrency of 5 using a simple counter
+MAX_JOBS=10
+JOB_COUNT=0
+
+for entry in "${VALIDATORS_ARRAY[@]}"; do
+    process_validator "$entry" &
+
+    (( JOB_COUNT++ ))
+
+    if [[ $JOB_COUNT -ge $MAX_JOBS ]]; then
+        wait
+        JOB_COUNT=0
+    fi
+done
+
+# Final wait for any remaining jobs
+wait
 
 # Read tuples file after all jobs complete
 if [[ -f "$TUPLES_FILE" ]]; then
