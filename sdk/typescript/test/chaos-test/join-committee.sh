@@ -116,7 +116,86 @@ for ((i=FIRST_VALIDATOR_IN_SET; i<VALIDATOR_NUM + FIRST_VALIDATOR_IN_SET; i++));
     VALIDATORS_ARRAY+=("$VALIDATOR_NAME:$VALIDATOR_HOSTNAME")
 done
 
-pushd "$SUBDOMAIN"
+pushd $SUBDOMAIN
+
+############################
+## Create Validators
+############################
+SUI_BACKUP_DIR="sui_backup"
+ROOT_SEED_CREATED=0  # Track if the root-seed.key has been created
+
+for entry in "${VALIDATORS_ARRAY[@]}"; do
+    # Split the tuple "name:hostname" into VALIDATOR_NAME and VALIDATOR_HOSTNAME.
+    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+
+    # Use the VALIDATOR_HOSTNAME as the directory name.
+    VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
+    echo "Creating directory structure for validator '$VALIDATOR_NAME' with hostname '$VALIDATOR_HOSTNAME'"
+
+    # Create validator directory and backup directory.
+    mkdir -p "$VALIDATOR_DIR/$SUI_BACKUP_DIR"
+    SUI_CONFIG_PATH=~/.sui/sui_config
+
+    # Recreate the sui config for each validator.
+    rm -rf $SUI_CONFIG_PATH
+    mkdir -p $SUI_CONFIG_PATH
+
+    VALIDATOR_ACCOUNT_KEY_FILE=${VALIDATOR_HOSTNAME}.account.json
+    SUI_TEMPLATE_DIR=../sui-template
+    SUI_CLIENT_YAML_FILE=client.yaml
+    SUI_KEYSTORE_FILE=sui.keystore
+    SUI_ALIASES_FILE=sui.aliases
+    cp $SUI_TEMPLATE_DIR/sui.keystore.template "$SUI_CONFIG_PATH/$SUI_KEYSTORE_FILE"
+    cp $SUI_TEMPLATE_DIR/client.template.yaml "$SUI_CONFIG_PATH/$SUI_CLIENT_YAML_FILE"
+    cp $SUI_TEMPLATE_DIR/sui.aliases.template.json "$SUI_CONFIG_PATH/$SUI_ALIASES_FILE"
+
+    pushd $SUI_CONFIG_PATH > /dev/null
+
+    sui keytool generate ed25519 "m/44'/784'/0'/0'/0'" word24 --json > "$VALIDATOR_ACCOUNT_KEY_FILE"
+    SUI_ADDR=$(jq -r '.suiAddress' "$VALIDATOR_ACCOUNT_KEY_FILE")
+    MNEMONIC=$(jq -r '.mnemonic' "$VALIDATOR_ACCOUNT_KEY_FILE")
+    sui keytool import "$MNEMONIC" ed25519 "m/44'/784'/0'/0'/0'"
+
+    # Fetch the alias and change it (the --alias option is not working currently)
+    SUI_CURRENT_ALIAS=$(jq -r '.[].alias' sui.aliases)
+    sui keytool update-alias "$SUI_CURRENT_ALIAS" "$VALIDATOR_NAME"
+    yq e -i ".envs[].alias = \"$SUBDOMAIN\"" "$SUI_CLIENT_YAML_FILE"
+    yq e -i ".envs[].rpc = \"$SUI_FULLNODE_RPC_URL\"" "$SUI_CLIENT_YAML_FILE"
+    yq e -i ".active_address = \"$SUI_ADDR\"" "$SUI_CLIENT_YAML_FILE"
+    yq e -i ".active_env = \"$SUBDOMAIN\"" "$SUI_CLIENT_YAML_FILE"
+    yq e -i ".keystore.File = \"$SUI_CONFIG_PATH/$SUI_KEYSTORE_FILE\"" "$SUI_CLIENT_YAML_FILE"
+
+    popd > /dev/null
+    cp -r $SUI_CONFIG_PATH "$VALIDATOR_DIR/$SUI_BACKUP_DIR"
+    SENDER_SUI_ADDR=$SUI_ADDR
+
+    # Create Validator info.
+    pushd "$VALIDATOR_DIR" > /dev/null
+
+    # If we already have a root-seed.key, copy it into current dir before make-validator-info
+    if [ "$ROOT_SEED_CREATED" -eq 1 ]; then
+        echo "Copying existing root-seed.key for validator '$VALIDATOR_NAME'"
+        cp ../root-seed.key .
+    fi
+
+    # Now run make-validator-info
+    RUST_MIN_STACK=$RUST_MIN_STACK $BINARY_NAME validator make-validator-info "$VALIDATOR_NAME" "$VALIDATOR_NAME" "" "" "$VALIDATOR_HOSTNAME" 0 "$SENDER_SUI_ADDR"
+
+    # After the first validator generates root-seed.key, save it globally
+    if [ "$ROOT_SEED_CREATED" -eq 0 ]; then
+        echo "Saving initial root-seed.key after first validator"
+        cp root-seed.key ../root-seed.key
+        ROOT_SEED_CREATED=1
+    fi
+
+    mkdir -p "$KEY_PAIRS_DIR"
+    mv ./*.key "$KEY_PAIRS_DIR"/
+
+    popd > /dev/null
+
+    sui keytool list
+done
+
 
 SUI_BACKUP_DIR="sui_backup"
 
