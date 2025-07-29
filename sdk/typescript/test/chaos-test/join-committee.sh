@@ -203,7 +203,7 @@ SUI_BACKUP_DIR="sui_backup"
 
 export PUBLISHER_DIR=publisher
 
-PUBLISHER_CONFIG_FILE="$PUBLISHER_DIR/ika_config.json"
+PUBLISHER_CONFIG_FILE="$PUBLISHER_DIR/ika_publish_config.json"
 
 IKA_PACKAGE_ID=$(jq -r '.ika_package_id' "$PUBLISHER_CONFIG_FILE")
 IKA_SYSTEM_PACKAGE_ID=$(jq -r '.ika_system_package_id' "$PUBLISHER_CONFIG_FILE")
@@ -306,6 +306,8 @@ for entry in "${VALIDATOR_TUPLES[@]}"; do
         --stake-amount "$VALIDATOR_STAKED_TOKENS_NUM"
 done
 
+echo "✅ All validators have been staked successfully."
+exit 0
 ############################
 # Join Committee
 ############################
