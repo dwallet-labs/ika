@@ -47,7 +47,7 @@ fi
 # The prefix for the validator names (e.g. val1.devnet.ika.cloud, val2.devnet.ika.cloud, etc...).
 export VALIDATOR_PREFIX="val"
 # The number of validators to join committee.
-export VALIDATOR_NUM=1
+export VALIDATOR_NUM=3
 export FIRST_VALIDATOR_IN_SET=5
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
