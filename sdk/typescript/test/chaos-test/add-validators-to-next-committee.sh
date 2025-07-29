@@ -4,7 +4,7 @@
 # All you have to do is to set the VALIDATOR_NUM variable to the number of validators you want to add,
 # and the FIRST_VALIDATOR_IN_SET to the current committee size + 1.
 
-# This script will only work if you ran ./create-ika-genesis.sh before running it.
+# This script will only work if you run ./create-ika-genesis.sh beforehand.
 
 set -e
 
