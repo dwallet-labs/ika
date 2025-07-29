@@ -101,7 +101,7 @@ done
 RUST_MIN_STACK=16777216
 
 RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
-cp ../../target/release/"$BINARY_NAME" .
+cp ../../../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
 VALIDATORS_ARRAY=()
