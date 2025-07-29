@@ -208,11 +208,37 @@ PUBLISHER_CONFIG_FILE="$PUBLISHER_DIR/ika_config.json"
 IKA_PACKAGE_ID=$(jq -r '.ika_package_id' "$PUBLISHER_CONFIG_FILE")
 IKA_SYSTEM_PACKAGE_ID=$(jq -r '.ika_system_package_id' "$PUBLISHER_CONFIG_FILE")
 IKA_SYSTEM_OBJECT_ID=$(jq -r '.ika_system_object_id' "$PUBLISHER_CONFIG_FILE")
+IKA_COMMON_PACKAGE_ID=$(jq -r '.ika_common_package_id' "$PUBLISHER_CONFIG_FILE")
+IKA_DWALLET_2PC_MPC_PACKAGE_ID=$(jq -r '.ika_dwallet_2pc_mpc_package_id' "$PUBLISHER_CONFIG_FILE")
 
 # Print the values for verification.
 echo "IKA Package ID: $IKA_PACKAGE_ID"
 echo "IKA System Package ID: $IKA_SYSTEM_PACKAGE_ID"
 echo "System ID: $IKA_SYSTEM_OBJECT_ID"
+echo "IKA Common Package ID: $IKA_COMMON_PACKAGE_ID"
+echo "IKA DWallet 2PC MPC Package ID: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
+
+############################
+# Request Tokens and Create Validator.yaml (Max 5 Parallel + Retry)
+############################
+
+# Concurrency control (compatible with bash < 4.3)
+MAX_JOBS=10
+JOB_COUNT=0
+
+for entry in "${VALIDATORS_ARRAY[@]}"; do
+  request_and_generate_yaml "$entry" &
+
+  (( JOB_COUNT++ ))
+
+  if [[ $JOB_COUNT -ge $MAX_JOBS ]]; then
+    wait  # wait for all background jobs
+    JOB_COUNT=0
+  fi
+done
+
+# Wait for any remaining background jobs
+wait
 
 # Array to store validator tuples
 VALIDATOR_TUPLES=()

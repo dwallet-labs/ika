@@ -54,3 +54,51 @@ request_and_generate_yaml() {
     echo "[Faucet] ❗ Failed to get tokens for '$VALIDATOR_NAME' after $max_attempts attempts."
   fi
 }
+
+# Function to process a validator
+process_validator() {
+    local entry="$1"
+    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+    local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
+    local OUTPUT_FILE="$TMP_OUTPUT_DIR/${VALIDATOR_NAME}_output.json"
+    local LOCAL_SUI_CONFIG_DIR="/tmp/sui_config_${VALIDATOR_NAME}"
+    local LOCAL_IKA_CONFIG_DIR="/tmp/ika_config_${VALIDATOR_NAME}"
+
+    echo "[Become Validator Candidate] Processing validator '$VALIDATOR_NAME' in directory '$VALIDATOR_DIR'"
+
+    rm -rf "$LOCAL_IKA_CONFIG_DIR"
+    mkdir -p "$LOCAL_IKA_CONFIG_DIR"
+
+    # Set up clean local SUI config dir
+    rm -rf "$LOCAL_SUI_CONFIG_DIR"
+    mkdir -p "$LOCAL_SUI_CONFIG_DIR"
+    cp -r "$VALIDATOR_DIR/$SUI_BACKUP_DIR/sui_config/"* "$LOCAL_SUI_CONFIG_DIR"
+    # Update keystore path in client.yaml to the current validator's sui.keystore
+    yq e ".keystore.File = \"$LOCAL_SUI_CONFIG_DIR/sui.keystore\"" -i "$LOCAL_SUI_CONFIG_DIR/client.yaml"
+
+    # Run validator config-env and become-candidate with isolated config dirs
+    SUI_CONFIG_DIR="$LOCAL_SUI_CONFIG_DIR" \
+    IKA_CONFIG_DIR="$LOCAL_IKA_CONFIG_DIR" \
+    $BINARY_NAME validator config-env \
+        --ika-package-id "$IKA_PACKAGE_ID" \
+        --ika-system-package-id "$IKA_SYSTEM_PACKAGE_ID" \
+        --ika-system-object-id "$IKA_SYSTEM_OBJECT_ID" \
+        --ika-common-package-id "$IKA_COMMON_PACKAGE_ID" \
+        --ika-dwallet-2pc-mpc-package-id "$IKA_DWALLET_2PC_MPC_PACKAGE_ID" \
+
+    SUI_CONFIG_DIR="$LOCAL_SUI_CONFIG_DIR" \
+    IKA_CONFIG_DIR="$LOCAL_IKA_CONFIG_DIR" \
+    $BINARY_NAME validator become-candidate "$VALIDATOR_DIR/validator.info" --json > "$OUTPUT_FILE"
+#    $BINARY_NAME validator become-candidate "$VALIDATOR_DIR/validator.info" --json 2>&1 | tee "$OUTPUT_FILE"
+
+    # Validate and extract IDs
+    if jq empty "$OUTPUT_FILE" 2>/dev/null; then
+        VALIDATOR_ID=$(jq -r '.[1].validator_id' "$OUTPUT_FILE")
+        VALIDATOR_CAP_ID=$(jq -r '.[1].validator_cap_id' "$OUTPUT_FILE")
+        echo "[✓] Parsed validator_id=$VALIDATOR_ID, validator_cap_id=$VALIDATOR_CAP_ID for $VALIDATOR_NAME"
+        echo "$VALIDATOR_NAME:$VALIDATOR_ID:$VALIDATOR_CAP_ID" >> "$TUPLES_FILE"
+    else
+        echo "[ERROR] Invalid JSON from become-candidate for $VALIDATOR_NAME"
+        cat "$OUTPUT_FILE"
+    fi
+}
