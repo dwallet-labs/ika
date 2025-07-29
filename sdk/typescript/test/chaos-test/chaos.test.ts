@@ -38,6 +38,6 @@ describe('chaos tests', () => {
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
-		await createValidatorPod(kc, NAMESPACE_NAME, Number(2));
+		await createValidatorPod(kc, NAMESPACE_NAME, Number(5));
 	});
 });
