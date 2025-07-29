@@ -41,6 +41,8 @@ else
     echo "yq is already installed."
 fi
 
+. ./shared.sh
+
 # Default values.
 # The prefix for the validator names (e.g. val1.devnet.ika.cloud, val2.devnet.ika.cloud, etc...).
 export VALIDATOR_PREFIX="val"
