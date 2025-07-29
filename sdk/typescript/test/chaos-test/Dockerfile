@@ -27,7 +27,6 @@ COPY crates crates
 COPY contracts contracts
 
 RUN RUSTFLAGS="-C opt-level=2" cargo build --no-default-features --profile ${PROFILE} --bin ika-node
-#RUN cargo build --no-default-features --profile dev --bin ika-node
 
 # ==========================
 # Runtime stage
