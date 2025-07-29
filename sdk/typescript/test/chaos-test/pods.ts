@@ -110,7 +110,6 @@ export async function createValidatorPod(
 					},
 				},
 			],
-			restartPolicy: 'Never',
 		},
 	};
 	await k8sApi.createNamespacedPod({
@@ -179,7 +178,6 @@ export async function createPods(kc: KubeConfig, namespaceName: string, numOfVal
 					},
 				},
 			],
-			restartPolicy: 'Never',
 		},
 	};
 	await k8sApi.createNamespacedPod({
