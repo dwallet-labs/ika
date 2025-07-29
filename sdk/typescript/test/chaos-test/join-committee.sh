@@ -307,7 +307,6 @@ for entry in "${VALIDATOR_TUPLES[@]}"; do
 done
 
 echo "✅ All validators have been staked successfully."
-exit 0
 ############################
 # Join Committee
 ############################
@@ -341,3 +340,5 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
         fi
     done
 done
+
+echo "✅ All validators have joined the committee successfully."
