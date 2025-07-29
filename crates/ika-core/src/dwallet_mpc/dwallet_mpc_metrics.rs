@@ -452,7 +452,7 @@ mod tests {
         let new_mean = 142.5;
         let old_variance = 633.3333334; // correct sample variance of [100, 120, 150]
         let new_value = 200.0;
-        let n = 4; // number of values BEFORE adding new_value
+        let n = 4;
         let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
         assert_eq!(updated_variance, 1891.6666673499997); // correct sample variance of [100, 120, 150, 200]
     }
