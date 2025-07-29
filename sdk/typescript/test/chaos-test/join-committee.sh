@@ -281,6 +281,32 @@ for tup in "${VALIDATOR_TUPLES[@]}"; do
 done
 
 ############################
+# Stake Validators
+############################
+
+# Copy publisher sui_config to SUI_CONFIG_PATH
+rm -rf "$SUI_CONFIG_PATH"
+mkdir -p "$SUI_CONFIG_PATH"
+cp -r "$PUBLISHER_DIR/sui_config/"* "$SUI_CONFIG_PATH"
+
+# Extract IKA_SUPPLY_ID (ika_coin_id) from publisher config
+IKA_SUPPLY_ID=$(jq -r '.ika_supply_id' "$PUBLISHER_CONFIG_FILE")
+
+# Stake Validators
+for entry in "${VALIDATOR_TUPLES[@]}"; do
+    # New format: validator_name:validator_id:validator_cap_id
+    IFS=":" read -r VALIDATOR_NAME VALIDATOR_ID VALIDATOR_CAP_ID <<< "$entry"
+
+    echo "Staking for Validator '$VALIDATOR_NAME' (ID: $VALIDATOR_ID) with IKA Coin ID: $IKA_SUPPLY_ID"
+
+    # Execute the stake-validator command
+    $BINARY_NAME validator stake-validator \
+        --validator-id "$VALIDATOR_ID" \
+        --ika-supply-id "$IKA_SUPPLY_ID" \
+        --stake-amount "$VALIDATOR_STAKED_TOKENS_NUM"
+done
+
+############################
 # Join Committee
 ############################
 
