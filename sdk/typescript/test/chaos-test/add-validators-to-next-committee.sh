@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# This script allows to add N validators to the next committee.
+# All you have to do is to set the VALIDATOR_NUM variable to the number of validators you want to add,
+# and the FIRST_VALIDATOR_IN_SET to the current committee size + 1.
+
+# This script will only work if you ran ./create-ika-genesis.sh before running it.
+
 set -e
 
 command_exists() {
