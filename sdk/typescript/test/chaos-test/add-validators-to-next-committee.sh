@@ -53,8 +53,13 @@ fi
 # The prefix for the validator names (e.g. val1.devnet.ika.cloud, val2.devnet.ika.cloud, etc...).
 export VALIDATOR_PREFIX="val"
 # The number of validators to join committee.
-export VALIDATOR_NUM=1
-export FIRST_VALIDATOR_IN_SET=5
+
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <VALIDATOR_NUM> <FIRST_VALIDATOR_IN_SET>" >&2
+  exit 1
+fi
+VALIDATOR_NUM="$1"
+FIRST_VALIDATOR_IN_SET="$2"
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
 # The subdomain for Ika the network.

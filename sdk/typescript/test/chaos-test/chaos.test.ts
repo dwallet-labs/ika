@@ -4,8 +4,8 @@ import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
 import { execa } from 'execa';
 import { describe, it } from 'vitest';
 
-import { delay, getSystemInner } from '../../src/dwallet-mpc/globals';
-import { createConf } from '../e2e/dwallet-mpc.test';
+import { Config, delay, getSystemInner } from '../../src/dwallet-mpc/globals';
+import { createConf, runSignFullFlow } from '../e2e/dwallet-mpc.test';
 import { createConfigMaps } from './config-map';
 import { NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
 import { createNetworkServices } from './network-service';
@@ -75,14 +75,42 @@ describe('chaos tests', () => {
 		})`${createIkaGenesisPath}`;
 	});
 
-	it('should wait for an epoch switch and verify the next epoch committee is of the expected size', async () => {
-		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
-		const addValidatorScriptPath = `${TEST_ROOT_DIR}/add-validators-to-next-committee.sh`;
-		const { stdout, stderr } = await execFileAsync(addValidatorScriptPath, { cwd: TEST_ROOT_DIR });
-		if (stderr) {
-			throw new Error(`Error executing script: ${stderr}`);
-		}
+	it('run a full flow test of adding validators to the next epoch', async () => {
+		// The number of validators to add to the next epoch
+		const numOfValidatorsToAdd = 3;
+		// The number of old validators to kill after the validators has been added, used to verify the new validators
+		// are operational.
+		const numOfValidatorsToKill = 2;
 
+		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
+
+		const startCommitteeSize = Number(process.env.VALIDATOR_NUM);
+		// ------------ Create Ika Genesis ------------
+		const createIkaGenesisPath = `${TEST_ROOT_DIR}/create-ika-genesis-mac.sh`;
+		await execa({
+			stdout: ['pipe', 'inherit'],
+			stderr: ['pipe', 'inherit'],
+			cwd: TEST_ROOT_DIR,
+		})`${createIkaGenesisPath}`;
+
+		console.log(
+			`Ika genesis created, adding ${numOfValidatorsToAdd} validators to the next committee`,
+		);
+		const addValidatorScriptPath = `${TEST_ROOT_DIR}/add-validators-to-next-committee.sh`;
+		await execa(
+			addValidatorScriptPath,
+			[numOfValidatorsToAdd.toString(), (startCommitteeSize + 1).toString()],
+			{
+				stdout: ['pipe', 'inherit'],
+				stderr: ['pipe', 'inherit'],
+				cwd: TEST_ROOT_DIR,
+			},
+		);
+
+		console.log('Validators added to the next committee, deploying ika network');
+		await deployIkaNetwork();
+
+		console.log('Ika network deployed, waiting for epoch switch');
 		const conf = await createConf();
 		let systemInner = await getSystemInner(conf);
 		const startEpoch = systemInner.fields.value.fields.epoch;
@@ -92,9 +120,23 @@ describe('chaos tests', () => {
 			if (systemInner.fields.value.fields.epoch > startEpoch) {
 				epochSwitched = true;
 			} else {
-				await delay(5000);
+				await delay(5_000);
 			}
 		}
-		console.log('Epoch switched successfully');
+		console.log('Epoch switched, start new validators & kill old ones');
+		const kc = new KubeConfig();
+		kc.loadFromDefault();
+		await createConfigMaps(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM) + 1, true);
+
+		for (let i = 0; i < numOfValidatorsToAdd; i++) {
+			await createValidatorPod(kc, NAMESPACE_NAME, startCommitteeSize + 1 + i);
+		}
+
+		for (let i = 0; i < numOfValidatorsToKill; i++) {
+			await killValidatorPod(kc, NAMESPACE_NAME, i);
+		}
+
+		console.log('deployed new validators, running a full flow test');
+		await runSignFullFlow(conf);
 	});
 });
