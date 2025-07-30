@@ -1,6 +1,7 @@
-import { exec, execFile } from 'node:child_process';
+import { exec, execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
+import { execa } from 'execa';
 import { describe, it } from 'vitest';
 
 import { delay, getSystemInner } from '../../src/dwallet-mpc/globals';
@@ -62,6 +63,16 @@ describe('chaos tests', () => {
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
 		await createConfigMaps(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM) + 1, true);
+	});
+
+	it('should run create ika genesis', async () => {
+		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
+		const createIkaGenesisPath = `${TEST_ROOT_DIR}/create-ika-genesis-mac.sh`;
+		await execa({
+			stdout: ['pipe', 'inherit'],
+			stderr: ['pipe', 'inherit'],
+			cwd: TEST_ROOT_DIR,
+		})`${createIkaGenesisPath}`;
 	});
 
 	it('should wait for an epoch switch and verify the next epoch committee is of the expected size', async () => {
