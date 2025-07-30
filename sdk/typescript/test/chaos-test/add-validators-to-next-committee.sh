@@ -54,7 +54,7 @@ fi
 export VALIDATOR_PREFIX="val"
 # The number of validators to join committee.
 export VALIDATOR_NUM=1
-export FIRST_VALIDATOR_IN_SET=6
+export FIRST_VALIDATOR_IN_SET=5
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
 # The subdomain for Ika the network.
@@ -277,6 +277,7 @@ if [[ -f "$TUPLES_FILE" ]]; then
     done < "$TUPLES_FILE"
 else
     echo "[ERROR] Tuples file not found: $TUPLES_FILE"
+    exit 1
 fi
 
 # Summary
