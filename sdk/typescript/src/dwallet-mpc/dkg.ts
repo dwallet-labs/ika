@@ -281,9 +281,6 @@ async function launchDKGFirstRound(c: Config): Promise<DKGFirstRoundOutputResult
 			showEvents: true,
 		},
 	});
-	if (!result.events) {
-		throw new Error('No events found in DKG first round transaction result');
-	}
 	const startDKGEvent = await getEventOfType(result.events, isStartDKGFirstRoundEvent);
 	if (!startDKGEvent) {
 		throw new Error('invalid start DKG first round event');
