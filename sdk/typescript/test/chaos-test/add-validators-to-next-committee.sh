@@ -54,7 +54,7 @@ fi
 export VALIDATOR_PREFIX="val"
 # The number of validators to join committee.
 export VALIDATOR_NUM=1
-export FIRST_VALIDATOR_IN_SET=5
+export FIRST_VALIDATOR_IN_SET=6
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
 # The subdomain for Ika the network.
@@ -347,6 +347,14 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
             break
         fi
     done
+done
+
+for entry in "${VALIDATORS_ARRAY[@]}"; do
+    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+    VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
+    yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
+    yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
+    yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
 done
 
 echo "✅ All validators have joined the committee successfully."
