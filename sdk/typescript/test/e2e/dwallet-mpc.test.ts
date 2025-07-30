@@ -1,40 +1,27 @@
+;
 // Copyright (c) dWallet Labs, Ltd..
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import path from 'path';
-import { sample_dwallet_keypair, verify_secp_signature } from '@dwallet-network/dwallet-mpc-wasm';
+import {
+	public_key_from_dwallet_output,
+	sample_dwallet_keypair,
+	verify_secp_signature,
+} from '@dwallet-network/dwallet-mpc-wasm';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+
+
 import { createDWallet, launchDKGFirstRoundWithGivenCoins } from '../../src/dwallet-mpc/dkg';
-import {
-	checkpointCreationTime,
-	Config,
-	delay,
-	DWALLET_NETWORK_VERSION,
-	getAllChildObjectsIDs,
-	getNetworkPublicParameters,
-	getObjectWithType,
-	isCoordinatorInner,
-	isSystemInner,
-	isValidator,
-} from '../../src/dwallet-mpc/globals';
+import { checkpointCreationTime, Config, delay, DWALLET_NETWORK_VERSION, getAllChildObjectsIDs, getNetworkPublicParameters, getObjectWithType, isCoordinatorInner, isSystemInner, isValidator } from '../../src/dwallet-mpc/globals';
 import { createImportedDWallet } from '../../src/dwallet-mpc/import-dwallet';
 import { presign } from '../../src/dwallet-mpc/presign';
-import {
-	isDWalletWithPublicUserSecretKeyShares,
-	makeDWalletUserSecretKeySharesPublicRequestEvent,
-} from '../../src/dwallet-mpc/publish_secret_share';
-import {
-	completeFutureSign,
-	createUnverifiedPartialUserSignatureCap,
-	Hash,
-	sign,
-	signWithImportedDWallet,
-	verifySignWithPartialUserSignatures,
-} from '../../src/dwallet-mpc/sign';
+import { isDWalletWithPublicUserSecretKeyShares, makeDWalletUserSecretKeySharesPublicRequestEvent } from '../../src/dwallet-mpc/publish_secret_share';
+import { completeFutureSign, createUnverifiedPartialUserSignatureCap, Hash, sign, signWithImportedDWallet, verifySignWithPartialUserSignatures } from '../../src/dwallet-mpc/sign';
+
 
 const fiveMinutes = 5 * 60 * 1000;
 describe('Test dWallet MPC', () => {
@@ -112,7 +99,7 @@ describe('Test dWallet MPC', () => {
 		console.log(`Sing completed successfully: ${signRes.id.id}`);
 		console.timeEnd('Step 3: Sign Phase');
 		const isValid = verify_secp_signature(
-			cw,
+			public_key_from_dwallet_output(dwallet.output),
 			signRes.state.fields.signature,
 			Buffer.from('hello world'),
 			networkDecryptionKeyPublicOutput,
