@@ -111,6 +111,14 @@ describe('Test dWallet MPC', () => {
 		);
 		console.log(`Sing completed successfully: ${signRes.id.id}`);
 		console.timeEnd('Step 3: Sign Phase');
+		const isValid = verify_secp_signature(
+			cw,
+			signRes.state.fields.signature,
+			Buffer.from('hello world'),
+			networkDecryptionKeyPublicOutput,
+			Hash.KECCAK256,
+		);
+		expect(isValid).toBeTruthy();
 	});
 
 	it('should launch DKG first round with given coins', async () => {

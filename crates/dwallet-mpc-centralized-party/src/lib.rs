@@ -153,6 +153,18 @@ pub fn create_dkg_output(
     }
 }
 
+fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
+        bcs::from_bytes(&dwallet_output)?;
+    match dkg_output {
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
+            let dkg_output: DKGDecentralizedOutput = bcs::from_bytes(&dkg_output)?;
+            let public_key = dkg_output.public_key;
+            Ok(bcs::to_bytes(&public_key)?)
+        }
+    }
+}
+
 /// Executes the centralized phase of the Sign protocol,
 ///  the first part of the protocol.
 ///
