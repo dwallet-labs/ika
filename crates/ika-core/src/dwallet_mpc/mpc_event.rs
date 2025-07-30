@@ -1,4 +1,4 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::dwallet_dkg::{
@@ -394,7 +394,7 @@ impl DWalletMPCService {
                     return events;
                 }
                 Err(err) => {
-                    error!(
+                    warn!(
                         error=?err,
                         current_epoch=?self.epoch_store.epoch(),
                          "failed to load missed events from Sui"

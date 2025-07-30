@@ -1,4 +1,4 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_checkpoints::DWalletCheckpointStore;
@@ -269,7 +269,7 @@ mod tests {
     use super::*;
     use ika_sui_client::retry_with_max_elapsed_time;
     use std::time::Duration;
-    use tracing::error;
+    use tracing::warn;
 
     async fn example_func_ok() -> anyhow::Result<()> {
         Ok(())

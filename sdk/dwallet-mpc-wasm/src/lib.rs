@@ -6,10 +6,10 @@ use dwallet_mpc_centralized_party::{
     create_imported_dwallet_centralized_step_inner, decrypt_user_share_inner,
     encrypt_secret_key_share_and_prove, generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
-    verify_secp_signature_inner, verify_secret_share,
+    verify_secp_signature_inner, verify_secret_share, public_key_from_dwallet_output_inner
 };
-use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsValue;
 
 #[wasm_bindgen]
 pub fn create_dkg_centralized_output(
@@ -28,6 +28,15 @@ pub fn create_dkg_centralized_output(
         dkg_centralized_result.public_output.clone(),
         dkg_centralized_result.centralized_secret_output.clone(),
     ))
+    .map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn public_key_from_dwallet_output(dwallet_output: Vec<u8>) -> Result<JsValue, JsError> {
+    serde_wasm_bindgen::to_value(
+        &public_key_from_dwallet_output_inner(dwallet_output)
+            .map_err(|e| JsError::new(&e.to_string()))?,
+    )
     .map_err(|e| JsError::new(&e.to_string()))
 }
 

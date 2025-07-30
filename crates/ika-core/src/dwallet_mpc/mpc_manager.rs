@@ -1,4 +1,4 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::build_messages_to_advance;
@@ -15,12 +15,13 @@ use crate::dwallet_mpc::{
 };
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCSessionStatus};
+use fastcrypto::hash::HashFunction;
 use group::PartyID;
 use ika_config::NodeConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
-use ika_types::crypto::AuthorityName;
 use ika_types::crypto::AuthorityPublicKeyBytes;
+use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
@@ -302,22 +303,15 @@ impl DWalletMPCManager {
 
             return;
         };
-
+        let mut message_hasher = DefaultHash::default();
+        message_hasher.update(&message.message);
         info!(
             session_identifier=?session_identifier,
             sender_authority=?sender_authority,
             receiver_authority=?self.validator_name,
             mpc_round_number=?mpc_round_number,
+            message_hash=?message_hasher.finalize().digest,
             "Received an MPC message for session",
-        );
-
-        debug!(
-            session_identifier=?session_identifier,
-            sender_authority=?sender_authority,
-            receiver_authority=?self.validator_name,
-            mpc_round_number=?mpc_round_number,
-            message_bytes=?message.message,
-            "Received an MPC message for session with contents",
         );
 
         if self.is_malicious_actor(&sender_authority) {
@@ -552,6 +546,15 @@ impl DWalletMPCManager {
                     for (key_id, res) in results {
                         match res {
                             Ok(key) => {
+                                if key.epoch != self.epoch_id {
+                                    info!(
+                                        key_id=?key_id,
+                                        epoch=?key.epoch,
+                                        "Network key epoch does not match current epoch, ignoring"
+                                    );
+
+                                    continue;
+                                }
                                 info!(key_id=?key_id, "Updating (decrypting new shares) network key for key_id");
                                 if let Err(e) = self
                                     .network_keys

@@ -1,4 +1,4 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! The SuiExecutor module handles executing transactions
@@ -49,7 +49,7 @@ use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction};
 use tokio::sync::watch;
 use tokio::time::{self, Duration};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum StopReason {
@@ -754,14 +754,13 @@ where
             return Err(IkaError::SuiClientTxFailureGeneric(
                 tx_response.digest,
                 format!(
-                    "Transaction executed successfully, but it failed with an error: {:?}",
-                    error
+                    "Transaction executed successfully, but it failed with an error: {error:?}",
                 ),
             )
             .into());
         };
 
-        *last_submitted_tx_digest = Some(tx_response.digest.clone());
+        *last_submitted_tx_digest = Some(tx_response.digest);
         Ok(tx_response)
     }
 
