@@ -84,7 +84,7 @@ export function getEventOfType<TEvent>(
 			return event.parsedJson;
 		}
 	}
-	throw new Error('Event not found');
+	return null;
 }
 
 export async function getObjectWithType<TObject>(
