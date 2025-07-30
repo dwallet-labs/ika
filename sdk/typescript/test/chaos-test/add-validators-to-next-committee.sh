@@ -250,6 +250,7 @@ wait
 VALIDATOR_TUPLES=()
 TMP_OUTPUT_DIR="/tmp/become_candidate_outputs"
 TUPLES_FILE="$TMP_OUTPUT_DIR/tuples.txt"
+rm -f "$TUPLES_FILE"
 
 # Launch jobs with a max concurrency of 5 using a simple counter
 MAX_JOBS=10
