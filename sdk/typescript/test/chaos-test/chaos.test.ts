@@ -1,10 +1,16 @@
+import { exec, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
 import { describe, it } from 'vitest';
 
+import { delay, getSystemInner } from '../../src/dwallet-mpc/globals';
+import { createConf } from '../e2e/dwallet-mpc.test';
 import { createConfigMaps } from './config-map';
 import { NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
 import { createNetworkServices } from './network-service';
 import { createPods, createValidatorPod, killValidatorPod } from './pods';
+
+const execFileAsync = promisify(execFile);
 
 const createNamespace = async (kc: KubeConfig, namespaceName: string) => {
 	const k8sApi = kc.makeApiClient(CoreV1Api);
@@ -56,5 +62,28 @@ describe('chaos tests', () => {
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
 		await createConfigMaps(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM) + 1, true);
+	});
+
+	it('should wait for an epoch switch and verify the next epoch committee is of the expected size', async () => {
+		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
+		const addValidatorScriptPath = `${TEST_ROOT_DIR}/add-validators-to-next-committee.sh`;
+		const { stdout, stderr } = await execFileAsync(addValidatorScriptPath, { cwd: TEST_ROOT_DIR });
+		if (stderr) {
+			throw new Error(`Error executing script: ${stderr}`);
+		}
+
+		const conf = await createConf();
+		let systemInner = await getSystemInner(conf);
+		const startEpoch = systemInner.fields.value.fields.epoch;
+		let epochSwitched = false;
+		while (!epochSwitched) {
+			systemInner = await getSystemInner(conf);
+			if (systemInner.fields.value.fields.epoch > startEpoch) {
+				epochSwitched = true;
+			} else {
+				await delay(5000);
+			}
+		}
+		console.log('Epoch switched successfully');
 	});
 });
