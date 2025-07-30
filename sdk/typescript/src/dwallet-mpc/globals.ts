@@ -78,9 +78,12 @@ export function isPresign(obj: any): obj is Presign {
 }
 
 export async function getEventOfType<TEvent>(
-	events: SuiEvent[],
+	events: SuiEvent[] | null | undefined,
 	isEvent: (event: any) => event is TEvent,
 ): Promise<TEvent | null> {
+	if (!events || events.length === 0) {
+		return null;
+	}
 	for (const event of events) {
 		if (isEvent(event.parsedJson)) {
 			return event.parsedJson;
