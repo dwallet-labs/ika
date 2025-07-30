@@ -154,8 +154,7 @@ pub fn create_dkg_output(
 }
 
 pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-    let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
-        bcs::from_bytes(&dwallet_output)?;
+    let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput = bcs::from_bytes(&dwallet_output)?;
     match dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
             let dkg_output: DKGDecentralizedOutput = bcs::from_bytes(&dkg_output)?;
