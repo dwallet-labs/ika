@@ -14,6 +14,7 @@ import {
 	delay,
 	DWALLET_COORDINATOR_MOVE_MODULE_NAME,
 	getDWalletSecpState,
+	getEventOfType,
 	getObjectWithType,
 	isActiveDWallet,
 	isMoveObject,
@@ -373,8 +374,11 @@ export async function transferEncryptedSecretShare(
 			showEvents: true,
 		},
 	});
-	const startVerificationEvent = result.events?.at(1)?.parsedJson;
-	if (!isStartEncryptedShareVerificationEvent(startVerificationEvent)) {
+	const startVerificationEvent = getEventOfType(
+		result.events,
+		isStartEncryptedShareVerificationEvent,
+	);
+	if (!startVerificationEvent) {
 		throw new Error('invalid start DKG first round event');
 	}
 	await waitForChainVerification(

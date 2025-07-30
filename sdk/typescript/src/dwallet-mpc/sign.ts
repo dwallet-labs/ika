@@ -8,6 +8,7 @@ import {
 	DWALLET_COORDINATOR_INNER_MOVE_MODULE_NAME,
 	DWALLET_COORDINATOR_MOVE_MODULE_NAME,
 	getDWalletSecpState,
+	getEventOfType,
 	getObjectWithType,
 	isActiveDWallet,
 	isDWalletCap,
@@ -64,8 +65,8 @@ async function call_mpc_sign_tx(tx: Transaction, emptyIKACoin: TransactionResult
 			showEvents: true,
 		},
 	});
-	const startSessionEvent = result.events?.at(1)?.parsedJson;
-	if (!isStartSignEvent(startSessionEvent)) {
+	const startSessionEvent = getEventOfType(result.events, isStartSignEvent);
+	if (!startSessionEvent) {
 		throw new Error('invalid start session event');
 	}
 	return await getObjectWithType(conf, startSessionEvent.event_data.sign_id, isReadySignObject);

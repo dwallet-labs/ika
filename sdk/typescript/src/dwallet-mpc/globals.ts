@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 import * as fs from 'node:fs';
 import { network_dkg_public_output_to_protocol_pp } from '@dwallet-network/dwallet-mpc-wasm';
-import type { SuiClient } from '@mysten/sui/client';
+import type { SuiClient, SuiEvent } from '@mysten/sui/client';
 import type { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import type { Transaction } from '@mysten/sui/transactions';
 import sha3 from 'js-sha3';
@@ -70,6 +70,21 @@ export function isPresign(obj: any): obj is Presign {
 		obj?.dwallet_id !== undefined &&
 		obj?.state?.fields?.presign !== undefined
 	);
+}
+
+export function getEventOfType<TEvent>(
+	events: SuiEvent[] | null | undefined,
+	isEvent: (event: any) => event is TEvent,
+): TEvent | null {
+	if (!events || events.length === 0) {
+		return null;
+	}
+	for (const event of events) {
+		if (isEvent(event.parsedJson)) {
+			return event.parsedJson;
+		}
+	}
+	return null;
 }
 
 export async function getObjectWithType<TObject>(
