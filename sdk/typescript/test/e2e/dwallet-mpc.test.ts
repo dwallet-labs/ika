@@ -173,7 +173,7 @@ describe('Test dWallet MPC', () => {
 		console.log(`presign has been created successfully: ${completedPresign.id.id}`);
 		await delay(checkpointCreationTime);
 		console.log('Running Sign...');
-		await sign(
+		const signResponse = await sign(
 			conf,
 			completedPresign.id.id,
 			dwalletWithSecretShare.dwallet_cap_id,
@@ -182,6 +182,15 @@ describe('Test dWallet MPC', () => {
 			networkDecryptionKeyPublicOutput,
 			Hash.KECCAK256,
 		);
+		const publicKey = public_key_from_dwallet_output(dwallet.output);
+		const isValid = verify_secp_signature(
+			publicKey,
+			signResponse.state.fields.signature,
+			Buffer.from('hello world'),
+			networkDecryptionKeyPublicOutput,
+			Hash.KECCAK256,
+		);
+		expect(isValid).toBeTruthy();
 	});
 
 	it('should complete future sign', async () => {
