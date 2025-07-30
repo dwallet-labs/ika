@@ -1,5 +1,7 @@
+import { promises as fs } from 'fs';
 import { exec, execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import path from 'path';
 import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
 import { execa } from 'execa';
 import { describe, it } from 'vitest';
@@ -92,6 +94,10 @@ describe('chaos tests', () => {
 			stderr: ['pipe', 'inherit'],
 			cwd: TEST_ROOT_DIR,
 		})`${createIkaGenesisPath}`;
+		await fs.copyFile(
+			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/ika_config.json`,
+			path.resolve(process.cwd(), '../../ika_config.json'),
+		);
 
 		console.log(
 			`Ika genesis created, adding ${numOfValidatorsToAdd} validators to the next committee`,
@@ -138,5 +144,5 @@ describe('chaos tests', () => {
 
 		console.log('deployed new validators, running a full flow test');
 		await runSignFullFlow(conf);
-	});
+	}, 3_600_000);
 });
