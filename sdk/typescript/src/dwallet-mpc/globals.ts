@@ -77,10 +77,10 @@ export function isPresign(obj: any): obj is Presign {
 	);
 }
 
-export async function getEventOfType<TEvent>(
+export function getEventOfType<TEvent>(
 	events: SuiEvent[] | null | undefined,
 	isEvent: (event: any) => event is TEvent,
-): Promise<TEvent | null> {
+): TEvent | null {
 	if (!events || events.length === 0) {
 		return null;
 	}

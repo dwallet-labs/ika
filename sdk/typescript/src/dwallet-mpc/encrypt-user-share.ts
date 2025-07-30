@@ -8,12 +8,14 @@ import { bcs, toHex } from '@mysten/bcs';
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 
-import type { Config, EncryptedDWalletData } from './globals.js';
 import {
+	Config,
 	createSessionIdentifier,
 	delay,
 	DWALLET_COORDINATOR_MOVE_MODULE_NAME,
+	EncryptedDWalletData,
 	getDWalletSecpState,
+	getEventOfType,
 	getObjectWithType,
 	isActiveDWallet,
 	isMoveObject,
@@ -373,8 +375,11 @@ export async function transferEncryptedSecretShare(
 			showEvents: true,
 		},
 	});
-	const startVerificationEvent = result.events?.at(1)?.parsedJson;
-	if (!isStartEncryptedShareVerificationEvent(startVerificationEvent)) {
+	const startVerificationEvent = getEventOfType(
+		result.events,
+		isStartEncryptedShareVerificationEvent,
+	);
+	if (!startVerificationEvent) {
 		throw new Error('invalid start DKG first round event');
 	}
 	await waitForChainVerification(

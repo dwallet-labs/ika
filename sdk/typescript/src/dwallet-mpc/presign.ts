@@ -6,6 +6,7 @@ import {
 	createSessionIdentifier,
 	DWALLET_COORDINATOR_MOVE_MODULE_NAME,
 	getDWalletSecpState,
+	getEventOfType,
 	getObjectWithType,
 	SUI_PACKAGE_ID,
 } from './globals.js';
@@ -80,8 +81,8 @@ export async function presign(conf: Config, dwallet_id: string): Promise<Complet
 			showEvents: true,
 		},
 	});
-	const startSessionEvent = result.events?.at(1)?.parsedJson;
-	if (!isStartPresignEvent(startSessionEvent)) {
+	const startSessionEvent = getEventOfType(result.events, isStartPresignEvent);
+	if (!startSessionEvent) {
 		throw new Error('invalid start session event');
 	}
 

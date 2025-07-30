@@ -211,8 +211,8 @@ export async function dkgSecondRoundMoveCall(
 	if (result.errors !== undefined) {
 		throw new Error(`DKG second round failed with errors ${result.errors}`);
 	}
-	const startSessionEvent = result.events?.at(1)?.parsedJson;
-	if (!isStartDKGSecondRoundEvent(startSessionEvent)) {
+	const startSessionEvent = getEventOfType(result.events, isStartDKGSecondRoundEvent);
+	if (!startSessionEvent) {
 		throw new Error('invalid start session event');
 	}
 	const dwallet = await getObjectWithType(conf, firstRoundOutputResult.dwalletID, isActiveDWallet);
@@ -281,7 +281,7 @@ async function launchDKGFirstRound(c: Config): Promise<DKGFirstRoundOutputResult
 			showEvents: true,
 		},
 	});
-	const startDKGEvent = await getEventOfType(result.events, isStartDKGFirstRoundEvent);
+	const startDKGEvent = getEventOfType(result.events, isStartDKGFirstRoundEvent);
 	if (!startDKGEvent) {
 		throw new Error('invalid start DKG first round event');
 	}
@@ -342,8 +342,8 @@ export async function launchDKGFirstRoundWithGivenCoins(
 			showEvents: true,
 		},
 	});
-	const startDKGEvent = result.events?.at(1)?.parsedJson;
-	if (!isStartDKGFirstRoundEvent(startDKGEvent)) {
+	const startDKGEvent = getEventOfType(result.events, isStartDKGFirstRoundEvent);
+	if (!startDKGEvent) {
 		throw new Error('invalid start DKG first round event');
 	}
 	const dwalletID = startDKGEvent.event_data.dwallet_id;

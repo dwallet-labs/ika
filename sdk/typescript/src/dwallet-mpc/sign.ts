@@ -64,7 +64,7 @@ async function call_mpc_sign_tx(tx: Transaction, emptyIKACoin: TransactionResult
 			showEvents: true,
 		},
 	});
-	const startSessionEvent = await getEventOfType(result.events, isStartSignEvent);
+	const startSessionEvent = getEventOfType(result.events, isStartSignEvent);
 	if (!startSessionEvent) {
 		throw new Error('invalid start session event');
 	}

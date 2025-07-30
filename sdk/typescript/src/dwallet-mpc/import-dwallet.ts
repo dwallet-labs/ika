@@ -7,9 +7,9 @@ import { Transaction } from '@mysten/sui/transactions';
 
 import { acceptEncryptedUserShare } from './dkg.js';
 import { getOrCreateClassGroupsKeyPair } from './encrypt-user-share.js';
-import type {
+import {
 	Config,
-	DWallet,
+	DWallet, getEventOfType,
 	SessionIdentifierRegisteredEvent,
 	SharedObjectData,
 } from './globals.js';
@@ -114,8 +114,8 @@ export async function createSessionIdentifierMoveCall(
 			showEvents: true,
 		},
 	});
-	const creationEvent = result.events?.at(0)?.parsedJson;
-	if (!isSessionIdentifierRegisteredEvent(creationEvent)) {
+	const creationEvent = getEventOfType(result.events, isSessionIdentifierRegisteredEvent);
+	if (!creationEvent) {
 		throw new Error('Failed to create imported dWallet');
 	}
 	return creationEvent;
@@ -190,8 +190,11 @@ export async function verifyImportedDWalletMoveCall(
 	if (result.errors !== undefined) {
 		throw new Error(`DKG second round failed with errors ${result.errors}`);
 	}
-	const startSessionEvent = result.events?.at(0)?.parsedJson;
-	if (!isDWalletImportedKeyVerificationRequestEvent(startSessionEvent)) {
+	const startSessionEvent = getEventOfType(
+		result.events,
+		isDWalletImportedKeyVerificationRequestEvent,
+	);
+	if (!startSessionEvent) {
 		throw new Error('invalid start session event');
 	}
 	await getObjectWithType(conf, startSessionEvent.event_data.dwallet_id, isActiveDWallet);
