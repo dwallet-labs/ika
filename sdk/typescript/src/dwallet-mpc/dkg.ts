@@ -5,18 +5,15 @@ import {
 	encrypt_secret_share,
 } from '@dwallet-network/dwallet-mpc-wasm';
 import { bcs } from '@mysten/bcs';
-import type { SuiEvent } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 
 import type { ClassGroupsSecpKeyPair } from './encrypt-user-share.js';
 import { getOrCreateClassGroupsKeyPair } from './encrypt-user-share.js';
+import type { ActiveDWallet, DWallet, EncryptedDWalletData } from './globals.js';
 import {
-	ActiveDWallet,
 	createSessionIdentifier,
 	delay,
-	DWallet,
 	DWALLET_COORDINATOR_MOVE_MODULE_NAME,
-	EncryptedDWalletData,
 	getDWalletSecpState,
 	getEventOfType,
 	getInitialSharedVersion,
