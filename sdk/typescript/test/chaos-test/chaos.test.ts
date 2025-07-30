@@ -131,6 +131,7 @@ describe('chaos tests', () => {
 			}
 		}
 		console.log('Epoch switched, start new validators & kill old ones');
+		// everything works fine until here
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
 		await createConfigMaps(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM) + 1, true);
