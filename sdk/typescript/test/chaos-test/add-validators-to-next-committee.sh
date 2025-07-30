@@ -350,6 +350,7 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
     done
 done
 
+IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_DIR/ika_publish_config.json")
 for entry in "${VALIDATORS_ARRAY[@]}"; do
     IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
     VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
