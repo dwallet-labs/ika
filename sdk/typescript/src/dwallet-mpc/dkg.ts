@@ -284,8 +284,8 @@ async function launchDKGFirstRound(c: Config): Promise<DKGFirstRoundOutputResult
 	if (!result.events) {
 		throw new Error('No events found in DKG first round transaction result');
 	}
-	const startDKGEvent = getEventOfType(result.events, isStartDKGFirstRoundEvent);
-	if (!isStartDKGFirstRoundEvent(startDKGEvent)) {
+	const startDKGEvent = await getEventOfType(result.events, isStartDKGFirstRoundEvent);
+	if (!startDKGEvent) {
 		throw new Error('invalid start DKG first round event');
 	}
 	const dwalletID = startDKGEvent.event_data.dwallet_id;
