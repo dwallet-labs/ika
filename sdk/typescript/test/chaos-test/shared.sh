@@ -4,7 +4,6 @@ request_and_generate_yaml() {
   local i="$1"
   VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
   VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-  IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
   local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
 
   # Extract values from the validator.info file
