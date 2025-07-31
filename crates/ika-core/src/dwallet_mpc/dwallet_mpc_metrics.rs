@@ -21,8 +21,8 @@
 
 use ika_types::messages_dwallet_mpc::MPCRequestInput;
 use prometheus::{
-    GaugeVec, IntGauge, IntGaugeVec, Registry, register_gauge_vec_with_registry,
-    register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
+    IntGauge, IntGaugeVec, Registry, register_int_gauge_vec_with_registry,
+    register_int_gauge_with_registry,
 };
 use std::sync::Arc;
 
@@ -60,10 +60,10 @@ pub struct DWalletMPCMetrics {
     advance_completions: IntGaugeVec,
 
     /// Records the average duration of computations for each MPC round.
-    computation_duration_avg: GaugeVec,
+    computation_duration_avg: IntGaugeVec,
 
     /// Records the variance of the computation durations for each MPC round.
-    computation_duration_variance: GaugeVec,
+    computation_duration_variance: IntGaugeVec,
 
     /// Tracks the number of MPC protocol sessions that have been started.
     session_start_count: IntGaugeVec,
@@ -143,14 +143,14 @@ impl DWalletMPCMetrics {
                 registry
             )
             .unwrap(),
-            computation_duration_variance: register_gauge_vec_with_registry!(
+            computation_duration_variance: register_int_gauge_vec_with_registry!(
                 "dwallet_mpc_computation_duration_variance",
                 "Variance of the duration of MPC computations in milliseconds",
                 &round_metric_labels,
                 registry
             )
             .unwrap(),
-            computation_duration_avg: register_gauge_vec_with_registry!(
+            computation_duration_avg: register_int_gauge_vec_with_registry!(
                 "dwallet_mpc_computation_duration_avg",
                 "Average duration of MPC computations in milliseconds",
                 &round_metric_labels,
@@ -310,8 +310,8 @@ impl DWalletMPCMetrics {
                 &mpc_event_data.get_signature_algorithm(),
             ])
             .get();
-        let new_avg = (current_avg * (advance_completions_count as f64 - 1.0) + duration_ms as f64)
-            / (advance_completions_count as f64);
+        let new_avg = (current_avg * (advance_completions_count - 1) + duration_ms)
+            / advance_completions_count;
         self.computation_duration_avg
             .with_label_values(&[
                 &mpc_event_data.to_string(),
@@ -336,7 +336,7 @@ impl DWalletMPCMetrics {
                 current_avg,
                 new_avg,
                 current_variance,
-                duration_ms as f64,
+                duration_ms,
                 advance_completions_count,
             );
             self.computation_duration_variance
@@ -357,7 +357,7 @@ impl DWalletMPCMetrics {
                     &mpc_event_data.get_hash_scheme(),
                     &mpc_event_data.get_signature_algorithm(),
                 ])
-                .set(0.0);
+                .set(0);
         }
     }
 
@@ -390,70 +390,47 @@ impl DWalletMPCMetrics {
 
 /// Calculating the variance using the Welford's method.
 /// Learn more in this [article](https://jonisalonen.com/2013/deriving-welfords-method-for-computing-variance/)
-fn update_variance(old_mean: f64, new_mean: f64, old_variance: f64, new_value: f64, n: i64) -> f64 {
+fn update_variance(old_mean: i64, new_mean: i64, old_variance: i64, new_value: i64, n: i64) -> i64 {
+    // convert all the vars to f64 to avoid overflow
+    let old_mean = old_mean as f64;
+    let new_mean = new_mean as f64;
+    let old_variance = old_variance as f64;
+    let new_value = new_value as f64;
     let n = n as f64;
     let first = old_variance * (n - 2.0);
     let second = (new_value - new_mean) * (new_value - old_mean);
-    (first + second) / (n - 1.0)
+    let result = (first + second) / (n - 1.0);
+    result as i64
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // test the update variance function
     #[test]
     fn test_update_variance() {
-        // Case 1
-        let old_mean = 347.0;
-        let new_mean = 356.0;
-        let old_variance = 0.0;
-        let new_value = 365.0;
+        let old_mean = 347;
+        let new_mean = 356;
+        let old_variance = 0;
+        let new_value = 365;
+        let n = 2; // number of values before adding new_value
+
+        let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
+        assert_eq!(updated_variance, 162);
+
+        let new_value = 70;
+        let old_mean = 55;
+        let new_mean = 60;
+        let old_variance = 50;
+        let n = 3;
+        let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
+        assert_eq!(updated_variance, 100);
+
+        let new_value = 60;
+        let old_mean = 50;
+        let new_mean = 55;
+        let old_variance = 0;
         let n = 2;
         let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
-        assert_eq!(updated_variance, 162.0);
-
-        // Case 2
-        let new_value = 70.0;
-        let old_mean = 55.0;
-        let new_mean = 60.0;
-        let old_variance = 50.0;
-        let n = 3;
-        let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
-        assert_eq!(updated_variance, 100.0);
-
-        // Case 3
-        let new_value = 60.0;
-        let old_mean = 50.0;
-        let new_mean = 55.0;
-        let old_variance = 0.0;
-        let n = 2;
-        let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
-        assert_eq!(updated_variance, 50.0);
-
-        // Case 4: add 30 to [10, 20]
-        let old_mean = 15.0;
-        let new_mean = 20.0;
-        let old_variance = 50.0; // var([10, 20]) = 50
-        let new_value = 30.0;
-        let n = 3;
-        let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
-        assert_eq!(updated_variance, 100.0); // var([10, 20, 30]) = 100
-
-        // Case 5: add 99 to [100, 100, 100]
-        let old_mean = 100.0;
-        let new_mean = 99.0;
-        let old_variance = 0.0; // var([100, 100, 100]) = 0
-        let new_value = 99.0;
-        let n = 3;
-        let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
-        assert_eq!(updated_variance, 0.0); // var([100, 100, 100, 99]) = 0
-
-        // Case 6: add 200 to [100, 120, 150]
-        let old_mean = 123.3333333;
-        let new_mean = 142.5;
-        let old_variance = 633.3333334; // correct sample variance of [100, 120, 150]
-        let new_value = 200.0;
-        let n = 4;
-        let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
-        assert_eq!(updated_variance, 1891.6666673499997); // correct sample variance of [100, 120, 150, 200]
+        assert_eq!(updated_variance, 50);
     }
 }

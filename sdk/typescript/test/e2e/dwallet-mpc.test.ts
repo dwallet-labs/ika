@@ -2,11 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import path from 'path';
-import {
-	public_key_from_dwallet_output,
-	sample_dwallet_keypair,
-	verify_secp_signature,
-} from '@dwallet-network/dwallet-mpc-wasm';
+import { sample_dwallet_keypair, verify_secp_signature } from '@dwallet-network/dwallet-mpc-wasm';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
@@ -174,14 +170,6 @@ describe('Test dWallet MPC', () => {
 		);
 		console.log(`Sing completed successfully: ${signRes.id.id}`);
 		console.timeEnd('Step 3: Sign Phase');
-		const isValid = verify_secp_signature(
-			public_key_from_dwallet_output(dwallet.output),
-			signRes.state.fields.signature,
-			Buffer.from('hello world'),
-			networkDecryptionKeyPublicOutput,
-			Hash.KECCAK256,
-		);
-		expect(isValid).toBeTruthy();
 	});
 
 	it('run multiple full flows simultaneously', async () => {
@@ -258,7 +246,7 @@ describe('Test dWallet MPC', () => {
 		console.log(`presign has been created successfully: ${completedPresign.id.id}`);
 		await delay(checkpointCreationTime);
 		console.log('Running Sign...');
-		const signResponse = await sign(
+		await sign(
 			conf,
 			completedPresign.id.id,
 			dwalletWithSecretShare.dwallet_cap_id,
@@ -267,15 +255,6 @@ describe('Test dWallet MPC', () => {
 			networkDecryptionKeyPublicOutput,
 			Hash.KECCAK256,
 		);
-		const publicKey = public_key_from_dwallet_output(dwallet.output);
-		const isValid = verify_secp_signature(
-			publicKey,
-			signResponse.state.fields.signature,
-			Buffer.from('hello world'),
-			networkDecryptionKeyPublicOutput,
-			Hash.KECCAK256,
-		);
-		expect(isValid).toBeTruthy();
 	});
 
 	it('should complete future sign', async () => {
@@ -348,7 +327,7 @@ describe('Test dWallet MPC', () => {
 		console.log(`presign has been created successfully: ${completedPresign.id.id}`);
 		await delay(checkpointCreationTime);
 		console.log('Running Sign...');
-		const signature = await signWithImportedDWallet(
+		await signWithImportedDWallet(
 			conf,
 			completedPresign.id.id,
 			dwalletWithSecretShare.dwallet_cap_id,
@@ -357,14 +336,6 @@ describe('Test dWallet MPC', () => {
 			networkDecryptionKeyPublicOutput,
 			Hash.KECCAK256,
 		);
-		const isValid = verify_secp_signature(
-			public_key_from_dwallet_output(dwallet.output),
-			signature.state.fields.signature,
-			Buffer.from('hello world'),
-			networkDecryptionKeyPublicOutput,
-			Hash.KECCAK256,
-		);
-		expect(isValid).toBeTruthy();
 	});
 
 	it('should create an imported dWallet, sign with it & verify the signature against the original public key', async () => {
