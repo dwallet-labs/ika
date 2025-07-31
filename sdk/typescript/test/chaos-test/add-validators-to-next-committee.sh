@@ -53,8 +53,13 @@ fi
 # The prefix for the validator names (e.g. val1.devnet.ika.cloud, val2.devnet.ika.cloud, etc...).
 export VALIDATOR_PREFIX="val"
 # The number of validators to join committee.
-export VALIDATOR_NUM=3
-export FIRST_VALIDATOR_IN_SET=5
+
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <VALIDATOR_NUM> <FIRST_VALIDATOR_IN_SET>" >&2
+  exit 1
+fi
+VALIDATOR_NUM="$1"
+FIRST_VALIDATOR_IN_SET="$2"
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
 # The subdomain for Ika the network.
@@ -64,47 +69,6 @@ export BINARY_NAME="ika"
 export KEY_PAIRS_DIR="key-pairs"
 export SUI_CHAIN_IDENTIFIER="custom"
 SUI_CONFIG_PATH=~/.sui/sui_config
-
-# Function to display help message
-show_help() {
-    echo "Usage: $0 [options]"
-    echo ""
-    echo "This script sets up a genesis and config with given options."
-    echo ""
-    echo "Options:"
-    echo "  --validator-prefix <prefix>         Set the prefix for validators. Default: $VALIDATOR_PREFIX"
-    echo "  --validator-num <number>            Set the number of validators. Default: $VALIDATOR_NUM"
-    echo "  --validator-staked-tokens-num <num>   Set the number of staked tokens. Default: $VALIDATOR_STAKED_TOKENS_NUM"
-    echo "  --subdomain <subdomain>             Set the subdomain for validators. Default: $SUBDOMAIN"
-    echo "  --binary-name <path>                Set the binary name path. Default: $PWD/ika"
-    echo "  --key-pairs-dir <directory>         Set the directory for key pairs. Default: key-pairs"
-    echo "  --validators-file <file>            Specify a file with validators."
-    echo "  --image-name <image>                Specify the Docker image name. Default: $IMAGE_NAME"
-    echo "  --sui-faucet-url <url>              Set the SUI faucet URL. Default: $SUI_FAUCET_URL"
-    echo "  --epoch-duration-time <time>        Set the epoch duration time. Default: $EPOCH_DURATION_TIME_MS"
-    echo "  -h, --help                        Display this help message and exit."
-    echo ""
-    echo "Note: --validators-file overrides --validator-prefix and --validator-num."
-}
-
-# Parse named arguments
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        --validator-prefix) VALIDATOR_PREFIX="$2"; shift ;;
-        --validator-num) VALIDATOR_NUM="$2"; shift ;;
-        --validator-staked-tokens-num) VALIDATOR_STAKED_TOKENS_NUM="$2"; shift ;;
-        --subdomain) SUBDOMAIN="$2"; shift ;;
-        --binary-name) BINARY_NAME="$2"; shift ;;
-        --key-pairs-dir) KEY_PAIRS_DIR="$2"; shift ;;
-        --image-name) IMAGE_NAME="$2"; shift ;;
-        --sui-faucet-url) SUI_FAUCET_URL="$2"; shift ;;
-        --epoch-duration-time) EPOCH_DURATION_TIME_MS="$2"; shift ;;
-        -h|--help) show_help; exit 0 ;;
-        *) echo "Unknown parameter passed: $1"; exit 1 ;;
-    esac
-    shift
-done
-
 
 RUST_MIN_STACK=16777216
 
@@ -277,6 +241,7 @@ if [[ -f "$TUPLES_FILE" ]]; then
     done < "$TUPLES_FILE"
 else
     echo "[ERROR] Tuples file not found: $TUPLES_FILE"
+    exit 1
 fi
 
 # Summary
@@ -347,6 +312,15 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
             break
         fi
     done
+done
+
+IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_DIR/ika_publish_config.json")
+for entry in "${VALIDATORS_ARRAY[@]}"; do
+    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+    VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
+    yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
+    yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
+    yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
 done
 
 echo "✅ All validators have joined the committee successfully."
