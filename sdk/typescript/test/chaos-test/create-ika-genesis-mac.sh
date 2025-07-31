@@ -413,21 +413,24 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
         VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
         VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
         IFS=":" read -r NAME HOSTNAME <<< "$entry"
-        if [[ "$NAME" == "$VALIDATOR_NAME" ]]; then
-            VALIDATOR_HOSTNAME="$HOSTNAME"
-            break
-        fi
+#        if [[ "$NAME" == "$VALIDATOR_NAME" ]]; then
+#            VALIDATOR_HOSTNAME="$HOSTNAME"
+#            break
+#        fi
     done
 
     # Copy sui_config and run join-committee
     VALIDATOR_DIR="$VALIDATOR_HOSTNAME"
     rm -rf "$SUI_CONFIG_PATH"
     mkdir -p "$SUI_CONFIG_PATH"
+    echo pwd
     cp -r "$VALIDATOR_DIR/$SUI_BACKUP_DIR/sui_config/"* "$SUI_CONFIG_PATH"
 
     echo "Joining committee for Validator '$VALIDATOR_NAME' (Cap ID: $VALIDATOR_CAP_ID)"
     VAL_IKA_CONFIG_DIR="/tmp/ika_config_${VALIDATOR_NAME}"
     IKA_SUI_CONFIG_FILE="$VAL_IKA_CONFIG_DIR/ika_sui_config.yaml"
+    echo "$IKA_SUI_CONFIG_FILE"
+    echo "$VALIDATOR_CAP_ID"
     $BINARY_NAME validator join-committee \
         --validator-cap-id "$VALIDATOR_CAP_ID" --ika-sui-config "$IKA_SUI_CONFIG_FILE"
 done
