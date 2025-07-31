@@ -154,7 +154,7 @@ export async function createPods(kc: KubeConfig, namespaceName: string, numOfVal
 					image: process.env.DOCKER_TAG,
 					resources: {
 						requests: {
-							cpu: '8',
+							cpu: '16',
 							memory: '10Gi',
 						},
 					},
