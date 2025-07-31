@@ -42,4 +42,4 @@ jobs:
         run: |
           touch .env
           ./build.sh
-          docker push $IMAGE_NAME
+          docker push "$DOCKER_TAG"
