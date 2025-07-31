@@ -1,4 +1,4 @@
-name: Publish Chaos Test Image
+name: Build & Upload Docker Image
 
 on:
   workflow_dispatch:
@@ -7,6 +7,10 @@ on:
         description: 'Build flags for cargo'
         required: false
         default: '--no-default-features'
+      imageTag:
+        description: 'Tag for the Docker image'
+        required: false
+        default: 'latest'
 
 jobs:
   build-and-push:
@@ -20,18 +24,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: dwallet-labs
-          password: ${{ secrets.GHCR_PAT }}
+      - name: Set up Docker auth for GAR
+        run: |
+          echo "${{ secrets.GAR_KEY }}" > key.json
+          gcloud auth activate-service-account --key-file=key.json
+          gcloud auth configure-docker us-docker.pkg.dev --quiet
+        env:
+          CLOUDSDK_CORE_PROJECT: <your-gcp-project-id>
 
       - name: Build and push Docker image
         env:
           CARGO_BUILD_FLAGS: ${{ github.event.inputs.cargo_build_flags }}
         run: |
-          IMAGE_NAME=ghcr.io/dwallet-labs/dwallet-network/ika:latest
+          IMAGE_name="us-docker.pkg.dev/<project-id>/<repo>/<image>:${{ github.event.inputs.imageTag }}"
           cd sdk/typescript/test/chaos-test
           docker build -t $IMAGE_NAME .
           docker push $IMAGE_NAME
