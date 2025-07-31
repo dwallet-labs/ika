@@ -67,7 +67,6 @@ echo "Creating validators from prefix '$VALIDATOR_PREFIX' and number '$VALIDATOR
 
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
     VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-    # For enumerated list, compute the hostname as: name.SUBDOMAIN
     VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
     echo "Generated validator: Name = $VALIDATOR_NAME, Hostname = $VALIDATOR_HOSTNAME"
     VALIDATORS_ARRAY+=("$VALIDATOR_NAME:$VALIDATOR_HOSTNAME")
@@ -86,9 +85,9 @@ pushd "$SUBDOMAIN"
 SUI_BACKUP_DIR="sui_backup"
 ROOT_SEED_CREATED=0  # Track if the root-seed.key has been created
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-    # Split the tuple "name:hostname" into VALIDATOR_NAME and VALIDATOR_HOSTNAME.
-    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
 
     # Use the VALIDATOR_HOSTNAME as the directory name.
     VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
