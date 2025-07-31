@@ -27,7 +27,7 @@ jobs:
 
       - name: Set up Docker auth for GAR
         run: |
-          echo ${{ secrets.GAR_KEY }} > key.json
+          printf '%s' "${{ secrets.GAR_KEY }}" > key.json
           gcloud auth activate-service-account --key-file=key.json
           gcloud auth configure-docker us-docker.pkg.dev --quiet
         env:
