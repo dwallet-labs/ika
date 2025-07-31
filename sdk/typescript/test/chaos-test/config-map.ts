@@ -5,10 +5,11 @@ import { CoreV1Api } from '@kubernetes/client-node';
 
 import { CONFIG_MAP_NAME, NAMESPACE_NAME, NETWORK_SERVICE_NAME, TEST_ROOT_DIR } from './globals.js';
 
-export async function createConfigMap(
+export async function createConfigMaps(
 	kc: KubeConfig,
 	namespaceName: string,
 	numOfValidators: number,
+	update = false,
 ): Promise<V1ConfigMap> {
 	const k8sApi = kc.makeApiClient(CoreV1Api);
 	const fullNodeYaml = fs.readFileSync(
@@ -59,6 +60,12 @@ export async function createConfigMap(
 			...validatorsConfig,
 		},
 	};
+	if (update) {
+		await k8sApi.deleteNamespacedConfigMap({
+			namespace: namespaceName,
+			name: CONFIG_MAP_NAME,
+		});
+	}
 	return await k8sApi.createNamespacedConfigMap({
 		namespace: namespaceName,
 		body: configMap,
