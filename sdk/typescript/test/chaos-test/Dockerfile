@@ -26,7 +26,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 COPY contracts contracts
 
-RUN RUSTFLAGS="-C opt-level=2" cargo build --no-default-features --profile ${PROFILE} --bin ika-node
+RUN RUSTFLAGS="-C opt-level=2" cargo build ${CARGO_BUILD_FLAGS} --profile ${PROFILE} --bin ika-node
 
 # ==========================
 # Runtime stage
