@@ -2,6 +2,11 @@ name: Publish Chaos Test Image
 
 on:
   workflow_dispatch:
+    inputs:
+      cargo_build_flags:
+        description: 'Build flags for cargo'
+        required: false
+        default: '--no-default-features'
 
 jobs:
   build-and-push:
@@ -23,6 +28,8 @@ jobs:
           password: ${{ secrets.GHCR_PAT }}
 
       - name: Build and push Docker image
+        env:
+          CARGO_BUILD_FLAGS: ${{ github.event.inputs.cargo_build_flags }}
         run: |
           IMAGE_NAME=ghcr.io/dwallet-labs/dwallet-network/ika:latest
           cd sdk/typescript/test/chaos-test
