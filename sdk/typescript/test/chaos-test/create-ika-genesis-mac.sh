@@ -53,9 +53,6 @@ export SUBDOMAIN="ika-dns-service.ika.svc.cluster.local"
 export BINARY_NAME="ika"
 # The directory to store the key pairs.
 export KEY_PAIRS_DIR="key-pairs"
-# The root address for the genesis account (to hold all the tokens).
-# In a testnet use the faucet public key.
-ROOT_ADDR=""
 export SUI_CHAIN_IDENTIFIER="custom"
 
 
