@@ -56,52 +56,7 @@ export KEY_PAIRS_DIR="key-pairs"
 # The root address for the genesis account (to hold all the tokens).
 # In a testnet use the faucet public key.
 ROOT_ADDR=""
-# The file containing the validators (separator: newline).
-export VALIDATORS_FILE=""
 export SUI_CHAIN_IDENTIFIER="custom"
-
-
-
-# Function to display help message
-show_help() {
-    echo "Usage: $0 [options]"
-    echo ""
-    echo "This script sets up a genesis and config with given options."
-    echo ""
-    echo "Options:"
-    echo "  --validator-prefix <prefix>         Set the prefix for validators. Default: $VALIDATOR_PREFIX"
-    echo "  --validator-num <number>            Set the number of validators. Default: $VALIDATOR_NUM"
-    echo "  --validator-staked-tokens-num <num>   Set the number of staked tokens. Default: $VALIDATOR_STAKED_TOKENS_NUM"
-    echo "  --subdomain <subdomain>             Set the subdomain for validators. Default: $SUBDOMAIN"
-    echo "  --binary-name <path>                Set the binary name path. Default: $PWD/ika"
-    echo "  --key-pairs-dir <directory>         Set the directory for key pairs. Default: key-pairs"
-    echo "  --root-addr <address>               Set the root address. Default: 0x3e..."
-    echo "  --validators-file <file>            Specify a file with validators."
-    echo "  --sui-faucet-url <url>              Set the SUI faucet URL. Default: $SUI_FAUCET_URL"
-    echo "  --epoch-duration-time <time>        Set the epoch duration time. Default: $EPOCH_DURATION_TIME_MS"
-    echo "  -h, --help                        Display this help message and exit."
-    echo ""
-    echo "Note: --validators-file overrides --validator-prefix and --validator-num."
-}
-
-# Parse named arguments
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        --validator-prefix) VALIDATOR_PREFIX="$2"; shift ;;
-        --validator-num) VALIDATOR_NUM="$2"; shift ;;
-        --validator-staked-tokens-num) VALIDATOR_STAKED_TOKENS_NUM="$2"; shift ;;
-        --subdomain) SUBDOMAIN="$2"; shift ;;
-        --binary-name) BINARY_NAME="$2"; shift ;;
-        --key-pairs-dir) KEY_PAIRS_DIR="$2"; shift ;;
-        --root-addr) ROOT_ADDR="$2"; shift ;;
-        --validators-file) VALIDATORS_FILE="$2"; shift ;;
-        --sui-faucet-url) SUI_FAUCET_URL="$2"; shift ;;
-        --epoch-duration-time) EPOCH_DURATION_TIME_MS="$2"; shift ;;
-        -h|--help) show_help; exit 0 ;;
-        *) echo "Unknown parameter passed: $1"; exit 1 ;;
-    esac
-    shift
-done
 
 
 RUST_MIN_STACK=16777216
@@ -112,47 +67,15 @@ BINARY_NAME="$(pwd)/$BINARY_NAME"
 
 VALIDATORS_ARRAY=()
 
-# Check if --validators-file is provided and process it.
-if [[ -n "$VALIDATORS_FILE" ]]; then
-    echo "Creating validators from file: $VALIDATORS_FILE"
+echo "Creating validators from prefix '$VALIDATOR_PREFIX' and number '$VALIDATOR_NUM'"
 
-    if [[ ! -f "$VALIDATORS_FILE" ]]; then
-        echo "Error: File '$VALIDATORS_FILE' not found." >&2
-        exit 1
-    fi
-
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        # Skip empty lines.
-        [[ -z "$line" ]] && continue
-
-        # Split the line into two parts: validator name and hostname.
-        read -r name hostname <<< "$line"
-
-        # Trim any extra whitespace.
-        name=$(echo "$name" | xargs)
-        hostname=$(echo "$hostname" | xargs)
-
-        # Append the tuple as "name:hostname" to the array.
-        VALIDATORS_ARRAY+=("$name:$hostname")
-    done < "$VALIDATORS_FILE"
-
-    for entry in "${VALIDATORS_ARRAY[@]}"; do
-        IFS=":" read -r v_name v_hostname <<< "$entry"
-        echo "Processed validator: Name = $v_name, Hostname = $v_hostname"
-    done
-
-    VALIDATOR_NUM=${#VALIDATORS_ARRAY[@]}
-else
-    echo "Creating validators from prefix '$VALIDATOR_PREFIX' and number '$VALIDATOR_NUM'"
-
-    for ((i=1; i<=VALIDATOR_NUM; i++)); do
-        VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-        # For enumerated list, compute the hostname as: name.SUBDOMAIN
-        VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-        echo "Generated validator: Name = $VALIDATOR_NAME, Hostname = $VALIDATOR_HOSTNAME"
-        VALIDATORS_ARRAY+=("$VALIDATOR_NAME:$VALIDATOR_HOSTNAME")
-    done
-fi
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    # For enumerated list, compute the hostname as: name.SUBDOMAIN
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
+    echo "Generated validator: Name = $VALIDATOR_NAME, Hostname = $VALIDATOR_HOSTNAME"
+    VALIDATORS_ARRAY+=("$VALIDATOR_NAME:$VALIDATOR_HOSTNAME")
+done
 
 #############################
 ## Create a dir for this deployment.
