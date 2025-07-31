@@ -1,6 +1,7 @@
 name: Build & Upload Docker Image
 
 on:
+  push:
   workflow_dispatch:
     inputs:
       cargo_build_flags:
