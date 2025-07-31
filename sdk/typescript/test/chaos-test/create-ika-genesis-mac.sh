@@ -200,9 +200,7 @@ MAX_JOBS=10
 JOB_COUNT=0
 
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-  VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-  VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-  request_and_generate_yaml "$entry" &
+  request_and_generate_yaml "$i" &
 
   (( JOB_COUNT++ ))
 
@@ -239,9 +237,7 @@ MAX_JOBS=10
 JOB_COUNT=0
 
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-    process_validator "$entry" &
+    process_validator "$i" &
 
     (( JOB_COUNT++ ))
 

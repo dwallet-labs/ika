@@ -1,7 +1,9 @@
 #!/bin/bash
 
 request_and_generate_yaml() {
-  local entry="$1"
+  local i="$1"
+  VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+  VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
   IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
   local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
 
@@ -57,7 +59,9 @@ request_and_generate_yaml() {
 
 # Function to process a validator
 process_validator() {
-    local entry="$1"
+    local i="$1"
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
     IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
     local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
     local OUTPUT_FILE="$TMP_OUTPUT_DIR/${VALIDATOR_NAME}_output.json"
