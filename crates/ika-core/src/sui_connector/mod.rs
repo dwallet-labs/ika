@@ -10,6 +10,7 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use futures::{StreamExt, future};
 use ika_config::node::{RunWithRange, SuiChainIdentifier, SuiConnectorConfig};
+use ika_sui_client::system_receiver::SystemReceiver;
 use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId};
 use ika_types::error::IkaResult;
@@ -17,6 +18,7 @@ use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
 };
+use ika_types::sui::SystemInner;
 use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,6 +49,7 @@ pub struct SuiConnectorService {
     sui_client: Arc<SuiClient<SuiSdkClient>>,
     sui_executor: SuiExecutor<SuiSdkClient>,
     network_keys_receiver: watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
+    system_receiver: SystemReceiver,
     // todo(zeev): this needs a refactor.
     #[allow(dead_code)]
     task_handles: Vec<JoinHandle<()>>,
@@ -67,6 +70,7 @@ impl SuiConnectorService {
         next_epoch_committee_sender: Sender<Committee>,
         new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
         end_of_publish_sender: Sender<Option<u64>>,
+        system_receiver: SystemReceiver,
     ) -> anyhow::Result<(
         Arc<Self>,
         watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -114,6 +118,7 @@ impl SuiConnectorService {
                 task_handles,
                 sui_connector_config,
                 metrics: sui_connector_metrics,
+                system_receiver: system_receiver.clone(),
             }),
             network_keys_receiver,
         ))
@@ -125,7 +130,12 @@ impl SuiConnectorService {
         run_with_range: Option<RunWithRange>,
     ) -> StopReason {
         self.sui_executor
-            .run_epoch(epoch_id, run_with_range, self.network_keys_receiver.clone())
+            .run_epoch(
+                epoch_id,
+                run_with_range,
+                self.network_keys_receiver.clone(),
+                self.system_receiver.clone(),
+            )
             .await
     }
 
