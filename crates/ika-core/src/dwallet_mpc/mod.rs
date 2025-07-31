@@ -126,3 +126,41 @@ pub(crate) fn party_ids_to_authority_names(
         })
         .collect()
 }
+
+mod tests {
+    use super::*;
+    use fastcrypto::bls12381::min_sig::BLS12381PublicKey;
+    use fastcrypto::traits::{KeyPair, ToFromBytes};
+    use ika_types::crypto::AuthorityPublicKeyBytes;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn test_party_id_to_authority_name() {
+        let (committee, keypairs) = Committee::new_simple_test_committee();
+
+        assert_eq!(
+            party_id_to_authority_name(1, &committee),
+            Some(AuthorityPublicKeyBytes::new(
+                keypairs[0].public().pubkey.to_bytes()
+            ))
+        );
+        assert_eq!(
+            party_id_to_authority_name(2, &committee),
+            Some(AuthorityPublicKeyBytes::new(
+                keypairs[1].public().pubkey.to_bytes()
+            ))
+        );
+        assert_eq!(
+            party_id_to_authority_name(3, &committee),
+            Some(AuthorityPublicKeyBytes::new(
+                keypairs[2].public().pubkey.to_bytes()
+            ))
+        );
+        assert_eq!(
+            party_id_to_authority_name(4, &committee),
+            Some(AuthorityPublicKeyBytes::new(
+                keypairs[3].public().pubkey.to_bytes()
+            ))
+        );
+    }
+}
