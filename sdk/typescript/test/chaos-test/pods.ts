@@ -53,7 +53,7 @@ export async function createValidatorPod(
 					image: process.env.DOCKER_TAG,
 					resources: {
 						requests: {
-							cpu: '8',
+							cpu: '16',
 							memory: '10Gi',
 						},
 					},
