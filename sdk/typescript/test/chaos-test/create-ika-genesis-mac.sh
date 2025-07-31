@@ -197,8 +197,9 @@ echo "Ika dWallet 2PC MPC Package ID: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
 ############################
 
 request_and_generate_yaml() {
-  local entry="$1"
-  IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+  local i="$1"
+  VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+  VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
   local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
 
   # Extract values from the validator.info file
@@ -258,9 +259,7 @@ MAX_JOBS=10
 JOB_COUNT=0
 
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-  VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-  VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-  request_and_generate_yaml "$entry" &
+  request_and_generate_yaml "$i" &
 
   (( JOB_COUNT++ ))
 
@@ -294,8 +293,9 @@ rm -f "$TUPLES_FILE"
 
 # Function to process a validator
 process_validator() {
-    local entry="$1"
-    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+    local i="$1"
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
     local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
     local OUTPUT_FILE="$TMP_OUTPUT_DIR/${VALIDATOR_NAME}_output.json"
     local LOCAL_SUI_CONFIG_DIR="/tmp/sui_config_${VALIDATOR_NAME}"
@@ -345,9 +345,7 @@ MAX_JOBS=10
 JOB_COUNT=0
 
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-    process_validator "$entry" &
+    process_validator "$i" &
 
     (( JOB_COUNT++ ))
 
