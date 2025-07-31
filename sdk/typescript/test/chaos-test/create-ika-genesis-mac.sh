@@ -410,13 +410,12 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
 
     # Find the validator's hostname based on its name
     for ((i=1; i<=VALIDATOR_NUM; i++)); do
-        VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-        VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-        IFS=":" read -r NAME HOSTNAME <<< "$entry"
-#        if [[ "$NAME" == "$VALIDATOR_NAME" ]]; then
-#            VALIDATOR_HOSTNAME="$HOSTNAME"
-#            break
-#        fi
+        NAME="${VALIDATOR_PREFIX}${i}"
+        HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
+        if [[ "$NAME" == "$VALIDATOR_NAME" ]]; then
+            VALIDATOR_HOSTNAME="$HOSTNAME"
+            break
+        fi
     done
 
     # Copy sui_config and run join-committee
