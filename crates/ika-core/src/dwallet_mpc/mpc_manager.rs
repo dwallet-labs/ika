@@ -440,6 +440,7 @@ impl DWalletMPCManager {
                     &mpc_event_data,
                 );
 
+                // TODO: here we should call `ready_to_advance()` instead, and save the `AdvanceRequests` inside the `ComputationRequest`.
                 build_messages_to_advance(
                     session.current_mpc_round,
                     rounds_to_delay,
