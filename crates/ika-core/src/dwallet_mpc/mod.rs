@@ -110,6 +110,9 @@ pub(crate) fn party_id_to_authority_name(
 }
 
 /// Convert a given [`Vec<PartyID>`] to the corresponding [`Vec<AuthorityName>`].
+///
+/// Returns the authority names for the given party IDs that are part of the committee, and ignores any
+/// party IDs that do not have a corresponding authority name in the committee.
 pub(crate) fn party_ids_to_authority_names(
     party_ids: &[PartyID],
     committee: &Committee,
@@ -178,5 +181,32 @@ mod tests {
         let (committee, _keypairs) = Committee::new_simple_test_committee();
 
         assert_eq!(party_id_to_authority_name(0, &committee), None);
+    }
+
+    #[test]
+    fn test_party_ids_to_authority_names() {
+        let (committee, keypairs) = Committee::new_simple_test_committee();
+        assert_eq!(
+            party_ids_to_authority_names(&[1, 2, 3, 4], &committee),
+            vec![
+                AuthorityPublicKeyBytes::new(keypairs[0].public().pubkey.to_bytes()),
+                AuthorityPublicKeyBytes::new(keypairs[1].public().pubkey.to_bytes()),
+                AuthorityPublicKeyBytes::new(keypairs[2].public().pubkey.to_bytes()),
+                AuthorityPublicKeyBytes::new(keypairs[3].public().pubkey.to_bytes()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_party_ids_to_authority_names_some_absent_authorities() {
+        let (committee, keypairs) = Committee::new_simple_test_committee();
+        assert_eq!(
+            party_ids_to_authority_names(&[1, 2, 3, 40], &committee),
+            vec![
+                AuthorityPublicKeyBytes::new(keypairs[0].public().pubkey.to_bytes()),
+                AuthorityPublicKeyBytes::new(keypairs[1].public().pubkey.to_bytes()),
+                AuthorityPublicKeyBytes::new(keypairs[2].public().pubkey.to_bytes()),
+            ]
+        );
     }
 }
