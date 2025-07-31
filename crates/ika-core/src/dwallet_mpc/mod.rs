@@ -167,6 +167,13 @@ mod tests {
     }
 
     #[test]
+    fn test_party_id_to_authority_name_zero_party() {
+        let (committee, _keypairs) = Committee::new_simple_test_committee();
+
+        assert_eq!(party_id_to_authority_name(0, &committee), None);
+    }
+
+    #[test]
     fn test_party_id_to_authority_name_not_existing_party() {
         let (committee, _keypairs) = Committee::new_simple_test_committee();
 
