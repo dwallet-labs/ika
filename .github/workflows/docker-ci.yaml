@@ -38,7 +38,7 @@ jobs:
         working-directory: sdk/typescript/test/chaos-test
         env:
           CARGO_BUILD_FLAGS: ${{ github.event.inputs.cargo_build_flags }}
+          DOCKER_TAG: "us-docker.pkg.dev/common-449616/ika/ika-node:${{ github.event.inputs.imageTag }}"
         run: |
-          IMAGE_NAME="us-docker.pkg.dev/common-449616/ika/ika-node:${{ github.event.inputs.imageTag }}"
-          docker build . -t $IMAGE_NAME
+          ./build.sh
           docker push $IMAGE_NAME
