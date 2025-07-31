@@ -41,5 +41,5 @@ jobs:
         run: |
           IMAGE_name="us-docker.pkg.dev/common-449616/ika/ika-node:${{ github.event.inputs.imageTag }}"
           cd sdk/typescript/test/chaos-test
-          docker build -t $IMAGE_NAME .
+          docker build . -t $IMAGE_NAME
           docker push $IMAGE_NAME
