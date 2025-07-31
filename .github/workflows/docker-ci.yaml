@@ -30,13 +30,13 @@ jobs:
           gcloud auth activate-service-account --key-file=key.json
           gcloud auth configure-docker us-docker.pkg.dev --quiet
         env:
-          CLOUDSDK_CORE_PROJECT: <your-gcp-project-id>
+          CLOUDSDK_CORE_PROJECT: common-449616
 
       - name: Build and push Docker image
         env:
           CARGO_BUILD_FLAGS: ${{ github.event.inputs.cargo_build_flags }}
         run: |
-          IMAGE_name="us-docker.pkg.dev/<project-id>/<repo>/<image>:${{ github.event.inputs.imageTag }}"
+          IMAGE_name="us-docker.pkg.dev/common-449616/ika/ika-node:${{ github.event.inputs.imageTag }}"
           cd sdk/typescript/test/chaos-test
           docker build -t $IMAGE_NAME .
           docker push $IMAGE_NAME
