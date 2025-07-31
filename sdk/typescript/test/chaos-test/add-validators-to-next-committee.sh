@@ -78,18 +78,6 @@ RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
 cp ../../../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
-VALIDATORS_ARRAY=()
-
-echo "Creating validators from prefix '$VALIDATOR_PREFIX' and number '$VALIDATOR_NUM'"
-
-for ((i=FIRST_VALIDATOR_IN_SET; i<VALIDATOR_NUM + FIRST_VALIDATOR_IN_SET; i++)); do
-    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-    # For enumerated list, compute the hostname as: name.SUBDOMAIN
-    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-    echo "Generated validator: Name = $VALIDATOR_NAME, Hostname = $VALIDATOR_HOSTNAME"
-    VALIDATORS_ARRAY+=("$VALIDATOR_NAME:$VALIDATOR_HOSTNAME")
-done
-
 pushd $SUBDOMAIN
 
 ############################
@@ -98,9 +86,9 @@ pushd $SUBDOMAIN
 SUI_BACKUP_DIR="sui_backup"
 ROOT_SEED_CREATED=0  # Track if the root-seed.key has been created
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-    # Split the tuple "name:hostname" into VALIDATOR_NAME and VALIDATOR_HOSTNAME.
-    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
 
     # Use the VALIDATOR_HOSTNAME as the directory name.
     VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
@@ -198,8 +186,8 @@ echo "IKA DWallet 2PC MPC Package ID: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
 MAX_JOBS=10
 JOB_COUNT=0
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-  request_and_generate_yaml "$entry" &
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+  request_and_generate_yaml "$i" &
 
   (( JOB_COUNT++ ))
 
@@ -222,8 +210,8 @@ rm -f "$TUPLES_FILE"
 MAX_JOBS=10
 JOB_COUNT=0
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-    process_validator "$entry" &
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    process_validator "$i" &
 
     (( JOB_COUNT++ ))
 
@@ -288,8 +276,9 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
     IFS=":" read -r VALIDATOR_NAME VALIDATOR_ID VALIDATOR_CAP_ID <<< "$tuple"
 
     # Find the validator's hostname based on its name
-    for entry in "${VALIDATORS_ARRAY[@]}"; do
-        IFS=":" read -r NAME HOSTNAME <<< "$entry"
+    for ((i=1; i<=VALIDATOR_NUM; i++)); do
+        NAME="${VALIDATOR_PREFIX}${i}"
+        HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
         if [[ "$NAME" == "$VALIDATOR_NAME" ]]; then
             echo "Debug: Processing validator: $VALIDATOR_NAME with ID: $VALIDATOR_ID and Cap ID: $VALIDATOR_CAP_ID"
 
@@ -317,8 +306,9 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
 done
 
 IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_DIR/ika_publish_config.json")
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
     VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
     yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
     yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
