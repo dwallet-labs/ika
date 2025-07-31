@@ -61,16 +61,7 @@ RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
 cp ../../../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
-VALIDATORS_ARRAY=()
-
 echo "Creating validators from prefix '$VALIDATOR_PREFIX' and number '$VALIDATOR_NUM'"
-
-for ((i=1; i<=VALIDATOR_NUM; i++)); do
-    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-    echo "Generated validator: Name = $VALIDATOR_NAME, Hostname = $VALIDATOR_HOSTNAME"
-    VALIDATORS_ARRAY+=("$VALIDATOR_NAME:$VALIDATOR_HOSTNAME")
-done
 
 #############################
 ## Create a dir for this deployment.
@@ -266,7 +257,9 @@ request_and_generate_yaml() {
 MAX_JOBS=10
 JOB_COUNT=0
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+  VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+  VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
   request_and_generate_yaml "$entry" &
 
   (( JOB_COUNT++ ))
@@ -351,7 +344,9 @@ process_validator() {
 MAX_JOBS=10
 JOB_COUNT=0
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
     process_validator "$entry" &
 
     (( JOB_COUNT++ ))
@@ -416,7 +411,9 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
     IFS=":" read -r VALIDATOR_NAME VALIDATOR_ID VALIDATOR_CAP_ID <<< "$tuple"
 
     # Find the validator's hostname based on its name
-    for entry in "${VALIDATORS_ARRAY[@]}"; do
+    for ((i=1; i<=VALIDATOR_NUM; i++)); do
+        VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+        VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
         IFS=":" read -r NAME HOSTNAME <<< "$entry"
         if [[ "$NAME" == "$VALIDATOR_NAME" ]]; then
             VALIDATOR_HOSTNAME="$HOSTNAME"
@@ -500,8 +497,9 @@ echo "Generating seed_peers.yaml..."
 SEED_PEERS_FILE="seed_peers.yaml"
 : > "$SEED_PEERS_FILE"  # Empty or create file
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-  IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+  VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+  VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
   VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
 
   INFO_FILE="$VALIDATOR_DIR/validator.info"
@@ -548,8 +546,9 @@ yq e ".\"p2p-config\".\"external-address\" = \"/dns/fullnode.$SUBDOMAIN/udp/8084
 yq e '."p2p-config"."seed-peers" = load("seed_peers.yaml")' -i "$FULLNODE_YAML_PATH"
 
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
     VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
     yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
     yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
