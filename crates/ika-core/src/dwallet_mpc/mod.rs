@@ -96,6 +96,10 @@ pub(crate) fn party_id_to_authority_name(
     party_id: PartyID,
     committee: &Committee,
 ) -> Option<AuthorityName> {
+    if party_id == 0 {
+        // Party IDs are 1-based, so 0 is not a valid party ID.
+        return None;
+    }
     // A tangible party ID is of type `PartyID` and in the range `1..=number_of_tangible_parties`.
     // Convert it to an index to the committee authority names, which is in the range `0..number_of_tangible_parties`,
     // Decrement the index to transform it from 1-based to 0-based.
@@ -129,10 +133,8 @@ pub(crate) fn party_ids_to_authority_names(
 
 mod tests {
     use super::*;
-    use fastcrypto::bls12381::min_sig::BLS12381PublicKey;
-    use fastcrypto::traits::{KeyPair, ToFromBytes};
+    use fastcrypto::traits::KeyPair;
     use ika_types::crypto::AuthorityPublicKeyBytes;
-    use std::collections::BTreeMap;
 
     #[test]
     fn test_party_id_to_authority_name() {
@@ -162,5 +164,12 @@ mod tests {
                 keypairs[3].public().pubkey.to_bytes()
             ))
         );
+    }
+
+    #[test]
+    fn test_party_id_to_authority_name_not_existing_party() {
+        let (committee, _keypairs) = Committee::new_simple_test_committee();
+
+        assert_eq!(party_id_to_authority_name(0, &committee), None);
     }
 }
