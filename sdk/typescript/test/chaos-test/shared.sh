@@ -62,7 +62,6 @@ process_validator() {
     local i="$1"
     VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
     VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
     local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
     local OUTPUT_FILE="$TMP_OUTPUT_DIR/${VALIDATOR_NAME}_output.json"
     local LOCAL_SUI_CONFIG_DIR="/tmp/sui_config_${VALIDATOR_NAME}"
