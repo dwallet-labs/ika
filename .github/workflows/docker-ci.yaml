@@ -1,7 +1,6 @@
 name: Publish Chaos Test Image
 
 on:
-  push:
   workflow_dispatch:
 
 jobs:
