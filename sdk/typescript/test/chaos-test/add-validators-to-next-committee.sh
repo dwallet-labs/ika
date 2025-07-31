@@ -1,6 +1,18 @@
 #!/bin/bash
 
+# This script allows to add N validators to the next committee.
+# The script accepts the <VALIDATOR_NUM> <FIRST_VALIDATOR_IN_SET> arguments.
+# The <VALIDATOR_NUM> is the number of validators to add to the committee.
+# The <FIRST_VALIDATOR_IN_SET> is the current committee size + 1, i.e. if the current committee size is 4,
+# you should pass 5 as the <FIRST_VALIDATOR_IN_SET> argument.
+
+# This script will only work if you run ./create-ika-genesis.sh beforehand.
+
 set -e
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
 
 # Load environment variables from .env if not already set
 if [ -f .env ]; then
@@ -20,10 +32,6 @@ else
   echo ".env file not found!"
   exit 1
 fi
-
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
 
 # Check if jq is installed
 if ! command_exists jq; then
@@ -46,13 +54,23 @@ fi
 # Default values.
 # The prefix for the validator names (e.g. val1.devnet.ika.cloud, val2.devnet.ika.cloud, etc...).
 export VALIDATOR_PREFIX="val"
+# The number of validators to join committee.
+
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <VALIDATOR_NUM> <FIRST_VALIDATOR_IN_SET>" >&2
+  exit 1
+fi
+VALIDATOR_NUM="$1"
+FIRST_VALIDATOR_IN_SET="$2"
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
+# The subdomain for Ika the network.
 # The binary name to use.
 export BINARY_NAME="ika"
 # The directory to store the key pairs.
 export KEY_PAIRS_DIR="key-pairs"
 export SUI_CHAIN_IDENTIFIER="custom"
+SUI_CONFIG_PATH=~/.sui/sui_config
 
 RUST_MIN_STACK=16777216
 
@@ -60,14 +78,7 @@ RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
 cp ../../../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
-echo "Creating validators from prefix '$VALIDATOR_PREFIX' and number '$VALIDATOR_NUM'"
-
-#############################
-## Create a dir for this deployment.
-#############################
-rm -rf "$SUBDOMAIN"
-mkdir -p "$SUBDOMAIN"
-pushd "$SUBDOMAIN"
+pushd $SUBDOMAIN
 
 ############################
 ## Create Validators
@@ -148,33 +159,10 @@ for ((i=1; i<=VALIDATOR_NUM; i++)); do
 done
 
 
-###############################
-# Create the Ika system on Sui.
-###############################
-rm -rf "$SUI_CONFIG_PATH"
-
-cargo build --bin ika-swarm-config
-cp ../../../../../target/debug/ika-swarm-config .
-
-# Publish IKA Modules (Creates the publisher config).
-# echo the parameters to the next call
-echo "Publishing IKA modules with the following parameters:"
-echo "SUI_FULLNODE_RPC_URL: $SUI_FULLNODE_RPC_URL"
-echo "SUI_FAUCET_URL: $SUI_FAUCET_URL"
-
-./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL"
-
-# Mint IKA Tokens
-./ika-swarm-config mint-ika-tokens --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL" --ika-config-path ./ika_publish_config.json
-
-# Init IKA
-./ika-swarm-config init-env --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --ika-config-path ./ika_publish_config.json --epoch-duration-ms "$EPOCH_DURATION_TIME_MS"
+SUI_BACKUP_DIR="sui_backup"
 
 export PUBLISHER_DIR=publisher
 
-mkdir -p $PUBLISHER_DIR
-mv ika_publish_config.json $PUBLISHER_DIR/
-cp -r "$SUI_CONFIG_PATH" $PUBLISHER_DIR/
 PUBLISHER_CONFIG_FILE="$PUBLISHER_DIR/ika_publish_config.json"
 
 IKA_PACKAGE_ID=$(jq -r '.ika_package_id' "$PUBLISHER_CONFIG_FILE")
@@ -183,13 +171,12 @@ IKA_SYSTEM_OBJECT_ID=$(jq -r '.ika_system_object_id' "$PUBLISHER_CONFIG_FILE")
 IKA_COMMON_PACKAGE_ID=$(jq -r '.ika_common_package_id' "$PUBLISHER_CONFIG_FILE")
 IKA_DWALLET_2PC_MPC_PACKAGE_ID=$(jq -r '.ika_dwallet_2pc_mpc_package_id' "$PUBLISHER_CONFIG_FILE")
 
-
 # Print the values for verification.
-echo "Ika Package ID: $IKA_PACKAGE_ID"
-echo "Ika System Package ID: $IKA_SYSTEM_PACKAGE_ID"
-echo "Ika System Object ID: $IKA_SYSTEM_OBJECT_ID"
-echo "Ika Common Package ID: $IKA_COMMON_PACKAGE_ID"
-echo "Ika dWallet 2PC MPC Package ID: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
+echo "IKA Package ID: $IKA_PACKAGE_ID"
+echo "IKA System Package ID: $IKA_SYSTEM_PACKAGE_ID"
+echo "System ID: $IKA_SYSTEM_OBJECT_ID"
+echo "IKA Common Package ID: $IKA_COMMON_PACKAGE_ID"
+echo "IKA DWallet 2PC MPC Package ID: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
 
 ############################
 # Request Tokens and Create Validator.yaml (Max 5 Parallel + Retry)
@@ -213,23 +200,10 @@ done
 # Wait for any remaining background jobs
 wait
 
-# This is needed later for the publisher, in oder to update the ika_sui_config.yaml.
-$BINARY_NAME validator config-env \
-    --ika-package-id "$IKA_PACKAGE_ID" \
-    --ika-system-package-id "$IKA_SYSTEM_PACKAGE_ID" \
-    --ika-system-object-id "$IKA_SYSTEM_OBJECT_ID" \
-    --ika-common-package-id "$IKA_COMMON_PACKAGE_ID" \
-    --ika-dwallet-2pc-mpc-package-id "$IKA_DWALLET_2PC_MPC_PACKAGE_ID" \
-
-############################
-# Become Validator Candidate (Max 5 Parallel Jobs)
-############################
-
 # Array to store validator tuples
 VALIDATOR_TUPLES=()
 TMP_OUTPUT_DIR="/tmp/become_candidate_outputs"
 TUPLES_FILE="$TMP_OUTPUT_DIR/tuples.txt"
-mkdir -p "$TMP_OUTPUT_DIR"
 rm -f "$TUPLES_FILE"
 
 # Launch jobs with a max concurrency of 5 using a simple counter
@@ -257,6 +231,7 @@ if [[ -f "$TUPLES_FILE" ]]; then
     done < "$TUPLES_FILE"
 else
     echo "[ERROR] Tuples file not found: $TUPLES_FILE"
+    exit 1
 fi
 
 # Summary
@@ -265,7 +240,6 @@ echo "✅ All validator tuples:"
 for tup in "${VALIDATOR_TUPLES[@]}"; do
     echo "  $tup"
 done
-
 
 ############################
 # Stake Validators
@@ -293,6 +267,7 @@ for entry in "${VALIDATOR_TUPLES[@]}"; do
         --stake-amount "$VALIDATOR_STAKED_TOKENS_NUM"
 done
 
+echo "✅ All validators have been staked successfully."
 ############################
 # Join Committee
 ############################
@@ -305,136 +280,32 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
         NAME="${VALIDATOR_PREFIX}${i}"
         HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
         if [[ "$NAME" == "$VALIDATOR_NAME" ]]; then
+            echo "Debug: Processing validator: $VALIDATOR_NAME with ID: $VALIDATOR_ID and Cap ID: $VALIDATOR_CAP_ID"
+
             VALIDATOR_HOSTNAME="$HOSTNAME"
+            echo "Debug: Found hostname: $VALIDATOR_HOSTNAME"
+
+            # Copy sui_config and run join-committee
+            VALIDATOR_DIR="$VALIDATOR_HOSTNAME"
+            rm -rf "$SUI_CONFIG_PATH"
+            echo "Debug: Removing $SUI_CONFIG_PATH"
+            mkdir -p "$SUI_CONFIG_PATH"
+            echo "Debug: Creating $SUI_CONFIG_PATH"
+            echo "Debug: Copying sui_config from $VALIDATOR_DIR/$SUI_BACKUP_DIR/sui_config/ to $SUI_CONFIG_PATH"
+            cp -r "$VALIDATOR_DIR/$SUI_BACKUP_DIR/sui_config/"* "$SUI_CONFIG_PATH"
+
+            echo "Joining committee for Validator '$VALIDATOR_NAME' (Cap ID: $VALIDATOR_CAP_ID)"
+
+            VAL_IKA_CONFIG_DIR="/tmp/ika_config_${VALIDATOR_NAME}"
+            IKA_SUI_CONFIG_FILE="$VAL_IKA_CONFIG_DIR/ika_sui_config.yaml"
+            $BINARY_NAME validator join-committee \
+                --validator-cap-id "$VALIDATOR_CAP_ID" --ika-sui-config "$IKA_SUI_CONFIG_FILE"
             break
         fi
     done
-
-    # Copy sui_config and run join-committee
-    VALIDATOR_DIR="$VALIDATOR_HOSTNAME"
-    rm -rf "$SUI_CONFIG_PATH"
-    mkdir -p "$SUI_CONFIG_PATH"
-    cp -r "$VALIDATOR_DIR/$SUI_BACKUP_DIR/sui_config/"* "$SUI_CONFIG_PATH"
-
-    echo "Joining committee for Validator '$VALIDATOR_NAME' (Cap ID: $VALIDATOR_CAP_ID)"
-    VAL_IKA_CONFIG_DIR="/tmp/ika_config_${VALIDATOR_NAME}"
-    IKA_SUI_CONFIG_FILE="$VAL_IKA_CONFIG_DIR/ika_sui_config.yaml"
-    $BINARY_NAME validator join-committee \
-        --validator-cap-id "$VALIDATOR_CAP_ID" --ika-sui-config "$IKA_SUI_CONFIG_FILE"
 done
-
-#############################
-# IKA System Initialization
-#############################
-
-# sleep 30 seconds (needed for initialize)
-#sleep 30
-echo "sleeping for 30 seconds"
-
-# Copy publisher sui_config to SUI_CONFIG_PATH
-rm -rf "$SUI_CONFIG_PATH"
-mkdir -p "$SUI_CONFIG_PATH"
-cp -r $PUBLISHER_DIR/sui_config/* "$SUI_CONFIG_PATH"
-
-./ika-swarm-config ika-system-initialize --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --ika-config-path $PUBLISHER_DIR/ika_publish_config.json
-
-# Convert the publisher config file to the format the tests expect for.
-yq -o=json '. as $in | {
-  "packages": {
-    "ika_package_id": $in.ika_package_id,
-    "ika_common_package_id": $in.ika_common_package_id,
-    "ika_dwallet_2pc_mpc_package_id": $in.ika_dwallet_2pc_mpc_package_id,
-    "ika_system_package_id": $in.ika_system_package_id
-  },
-  "objects": {
-    "ika_system_object_id": $in.ika_system_object_id,
-    "ika_dwallet_coordinator_object_id": $in.ika_dwallet_coordinator_object_id
-  }
-}' "$PUBLISHER_DIR/ika_publish_config.json" > "$PUBLISHER_DIR/ika_config.json"
-
-################################
-# Generate locals.tf
-################################
-
-PUBLISHER_CONFIG_FILE="$PUBLISHER_DIR/ika_config.json"
-
 
 IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_DIR/ika_publish_config.json")
-
-echo "Ika dWallet Coordinator Object ID: placeholder"
-
-cat > locals.tf <<EOF
-locals {
-  ika_chain_config = {
-    sui_chain_identifier              = "${SUI_CHAIN_IDENTIFIER}"
-    ika_common_package_id             = "${IKA_COMMON_PACKAGE_ID}"
-    ika_dwallet_2pc_mpc_package_id    = "${IKA_DWALLET_2PC_MPC_PACKAGE_ID}"
-    ika_package_id                    = "${IKA_PACKAGE_ID}"
-    ika_system_package_id             = "${IKA_SYSTEM_PACKAGE_ID}"
-    ika_system_object_id              = "${IKA_SYSTEM_OBJECT_ID}"
-    ika_dwallet_coordinator_object_id = "${IKA_DWALLET_COORDINATOR_OBJECT_ID}"
-  }
-}
-EOF
-
-
-############################
-# Generate Seed Peers
-############################
-echo "Generating seed_peers.yaml..."
-
-SEED_PEERS_FILE="seed_peers.yaml"
-: > "$SEED_PEERS_FILE"  # Empty or create file
-
-for ((i=1; i<=VALIDATOR_NUM; i++)); do
-  VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-  VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-  VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
-
-  INFO_FILE="$VALIDATOR_DIR/validator.info"
-  NETWORK_KEY_FILE="$VALIDATOR_DIR/key-pairs/network.key"
-
-  if [[ -f "$INFO_FILE" && -f "$NETWORK_KEY_FILE" ]]; then
-    P2P_ADDR=$(yq e '.p2p_address' "$INFO_FILE")
-    PEER_ID=$(sui keytool show "$NETWORK_KEY_FILE" --json | jq -r '.peerId')
-
-    echo "- address: $P2P_ADDR" >> "$SEED_PEERS_FILE"
-    echo "  peer-id: $PEER_ID" >> "$SEED_PEERS_FILE"
-  else
-    echo "Missing $INFO_FILE or $NETWORK_KEY_FILE"
-    exit 1
-  fi
-done
-
-echo "$SEED_PEERS_FILE generated in $SUBDOMAIN/"
-
-
-################################
-# Create the fullnode.yaml file.
-################################
-echo "Creating fullnode.yaml..."
-export FULLNODE_YAML_PATH="$PUBLISHER_DIR/fullnode.yaml"
-
-# Copy the template
-cp ../fullnode.template.yaml "$FULLNODE_YAML_PATH"
-
-# Replace upper-case variables with real values using yq
-yq e ".\"sui-connector-config\".\"sui-rpc-url\" = \"$SUI_DOCKER_URL\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"sui-chain-identifier\" = \"$SUI_CHAIN_IDENTIFIER\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-package-id\" = \"$IKA_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-system-package-id\" = \"$IKA_SYSTEM_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-system-object-id\" = \"$IKA_SYSTEM_OBJECT_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$FULLNODE_YAML_PATH"
-yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$FULLNODE_YAML_PATH"
-
-# Replace HOSTNAME in external-address
-yq e ".\"p2p-config\".\"external-address\" = \"/dns/fullnode.$SUBDOMAIN/udp/8084\"" -i "$FULLNODE_YAML_PATH"
-
-# Replace SEED_PEERS with actual array from seed_peers.yaml
-yq e '."p2p-config"."seed-peers" = load("seed_peers.yaml")' -i "$FULLNODE_YAML_PATH"
-
-
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
     VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
     VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
@@ -443,3 +314,5 @@ for ((i=1; i<=VALIDATOR_NUM; i++)); do
     yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
     yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
 done
+
+echo "✅ All validators have joined the committee successfully."
