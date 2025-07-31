@@ -39,7 +39,7 @@ jobs:
         env:
           CARGO_BUILD_FLAGS: ${{ github.event.inputs.cargo_build_flags }}
         run: |
-          IMAGE_name="us-docker.pkg.dev/common-449616/ika/ika-node:${{ github.event.inputs.imageTag }}"
+          IMAGE_NAME="us-docker.pkg.dev/common-449616/ika/ika-node:${{ github.event.inputs.imageTag }}"
           cd sdk/typescript/test/chaos-test
           docker build . -t $IMAGE_NAME
           docker push $IMAGE_NAME
