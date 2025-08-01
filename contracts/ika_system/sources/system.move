@@ -687,11 +687,6 @@ public fun epoch(self: &System): u64 {
     self.inner().epoch()
 }
 
-/// Returns unix timestamp of the start of current epoch
-public fun epoch_start_timestamp_ms(self: &mut System): u64 {
-    self.inner().epoch_start_timestamp_ms()
-}
-
 public fun validator_stake_amount(self: &mut System, validator_id: ID): u64 {
     self.inner_mut().validator_stake_amount(validator_id)
 }
@@ -716,6 +711,12 @@ fun inner_without_version_check(self: &System): &SystemInner {
 }
 
 // === Test Functions ===
+
+#[test_only]
+/// Returns unix timestamp of the start of current epoch
+public fun epoch_start_timestamp_ms(self: &mut System): u64 {
+    self.inner().epoch_start_timestamp_ms()
+}
 
 #[test_only]
 use sui::vec_set::VecSet;
