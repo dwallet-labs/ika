@@ -687,6 +687,8 @@ public fun epoch(self: &System): u64 {
     self.inner().epoch()
 }
 
+/// Returns the total amount staked with `validator_id`.
+/// Aborts if `validator_id` is not an active validator.
 public fun validator_stake_amount(self: &mut System, validator_id: ID): u64 {
     self.inner_mut().validator_stake_amount(validator_id)
 }
