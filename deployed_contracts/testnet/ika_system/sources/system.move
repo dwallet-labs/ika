@@ -681,21 +681,6 @@ public fun can_withdraw_staked_ika_early(self: &System, staked_ika: &StakedIka):
     self.inner().can_withdraw_staked_ika_early(staked_ika)
 }
 
-/// Return the current epoch number. Useful for applications that need a coarse-grained concept of time,
-/// since epochs are ever-increasing and epoch changes are intended to happen every 24 hours.
-public fun epoch(self: &System): u64 {
-    self.inner().epoch()
-}
-
-/// Returns unix timestamp of the start of current epoch
-public fun epoch_start_timestamp_ms(self: &mut System): u64 {
-    self.inner().epoch_start_timestamp_ms()
-}
-
-public fun validator_stake_amount(self: &mut System, validator_id: ID): u64 {
-    self.inner_mut().validator_stake_amount(validator_id)
-}
-
 // === Internals ===
 
 /// Get a mutable reference to `SystemInnerVX` from the `System`.
@@ -716,6 +701,26 @@ fun inner_without_version_check(self: &System): &SystemInner {
 }
 
 // === Test Functions ===
+
+#[test_only]
+/// Return the current epoch number. Useful for applications that need a coarse-grained concept of time,
+/// since epochs are ever-increasing and epoch changes are intended to happen every 24 hours.
+public fun epoch(self: &System): u64 {
+    self.inner().epoch()
+}
+
+#[test_only]
+/// Returns unix timestamp of the start of current epoch
+public fun epoch_start_timestamp_ms(self: &mut System): u64 {
+    self.inner().epoch_start_timestamp_ms()
+}
+
+#[test_only]
+/// Returns the total amount staked with `validator_id`.
+/// Aborts if `validator_id` is not an active validator.
+public fun validator_stake_amount(self: &mut System, validator_id: ID): u64 {
+    self.inner_mut().validator_stake_amount(validator_id)
+}
 
 #[test_only]
 use sui::vec_set::VecSet;
