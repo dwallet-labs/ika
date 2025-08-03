@@ -269,7 +269,7 @@ mod tests {
     use super::*;
     use ika_sui_client::retry_with_max_elapsed_time;
     use std::time::Duration;
-    use tracing::error;
+    use tracing::warn;
 
     async fn example_func_ok() -> anyhow::Result<()> {
         Ok(())
