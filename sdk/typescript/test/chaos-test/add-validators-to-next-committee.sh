@@ -62,7 +62,7 @@ if [ $# -ne 2 ]; then
 fi
 VALIDATOR_NUM="$1"
 FIRST_VALIDATOR_IN_SET="$2"
-TOTAL_VALIDATORS_NUM=$((VALIDATOR_NUM + FIRST_VALIDATOR_IN_SET))
+TOTAL_VALIDATORS_NUM=$((VALIDATOR_NUM + FIRST_VALIDATOR_IN_SET - 1))
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
 # The subdomain for Ika the network.
@@ -307,7 +307,7 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
 done
 
 IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_DIR/ika_publish_config.json")
-for ((i=1; i<=TOTAL_VALIDATORS_NUM; i++)); do
+for ((i=FIRST_VALIDATOR_IN_SET; i<=TOTAL_VALIDATORS_NUM; i++)); do
     VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
     VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
     VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
