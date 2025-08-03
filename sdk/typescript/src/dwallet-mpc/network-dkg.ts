@@ -22,7 +22,7 @@ export async function createNetworkKey(c: Config, protocolCapID: string): Promis
 		mutable: true,
 	});
 	const systemStateArg = tx.sharedObjectRef({
-		objectId: c.ikaConfig.objects.ika_dwallet_coordinator_object_id,
+		objectId: c.ikaConfig.objects.ika_system_object_id,
 		initialSharedVersion: await getInitialSharedVersion(
 			c,
 			c.ikaConfig.objects.ika_system_object_id,
