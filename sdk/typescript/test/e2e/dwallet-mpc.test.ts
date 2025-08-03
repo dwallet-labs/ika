@@ -101,8 +101,6 @@ async function runSignFullFlow(conf: Config) {
 }
 
 const fiveMinutes = 5 * 60 * 1000;
-// const SUI_RPC_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
-const SUI_RPC_URL = getFullnodeUrl('localnet');
 describe('Test dWallet MPC', () => {
 	let conf: Config;
 
@@ -450,7 +448,7 @@ describe('tests that do not require faucet requests', () => {
 		);
 		const address = keypair.getPublicKey().toSuiAddress();
 		console.log(`Address: ${address}`);
-		const suiClient = new SuiClient({ url: SUI_RPC_URL });
+		const suiClient = new SuiClient({ url: SUI_FULLNODE_URL });
 		conf = {
 			suiClientKeypair: keypair,
 			client: suiClient,
