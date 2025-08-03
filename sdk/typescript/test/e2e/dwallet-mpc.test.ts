@@ -141,22 +141,18 @@ describe('Test dWallet MPC', () => {
 	it('create multiple network keys and run multiple full flows with each of them', async () => {
 		const numOfNetworkKeys = 5;
 		const confs = [];
-		const
+		const protocolCapID = '0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa';
+		const publisherMnemonic =
+			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
+		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		for (let i = 0; i < numOfNetworkKeys; i++) {
 			const conf = await createConf();
-			const networkKeyID = await createNetworkKey(
-				conf,
-				`0x${(Math.random() * 1e16).toString(16)}`,
-			);
-			confs.push(conf);
+			const networkKeyID = await createNetworkKey(conf, protocolCapID);
+			confs.push({ conf, networkKeyID });
 		}
-		const networkKeyID = await getNetworkDecryptionKeyID(conf);
-		const tasks = [];
-		for (let i = 0; i < 5; i++) {
-			const conf = await createConf();
-			tasks.push(runFullFlowTestWithNetworkKey(conf, networkKeyID));
-		}
-		await Promise.all(tasks);
+		const tasks = confs.map(({ conf, networkKeyID }) =>
+			runFullFlowTestWithNetworkKey(conf, networkKeyID),
+		);
 	});
 
 	it('should launch DKG first round with given coins', async () => {
