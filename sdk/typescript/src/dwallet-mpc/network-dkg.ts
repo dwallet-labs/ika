@@ -27,7 +27,7 @@ export async function createNetworkKey(c: Config, protocolCapID: string): Promis
 			c,
 			c.ikaConfig.objects.ika_system_object_id,
 		),
-		mutable: true,
+		mutable: false,
 	});
 	const verifiedProtocolCap = tx.moveCall({
 		target: `${c.ikaConfig.packages.ika_system_package_id}::${DWALLET_SYSTEM_MOVE_MODULE_NAME}::verify_protocol_cap`,
@@ -49,6 +49,6 @@ export async function createNetworkKey(c: Config, protocolCapID: string): Promis
 			showEvents: true,
 		},
 	});
-	const startDKGEvent = result.events?.at(1)?.parsedJson;
+	const startDKGEvent = result.events?.at(0)?.parsedJson;
 	return '';
 }
