@@ -32,6 +32,7 @@ const AUTHORIZE_UPGRADE_FUNCTION_NAME: &IdentStr = ident_str!("authorize_upgrade
 const COMMIT_UPGRADE_FUNCTION_NAME: &IdentStr = ident_str!("commit_upgrade");
 const FINALIZE_UPGRADE_FUNCTION_NAME: &IdentStr = ident_str!("finalize_upgrade");
 const TRY_MIGRATE_FUNCTION_NAME: &IdentStr = ident_str!("try_migrate");
+const TRY_MIGRATE_BY_CAP_FUNCTION_NAME: &IdentStr = ident_str!("try_migrate_by_cap");
 const SET_SUPPORTED_AND_PRICING_FUNCTION_NAME: &IdentStr = ident_str!("set_supported_and_pricing");
 const SET_GAS_FEE_REIMBURSEMENT_SUI_SYSTEM_CALL_VALUE_BY_CAP_FUNCTION_NAME: &IdentStr =
     ident_str!("set_gas_fee_reimbursement_sui_system_call_value_by_cap");
@@ -209,6 +210,82 @@ pub async fn try_migrate_coordinator(
         TRY_MIGRATE_FUNCTION_NAME.to_owned(),
         vec![],
         vec![coordinator],
+    );
+
+    let tx_data = construct_unsigned_txn(context, sender, gas_budget, ptb).await?;
+
+    ika_validator_transactions::execute_transaction(context, tx_data).await
+}
+
+/// Try to migrate the system to a new package by protocol cap
+pub async fn try_migrate_system_by_cap(
+    context: &mut WalletContext,
+    protocol_cap_id: ObjectID,
+    new_ika_system_package_id: ObjectID,
+    ika_system_object_id: ObjectID,
+    gas_budget: u64,
+) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+    let client = context.get_client().await?;
+    let mut ptb = ProgrammableTransactionBuilder::new();
+
+    let sender = context.active_address()?;
+
+    let protocol_cap_ref = client
+        .transaction_builder()
+        .get_object_ref(protocol_cap_id)
+        .await?;
+
+    add_ika_system_command_to_ptb(
+        context,
+        TRY_MIGRATE_BY_CAP_FUNCTION_NAME,
+        vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+            protocol_cap_ref,
+        )))?],
+        ika_system_object_id,
+        new_ika_system_package_id,
+        &mut ptb,
+    )
+    .await?;
+
+    let tx_data = construct_unsigned_txn(context, sender, gas_budget, ptb).await?;
+
+    ika_validator_transactions::execute_transaction(context, tx_data).await
+}
+
+/// Try to migrate the coordinator to a new package by protocol cap
+pub async fn try_migrate_coordinator_by_cap(
+    context: &mut WalletContext,
+    protocol_cap_id: ObjectID,
+    ika_system_package_id: ObjectID,
+    ika_system_object_id: ObjectID,
+    new_ika_dwallet_2pc_mpc_package_id: ObjectID,
+    ika_dwallet_coordinator_object_id: ObjectID,
+    gas_budget: u64,
+) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+    let mut ptb = ProgrammableTransactionBuilder::new();
+
+    let sender = context.active_address()?;
+
+    let verified_protocol_cap = get_verified_protocol_cap(
+        context,
+        ika_system_package_id,
+        ika_system_object_id,
+        protocol_cap_id,
+        &mut ptb,
+    )
+    .await?;
+
+    let coordinator = ptb.input(
+        get_dwallet_2pc_mpc_coordinator_call_arg(context, ika_dwallet_coordinator_object_id)
+            .await?,
+    )?;
+
+    ptb.programmable_move_call(
+        new_ika_dwallet_2pc_mpc_package_id,
+        DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+        TRY_MIGRATE_BY_CAP_FUNCTION_NAME.to_owned(),
+        vec![],
+        vec![coordinator, verified_protocol_cap],
     );
 
     let tx_data = construct_unsigned_txn(context, sender, gas_budget, ptb).await?;
