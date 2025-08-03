@@ -8,6 +8,7 @@ ARG PROFILE=release
 ARG GIT_REVISION=unknown
 ARG GITHUB_TOKEN
 ARG WORKDIR=/opt
+ARG CARGO_BUILD_FLAGS
 
 # Environment
 ENV CARGO_HOME=/usr/local/cargo
