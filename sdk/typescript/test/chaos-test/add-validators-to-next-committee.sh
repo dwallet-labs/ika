@@ -62,6 +62,7 @@ if [ $# -ne 2 ]; then
 fi
 VALIDATOR_NUM="$1"
 FIRST_VALIDATOR_IN_SET="$2"
+TOTAL_VALIDATORS_NUM=$((VALIDATOR_NUM + FIRST_VALIDATOR_IN_SET))
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
 # The subdomain for Ika the network.
@@ -86,7 +87,7 @@ pushd $SUBDOMAIN
 SUI_BACKUP_DIR="sui_backup"
 ROOT_SEED_CREATED=0  # Track if the root-seed.key has been created
 
-for ((i=1; i<=VALIDATOR_NUM; i++)); do
+for ((i=FIRST_VALIDATOR_IN_SET; i<=TOTAL_VALIDATORS_NUM; i++)); do
     VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
     VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
 
@@ -186,7 +187,7 @@ echo "IKA DWallet 2PC MPC Package ID: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
 MAX_JOBS=10
 JOB_COUNT=0
 
-for ((i=1; i<=VALIDATOR_NUM; i++)); do
+for ((i=FIRST_VALIDATOR_IN_SET; i<=TOTAL_VALIDATORS_NUM; i++)); do
   request_and_generate_yaml "$i" &
 
   (( JOB_COUNT++ ))
@@ -210,7 +211,7 @@ rm -f "$TUPLES_FILE"
 MAX_JOBS=10
 JOB_COUNT=0
 
-for ((i=1; i<=VALIDATOR_NUM; i++)); do
+for ((i=FIRST_VALIDATOR_IN_SET; i<=TOTAL_VALIDATORS_NUM; i++)); do
     process_validator "$i" &
 
     (( JOB_COUNT++ ))
@@ -276,7 +277,7 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
     IFS=":" read -r VALIDATOR_NAME VALIDATOR_ID VALIDATOR_CAP_ID <<< "$tuple"
 
     # Find the validator's hostname based on its name
-    for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    for ((i=FIRST_VALIDATOR_IN_SET; i<=TOTAL_VALIDATORS_NUM; i++)); do
         NAME="${VALIDATOR_PREFIX}${i}"
         HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
         if [[ "$NAME" == "$VALIDATOR_NAME" ]]; then
@@ -306,7 +307,7 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
 done
 
 IKA_DWALLET_COORDINATOR_OBJECT_ID=$(jq -r '.ika_dwallet_coordinator_object_id' "$PUBLISHER_DIR/ika_publish_config.json")
-for ((i=1; i<=VALIDATOR_NUM; i++)); do
+for ((i=1; i<=TOTAL_VALIDATORS_NUM; i++)); do
     VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
     VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
     VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
