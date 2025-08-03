@@ -41,6 +41,7 @@ import {
 } from '../../src/dwallet-mpc/sign';
 
 const fiveMinutes = 5 * 60 * 1000;
+const SUI_RPC_URL = getFullnodeUrl('localnet');
 describe('Test dWallet MPC', () => {
 	let conf: Config;
 
@@ -52,7 +53,7 @@ describe('Test dWallet MPC', () => {
 		);
 		const address = keypair.getPublicKey().toSuiAddress();
 		console.log(`Address: ${address}`);
-		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
+		const suiClient = new SuiClient({ url: SUI_RPC_URL });
 		await requestSuiFromFaucetV2({
 			host: getFaucetHost('localnet'),
 			recipient: address,
@@ -367,7 +368,7 @@ describe('tests that do not require faucet requests', () => {
 		);
 		const address = keypair.getPublicKey().toSuiAddress();
 		console.log(`Address: ${address}`);
-		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
+		const suiClient = new SuiClient({ url: SUI_RPC_URL });
 		conf = {
 			suiClientKeypair: keypair,
 			client: suiClient,
@@ -405,5 +406,12 @@ describe('tests that do not require faucet requests', () => {
 			});
 			await delay(100);
 		}
+	});
+
+	it('should create a network key', () => {
+		const publisherMnemonic =
+			'assault ask miss tent also style outer best galaxy ugly cruise genre grant obvious grow mix chaos skin mushroom champion ball expose monster dwarf';
+		const keypair: Ed25519Keypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
+		console.log(keypair.toSuiAddress());
 	});
 });
