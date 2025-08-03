@@ -4,8 +4,11 @@ import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
 import { execa } from 'execa';
 import { describe, it } from 'vitest';
 
-import { delay, getSystemInner } from '../../src/dwallet-mpc/globals';
-import { createConf, runSignFullFlow } from '../e2e/dwallet-mpc.test';
+import { delay, getNetworkDecryptionKeyID, getSystemInner } from '../../src/dwallet-mpc/globals';
+import {
+	createConf,
+	runFullFlowTestWithNetworkKey,
+} from '../e2e/dwallet-mpc.test';
 import { createConfigMaps } from './config-map';
 import { NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
 import { createNetworkServices } from './network-service';
@@ -124,6 +127,7 @@ describe('chaos tests', () => {
 		}
 
 		console.log('deployed new validators, running a full flow test');
-		await runSignFullFlow(conf);
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		await runFullFlowTestWithNetworkKey(conf, networkKeyID);
 	}, 3_600_000);
 });

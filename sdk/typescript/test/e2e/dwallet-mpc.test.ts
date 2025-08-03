@@ -72,38 +72,7 @@ export async function createConf(): Promise<Config> {
 	};
 }
 
-export async function runSignFullFlow(conf: Config) {
-	const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
-	console.log('Creating dWallet...');
-	console.time('Step 1: dWallet Creation');
-	const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
-	console.log(`dWallet has been created successfully: ${dwallet.dwalletID}`);
-	console.timeEnd('Step 1: dWallet Creation');
-	await delay(checkpointCreationTime);
-	console.log('Running Presign...');
-	console.time('Step 2: Presign Phase');
-	const completedPresign = await presign(conf, dwallet.dwalletID);
-	console.timeEnd('Step 2: Presign Phase');
-	console.log(`Step 2: Presign completed | presignID = ${completedPresign.id.id}`);
-	await delay(checkpointCreationTime);
-	console.log('Running Sign...');
-	console.time('Step 3: Sign Phase');
-	const signRes = await sign(
-		conf,
-		completedPresign.id.id,
-		dwallet.dwallet_cap_id,
-		Buffer.from('hello world'),
-		dwallet.secret_share,
-		networkDecryptionKeyPublicOutput,
-		Hash.KECCAK256,
-	);
-	console.log(`Sing completed successfully: ${signRes.id.id}`);
-	console.timeEnd('Step 3: Sign Phase');
-}
-
 const fiveMinutes = 5 * 60 * 1000;
-// const SUI_RPC_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
-const SUI_RPC_URL = getFullnodeUrl('localnet');
 describe('Test dWallet MPC', () => {
 	let conf: Config;
 
@@ -160,10 +129,11 @@ describe('Test dWallet MPC', () => {
 	});
 
 	it('run multiple full flows simultaneously', async () => {
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
 		const tasks = [];
 		for (let i = 0; i < 5; i++) {
 			const conf = await createConf();
-			tasks.push(runSignFullFlow(conf));
+			tasks.push(runFullFlowTestWithNetworkKey(conf, networkKeyID));
 		}
 		await Promise.all(tasks);
 	});
@@ -428,7 +398,7 @@ describe('Test dWallet MPC', () => {
 	});
 });
 
-async function runFullFlowTestWithNetworkKey(conf: Config, networkKeyID: string) {
+export async function runFullFlowTestWithNetworkKey(conf: Config, networkKeyID: string) {
 	const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 	console.log('Creating dWallet...');
 	console.time('Step 1: dWallet Creation');
@@ -476,7 +446,7 @@ describe('tests that do not require faucet requests', () => {
 		);
 		const address = keypair.getPublicKey().toSuiAddress();
 		console.log(`Address: ${address}`);
-		const suiClient = new SuiClient({ url: SUI_RPC_URL });
+		const suiClient = new SuiClient({ url: SUI_FULLNODE_URL });
 		conf = {
 			suiClientKeypair: keypair,
 			client: suiClient,
