@@ -384,11 +384,45 @@ describe('Test dWallet MPC', () => {
 		const publisherMnemonic =
 			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
 		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
-		const keyID = await createNetworkKey(
+		const networkKeyID = await createNetworkKey(
 			conf,
 			'0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa',
 		);
-		console.log({ keyID });
+		console.log({ networkKeyID });
+		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
+		console.log('Creating dWallet...');
+		console.time('Step 1: dWallet Creation');
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
+		console.log(`dWallet has been created successfully: ${dwallet.dwalletID}`);
+		console.timeEnd('Step 1: dWallet Creation');
+		await delay(checkpointCreationTime);
+		console.log('Running Presign...');
+		console.time('Step 2: Presign Phase');
+		const completedPresign = await presign(conf, dwallet.dwalletID);
+		console.timeEnd('Step 2: Presign Phase');
+		console.log(`Step 2: Presign completed | presignID = ${completedPresign.id.id}`);
+		await delay(checkpointCreationTime);
+		console.log('Running Sign...');
+		console.time('Step 3: Sign Phase');
+		const signRes = await sign(
+			conf,
+			completedPresign.id.id,
+			dwallet.dwallet_cap_id,
+			Buffer.from('hello world'),
+			dwallet.secret_share,
+			networkDecryptionKeyPublicOutput,
+			Hash.KECCAK256,
+		);
+		console.log(`Sing completed successfully: ${signRes.id.id}`);
+		console.timeEnd('Step 3: Sign Phase');
+		const isValid = verify_secp_signature(
+			public_key_from_dwallet_output(dwallet.output),
+			signRes.state.fields.signature,
+			Buffer.from('hello world'),
+			networkDecryptionKeyPublicOutput,
+			Hash.KECCAK256,
+		);
+		expect(isValid).toBeTruthy();
 	});
 });
 
