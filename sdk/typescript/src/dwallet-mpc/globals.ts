@@ -9,6 +9,7 @@ import sha3 from 'js-sha3';
 
 export const DWALLET_COORDINATOR_MOVE_MODULE_NAME = 'coordinator';
 export const DWALLET_COORDINATOR_INNER_MOVE_MODULE_NAME = 'coordinator_inner';
+export const DWALLET_SYSTEM_MOVE_MODULE_NAME = 'system';
 export const DWALLET_NETWORK_VERSION = 0;
 
 export const SUI_PACKAGE_ID = '0x2';

@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import path from 'path';
-import { sample_dwallet_keypair, verify_secp_signature } from '@dwallet-network/dwallet-mpc-wasm';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import {
+	public_key_from_dwallet_output,
+	sample_dwallet_keypair,
+	verify_secp_signature,
+} from '@dwallet-network/dwallet-mpc-wasm';
+import { SuiClient } from '@mysten/sui/client';
 import { requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -22,6 +26,7 @@ import {
 	isValidator,
 } from '../../src/dwallet-mpc/globals';
 import { createImportedDWallet } from '../../src/dwallet-mpc/import-dwallet';
+import { createNetworkKey } from '../../src/dwallet-mpc/network-dkg';
 import { presign } from '../../src/dwallet-mpc/presign';
 import {
 	isDWalletWithPublicUserSecretKeyShares,
@@ -170,6 +175,14 @@ describe('Test dWallet MPC', () => {
 		);
 		console.log(`Sing completed successfully: ${signRes.id.id}`);
 		console.timeEnd('Step 3: Sign Phase');
+		const isValid = verify_secp_signature(
+			public_key_from_dwallet_output(dwallet.output),
+			signRes.state.fields.signature,
+			Buffer.from('hello world'),
+			networkDecryptionKeyPublicOutput,
+			Hash.KECCAK256,
+		);
+		expect(isValid).toBeTruthy();
 	});
 
 	it('run multiple full flows simultaneously', async () => {
@@ -246,7 +259,7 @@ describe('Test dWallet MPC', () => {
 		console.log(`presign has been created successfully: ${completedPresign.id.id}`);
 		await delay(checkpointCreationTime);
 		console.log('Running Sign...');
-		await sign(
+		const signResponse = await sign(
 			conf,
 			completedPresign.id.id,
 			dwalletWithSecretShare.dwallet_cap_id,
@@ -255,6 +268,15 @@ describe('Test dWallet MPC', () => {
 			networkDecryptionKeyPublicOutput,
 			Hash.KECCAK256,
 		);
+		const publicKey = public_key_from_dwallet_output(dwallet.output);
+		const isValid = verify_secp_signature(
+			publicKey,
+			signResponse.state.fields.signature,
+			Buffer.from('hello world'),
+			networkDecryptionKeyPublicOutput,
+			Hash.KECCAK256,
+		);
+		expect(isValid).toBeTruthy();
 	});
 
 	it('should complete future sign', async () => {
@@ -327,7 +349,7 @@ describe('Test dWallet MPC', () => {
 		console.log(`presign has been created successfully: ${completedPresign.id.id}`);
 		await delay(checkpointCreationTime);
 		console.log('Running Sign...');
-		await signWithImportedDWallet(
+		const signature = await signWithImportedDWallet(
 			conf,
 			completedPresign.id.id,
 			dwalletWithSecretShare.dwallet_cap_id,
@@ -336,6 +358,14 @@ describe('Test dWallet MPC', () => {
 			networkDecryptionKeyPublicOutput,
 			Hash.KECCAK256,
 		);
+		const isValid = verify_secp_signature(
+			public_key_from_dwallet_output(dwallet.output),
+			signature.state.fields.signature,
+			Buffer.from('hello world'),
+			networkDecryptionKeyPublicOutput,
+			Hash.KECCAK256,
+		);
+		expect(isValid).toBeTruthy();
 	});
 
 	it('should create an imported dWallet, sign with it & verify the signature against the original public key', async () => {
@@ -393,6 +423,18 @@ describe('Test dWallet MPC', () => {
 
 		console.log(operatorCapIDs.join(' '));
 	});
+
+	it('should create a network key', async () => {
+		const publisherMnemonic =
+			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
+		const keypair: Ed25519Keypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
+		conf.suiClientKeypair = keypair;
+		await createNetworkKey(
+			conf,
+			'0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa',
+		);
+		console.log(keypair.toSuiAddress());
+	});
 });
 
 describe('tests that do not require faucet requests', () => {
@@ -406,7 +448,7 @@ describe('tests that do not require faucet requests', () => {
 		);
 		const address = keypair.getPublicKey().toSuiAddress();
 		console.log(`Address: ${address}`);
-		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
+		const suiClient = new SuiClient({ url: SUI_FULLNODE_URL });
 		conf = {
 			suiClientKeypair: keypair,
 			client: suiClient,
