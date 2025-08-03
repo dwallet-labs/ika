@@ -1,15 +1,13 @@
 import { bcs } from '@mysten/bcs';
 import { Transaction } from '@mysten/sui/transactions';
 
+import type { Config } from './globals.js';
 import {
-	Config,
-	createSessionIdentifier,
 	DWALLET_COORDINATOR_MOVE_MODULE_NAME,
 	DWALLET_SYSTEM_MOVE_MODULE_NAME,
 	getInitialSharedVersion,
-	getNetworkDecryptionKeyID,
-	SUI_PACKAGE_ID,
-} from './globals';
+	getObjectWithType,
+} from './globals.js';
 
 export async function createNetworkKey(c: Config, protocolCapID: string): Promise<string> {
 	const tx = new Transaction();
@@ -50,14 +48,39 @@ export async function createNetworkKey(c: Config, protocolCapID: string): Promis
 		},
 	});
 	const startDKGEvent = result.events?.at(0)?.parsedJson;
-	return '';
+	if (!isStartNetworkDKGEvent(startDKGEvent)) {
+		throw new Error(
+			`Unexpected event type: ${JSON.stringify(startDKGEvent)}. Expected StartNetworkDKGEvent.`,
+		);
+	}
+	await getObjectWithType(
+		c,
+		startDKGEvent.event_data.dwallet_network_encryption_key_id,
+		isActiveNetworkKey,
+	);
+	return startDKGEvent.event_data.dwallet_network_encryption_key_id;
 }
 
 interface StartNetworkDKGEvent {
 	event_data: {
-		dwallet_id: string;
-		dwallet_cap_id: string;
 		dwallet_network_encryption_key_id: string;
+		params_for_network: string;
 	};
-	session_identifier_preimage: Uint8Array;
+}
+
+function isStartNetworkDKGEvent(obj: any): obj is StartNetworkDKGEvent {
+	return (
+		!!obj?.event_data?.dwallet_network_encryption_key_id && !!obj?.event_data.params_for_network
+	);
+}
+
+export interface ActiveNetworkKey {
+	state: {
+		variant: 'NetworkDKGCompleted';
+	};
+	id: { id: string };
+}
+
+function isActiveNetworkKey(obj: any): obj is ActiveNetworkKey {
+	return obj?.state?.variant === 'NetworkDKGCompleted';
 }
