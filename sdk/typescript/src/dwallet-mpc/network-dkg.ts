@@ -50,15 +50,5 @@ export async function createNetworkKey(c: Config, protocolCapID: string): Promis
 		},
 	});
 	const startDKGEvent = result.events?.at(1)?.parsedJson;
-	if (!isStartDKGFirstRoundEvent(startDKGEvent)) {
-		throw new Error('invalid start DKG first round event');
-	}
-	const dwalletID = startDKGEvent.event_data.dwallet_id;
-	const output = await waitForDKGFirstRoundOutput(c, dwalletID);
-	return {
-		sessionIdentifier: startDKGEvent.session_identifier_preimage,
-		output: output,
-		dwalletCapID: startDKGEvent.event_data.dwallet_cap_id,
-		dwalletID,
-	};
+	return '';
 }
