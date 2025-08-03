@@ -51,6 +51,12 @@ export async function createValidatorPod(
 					command: ['/opt/ika/bin/ika-node', '--config-path', '/opt/ika/config/validator.yaml'],
 					name: 'ika-node',
 					image: process.env.DOCKER_TAG,
+					resources: {
+						requests: {
+							cpu: '16',
+							memory: '10Gi',
+						},
+					},
 					volumeMounts: [
 						{
 							name: 'config-vol',
@@ -146,6 +152,12 @@ export async function createPods(kc: KubeConfig, namespaceName: string, numOfVal
 					command: ['/opt/ika/bin/ika-node', '--config-path', '/opt/ika/config/fullnode.yaml'],
 					name: 'ika-node',
 					image: process.env.DOCKER_TAG,
+					resources: {
+						requests: {
+							cpu: '16',
+							memory: '10Gi',
+						},
+					},
 					volumeMounts: [
 						{
 							name: 'config-vol',
