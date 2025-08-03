@@ -52,3 +52,12 @@ export async function createNetworkKey(c: Config, protocolCapID: string): Promis
 	const startDKGEvent = result.events?.at(0)?.parsedJson;
 	return '';
 }
+
+interface StartNetworkDKGEvent {
+	event_data: {
+		dwallet_id: string;
+		dwallet_cap_id: string;
+		dwallet_network_encryption_key_id: string;
+	};
+	session_identifier_preimage: Uint8Array;
+}
