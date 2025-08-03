@@ -82,14 +82,14 @@ describe('Test dWallet MPC', () => {
 	it('should create a dWallet (DKG)', async () => {
 		const networkKeyID = await getNetworkDecryptionKeyID(conf);
 		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.log(`dWallet has been created successfully: ${dwallet}`);
 	});
 
 	it('should run presign', async () => {
 		const networkKeyID = await getNetworkDecryptionKeyID(conf);
 		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.log(`dWallet has been created successfully: ${dwallet}`);
 		const completedPresign = await presign(conf, dwallet.dwalletID);
 		console.log(`presign has been created successfully: ${completedPresign.id.id}`);
@@ -100,7 +100,7 @@ describe('Test dWallet MPC', () => {
 		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		console.log('Creating dWallet...');
 		console.time('Step 1: dWallet Creation');
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.log(`dWallet has been created successfully: ${dwallet.dwalletID}`);
 		console.timeEnd('Step 1: dWallet Creation');
 		await delay(checkpointCreationTime);
@@ -165,7 +165,7 @@ describe('Test dWallet MPC', () => {
 		const networkKeyID = await getNetworkDecryptionKeyID(conf);
 		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		console.log('Creating dWallet...');
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.log(`dWallet has been created successfully: ${dwallet.dwalletID}`);
 		await delay(checkpointCreationTime);
 		console.log('Running publish secret share...');
@@ -180,7 +180,7 @@ describe('Test dWallet MPC', () => {
 		const networkKeyID = await getNetworkDecryptionKeyID(conf);
 		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		console.log('Creating dWallet...');
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.log(`dWallet has been created successfully: ${dwallet.dwalletID}`);
 		await delay(checkpointCreationTime);
 		console.log('Running publish secret share...');
@@ -226,7 +226,7 @@ describe('Test dWallet MPC', () => {
 
 		console.log('Step 1: dWallet Creation');
 		console.time('Step 1: dWallet Creation');
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.timeEnd('Step 1: dWallet Creation');
 		console.log(`Step 1: dWallet created | dWalletID = ${dwallet.dwalletID}`);
 		await delay(checkpointCreationTime);

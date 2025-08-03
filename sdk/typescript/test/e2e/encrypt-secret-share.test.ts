@@ -37,7 +37,11 @@ describe('Test dWallet MPC', () => {
 			sourceConf,
 			networkKeyID,
 		);
-		const sourceDwallet = await createDWallet(sourceConf, networkDecryptionKeyPublicOutput);
+		const sourceDwallet = await createDWallet(
+			sourceConf,
+			networkKeyID,
+			networkDecryptionKeyPublicOutput,
+		);
 		// Create Destination Class Groups Keypair & Store it on the chain.
 		await getOrCreateClassGroupsKeyPair(destConf);
 		await delay(checkpointCreationTime);
