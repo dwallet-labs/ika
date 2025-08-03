@@ -46,6 +46,6 @@ docker build -f "$DOCKERFILE" "$REPO_ROOT" \
   --build-arg BUILD_DATE="$BUILD_DATE" \
   --build-arg PROFILE="$PROFILE" \
   --build-arg WITH_NETWORK_DKG="$WITH_NETWORK_DKG" \
-  --build-arg CARGO_BUILD_FLAGS="$1" \
+  --build-arg "CARGO_BUILD_FLAGS=$1" \
   --tag "$DOCKER_TAG" \
   "$@"
