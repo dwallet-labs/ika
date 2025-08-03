@@ -364,8 +364,12 @@ async function readTableVecAsRawBytes(c: Config, table_id: string): Promise<Uint
 
 export async function getNetworkPublicParameters(
 	c: Config,
-	networkDecryptionKeyPublicOutputID: string,
+	networkDecryptionKeyID: string,
 ): Promise<Uint8Array> {
+	const networkDecryptionKeyPublicOutputID = await getNetworkDecryptionKeyPublicOutputID(
+		c,
+		networkDecryptionKeyID,
+	);
 	const currentEpoch = await getNetworkCurrentEpochNumber(c);
 	const cachedPP = getCachedPublicParameters(networkDecryptionKeyPublicOutputID, currentEpoch);
 	if (cachedPP) {
