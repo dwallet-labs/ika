@@ -232,7 +232,7 @@ describe('Test dWallet MPC', () => {
 		const networkKeyID = await getNetworkDecryptionKeyID(conf);
 		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		const [secretKey, _publicKey] = sample_dwallet_keypair(networkDecryptionKeyPublicOutput);
-		const dwallet = await createImportedDWallet(conf, secretKey);
+		const dwallet = await createImportedDWallet(conf, secretKey, networkKeyID);
 		console.log({ ...dwallet });
 	});
 
@@ -240,7 +240,7 @@ describe('Test dWallet MPC', () => {
 		const networkKeyID = await getNetworkDecryptionKeyID(conf);
 		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		const [secretKey, _publicKey] = sample_dwallet_keypair(networkDecryptionKeyPublicOutput);
-		const dwallet = await createImportedDWallet(conf, secretKey);
+		const dwallet = await createImportedDWallet(conf, secretKey, networkKeyID);
 		await delay(checkpointCreationTime);
 		console.log({ ...dwallet });
 		console.log('Running publish secret share...');
@@ -283,7 +283,7 @@ describe('Test dWallet MPC', () => {
 		const networkKeyID = await getNetworkDecryptionKeyID(conf);
 		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		const [secretKey, publicKey] = sample_dwallet_keypair(networkDecryptionKeyPublicOutput);
-		const dwallet = await createImportedDWallet(conf, secretKey);
+		const dwallet = await createImportedDWallet(conf, secretKey, networkKeyID);
 		console.log({ ...dwallet });
 		await delay(checkpointCreationTime);
 		console.log('Running Presign...');
