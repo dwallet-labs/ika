@@ -15,6 +15,12 @@ build
 storage
 !crates/ika-types/src/storage
 
+# Move package summary
+package_summaries
+
+# Sui codegen
+generated
+
 # Move-related files
 Move.lock
 !deployed_contracts/testnet/ika/Move.lock

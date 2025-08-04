@@ -4,6 +4,7 @@ import {
 	DWalletNetworkDecryptionKey,
 	MoveDynamicField,
 	MoveObject,
+	StartDKGFirstRoundEvent,
 	System,
 	SystemInner,
 } from './types';
@@ -46,6 +47,15 @@ export function isMoveObject<TFields>(obj: any): obj is MoveObject<TFields> {
 
 export function isMoveDynamicField(obj: any): obj is MoveDynamicField {
 	return obj?.fields?.name !== undefined && obj?.fields?.value !== undefined;
+}
+
+export function isStartDKGFirstRoundEvent(obj: any): obj is StartDKGFirstRoundEvent {
+	return (
+		!!obj?.event_data?.dwallet_id &&
+		!!obj?.session_identifier_preimage &&
+		!!obj?.event_data?.dwallet_cap_id &&
+		!!obj?.event_data?.dwallet_network_encryption_key_id
+	);
 }
 
 /**

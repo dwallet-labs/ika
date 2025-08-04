@@ -120,3 +120,12 @@ export interface MoveDynamicField {
 		value: Uint8Array;
 	};
 }
+
+export interface StartDKGFirstRoundEvent {
+	event_data: {
+		dwallet_id: string;
+		dwallet_cap_id: string;
+		dwallet_network_encryption_key_id: string;
+	};
+	session_identifier_preimage: Uint8Array;
+}

@@ -5,21 +5,20 @@ import { IkaConfig } from '../client/types';
 
 export function registerEncryptionKey(
 	ikaConfig: IkaConfig,
-	encryption: {
-		encryptionKey: Uint8Array;
-		encryptionKeySignature: Uint8Array;
-		encryptionKeyAddress: Uint8Array;
-	},
+	curve: number,
+	encryptionKey: Uint8Array,
+	encryptionKeySignature: Uint8Array,
+	encryptionKeyAddress: Uint8Array,
 	tx: Transaction,
 ) {
 	tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::register_encryption_key`,
 		arguments: [
 			getCoordinatorObjectRef(ikaConfig, tx),
-			tx.pure.u32(0),
-			tx.pure(bcs.vector(bcs.u8()).serialize(encryption.encryptionKey)),
-			tx.pure(bcs.vector(bcs.u8()).serialize(encryption.encryptionKeySignature)),
-			tx.pure(bcs.vector(bcs.u8()).serialize(encryption.encryptionKeyAddress)),
+			tx.pure.u32(curve),
+			tx.pure(bcs.vector(bcs.u8()).serialize(encryptionKey)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(encryptionKeySignature)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(encryptionKeyAddress)),
 		],
 	});
 }
@@ -110,28 +109,28 @@ export function requestDWalletDKGFirstRound(
 
 export function requestDWalletDKGSecondRound(
 	ikaConfig: IkaConfig,
-	dwalletCap: string,
+	dwalletCap: TransactionObjectArgument,
 	centralizedPublicKeyShareAndProof: Uint8Array,
 	encryptedCentralizedSecretShareAndProof: Uint8Array,
 	encryptionKeyAddress: string,
 	userPublicOutput: Uint8Array,
 	signerPublicKey: Uint8Array,
-	sessionIdentifier: Uint8Array,
+	sessionIdentifier: TransactionObjectArgument,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
-): TransactionObjectArgument {
-	return tx.moveCall({
+) {
+	tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg_second_round`,
 		arguments: [
 			getCoordinatorObjectRef(ikaConfig, tx),
-			tx.object(dwalletCap),
+			dwalletCap,
 			tx.pure(bcs.vector(bcs.u8()).serialize(centralizedPublicKeyShareAndProof)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(encryptedCentralizedSecretShareAndProof)),
 			tx.pure.address(encryptionKeyAddress),
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(signerPublicKey)),
-			tx.pure(bcs.vector(bcs.u8()).serialize(sessionIdentifier)),
+			sessionIdentifier,
 			ikaCoin,
 			suiCoin,
 		],
