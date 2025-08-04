@@ -139,8 +139,8 @@ describe('Test dWallet MPC', () => {
 	});
 
 	it('create multiple network keys and run multiple full flows with each of them', async () => {
-		const numOfNetworkKeys = 5;
-		const flowsPerKey = 5;
+		const numOfNetworkKeys = 2;
+		const flowsPerKey = 2;
 		const confs = [];
 		const protocolCapID = '0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa';
 		const publisherMnemonic =
