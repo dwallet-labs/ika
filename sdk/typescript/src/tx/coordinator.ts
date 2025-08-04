@@ -1,5 +1,5 @@
 import { bcs } from '@mysten/bcs';
-import type { Transaction, TransactionArgument } from '@mysten/sui/transactions';
+import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import { IkaConfig } from '../client/types';
 
@@ -26,16 +26,12 @@ export function registerEncryptionKey(
 
 export function registerSessionIdentifier(
 	ikaConfig: IkaConfig,
-	sessionIdentifier: Uint8Array,
+	sessionIdentifier: TransactionObjectArgument,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::register_session_identifier`,
-		arguments: [
-			getCoordinatorObjectRef(ikaConfig, tx),
-			tx.pure(bcs.vector(bcs.u8()).serialize(sessionIdentifier)),
-			tx.gas,
-		],
+		arguments: [getCoordinatorObjectRef(ikaConfig, tx), sessionIdentifier, tx.gas],
 	});
 }
 
@@ -43,7 +39,7 @@ export function getActiveEncryptionKey(
 	ikaConfig: IkaConfig,
 	address: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::get_active_encryption_key`,
 		arguments: [getCoordinatorObjectRef(ikaConfig, tx), tx.pure.address(address)],
@@ -57,7 +53,7 @@ export function approveMessage(
 	hashScheme: number,
 	message: Uint8Array,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::approve_message`,
 		arguments: [
@@ -77,7 +73,7 @@ export function approveImportedKeyMessage(
 	hashScheme: number,
 	message: Uint8Array,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::approve_imported_key_message`,
 		arguments: [
@@ -94,18 +90,18 @@ export function requestDWalletDKGFirstRound(
 	ikaConfig: IkaConfig,
 	dwalletNetworkEncryptionKeyID: string,
 	curve: number,
-	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	sessionIdentifier: TransactionObjectArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg_first_round`,
 		arguments: [
 			getCoordinatorObjectRef(ikaConfig, tx),
 			tx.pure.id(dwalletNetworkEncryptionKeyID),
 			tx.pure.u32(curve),
-			tx.pure(bcs.vector(bcs.u8()).serialize(sessionIdentifier)),
+			sessionIdentifier,
 			ikaCoin,
 			suiCoin,
 		],
@@ -121,10 +117,10 @@ export function requestDWalletDKGSecondRound(
 	userPublicOutput: Uint8Array,
 	signerPublicKey: Uint8Array,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg_second_round`,
 		arguments: [
@@ -148,7 +144,7 @@ export function processCheckpointMessageByQuorum(
 	signersBitmap: Uint8Array,
 	message: Uint8Array,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::process_checkpoint_message_by_quorum`,
 		arguments: [
@@ -210,7 +206,7 @@ export function processCheckpointMessageByCap(
 	message: Uint8Array,
 	verifiedProtocolCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::process_checkpoint_message_by_cap`,
 		arguments: [
@@ -278,10 +274,10 @@ export function requestImportedKeyDwalletVerification(
 	userPublicOutput: Uint8Array,
 	signerPublicKey: Uint8Array,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_imported_key_dwallet_verification`,
 		arguments: [
@@ -305,8 +301,8 @@ export function requestMakeDwalletUserSecretKeySharesPublic(
 	dwalletId: string,
 	publicUserSecretKeyShares: Uint8Array,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ) {
 	tx.moveCall({
@@ -329,8 +325,8 @@ export function requestReEncryptUserShareFor(
 	encryptedCentralizedSecretShareAndProof: Uint8Array,
 	sourceEncryptedUserSecretKeyShareId: string,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ) {
 	tx.moveCall({
@@ -371,10 +367,10 @@ export function requestPresign(
 	dwalletId: string,
 	signatureAlgorithm: number,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_presign`,
 		arguments: [
@@ -394,10 +390,10 @@ export function requestGlobalPresign(
 	curve: number,
 	signatureAlgorithm: number,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_global_presign`,
 		arguments: [
@@ -416,7 +412,7 @@ export function isPresignValid(
 	ikaConfig: IkaConfig,
 	presignCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::is_presign_valid`,
 		arguments: [getCoordinatorObjectRef(ikaConfig, tx), tx.object(presignCap)],
@@ -427,7 +423,7 @@ export function verifyPresignCap(
 	ikaConfig: IkaConfig,
 	unverifiedPresignCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::verify_presign_cap`,
 		arguments: [getCoordinatorObjectRef(ikaConfig, tx), tx.object(unverifiedPresignCap)],
@@ -440,8 +436,8 @@ export function requestSign(
 	messageApproval: string,
 	messageCentralizedSignature: Uint8Array,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ) {
 	tx.moveCall({
@@ -464,8 +460,8 @@ export function requestImportedKeySign(
 	importedKeyMessageApproval: string,
 	messageCentralizedSignature: Uint8Array,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ) {
 	tx.moveCall({
@@ -490,10 +486,10 @@ export function requestFutureSign(
 	hashScheme: number,
 	messageCentralizedSignature: Uint8Array,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_future_sign`,
 		arguments: [
@@ -514,7 +510,7 @@ export function isPartialUserSignatureValid(
 	ikaConfig: IkaConfig,
 	unverifiedPartialUserSignatureCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::is_partial_user_signature_valid`,
 		arguments: [
@@ -528,7 +524,7 @@ export function verifyPartialUserSignatureCap(
 	ikaConfig: IkaConfig,
 	unverifiedPartialUserSignatureCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::verify_partial_user_signature_cap`,
 		arguments: [
@@ -543,8 +539,8 @@ export function requestSignWithPartialUserSignature(
 	verifiedPartialUserSignatureCap: string,
 	messageApproval: string,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ) {
 	tx.moveCall({
@@ -565,8 +561,8 @@ export function requestImportedKeySignWithPartialUserSignature(
 	verifiedPartialUserSignatureCap: string,
 	importedKeyMessageApproval: string,
 	sessionIdentifier: Uint8Array,
-	ikaCoin: TransactionArgument,
-	suiCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ) {
 	tx.moveCall({
@@ -587,7 +583,7 @@ export function matchPartialUserSignatureWithMessageApproval(
 	verifiedPartialUserSignatureCap: string,
 	messageApproval: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::match_partial_user_signature_with_message_approval`,
 		arguments: [
@@ -603,7 +599,7 @@ export function matchPartialUserSignatureWithImportedKeyMessageApproval(
 	verifiedPartialUserSignatureCap: string,
 	importedKeyMessageApproval: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::match_partial_user_signature_with_imported_key_message_approval`,
 		arguments: [
@@ -614,7 +610,7 @@ export function matchPartialUserSignatureWithImportedKeyMessageApproval(
 	});
 }
 
-export function currentPricing(ikaConfig: IkaConfig, tx: Transaction): TransactionArgument {
+export function currentPricing(ikaConfig: IkaConfig, tx: Transaction): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::current_pricing`,
 		arguments: [getCoordinatorObjectRef(ikaConfig, tx)],
@@ -623,7 +619,7 @@ export function currentPricing(ikaConfig: IkaConfig, tx: Transaction): Transacti
 
 export function subsidizeCoordinatorWithSui(
 	ikaConfig: IkaConfig,
-	suiCoin: TransactionArgument,
+	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ) {
 	tx.moveCall({
@@ -634,7 +630,7 @@ export function subsidizeCoordinatorWithSui(
 
 export function subsidizeCoordinatorWithIka(
 	ikaConfig: IkaConfig,
-	ikaCoin: TransactionArgument,
+	ikaCoin: TransactionObjectArgument,
 	tx: Transaction,
 ) {
 	tx.moveCall({
@@ -672,7 +668,7 @@ export function tryMigrate(ikaConfig: IkaConfig, tx: Transaction) {
 	});
 }
 
-export function version(ikaConfig: IkaConfig, tx: Transaction): TransactionArgument {
+export function version(ikaConfig: IkaConfig, tx: Transaction): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::version`,
 		arguments: [getCoordinatorObjectRef(ikaConfig, tx)],

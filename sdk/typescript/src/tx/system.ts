@@ -1,5 +1,5 @@
 import { bcs } from '@mysten/bcs';
-import type { Transaction, TransactionArgument } from '@mysten/sui/transactions';
+import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import { IkaConfig } from '../client/types';
 
@@ -23,9 +23,9 @@ export function requestAddValidatorCandidate(
 	},
 	tx: Transaction,
 ): {
-	validatorCap: TransactionArgument;
-	validatorOperationCap: TransactionArgument;
-	validatorCommissionCap: TransactionArgument;
+	validatorCap: TransactionObjectArgument;
+	validatorOperationCap: TransactionObjectArgument;
+	validatorCommissionCap: TransactionObjectArgument;
 } {
 	const [validatorCap, validatorOperationCap, validatorCommissionCap] = tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::request_add_validator_candidate`,
@@ -106,10 +106,10 @@ export function setNextCommission(
 
 export function requestAddStake(
 	ikaConfig: IkaConfig,
-	stakeCoin: TransactionArgument,
+	stakeCoin: TransactionObjectArgument,
 	validatorId: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::request_add_stake`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), stakeCoin, tx.pure.id(validatorId)],
@@ -127,7 +127,7 @@ export function withdrawStake(
 	ikaConfig: IkaConfig,
 	stakedIka: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::withdraw_stake`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.object(stakedIka)],
@@ -170,7 +170,7 @@ export function rotateOperationCap(
 	ikaConfig: IkaConfig,
 	validatorCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::rotate_operation_cap`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.object(validatorCap)],
@@ -181,7 +181,7 @@ export function rotateCommissionCap(
 	ikaConfig: IkaConfig,
 	validatorCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::rotate_commission_cap`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.object(validatorCap)],
@@ -193,7 +193,7 @@ export function collectCommission(
 	validatorCommissionCap: string,
 	amount: number | null,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::collect_commission`,
 		arguments: [
@@ -226,7 +226,7 @@ export function validatorMetadata(
 	ikaConfig: IkaConfig,
 	validatorId: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::validator_metadata`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.pure.id(validatorId)],
@@ -363,7 +363,7 @@ export function setNextEpochMpcDataBytes(
 	mpcData: Uint8Array[],
 	validatorOperationCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::set_next_epoch_mpc_data_bytes`,
 		arguments: [
@@ -374,7 +374,7 @@ export function setNextEpochMpcDataBytes(
 	});
 }
 
-export function activeCommittee(ikaConfig: IkaConfig, tx: Transaction): TransactionArgument {
+export function activeCommittee(ikaConfig: IkaConfig, tx: Transaction): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::active_committee`,
 		arguments: [getSystemObjectRef(ikaConfig, tx)],
@@ -384,7 +384,7 @@ export function activeCommittee(ikaConfig: IkaConfig, tx: Transaction): Transact
 export function nextEpochActiveCommittee(
 	ikaConfig: IkaConfig,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::next_epoch_active_committee`,
 		arguments: [getSystemObjectRef(ikaConfig, tx)],
@@ -406,7 +406,7 @@ export function createSystemCurrentStatusInfo(
 	ikaConfig: IkaConfig,
 	clock: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::create_system_current_status_info`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.object(clock)],
@@ -417,7 +417,7 @@ export function initiateAdvanceEpoch(
 	ikaConfig: IkaConfig,
 	clock: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::initiate_advance_epoch`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.object(clock)],
@@ -444,7 +444,7 @@ export function verifyValidatorCap(
 	ikaConfig: IkaConfig,
 	validatorCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::verify_validator_cap`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.object(validatorCap)],
@@ -455,7 +455,7 @@ export function verifyOperationCap(
 	ikaConfig: IkaConfig,
 	validatorOperationCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::verify_operation_cap`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.object(validatorOperationCap)],
@@ -466,7 +466,7 @@ export function verifyCommissionCap(
 	ikaConfig: IkaConfig,
 	validatorCommissionCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::verify_commission_cap`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.object(validatorCommissionCap)],
@@ -478,8 +478,8 @@ export function authorizeUpgrade(
 	packageId: string,
 	tx: Transaction,
 ): {
-	upgradeTicket: TransactionArgument;
-	upgradePackageApprover: TransactionArgument;
+	upgradeTicket: TransactionObjectArgument;
+	upgradePackageApprover: TransactionObjectArgument;
 } {
 	const [upgradeTicket, upgradePackageApprover] = tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::authorize_upgrade`,
@@ -553,7 +553,7 @@ export function verifyProtocolCap(
 	ikaConfig: IkaConfig,
 	protocolCap: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::verify_protocol_cap`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.object(protocolCap)],
@@ -635,7 +635,7 @@ export function calculateRewards(
 	activationEpoch: number,
 	withdrawEpoch: number,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::calculate_rewards`,
 		arguments: [
@@ -652,14 +652,14 @@ export function canWithdrawStakedIkaEarly(
 	ikaConfig: IkaConfig,
 	stakedIka: string,
 	tx: Transaction,
-): TransactionArgument {
+): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::can_withdraw_staked_ika_early`,
 		arguments: [getSystemObjectRef(ikaConfig, tx), tx.object(stakedIka)],
 	});
 }
 
-export function version(ikaConfig: IkaConfig, tx: Transaction): TransactionArgument {
+export function version(ikaConfig: IkaConfig, tx: Transaction): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaSystemPackage}::system::version`,
 		arguments: [getSystemObjectRef(ikaConfig, tx)],

@@ -16,14 +16,6 @@ export interface IkaObjectsConfig {
 		objectID: string;
 		initialSharedVersion: number;
 	};
-	ikaDWalletCoordinatorInner: {
-		objectID: string;
-		initialSharedVersion: number;
-	};
-	ikaDWalletCoordinatorInnerKeys: {
-		objectID: string;
-		initialSharedVersion: number;
-	};
 }
 
 export interface IkaConfig {
@@ -40,6 +32,7 @@ export interface IkaClientOptions {
 		epoch: number;
 		publicParameters: Uint8Array;
 	};
+	cache?: boolean;
 }
 
 export interface CoordinatorInner {
@@ -68,6 +61,20 @@ export interface CoordinatorInner {
 		};
 	};
 }
+
+export interface Coordinator {
+	fields: {
+		id: {
+			id: string;
+		};
+		migration_epoch: null;
+		new_package_id: null;
+		package_id: string;
+		version: string;
+	};
+}
+
+export interface System extends Coordinator {}
 
 export interface SystemInner {
 	fields: {
