@@ -3,11 +3,10 @@
 # ==========================
 FROM rust:1.88-bullseye AS builder
 
-# Arguments
-ARG PROFILE=release
 ARG GIT_REVISION=unknown
 ARG GITHUB_TOKEN
 ARG WORKDIR=/opt
+ARG CARGO_BUILD_FLAGS
 
 # Environment
 ENV CARGO_HOME=/usr/local/cargo
@@ -26,7 +25,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 COPY contracts contracts
 
-RUN RUSTFLAGS="-C opt-level=2" cargo build --no-default-features --profile ${PROFILE} --bin ika-node
+RUN cargo build ${CARGO_BUILD_FLAGS} --profile release --bin ika-node
 
 # ==========================
 # Runtime stage
