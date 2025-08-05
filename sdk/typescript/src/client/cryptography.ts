@@ -5,6 +5,16 @@ import {
 } from '@dwallet-network/dwallet-mpc-wasm';
 import sha3 from 'js-sha3';
 
+import { IkaClient } from './ika-client';
+
+export type PreparedSecondRound = {
+	centralizedPublicKeyShareAndProof: Uint8Array;
+	centralizedPublicOutput: Uint8Array;
+	centralizedSecretKeyShare: Uint8Array;
+	encryptedUserShareAndProof: Uint8Array;
+	dWalletCapId: string;
+};
+
 export function createClassGroupsKeypair(seed: Uint8Array): {
 	encryptionKey: Uint8Array;
 	decryptionKey: Uint8Array;
@@ -52,6 +62,70 @@ export function encryptSecretShare(
 	);
 
 	return encryptedUserShareAndProof;
+}
+
+export function prepareDKGSecondRound(
+	networkDecryptionKeyPublicOutput: Uint8Array,
+	firstRoundOutput: Uint8Array,
+	sessionIdentifier: Uint8Array,
+	encryptionKey: Uint8Array,
+	dWalletCapId: string,
+): PreparedSecondRound {
+	const [centralizedPublicKeyShareAndProof, centralizedPublicOutput, centralizedSecretKeyShare] =
+		create_dkg_centralized_output(
+			networkDecryptionKeyPublicOutput,
+			Uint8Array.from(firstRoundOutput),
+			sessionIdentifierDigest(sessionIdentifier),
+		);
+
+	const encryptedUserShareAndProof = encryptSecretShare(
+		centralizedSecretKeyShare,
+		encryptionKey,
+		networkDecryptionKeyPublicOutput,
+	);
+
+	return {
+		centralizedPublicKeyShareAndProof,
+		centralizedPublicOutput,
+		centralizedSecretKeyShare,
+		encryptedUserShareAndProof,
+		dWalletCapId,
+	};
+}
+
+export async function prepareDKGSecondRoundAsync(
+	ikaClient: IkaClient,
+	firstRoundOutput: Uint8Array | number[] | undefined,
+	sessionIdentifier: Uint8Array,
+	encryptionKey: Uint8Array,
+	dWalletCapId: string,
+): Promise<PreparedSecondRound> {
+	const networkDecryptionKeyPublicOutput = await ikaClient.getNetworkPublicParameters();
+
+	if (!firstRoundOutput) {
+		throw new Error('First round output is undefined');
+	}
+
+	const [centralizedPublicKeyShareAndProof, centralizedPublicOutput, centralizedSecretKeyShare] =
+		create_dkg_centralized_output(
+			networkDecryptionKeyPublicOutput,
+			Uint8Array.from(firstRoundOutput),
+			sessionIdentifierDigest(sessionIdentifier),
+		);
+
+	const encryptedUserShareAndProof = encryptSecretShare(
+		centralizedSecretKeyShare,
+		encryptionKey,
+		networkDecryptionKeyPublicOutput,
+	);
+
+	return {
+		centralizedPublicKeyShareAndProof,
+		centralizedPublicOutput,
+		centralizedSecretKeyShare,
+		encryptedUserShareAndProof,
+		dWalletCapId,
+	};
 }
 
 function sessionIdentifierDigest(sessionIdentifier: Uint8Array): Uint8Array {

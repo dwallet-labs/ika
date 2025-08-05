@@ -18,6 +18,42 @@ export class IkaTransaction {
 	}
 
 	/**
+	 * Request the DKG first round. Fetches the decryption key ID from the IKA client.
+	 * @param params - The parameters for the DKG first round.
+	 * @param params.curve - The curve to use for the DKG first round.
+	 * @param params.ikaCoin - The IKA coin to use for payment of the DKG first round.
+	 * @param params.suiCoin - The SUI coin to use for payment of the DKG first round.
+	 * @returns DWalletCap
+	 */
+	async requestDWalletDKGFirstRoundAsync({
+		curve,
+		ikaCoin,
+		suiCoin,
+	}: {
+		curve: number;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<{
+		dwalletCap: TransactionObjectArgument;
+		transaction: IkaTransaction;
+	}> {
+		const dwalletCap = coordinatorTx.requestDWalletDKGFirstRound(
+			this.ikaClient.ikaConfig,
+			await this.ikaClient.getDecryptionKeyID(),
+			curve,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		return {
+			dwalletCap,
+			transaction: this,
+		};
+	}
+
+	/**
 	 * Request the DKG first round.
 	 * @param params - The parameters for the DKG first round.
 	 * @param params.curve - The curve to use for the DKG first round.
@@ -53,6 +89,40 @@ export class IkaTransaction {
 			dwalletCap,
 			transaction: this,
 		};
+	}
+
+	/**
+	 * Request the DKG first round and keep the DWalletCap. Fetches the decryption key ID from the IKA client.
+	 * @param params - The parameters for the DKG first round.
+	 * @param params.curve - The curve to use for the DKG first round.
+	 * @param params.ikaCoin - The IKA coin to use for payment of the DKG first round.
+	 * @param params.suiCoin - The SUI coin to use for payment of the DKG first round.
+	 * @param params.receiver - The receiver of the DWalletCap.
+	 */
+	async requestDWalletDKGFirstRoundAndKeepAsync({
+		curve,
+		ikaCoin,
+		suiCoin,
+		receiver,
+	}: {
+		curve: number;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+		receiver: string;
+	}) {
+		const cap = coordinatorTx.requestDWalletDKGFirstRound(
+			this.ikaClient.ikaConfig,
+			await this.ikaClient.getDecryptionKeyID(),
+			curve,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		this.transaction.transferObjects([cap], receiver);
+
+		return this;
 	}
 
 	/**

@@ -54,10 +54,27 @@ export async function executeTransaction(suiClient: SuiClient, transaction: Tran
 	});
 }
 
+export function generateKeypair() {
+	const seed = new Uint8Array(32).fill(8);
+	const keypair = Ed25519Keypair.deriveKeypairFromSeed('0x1');
+	const encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+		Buffer.from(seed).toString('hex'),
+	);
+
+	return {
+		keypair,
+		encryptedSecretShareSigningKeypair,
+		seed,
+		encryptionKeyPublicKey: keypair.getPublicKey().toRawBytes(),
+		encryptionKeyAddress: keypair.getPublicKey().toSuiAddress(),
+		signerAddress: keypair.getPublicKey().toSuiAddress(),
+		signerPublicKey: keypair.getPublicKey().toRawBytes(),
+	};
+}
+
 export async function requestDKGFirstRound(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	decryptionKeyID: string,
 ): Promise<{
 	dwalletID: string;
 	sessionIdentifierPreimage: Uint8Array;
@@ -69,7 +86,7 @@ export async function requestDKGFirstRound(
 		transaction,
 	});
 
-	ikaTransaction.requestDWalletDKGFirstRoundAndKeep({
+	await ikaTransaction.requestDWalletDKGFirstRoundAndKeepAsync({
 		curve: 0,
 		decryptionKeyID,
 		ikaCoin: coinWithBalance({
@@ -141,21 +158,14 @@ export async function requestDkgSecondRound(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	{
-		dWalletCapId,
-		centralizedPublicKeyShareAndProof,
-		centralizedPublicOutput,
-		encryptedUserShareAndProof,
+		preparedSecondRound,
 		encryptionKeyAddress,
 		signerPublicKey,
 		userPublicOutput,
 	}: {
-		dWalletCapId: string;
-		centralizedPublicKeyShareAndProof: Uint8Array;
-		centralizedPublicOutput: Uint8Array;
-		encryptedUserShareAndProof: Uint8Array;
+		preparedSecondRound: PreparedSecondRound;
 		encryptionKeyAddress: string;
 		signerPublicKey: Uint8Array;
-		userPublicOutput: Uint8Array;
 	},
 ) {
 	const transaction = new Transaction();
@@ -166,13 +176,13 @@ export async function requestDkgSecondRound(
 	});
 
 	ikaTransaction.requestDWalletDKGSecondRound({
-		dwalletCap: dWalletCapId,
-		centralizedPublicKeyShareAndProof,
-		centralizedPublicOutput,
-		encryptedUserShareAndProof,
+		dwalletCap: preparedSecondRound.dWalletCapId,
+		centralizedPublicKeyShareAndProof: preparedSecondRound.centralizedPublicKeyShareAndProof,
+		centralizedPublicOutput: preparedSecondRound.centralizedPublicOutput,
+		encryptedUserShareAndProof: preparedSecondRound.encryptedUserShareAndProof,
 		encryptionKeyAddress,
 		signerPublicKey,
-		userPublicOutput,
+		userPublicOutput: preparedSecondRound.centralizedPublicOutput,
 		ikaCoin: coinWithBalance({
 			type: '0x2::ika::IKA',
 			balance: 0,

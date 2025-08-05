@@ -9,3 +9,11 @@ export function objResToBcs(resp: SuiObjectResponse): string {
 
 	return resp.data.bcs.bcsBytes;
 }
+
+export function parseNumbersToBytes(numbers: number[] | undefined): Uint8Array {
+	if (!numbers) {
+		throw new Error('Numbers are undefined');
+	}
+
+	return new Uint8Array(numbers);
+}
