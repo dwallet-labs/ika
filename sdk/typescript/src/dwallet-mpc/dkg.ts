@@ -76,10 +76,11 @@ function isStartDKGFirstRoundEvent(obj: any): obj is StartDKGFirstRoundEvent {
 
 export async function createDWallet(
 	conf: Config,
+	networkDecryptionKeyID: string,
 	networkDecryptionKeyPublicOutput: Uint8Array,
 ): Promise<DWallet> {
 	console.time('launchDKGFirstRound');
-	const firstRoundOutputResult = await launchDKGFirstRound(conf);
+	const firstRoundOutputResult = await launchDKGFirstRound(conf, networkDecryptionKeyID);
 	console.timeEnd('launchDKGFirstRound');
 	const classGroupsSecpKeyPair = await getOrCreateClassGroupsKeyPair(conf);
 	const secondRoundResponse = await launchDKGSecondRound(
@@ -231,14 +232,16 @@ interface DKGFirstRoundOutputResult {
  * The output of this function is being used to generate the input for the second round,
  * and as input for the centralized party round.
  */
-async function launchDKGFirstRound(c: Config): Promise<DKGFirstRoundOutputResult> {
+async function launchDKGFirstRound(
+	c: Config,
+	networkDecryptionKeyID: string,
+): Promise<DKGFirstRoundOutputResult> {
 	const tx = new Transaction();
 	const emptyIKACoin = tx.moveCall({
 		target: `${SUI_PACKAGE_ID}::coin::zero`,
 		arguments: [],
 		typeArguments: [`${c.ikaConfig.packages.ika_package_id}::ika::IKA`],
 	});
-	const networkDecryptionKeyID = await getNetworkDecryptionKeyID(c);
 	const dwalletStateArg = tx.sharedObjectRef({
 		objectId: c.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 		initialSharedVersion: await getInitialSharedVersion(

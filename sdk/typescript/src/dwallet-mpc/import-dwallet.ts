@@ -40,8 +40,12 @@ function isSessionIdentifierRegisteredEvent(event: any): event is SessionIdentif
 
 // todo(zeev): refactor for a better API
 // https://github.com/dwallet-labs/dwallet-network/pull/1040/files#r2097645823
-export async function createImportedDWallet(conf: Config, secretKey: Uint8Array): Promise<DWallet> {
-	const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
+export async function createImportedDWallet(
+	conf: Config,
+	secretKey: Uint8Array,
+	networkKeyID: string,
+): Promise<DWallet> {
+	const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 	const sessionIdentifierRegisteredEvent = await createSessionIdentifierMoveCall(conf);
 
 	// The outgoing message and the public output are sent to the network.
