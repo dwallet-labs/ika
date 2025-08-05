@@ -1,5 +1,4 @@
 import { prepareDKGSecondRoundAsync } from '../client/cryptography';
-import { parseNumbersToBytes } from '../client/utils';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -37,10 +36,9 @@ async function main() {
 
 	const preparedSecondRound = await prepareDKGSecondRoundAsync(
 		ikaClient,
-		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output,
+		dWallet,
 		sessionIdentifierPreimage,
 		classGroupsKeypair.encryptionKey,
-		dWallet.dwallet_cap_id,
 	);
 
 	const secondRoundMoveResponse = await requestDkgSecondRound(ikaClient, suiClient, {
@@ -51,19 +49,20 @@ async function main() {
 
 	const activeDWallet = await ikaClient.getDWallet(dwalletID);
 
-	await acceptEncryptedUserShare(ikaClient, suiClient, {
-		dwalletId: dwalletID,
-		encryptedUserSecretKeyShareId:
-			secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
-		userOutputSignature: await encryptedSecretShareSigningKeypair.sign(
-			parseNumbersToBytes(activeDWallet.state.Active?.public_output),
-		),
-	});
+	await acceptEncryptedUserShare(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		secondRoundMoveResponse,
+		encryptedSecretShareSigningKeypair,
+	);
 
-	await makeDWalletUserSecretKeySharesPublic(ikaClient, suiClient, {
-		dwalletId: dwalletID,
-		secretShare: preparedSecondRound.centralizedSecretKeyShare,
-	});
+	await makeDWalletUserSecretKeySharesPublic(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		preparedSecondRound,
+	);
 }
 
 export { main };

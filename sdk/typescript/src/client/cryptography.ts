@@ -6,6 +6,7 @@ import {
 import sha3 from 'js-sha3';
 
 import { IkaClient } from './ika-client';
+import { DWallet } from './types';
 
 export type PreparedSecondRound = {
 	centralizedPublicKeyShareAndProof: Uint8Array;
@@ -66,41 +67,11 @@ export function encryptSecretShare(
 
 export function prepareDKGSecondRound(
 	networkDecryptionKeyPublicOutput: Uint8Array,
-	firstRoundOutput: Uint8Array,
+	dWallet: DWallet,
 	sessionIdentifier: Uint8Array,
 	encryptionKey: Uint8Array,
-	dWalletCapId: string,
 ): PreparedSecondRound {
-	const [centralizedPublicKeyShareAndProof, centralizedPublicOutput, centralizedSecretKeyShare] =
-		create_dkg_centralized_output(
-			networkDecryptionKeyPublicOutput,
-			Uint8Array.from(firstRoundOutput),
-			sessionIdentifierDigest(sessionIdentifier),
-		);
-
-	const encryptedUserShareAndProof = encryptSecretShare(
-		centralizedSecretKeyShare,
-		encryptionKey,
-		networkDecryptionKeyPublicOutput,
-	);
-
-	return {
-		centralizedPublicKeyShareAndProof,
-		centralizedPublicOutput,
-		centralizedSecretKeyShare,
-		encryptedUserShareAndProof,
-		dWalletCapId,
-	};
-}
-
-export async function prepareDKGSecondRoundAsync(
-	ikaClient: IkaClient,
-	firstRoundOutput: Uint8Array | number[] | undefined,
-	sessionIdentifier: Uint8Array,
-	encryptionKey: Uint8Array,
-	dWalletCapId: string,
-): Promise<PreparedSecondRound> {
-	const networkDecryptionKeyPublicOutput = await ikaClient.getNetworkPublicParameters();
+	const firstRoundOutput = dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
 
 	if (!firstRoundOutput) {
 		throw new Error('First round output is undefined');
@@ -124,7 +95,42 @@ export async function prepareDKGSecondRoundAsync(
 		centralizedPublicOutput,
 		centralizedSecretKeyShare,
 		encryptedUserShareAndProof,
-		dWalletCapId,
+		dWalletCapId: dWallet.dwallet_cap_id,
+	};
+}
+
+export async function prepareDKGSecondRoundAsync(
+	ikaClient: IkaClient,
+	dWallet: DWallet,
+	sessionIdentifier: Uint8Array,
+	encryptionKey: Uint8Array,
+): Promise<PreparedSecondRound> {
+	const networkDecryptionKeyPublicOutput = await ikaClient.getNetworkPublicParameters();
+	const firstRoundOutput = dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
+
+	if (!firstRoundOutput) {
+		throw new Error('First round output is undefined');
+	}
+
+	const [centralizedPublicKeyShareAndProof, centralizedPublicOutput, centralizedSecretKeyShare] =
+		create_dkg_centralized_output(
+			networkDecryptionKeyPublicOutput,
+			Uint8Array.from(firstRoundOutput),
+			sessionIdentifierDigest(sessionIdentifier),
+		);
+
+	const encryptedUserShareAndProof = encryptSecretShare(
+		centralizedSecretKeyShare,
+		encryptionKey,
+		networkDecryptionKeyPublicOutput,
+	);
+
+	return {
+		centralizedPublicKeyShareAndProof,
+		centralizedPublicOutput,
+		centralizedSecretKeyShare,
+		encryptedUserShareAndProof,
+		dWalletCapId: dWallet.dwallet_cap_id,
 	};
 }
 

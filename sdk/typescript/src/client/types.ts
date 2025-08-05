@@ -1,5 +1,8 @@
 import { SuiClient } from '@mysten/sui/client';
 
+import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner';
+import * as SystemInnerModule from '../generated/ika_system/system_inner';
+
 export interface IkaPackageConfig {
 	ikaPackage: string;
 	ikaCommonPackage: string;
@@ -35,33 +38,6 @@ export interface IkaClientOptions {
 	cache?: boolean;
 }
 
-export interface CoordinatorInner {
-	fields: {
-		value: {
-			fields: {
-				dwallet_network_encryption_keys: {
-					fields: {
-						id: {
-							id: string;
-						};
-						size: number;
-					};
-				};
-				current_epoch: number;
-				pricing_and_fee_manager: {
-					fields: {
-						gas_fee_reimbursement_sui_system_call_value: number;
-						/// SUI balance for gas fee reimbursement to fund network tx responses
-						gas_fee_reimbursement_sui_system_call_balance: number;
-						/// IKA fees charged for consensus validation
-						fee_charged_ika: number;
-					};
-				};
-			};
-		};
-	};
-}
-
 export interface Coordinator {
 	fields: {
 		id: {
@@ -75,27 +51,6 @@ export interface Coordinator {
 }
 
 export interface System extends Coordinator {}
-
-export interface SystemInner {
-	fields: {
-		value: {
-			fields: {
-				validator_set: {
-					fields: {
-						validators: {
-							fields: {
-								id: {
-									id: string;
-								};
-								size: number;
-							};
-						};
-					};
-				};
-			};
-		};
-	};
-}
 
 export interface DWalletNetworkDecryptionKey {
 	fields: {
@@ -129,3 +84,8 @@ export interface StartDKGFirstRoundEvent {
 	};
 	session_identifier_preimage: Uint8Array;
 }
+
+export type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorInner.$inferType;
+export type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
+export type DWallet = typeof CoordinatorInnerModule.DWallet.$inferType;
+export type DWalletCap = typeof CoordinatorInnerModule.DWalletCap.$inferType;

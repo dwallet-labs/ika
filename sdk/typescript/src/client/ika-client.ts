@@ -5,13 +5,15 @@ import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordi
 import * as SystemModule from '../generated/ika_system/system';
 import * as SystemInnerModule from '../generated/ika_system/system_inner';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors';
-import { IkaClientOptions, IkaConfig } from './types';
+import {
+	CoordinatorInner,
+	DWallet,
+	DWalletCap,
+	IkaClientOptions,
+	IkaConfig,
+	SystemInner,
+} from './types';
 import { objResToBcs } from './utils';
-
-type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorInner.$inferType;
-type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
-type DWallet = typeof CoordinatorInnerModule.DWallet.$inferType;
-type DWalletCap = typeof CoordinatorInnerModule.DWalletCap.$inferType;
 
 export class IkaClient {
 	public ikaConfig: IkaConfig;
