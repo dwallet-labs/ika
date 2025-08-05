@@ -415,7 +415,7 @@ describe('Test dWallet MPC', () => {
 		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		const keyID = await createNetworkKey(
 			conf,
-			'0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa',
+			'0x6c39e2381922a6fab197043992d162a694166517a665330d862bdecd68401281',
 		);
 		console.log({ keyID });
 	});
