@@ -411,7 +411,7 @@ describe('Test dWallet MPC', () => {
 
 	it('should create a network key', async () => {
 		const publisherMnemonic =
-			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
+			'erupt aunt update illness ask shoulder pistol wheel scorpion fault box middle';
 		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		const keyID = await createNetworkKey(
 			conf,
