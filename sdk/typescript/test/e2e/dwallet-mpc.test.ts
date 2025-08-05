@@ -149,21 +149,20 @@ describe('Test dWallet MPC', () => {
 			const publisherMnemonic =
 				'key energy weapon biology worth crack aspect citizen ceiling banner network emotion';
 
+			const keyCreatorConf = await createConf();
+			keyCreatorConf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 			const numOfNetworkKeys = 2;
 			const flowsPerKey = 2;
-
 			// First wait for an epoch switch, to avoid creating the keys in the second half of the epoch.
 			await waitForEpochSwitch(conf);
-			const confs = await Promise.all(
-				Array.from({ length: numOfNetworkKeys }, async () => {
-					const conf = await createConf();
-					conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
-					const networkKeyID = await createNetworkKey(conf, protocolCapID);
-					return { conf, networkKeyID };
-				}),
-			);
+			const confs = [];
+			for (let i = 0; i < numOfNetworkKeys; i++) {
+				const conf = await createConf();
+				const networkKeyID = await createNetworkKey(keyCreatorConf, protocolCapID);
+				confs.push({ conf, networkKeyID });
+			}
 			await waitForEpochSwitch(conf);
-			console.log('Epoch switched, start new validators & kill old ones');
+			console.log('Epoch switched, start running full flows');
 			const tasks = confs
 				.map(({ conf, networkKeyID }) =>
 					Array(flowsPerKey)
