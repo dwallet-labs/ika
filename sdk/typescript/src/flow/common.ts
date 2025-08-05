@@ -128,7 +128,7 @@ export async function registerEncryptionKey(
 	suiClient: SuiClient,
 	encryptionKeyAddress: Uint8Array,
 	encryptionKey: Uint8Array,
-	encryptionKeySignature: Uint8Array,
+	encryptedSecretShareSigningKeypair: Ed25519Keypair,
 ) {
 	const transaction = new Transaction();
 
@@ -136,6 +136,10 @@ export async function registerEncryptionKey(
 		ikaClient,
 		transaction,
 	});
+
+	encryptionKeySignature = await encryptedSecretShareSigningKeypair.sign(
+		new Uint8Array(classGroupsKeypair.encryptionKey),
+	);
 
 	ikaTransaction.registerEncryptionKey({
 		curve: 0,

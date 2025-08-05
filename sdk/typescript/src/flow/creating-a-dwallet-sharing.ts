@@ -23,10 +23,6 @@ async function main() {
 		classGroupsKeypair,
 	} = generateKeypair();
 
-	const encryptionKeySignature = await encryptedSecretShareSigningKeypair.sign(
-		new Uint8Array(classGroupsKeypair.encryptionKey),
-	);
-
 	const { dwalletID, sessionIdentifierPreimage } = await requestDKGFirstRound(ikaClient, suiClient);
 
 	await registerEncryptionKey(
@@ -34,7 +30,7 @@ async function main() {
 		suiClient,
 		encryptionKeyPublicKey,
 		classGroupsKeypair.encryptionKey,
-		encryptionKeySignature,
+		encryptedSecretShareSigningKeypair,
 	);
 
 	const dWallet = await ikaClient.getDWallet(dwalletID);
