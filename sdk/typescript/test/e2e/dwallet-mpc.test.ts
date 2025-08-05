@@ -145,12 +145,15 @@ describe('Test dWallet MPC', () => {
 			// IMPORTANT: Update with values from your Ika chain before running the test.
 			// The publisher mnemonic can be fetched from the publisher logs while it deploys the Ika network,
 			// and the protocol Cap ID is one of the objects owned by it with the type `ProtocolCap`.
-			const protocolCapID = '0xfa764585389c9541565ec58a013ba7917145892e05f464666963a21716a9f2a0';
+			const protocolCapID = '0xebaa6271f1a71c37d55771bbe927a245ff680f4d28531627ab0ab8f72bf26fad';
 			const publisherMnemonic =
-				'sound expose space mosquito option depart rose diagram calm legal multiply useless';
+				'key energy weapon biology worth crack aspect citizen ceiling banner network emotion';
 
 			const numOfNetworkKeys = 2;
 			const flowsPerKey = 2;
+
+			// First wait for an epoch switch, to avoid creating the keys in the second half of the epoch.
+			await waitForEpochSwitch(conf);
 			const confs = await Promise.all(
 				Array.from({ length: numOfNetworkKeys }, async () => {
 					const conf = await createConf();
@@ -422,11 +425,11 @@ describe('Test dWallet MPC', () => {
 
 	it('should create a network key & run full flow with it', async () => {
 		const publisherMnemonic =
-			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
+			'key energy weapon biology worth crack aspect citizen ceiling banner network emotion';
 		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		const networkKeyID = await createNetworkKey(
 			conf,
-			'0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa',
+			'0xebaa6271f1a71c37d55771bbe927a245ff680f4d28531627ab0ab8f72bf26fad',
 		);
 		console.log({ networkKeyID });
 		await runFullFlowTestWithNetworkKey(conf, networkKeyID);
