@@ -113,7 +113,7 @@ export class IkaTransaction {
 		ikaCoin,
 		suiCoin,
 	}: {
-		dwalletCap: TransactionObjectArgument;
+		dwalletCap: string | TransactionObjectArgument;
 		centralizedPublicKeyShareAndProof: Uint8Array;
 		encryptedUserShareAndProof: Uint8Array;
 		centralizedPublicOutput: Uint8Array;
@@ -125,7 +125,7 @@ export class IkaTransaction {
 	}) {
 		coordinatorTx.requestDWalletDKGSecondRound(
 			this.ikaClient.ikaConfig,
-			dwalletCap,
+			this.transaction.object(dwalletCap),
 			centralizedPublicKeyShareAndProof,
 			encryptedUserShareAndProof,
 			encryptionKeyAddress,

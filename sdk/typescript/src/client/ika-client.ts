@@ -10,6 +10,8 @@ import { objResToBcs } from './utils';
 
 type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorInner.$inferType;
 type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
+type DWallet = typeof CoordinatorInnerModule.DWallet.$inferType;
+type DWalletCap = typeof CoordinatorInnerModule.DWalletCap.$inferType;
 
 export class IkaClient {
 	public ikaConfig: IkaConfig;
@@ -74,6 +76,58 @@ export class IkaClient {
 
 		await this.getObjects();
 		return this.cachedObjects!;
+	}
+
+	async getDWallet(dwalletID: string): Promise<DWallet> {
+		return this.client
+			.getObject({
+				id: dwalletID,
+				options: { showBcs: true },
+			})
+			.then((obj) => {
+				return CoordinatorInnerModule.DWallet.fromBase64(objResToBcs(obj));
+			});
+	}
+
+	async getMultipleDWallets(dwalletIDs: string[]): Promise<DWallet[]> {
+		return this.client
+			.multiGetObjects({
+				ids: dwalletIDs,
+				options: { showBcs: true },
+			})
+			.then((objs) => {
+				return objs.map((obj) => CoordinatorInnerModule.DWallet.fromBase64(objResToBcs(obj)));
+			});
+	}
+
+	async getOwnedDWalletCaps(
+		address: string,
+		cursor?: string,
+		limit?: number,
+	): Promise<{
+		dWalletCaps: DWalletCap[];
+		cursor: string | null | undefined;
+		hasNextPage: boolean;
+	}> {
+		const response = await this.client.getOwnedObjects({
+			owner: address,
+			filter: {
+				StructType: `${this.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::DWalletCap`,
+			},
+			options: {
+				showBcs: true,
+			},
+			cursor,
+			limit,
+		});
+
+		return {
+			dWalletCaps: response.data.map((obj) =>
+				CoordinatorInnerModule.DWalletCap.fromBase64(objResToBcs(obj)),
+			),
+			cursor: response.nextCursor,
+			hasNextPage: response.hasNextPage,
+		};
 	}
 
 	async getNetworkPublicParameters(): Promise<Uint8Array> {
