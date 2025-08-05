@@ -103,7 +103,10 @@ export async function prepareDKGSecondRoundAsync(
 	ikaClient: IkaClient,
 	dWallet: DWallet,
 	sessionIdentifier: Uint8Array,
-	encryptionKey: Uint8Array,
+	classGroupsKeypair: {
+		encryptionKey: Uint8Array;
+		decryptionKey: Uint8Array;
+	},
 ): Promise<PreparedSecondRound> {
 	const networkDecryptionKeyPublicOutput = await ikaClient.getNetworkPublicParameters();
 	const firstRoundOutput = dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
@@ -121,7 +124,7 @@ export async function prepareDKGSecondRoundAsync(
 
 	const encryptedUserShareAndProof = encryptSecretShare(
 		centralizedSecretKeyShare,
-		encryptionKey,
+		classGroupsKeypair.encryptionKey,
 		networkDecryptionKeyPublicOutput,
 	);
 

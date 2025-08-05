@@ -5,6 +5,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 
 import { IkaClient, IkaTransaction } from '../client';
+import { createClassGroupsKeypair } from '../client/cryptography';
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../generated/ika_dwallet_2pc_mpc/sessions_manager.js';
 
@@ -127,7 +128,10 @@ export async function registerEncryptionKey(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	encryptionKeyAddress: Uint8Array,
-	encryptionKey: Uint8Array,
+	classGroupsKeypair: {
+		encryptionKey: Uint8Array;
+		decryptionKey: Uint8Array;
+	},
 	encryptedSecretShareSigningKeypair: Ed25519Keypair,
 ) {
 	const transaction = new Transaction();
@@ -137,7 +141,7 @@ export async function registerEncryptionKey(
 		transaction,
 	});
 
-	encryptionKeySignature = await encryptedSecretShareSigningKeypair.sign(
+	const encryptionKeySignature = await encryptedSecretShareSigningKeypair.sign(
 		new Uint8Array(classGroupsKeypair.encryptionKey),
 	);
 

@@ -27,7 +27,7 @@ async function main() {
 		ikaClient,
 		suiClient,
 		encryptionKeyPublicKey,
-		classGroupsKeypair.encryptionKey,
+		classGroupsKeypair,
 		encryptedSecretShareSigningKeypair,
 	);
 
@@ -37,7 +37,7 @@ async function main() {
 		ikaClient,
 		dWallet,
 		sessionIdentifierPreimage,
-		classGroupsKeypair.encryptionKey,
+		classGroupsKeypair,
 	);
 
 	const secondRoundMoveResponse = await requestDkgSecondRound(ikaClient, suiClient, {
