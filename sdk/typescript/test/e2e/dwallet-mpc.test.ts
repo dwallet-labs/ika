@@ -21,7 +21,7 @@ import {
 	getAllChildObjectsIDs,
 	getNetworkDecryptionKeyID,
 	getNetworkPublicParameters,
-	getObjectWithType,
+	getObjectWithType, getSystemInner,
 	isCoordinatorInner,
 	isSystemInner,
 	isValidator,
@@ -151,6 +151,8 @@ describe('Test dWallet MPC', () => {
 			const networkKeyID = await createNetworkKey(conf, protocolCapID);
 			confs.push({ conf, networkKeyID });
 		}
+		await waitForEpochSwitch(conf);
+		console.log('Epoch switched, start new validators & kill old ones');
 		const tasks = confs
 			.map(({ conf, networkKeyID }) =>
 				Array(flowsPerKey)
@@ -420,6 +422,20 @@ describe('Test dWallet MPC', () => {
 		await runFullFlowTestWithNetworkKey(conf, networkKeyID);
 	});
 });
+
+export async function waitForEpochSwitch(conf: Config) {
+	let systemInner = await getSystemInner(conf);
+	const startEpoch = systemInner.fields.value.fields.epoch;
+	let epochSwitched = false;
+	while (!epochSwitched) {
+		systemInner = await getSystemInner(conf);
+		if (systemInner.fields.value.fields.epoch > startEpoch) {
+			epochSwitched = true;
+		} else {
+			await delay(5_000);
+		}
+	}
+}
 
 export async function runFullFlowTestWithNetworkKey(conf: Config, networkKeyID: string) {
 	const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
