@@ -142,7 +142,7 @@ describe('Test dWallet MPC', () => {
 	it('create multiple network keys and run multiple full flows with each of them', async () => {
 		// IMPORTANT: Update with values from your Ika chain before running the test.
 		// The publisher mnemonic can be fetched from the publisher logs while it deploys the Ika network,
-		// and the protocol Cap ID is one of the objects owned by it.
+		// and the protocol Cap ID is one of the objects owned by it with the type `ProtocolCap`.
 		const protocolCapID = '0x1000f671416a9339513fa7528286a3380d0bba0ab9a6af7965452de71028edd7';
 		const publisherMnemonic =
 			'equal spice fantasy live upon property degree put split similar pottery goddess';
