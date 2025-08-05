@@ -5,10 +5,7 @@ import { execa } from 'execa';
 import { describe, it } from 'vitest';
 
 import { delay, getNetworkDecryptionKeyID, getSystemInner } from '../../src/dwallet-mpc/globals';
-import {
-	createConf,
-	runFullFlowTestWithNetworkKey,
-} from '../e2e/dwallet-mpc.test';
+import { createConf, runFullFlowTestWithNetworkKey } from '../e2e/dwallet-mpc.test';
 import { createConfigMaps } from './config-map';
 import { NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
 import { createNetworkServices } from './network-service';
