@@ -145,9 +145,9 @@ describe('Test dWallet MPC', () => {
 			// IMPORTANT: Update with values from your Ika chain before running the test.
 			// The publisher mnemonic can be fetched from the publisher logs while it deploys the Ika network,
 			// and the protocol Cap ID is one of the objects owned by it with the type `ProtocolCap`.
-			const protocolCapID = '0x8e8bea0a38dc068322cab819fac678373647f084cd36ed079afbd3106899456a';
+			const protocolCapID = '0x437441f8bda550e82b24ad90e59182a8079ead3dd7cab342e2fb45297888ac3f';
 			const publisherMnemonic =
-				'theory mask thing fish connect food return bunker receive artwork usage hamster';
+				'circle item cruel elegant rescue cluster bone before ecology rude comfort rare';
 
 			const keyCreatorConf = await createConf();
 			keyCreatorConf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
