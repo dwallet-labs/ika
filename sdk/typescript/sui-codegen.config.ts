@@ -1,7 +1,7 @@
 import type { SuiCodegenConfig } from '@mysten/codegen';
 
 const config: SuiCodegenConfig = {
-	output: './generated',
+	output: './src/generated',
 	packages: [
 		{
 			package: '@local-pkg/2pc-mpc',

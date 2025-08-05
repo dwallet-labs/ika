@@ -1,17 +1,15 @@
 import { SuiClient } from '@mysten/sui/client';
 
+import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator';
+import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner';
+import * as SystemModule from '../generated/ika_system/system';
+import * as SystemInnerModule from '../generated/ika_system/system_inner';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors';
-import {
-	isCoordinator,
-	isCoordinatorInner,
-	isDWalletNetworkDecryptionKey,
-	isMoveDynamicField,
-	isMoveObject,
-	isSystem,
-	isSystemInner,
-	validateObject,
-} from './type-guards';
-import { CoordinatorInner, IkaClientOptions, IkaConfig, SystemInner } from './types';
+import { IkaClientOptions, IkaConfig } from './types';
+import { objResToBcs } from './utils';
+
+type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorInner.$inferType;
+type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
 
 export class IkaClient {
 	public ikaConfig: IkaConfig;
@@ -117,26 +115,14 @@ export class IkaClient {
 
 			const decryptionKey = await this.client.getObject({
 				id: decryptionKeyID,
-				options: { showContent: true },
+				options: { showBcs: true },
 			});
 
-			if (!decryptionKey || !isMoveObject(decryptionKey?.data?.content)) {
-				throw new InvalidObjectError('DWallet Network Decryption Key', decryptionKeyID);
-			}
-
-			const decryptionKeyData = validateObject(
-				decryptionKey.data.content,
-				isDWalletNetworkDecryptionKey,
-				'DWallet Network Decryption Key',
-				decryptionKeyID,
+			const decryptionKeyParsed = CoordinatorInnerModule.DWalletNetworkEncryptionKey.fromBase64(
+				objResToBcs(decryptionKey),
 			);
 
-			if (!isMoveObject(decryptionKeyData.fields.network_dkg_public_output)) {
-				throw new InvalidObjectError('Network DKG Public Output', decryptionKeyID);
-			}
-
-			return decryptionKeyData.fields.network_dkg_public_output.fields.contents.fields.id
-				.id as string;
+			return decryptionKeyParsed.network_dkg_public_output.contents.id.id;
 		} catch (error) {
 			if (error instanceof InvalidObjectError) {
 				throw error;
@@ -148,7 +134,7 @@ export class IkaClient {
 
 	async getEpoch(): Promise<number> {
 		const objects = await this.ensureInitialized();
-		return objects.coordinatorInner.fields.value.fields.current_epoch;
+		return +objects.coordinatorInner.current_epoch;
 	}
 
 	private async getObjects() {
@@ -187,29 +173,20 @@ export class IkaClient {
 					this.ikaConfig.objects.ikaDWalletCoordinator.objectID,
 					this.ikaConfig.objects.ikaSystemObject.objectID,
 				],
-				options: { showContent: true },
+				options: { showBcs: true },
 			});
 
-			const coordinatorData = validateObject(
-				coordinator.data?.content,
-				isCoordinator,
-				'Coordinator',
-				this.ikaConfig.objects.ikaDWalletCoordinator.objectID,
+			const coordinatorParsed = CoordinatorModule.DWalletCoordinator.fromBase64(
+				objResToBcs(coordinator),
 			);
-
-			const systemData = validateObject(
-				system.data?.content,
-				isSystem,
-				'System',
-				this.ikaConfig.objects.ikaSystemObject.objectID,
-			);
+			const systemParsed = SystemModule.System.fromBase64(objResToBcs(system));
 
 			const [coordinatorDFs, systemDFs] = await Promise.all([
 				this.client.getDynamicFields({
-					parentId: coordinatorData.fields.id.id,
+					parentId: coordinatorParsed.id.id,
 				}),
 				this.client.getDynamicFields({
-					parentId: systemData.fields.id.id,
+					parentId: systemParsed.id.id,
 				}),
 			]);
 
@@ -218,7 +195,7 @@ export class IkaClient {
 			}
 
 			const systemInnerID = systemDFs.data[systemDFs.data.length - 1].name.value as string;
-			const coordinatorInnerID = coordinatorDFs.data[+coordinatorData.fields.version].name
+			const coordinatorInnerID = coordinatorDFs.data[+coordinatorParsed.version].name
 				.value as string;
 
 			const [systemInner, coordinatorInner] = await this.client.multiGetObjects({
@@ -226,23 +203,13 @@ export class IkaClient {
 				options: { showContent: true },
 			});
 
-			const systemInnerData = validateObject(
-				systemInner.data?.content,
-				isSystemInner,
-				'SystemInner',
-				systemInnerID,
-			);
-
-			const coordinatorInnerData = validateObject(
-				coordinatorInner.data?.content,
-				isCoordinatorInner,
-				'CoordinatorInner',
-				coordinatorInnerID,
+			const systemInnerParsed = SystemInnerModule.SystemInner.fromBase64(objResToBcs(systemInner));
+			const coordinatorInnerParsed = CoordinatorInnerModule.DWalletCoordinatorInner.fromBase64(
+				objResToBcs(coordinatorInner),
 			);
 
 			const keysDFs = await this.client.getDynamicFields({
-				parentId:
-					coordinatorInnerData.fields.value.fields.dwallet_network_encryption_keys.fields.id.id,
+				parentId: coordinatorInnerParsed.dwallet_network_encryption_keys.id.id,
 			});
 
 			if (!keysDFs.data?.length) {
@@ -251,12 +218,12 @@ export class IkaClient {
 
 			const decryptionKeyID = keysDFs.data[keysDFs.data.length - 1].name.value as string;
 
-			this.ikaConfig.packages.ikaSystemPackage = systemData.fields.package_id;
-			this.ikaConfig.packages.ikaDwallet2pcMpcPackage = coordinatorData.fields.package_id;
+			this.ikaConfig.packages.ikaSystemPackage = systemParsed.package_id;
+			this.ikaConfig.packages.ikaDwallet2pcMpcPackage = coordinatorParsed.package_id;
 
 			return {
-				coordinatorInner: coordinatorInnerData,
-				systemInner: systemInnerData,
+				coordinatorInner: coordinatorInnerParsed,
+				systemInner: systemInnerParsed,
 				decryptionKeyID,
 			};
 		} catch (error) {
@@ -295,17 +262,8 @@ export class IkaClient {
 			const objectIds = allTableRows.map((tableRowResult) => tableRowResult.objectId);
 
 			await this.processBatchedObjects(objectIds, (dynField) => {
-				if (!isMoveObject(dynField.data?.content)) {
-					throw new InvalidObjectError('Move object', dynField.data?.objectId);
-				}
-
-				const dynamicFieldData = validateObject(
-					dynField.data.content,
-					isMoveDynamicField,
-					'Move dynamic field',
-					dynField.data?.objectId,
-				);
-
+				// TODO(fesal): Find a way to get DF type
+				// @ts-expect-error Find a way to get DF type
 				const tableIndex = parseInt(dynamicFieldData.fields.name);
 				if (isNaN(tableIndex)) {
 					throw new InvalidObjectError(
@@ -314,6 +272,8 @@ export class IkaClient {
 					);
 				}
 
+				// TODO(fesal): Find a way to get DF type
+				// @ts-expect-error Find a way to get DF type
 				data[tableIndex] = dynamicFieldData.fields.value;
 			});
 
