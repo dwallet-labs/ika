@@ -143,9 +143,14 @@ describe('Test dWallet MPC', () => {
 		const numOfNetworkKeys = 2;
 		const flowsPerKey = 2;
 		const confs = [];
-		const protocolCapID = '0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa';
+
+		// IMPORTANT: Update with values from your Ika chain before running the test.
+		// The publisher mnemonic can be fetched from the publisher logs while it deploys the Ika network,
+		// and the protocol Cap ID is one of the objects owned by it.
+		const protocolCapID = '0x1000f671416a9339513fa7528286a3380d0bba0ab9a6af7965452de71028edd7';
 		const publisherMnemonic =
 			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
+
 		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		for (let i = 0; i < numOfNetworkKeys; i++) {
 			const conf = await createConf();
