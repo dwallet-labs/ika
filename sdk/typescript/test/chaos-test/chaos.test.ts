@@ -4,12 +4,9 @@ import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
 import { execa } from 'execa';
 import { describe, it } from 'vitest';
 
-import { delay, getNetworkDecryptionKeyID, getSystemInner } from '../../src/dwallet-mpc/globals';
-import {
-	createConf,
-	runFullFlowTestWithNetworkKey,
-	waitForEpochSwitch,
-} from '../e2e/dwallet-mpc.test';
+import { delay, getNetworkDecryptionKeyID } from '../../src/dwallet-mpc/globals';
+import { createConf } from '../e2e/dwallet-mpc.test';
+import { runFullFlowTestWithNetworkKey, waitForEpochSwitch } from '../e2e/utils/utils';
 import { createConfigMaps } from './config-map';
 import { NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
 import { createNetworkServices } from './network-service';
