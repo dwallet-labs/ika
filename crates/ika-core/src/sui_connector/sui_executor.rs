@@ -165,7 +165,8 @@ where
             .calculation_votes
             .is_some();
         let next_epoch_active_committee_is_some = coordinator.next_epoch_active_committee.is_some();
-        let all_keys_completed_dkg = coordinator.dwallet_network_encryption_keys.size == network_encryption_key_ids.len() as u64;
+        let all_keys_completed_dkg = coordinator.dwallet_network_encryption_keys.size
+            == network_encryption_key_ids.len() as u64;
         let pricing_has_not_been_calculated = !epoch_switch_state.calculated_protocol_pricing;
         info!(
             ?calculation_votes_is_some,
