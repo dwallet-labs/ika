@@ -151,9 +151,9 @@ describe('Test dWallet MPC', () => {
 		const publisherMnemonic =
 			'equal spice fantasy live upon property degree put split similar pottery goddess';
 
-		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		for (let i = 0; i < numOfNetworkKeys; i++) {
 			const conf = await createConf();
+			conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 			const networkKeyID = await createNetworkKey(conf, protocolCapID);
 			confs.push({ conf, networkKeyID });
 		}
