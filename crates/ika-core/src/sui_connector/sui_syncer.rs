@@ -235,8 +235,8 @@ where
                 info!("No new network keys to fetch");
                 continue;
             }
-
-            let mut all_fetched_network_keys_data = HashMap::new();
+            let mut all_fetched_network_keys_data: HashMap<_, _> =
+                (*network_keys_sender.borrow().clone()).clone();
             for (key_id, network_dec_key_shares) in keys_to_fetch.into_iter() {
                 match sui_client
                     .get_network_encryption_key_with_full_data_by_epoch(
