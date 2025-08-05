@@ -101,6 +101,13 @@ export class UserShareEncrytionKeys {
 	}
 
 	/**
+	 * Gets the secret key
+	 */
+	getSecretKey(): string {
+		return this.encryptedSecretShareSigningKeypair.getSecretKey();
+	}
+
+	/**
 	 * Gets the signature of the encrypted secret share signing keypair
 	 */
 	async getEncryptionKeySignature(): Promise<Uint8Array> {
