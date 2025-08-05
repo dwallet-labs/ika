@@ -69,6 +69,7 @@ export function generateKeypair() {
 		encryptionKeyAddress: keypair.getPublicKey().toSuiAddress(),
 		signerAddress: keypair.getPublicKey().toSuiAddress(),
 		signerPublicKey: keypair.getPublicKey().toRawBytes(),
+		classGroupsKeypair: createClassGroupsKeypair(seed),
 	};
 }
 

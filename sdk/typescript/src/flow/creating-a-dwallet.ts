@@ -1,4 +1,4 @@
-import { createClassGroupsKeypair, prepareDKGSecondRoundAsync } from '../client/cryptography';
+import { prepareDKGSecondRoundAsync } from '../client/cryptography';
 import { parseNumbersToBytes } from '../client/utils';
 import {
 	acceptEncryptedUserShare,
@@ -16,13 +16,11 @@ const ikaClient = createIkaClient(suiClient);
 async function main() {
 	const {
 		encryptedSecretShareSigningKeypair,
-		seed,
 		encryptionKeyPublicKey,
 		encryptionKeyAddress,
 		signerPublicKey,
+		classGroupsKeypair,
 	} = generateKeypair();
-
-	const classGroupsKeypair = createClassGroupsKeypair(seed);
 
 	const encryptionKeySignature = await encryptedSecretShareSigningKeypair.sign(
 		new Uint8Array(classGroupsKeypair.encryptionKey),
