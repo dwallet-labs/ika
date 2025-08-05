@@ -1,4 +1,4 @@
-import { bcs } from '@mysten/bcs';
+import { bcs } from '@mysten/sui/bcs';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import { IkaConfig } from '../client/types';
@@ -299,7 +299,7 @@ export function requestMakeDwalletUserSecretKeySharesPublic(
 	ikaConfig: IkaConfig,
 	dwalletId: string,
 	publicUserSecretKeyShares: Uint8Array,
-	sessionIdentifier: Uint8Array,
+	sessionIdentifier: TransactionObjectArgument,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
@@ -310,7 +310,7 @@ export function requestMakeDwalletUserSecretKeySharesPublic(
 			getCoordinatorObjectRef(ikaConfig, tx),
 			tx.pure.id(dwalletId),
 			tx.pure(bcs.vector(bcs.u8()).serialize(publicUserSecretKeyShares)),
-			tx.pure(bcs.vector(bcs.u8()).serialize(sessionIdentifier)),
+			sessionIdentifier,
 			ikaCoin,
 			suiCoin,
 		],

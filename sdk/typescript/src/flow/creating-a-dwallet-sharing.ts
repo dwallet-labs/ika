@@ -9,6 +9,7 @@ import {
 	acceptEncryptedUserShare,
 	createIkaClient,
 	createSuiClient,
+	makeDWalletUserSecretKeySharesPublic,
 	registerEncryptionKey,
 	requestDKGFirstRound,
 	requestDkgSecondRound,
@@ -25,8 +26,8 @@ async function main() {
 		Buffer.from(seed).toString('hex'),
 	);
 	const encryptionKeyAddress = keypair.getPublicKey().toSuiBytes();
-	const classGroupsKeypair = createClassGroupsKeypair(seed);
 
+	const classGroupsKeypair = createClassGroupsKeypair(seed);
 	const encryptionKeySignature = await encryptedSecretShareSigningKeypair.sign(
 		new Uint8Array(classGroupsKeypair.encryptionKey),
 	);
@@ -91,6 +92,11 @@ async function main() {
 		encryptedUserSecretKeyShareId:
 			secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
 		userOutputSignature: await encryptedSecretShareSigningKeypair.sign(publicOutput),
+	});
+
+	await makeDWalletUserSecretKeySharesPublic(ikaClient, suiClient, {
+		dwalletId: dwalletID,
+		secretShare: centralizedSecretKeyShare,
 	});
 }
 

@@ -190,6 +190,30 @@ export class IkaTransaction {
 		return this;
 	}
 
+	makeDWalletUserSecretKeySharesPublic({
+		dWalletId,
+		secretShare,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWalletId: string;
+		secretShare: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		coordinatorTx.requestMakeDwalletUserSecretKeySharesPublic(
+			this.ikaClient.ikaConfig,
+			dWalletId,
+			secretShare,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		return this;
+	}
+
 	private createSessionIdentifier() {
 		const freshObjectAddress = this.transaction.moveCall({
 			target: `0x2::tx_context::fresh_object_address`,
