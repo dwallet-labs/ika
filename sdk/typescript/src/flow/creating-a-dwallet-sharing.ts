@@ -14,23 +14,11 @@ const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);
 
 async function main() {
-	const {
-		encryptedSecretShareSigningKeypair,
-		encryptionKeyPublicKey,
-		encryptionKeyAddress,
-		signerPublicKey,
-		classGroupsKeypair,
-	} = generateKeypair();
+	const { userShareEncryptionKeys, signerPublicKey } = generateKeypair();
 
 	const { dwalletID, sessionIdentifierPreimage } = await requestDKGFirstRound(ikaClient, suiClient);
 
-	await registerEncryptionKey(
-		ikaClient,
-		suiClient,
-		encryptionKeyPublicKey,
-		classGroupsKeypair,
-		encryptedSecretShareSigningKeypair,
-	);
+	await registerEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys);
 
 	const dWallet = await ikaClient.getDWallet(dwalletID);
 
@@ -38,14 +26,16 @@ async function main() {
 		ikaClient,
 		dWallet,
 		sessionIdentifierPreimage,
-		classGroupsKeypair,
+		userShareEncryptionKeys,
 	);
 
-	const secondRoundMoveResponse = await requestDkgSecondRound(ikaClient, suiClient, {
+	const secondRoundMoveResponse = await requestDkgSecondRound(
+		ikaClient,
+		suiClient,
 		preparedSecondRound,
-		encryptionKeyAddress,
+		userShareEncryptionKeys,
 		signerPublicKey,
-	});
+	);
 
 	const activeDWallet = await ikaClient.getDWallet(dwalletID);
 
@@ -54,7 +44,7 @@ async function main() {
 		suiClient,
 		activeDWallet,
 		secondRoundMoveResponse,
-		encryptedSecretShareSigningKeypair,
+		userShareEncryptionKeys,
 	);
 
 	await makeDWalletUserSecretKeySharesPublic(

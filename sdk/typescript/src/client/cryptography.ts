@@ -171,3 +171,18 @@ function u64ToBytesBigEndian(value: number | bigint): Uint8Array {
 	// Return the Uint8Array representation of the buffer
 	return new Uint8Array(buffer);
 }
+
+/**
+ * Converts a string to a Uint8Array
+ * @param input - The string to convert
+ * @returns The Uint8Array representation of the string
+ */
+export function stringToUint8Array(input: string): Uint8Array {
+	const asciiValues: number[] = [];
+
+	for (let i = 0; i < input.length; i++) {
+		asciiValues.push(input.charCodeAt(i));
+	}
+
+	return Uint8Array.from(asciiValues);
+}

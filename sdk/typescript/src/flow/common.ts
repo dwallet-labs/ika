@@ -6,6 +6,7 @@ import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 
 import { IkaClient, IkaTransaction } from '../client';
 import { createClassGroupsKeypair } from '../client/cryptography';
+import { UserShareEncrytionKeys } from '../client/user-share-encryption-keys';
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../generated/ika_dwallet_2pc_mpc/sessions_manager.js';
 
@@ -57,20 +58,16 @@ export async function executeTransaction(suiClient: SuiClient, transaction: Tran
 
 export function generateKeypair() {
 	const seed = new Uint8Array(32).fill(8);
-	const keypair = Ed25519Keypair.deriveKeypairFromSeed('0x1');
-	const encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed('0x1');
+
+	const userShareEncryptionKeys = UserShareEncrytionKeys.fromHexString(
 		Buffer.from(seed).toString('hex'),
 	);
 
 	return {
-		keypair,
-		encryptedSecretShareSigningKeypair,
-		seed,
-		encryptionKeyPublicKey: keypair.getPublicKey().toRawBytes(),
-		encryptionKeyAddress: keypair.getPublicKey().toSuiAddress(),
-		signerAddress: keypair.getPublicKey().toSuiAddress(),
-		signerPublicKey: keypair.getPublicKey().toRawBytes(),
-		classGroupsKeypair: createClassGroupsKeypair(seed),
+		userShareEncryptionKeys,
+		signerAddress: userKeypair.getPublicKey().toSuiAddress(),
+		signerPublicKey: userKeypair.getPublicKey().toRawBytes(),
 	};
 }
 
@@ -127,12 +124,7 @@ export async function requestDKGFirstRound(
 export async function registerEncryptionKey(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	encryptionKeyAddress: Uint8Array,
-	classGroupsKeypair: {
-		encryptionKey: Uint8Array;
-		decryptionKey: Uint8Array;
-	},
-	encryptedSecretShareSigningKeypair: Ed25519Keypair,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
 ) {
 	const transaction = new Transaction();
 
@@ -141,15 +133,13 @@ export async function registerEncryptionKey(
 		transaction,
 	});
 
-	const encryptionKeySignature = await encryptedSecretShareSigningKeypair.sign(
-		new Uint8Array(classGroupsKeypair.encryptionKey),
-	);
+	const encryptionKeySignature = await userShareEncryptionKeys.getEncryptionKeySignature();
 
 	ikaTransaction.registerEncryptionKey({
 		curve: 0,
-		encryptionKey,
+		encryptionKey: userShareEncryptionKeys.encryptionKey,
 		encryptionKeySignature,
-		encryptionKeyAddress,
+		encryptionKeyAddress: userShareEncryptionKeys.getPublicKey().toSuiAddress(),
 	});
 
 	const result = await executeTransaction(suiClient, transaction);
@@ -166,16 +156,9 @@ export async function registerEncryptionKey(
 export async function requestDkgSecondRound(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	{
-		preparedSecondRound,
-		encryptionKeyAddress,
-		signerPublicKey,
-		userPublicOutput,
-	}: {
-		preparedSecondRound: PreparedSecondRound;
-		encryptionKeyAddress: string;
-		signerPublicKey: Uint8Array;
-	},
+	preparedSecondRound: PreparedSecondRound,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
+	signerPublicKey: Uint8Array,
 ) {
 	const transaction = new Transaction();
 
@@ -189,7 +172,7 @@ export async function requestDkgSecondRound(
 		centralizedPublicKeyShareAndProof: preparedSecondRound.centralizedPublicKeyShareAndProof,
 		centralizedPublicOutput: preparedSecondRound.centralizedPublicOutput,
 		encryptedUserShareAndProof: preparedSecondRound.encryptedUserShareAndProof,
-		encryptionKeyAddress,
+		encryptionKeyAddress: userShareEncryptionKeys.getPublicKey().toSuiAddress(),
 		signerPublicKey,
 		userPublicOutput: preparedSecondRound.centralizedPublicOutput,
 		ikaCoin: coinWithBalance({
@@ -225,7 +208,7 @@ export async function acceptEncryptedUserShare(
 			encrypted_user_secret_key_share_id: string;
 		};
 	},
-	encryptedSecretShareSigningKeypair: Ed25519Keypair,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
 ) {
 	const transaction = new Transaction();
 
@@ -238,9 +221,7 @@ export async function acceptEncryptedUserShare(
 		dwalletId: dWallet.dwallet_id,
 		encryptedUserSecretKeyShareId:
 			secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
-		userOutputSignature: await encryptedSecretShareSigningKeypair.sign(
-			parseNumbersToBytes(dWallet.state.Active?.public_output),
-		),
+		userOutputSignature: await userShareEncryptionKeys.getUserOutputSignature(dWallet),
 	});
 
 	await executeTransaction(suiClient, transaction);
