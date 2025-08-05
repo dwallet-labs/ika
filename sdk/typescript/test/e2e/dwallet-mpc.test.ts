@@ -149,7 +149,7 @@ describe('Test dWallet MPC', () => {
 		// and the protocol Cap ID is one of the objects owned by it.
 		const protocolCapID = '0x1000f671416a9339513fa7528286a3380d0bba0ab9a6af7965452de71028edd7';
 		const publisherMnemonic =
-			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
+			'equal spice fantasy live upon property degree put split similar pottery goddess';
 
 		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		for (let i = 0; i < numOfNetworkKeys; i++) {
