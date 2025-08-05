@@ -160,29 +160,15 @@ where
             return;
         };
 
-        let calculation_votes_is_some = coordinator
-            .pricing_and_fee_management
-            .calculation_votes
-            .is_some();
-        let next_epoch_active_committee_is_some = coordinator.next_epoch_active_committee.is_some();
-        let all_keys_completed_dkg = coordinator.dwallet_network_encryption_keys.size
-            == network_encryption_key_ids.len() as u64;
-        let pricing_has_not_been_calculated = !epoch_switch_state.calculated_protocol_pricing;
-        info!(
-            ?calculation_votes_is_some,
-            ?next_epoch_active_committee_is_some,
-            ?all_keys_completed_dkg,
-            ?pricing_has_not_been_calculated,
-            dwallet_network_encryption_keys_size=?coordinator.dwallet_network_encryption_keys.size,
-            network_encryption_key_ids_len=?network_encryption_key_ids.len(),
-            "network encryption key mid-epoch reconfiguration and protocol pricing calculation check"
-        );
         if clock.timestamp_ms > mid_epoch_time
-            && calculation_votes_is_some
-            && next_epoch_active_committee_is_some
+            && coordinator
+                .pricing_and_fee_management
+                .calculation_votes
+                .is_some()
+            && coordinator.next_epoch_active_committee.is_some()
             // network_encryption_key_ids holds only keys that finished dkg
-            && all_keys_completed_dkg
-            && pricing_has_not_been_calculated
+            && coordinator.dwallet_network_encryption_keys.size == network_encryption_key_ids.len() as u64
+            && !epoch_switch_state.calculated_protocol_pricing
         {
             info!(
                 "Running network encryption key mid-epoch reconfiguration and Calculating protocol pricing"
