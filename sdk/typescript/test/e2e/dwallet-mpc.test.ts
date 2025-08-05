@@ -360,12 +360,12 @@ describe('Test dWallet MPC', () => {
 
 	it('should create a network key', async () => {
 		const publisherMnemonic =
-			'invest cram swamp please luggage century include pill empty kid glove armed';
+			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
 		const keypair: Ed25519Keypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		conf.suiClientKeypair = keypair;
 		await createNetworkKey(
 			conf,
-			'0x9211a67b5c11271146c9fa886d87b9a597641f40e0a34198321515a6e856f5a5',
+			'0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa',
 		);
 		console.log(keypair.toSuiAddress());
 	});
