@@ -221,13 +221,7 @@ where
                 network_encryption_keys
                     .into_iter()
                     .filter(|(id, key)| {
-                        if let Some(last_fetched_epoch) = last_fetched_network_keys.get(id) {
-                            // If the key is cached, check if it is in the awaiting state.
-                            current_epoch > *last_fetched_epoch
-                        } else {
-                            // If the key is not cached, we need to fetch it.
-                            key.state != DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG
-                        }
+                        key.state != DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG
                     })
                     .collect();
 
