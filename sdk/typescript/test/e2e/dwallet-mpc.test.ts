@@ -140,10 +140,6 @@ describe('Test dWallet MPC', () => {
 	});
 
 	it('create multiple network keys and run multiple full flows with each of them', async () => {
-		const numOfNetworkKeys = 2;
-		const flowsPerKey = 2;
-		const confs = [];
-
 		// IMPORTANT: Update with values from your Ika chain before running the test.
 		// The publisher mnemonic can be fetched from the publisher logs while it deploys the Ika network,
 		// and the protocol Cap ID is one of the objects owned by it.
@@ -151,12 +147,16 @@ describe('Test dWallet MPC', () => {
 		const publisherMnemonic =
 			'equal spice fantasy live upon property degree put split similar pottery goddess';
 
-		for (let i = 0; i < numOfNetworkKeys; i++) {
-			const conf = await createConf();
-			conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
-			const networkKeyID = await createNetworkKey(conf, protocolCapID);
-			confs.push({ conf, networkKeyID });
-		}
+		const numOfNetworkKeys = 2;
+		const flowsPerKey = 2;
+		const confs = await Promise.all(
+			Array.from({ length: numOfNetworkKeys }, async () => {
+				const conf = await createConf();
+				conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
+				const networkKeyID = await createNetworkKey(conf, protocolCapID);
+				return { conf, networkKeyID };
+			}),
+		);
 		await waitForEpochSwitch(conf);
 		console.log('Epoch switched, start new validators & kill old ones');
 		const tasks = confs
