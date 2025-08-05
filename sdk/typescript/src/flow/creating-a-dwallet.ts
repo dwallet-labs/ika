@@ -108,7 +108,7 @@ async function main() {
 		dwalletId: dwalletID,
 		encryptedUserSecretKeyShareId:
 			secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
-		userOutputSignature: publicOutput,
+		userOutputSignature: await encryptedSecretShareSigningKeypair.sign(publicOutput),
 	});
 }
 
