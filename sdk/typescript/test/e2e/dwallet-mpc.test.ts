@@ -155,19 +155,21 @@ describe('Test dWallet MPC', () => {
 			const flowsPerKey = 2;
 			// First wait for an epoch switch, to avoid creating the keys in the second half of the epoch.
 			await waitForEpochSwitch(conf);
-			const confs = [];
+			const keys = [];
 			for (let i = 0; i < numOfNetworkKeys; i++) {
-				const conf = await createConf();
 				const networkKeyID = await createNetworkKey(keyCreatorConf, protocolCapID);
-				confs.push({ conf, networkKeyID });
+				keys.push(networkKeyID);
 			}
 			await waitForEpochSwitch(conf);
 			console.log('Epoch switched, start running full flows');
-			const tasks = confs
-				.map(({ conf, networkKeyID }) =>
+			const tasks = keys
+				.map((networkKeyID) =>
 					Array(flowsPerKey)
 						.fill(null)
-						.map(() => runFullFlowTestWithNetworkKey(conf, networkKeyID)),
+						.map(async () => {
+							const conf = await createConf();
+							return runFullFlowTestWithNetworkKey(conf, networkKeyID);
+						}),
 				)
 				.flat();
 			await Promise.all(tasks);
