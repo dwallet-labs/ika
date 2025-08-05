@@ -46,7 +46,7 @@ const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
 // const SUI_FULLNODE_URL = getFullnodeUrl('localnet');
 // const SUI_FAUCET_HOST = getFaucetHost('localnet');
 
-async function createConf(): Promise<Config> {
+export async function createConf(): Promise<Config> {
 	const keypair = Ed25519Keypair.generate();
 	const dWalletSeed = crypto.getRandomValues(new Uint8Array(32));
 	const encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
@@ -71,7 +71,7 @@ async function createConf(): Promise<Config> {
 	};
 }
 
-async function runSignFullFlow(conf: Config) {
+export async function runSignFullFlow(conf: Config) {
 	const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
 	console.log('Creating dWallet...');
 	console.time('Step 1: dWallet Creation');
