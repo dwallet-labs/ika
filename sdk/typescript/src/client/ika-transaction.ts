@@ -1,9 +1,9 @@
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator';
-import { PreparedSecondRound } from './cryptography';
+import { createSignCentralizedOutput, PreparedSecondRound } from './cryptography';
 import { IkaClient } from './ika-client';
-import { DWallet } from './types';
+import { DWallet, EncryptedUserSecretKeyShare, Presign } from './types';
 import { UserShareEncrytionKeys } from './user-share-encryption-keys';
 import { stringToUint8Array } from './utils';
 
@@ -360,6 +360,73 @@ export class IkaTransaction {
 		);
 
 		this.transaction.transferObjects([unverifiedPresignCap], receiver);
+
+		return this;
+	}
+
+	async sign({
+		dWallet,
+		signatureAlgorithm,
+		hashScheme,
+		presign,
+		encryptedUserSecretKeyShare,
+		message,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: DWallet;
+		signatureAlgorithm: number;
+		hashScheme: number;
+		presign: Presign;
+		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+		message: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		if (!this.userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
+		if (!presign.state.Completed?.presign) {
+			throw new Error('Presign is not completed');
+		}
+
+		const messageApproval = coordinatorTx.approveMessage(
+			this.ikaClient.ikaConfig,
+			dWallet.dwallet_cap_id,
+			signatureAlgorithm,
+			hashScheme,
+			message,
+			this.transaction,
+		);
+
+		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
+			this.ikaClient.ikaConfig,
+			presign.id.id,
+			this.transaction,
+		);
+
+		coordinatorTx.requestSign(
+			this.ikaClient.ikaConfig,
+			verifiedPresignCap,
+			messageApproval,
+			createSignCentralizedOutput(
+				await this.ikaClient.getNetworkPublicParameters(),
+				dWallet,
+				await this.userShareEncryptionKeys.decryptUserShare(
+					dWallet,
+					encryptedUserSecretKeyShare,
+					await this.ikaClient.getNetworkPublicParameters(),
+				),
+				Uint8Array.from(presign.state.Completed?.presign),
+				message,
+				hashScheme,
+			),
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
 
 		return this;
 	}

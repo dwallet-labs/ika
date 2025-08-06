@@ -1,7 +1,7 @@
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
-import { createClassGroupsKeypair } from './cryptography';
-import { DWallet } from './types';
+import { createClassGroupsKeypair, decryptUserShare } from './cryptography';
+import { DWallet, EncryptedUserSecretKeyShare } from './types';
 import { parseNumbersToBytes, stringToUint8Array } from './utils';
 
 export class UserShareEncrytionKeys {
@@ -117,6 +117,20 @@ export class UserShareEncrytionKeys {
 	async getUserOutputSignature(dWallet: DWallet): Promise<Uint8Array> {
 		return await this.encryptedSecretShareSigningKeypair.sign(
 			parseNumbersToBytes(dWallet.state.Active?.public_output),
+		);
+	}
+
+	async decryptUserShare(
+		dWallet: DWallet,
+		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+		networkDecryptionKeyPublicOutput: Uint8Array,
+	): Promise<Uint8Array> {
+		return decryptUserShare(
+			this.decryptionKey,
+			this.encryptionKey,
+			Uint8Array.from(parseNumbersToBytes(dWallet.state.Active?.public_output)),
+			Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
+			networkDecryptionKeyPublicOutput,
 		);
 	}
 }

@@ -6,7 +6,7 @@ import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 
 import { IkaClient, IkaTransaction } from '../client';
 import { PreparedSecondRound } from '../client/cryptography';
-import { DWallet } from '../client/types';
+import { DWallet, EncryptedUserSecretKeyShare, Presign } from '../client/types';
 import { UserShareEncrytionKeys } from '../client/user-share-encryption-keys';
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../generated/ika_dwallet_2pc_mpc/sessions_manager.js';
@@ -237,6 +237,83 @@ export async function makeDWalletUserSecretKeySharesPublic(
 	ikaTransaction.makeDWalletUserSecretKeySharesPublic({
 		dWallet,
 		secretShare: preparedSecondRound.centralizedSecretKeyShare,
+		ikaCoin: coinWithBalance({
+			type: '0x2::ika::IKA',
+			balance: 0,
+		})(transaction),
+		suiCoin: coinWithBalance({
+			type: '0x2::sui::SUI',
+			balance: 0,
+		})(transaction),
+	});
+
+	await executeTransaction(suiClient, transaction);
+}
+
+export async function presign(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	signatureAlgorithm: number,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+	});
+
+	ikaTransaction.presignAndKeep({
+		dWallet,
+		signatureAlgorithm,
+		ikaCoin: coinWithBalance({
+			type: '0x2::ika::IKA',
+			balance: 0,
+		})(transaction),
+		suiCoin: coinWithBalance({
+			type: '0x2::sui::SUI',
+			balance: 0,
+		})(transaction),
+		receiver: '0x0',
+	});
+
+	const result = await executeTransaction(suiClient, transaction);
+
+	const presignRequestEvent = result.events?.find((event) => {
+		return event.type.includes('PresignRequestEvent') && event.type.includes('DWalletSessionEvent');
+	});
+
+	return SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.PresignRequestEvent,
+	).fromBase64(presignRequestEvent?.bcs as string);
+}
+
+export async function sign(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
+	presign: Presign,
+	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+	message: Uint8Array,
+	hashScheme: number,
+	signatureAlgorithm: number,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+		userShareEncryptionKeys,
+	});
+
+	await ikaTransaction.sign({
+		dWallet,
+		signatureAlgorithm,
+		hashScheme,
+		presign,
+		encryptedUserSecretKeyShare,
+		message,
 		ikaCoin: coinWithBalance({
 			type: '0x2::ika::IKA',
 			balance: 0,

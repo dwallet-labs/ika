@@ -9,8 +9,10 @@ import {
 	CoordinatorInner,
 	DWallet,
 	DWalletCap,
+	EncryptedUserSecretKeyShare,
 	IkaClientOptions,
 	IkaConfig,
+	Presign,
 	SystemInner,
 } from './types';
 import { objResToBcs } from './utils';
@@ -88,6 +90,30 @@ export class IkaClient {
 			})
 			.then((obj) => {
 				return CoordinatorInnerModule.DWallet.fromBase64(objResToBcs(obj));
+			});
+	}
+
+	async getPresign(presignID: string): Promise<Presign> {
+		return this.client
+			.getObject({
+				id: presignID,
+				options: { showBcs: true },
+			})
+			.then((obj) => {
+				return CoordinatorInnerModule.PresignSession.fromBase64(objResToBcs(obj));
+			});
+	}
+
+	async getEncryptedUserSecretKeyShare(
+		encryptedUserSecretKeyShareID: string,
+	): Promise<EncryptedUserSecretKeyShare> {
+		return this.client
+			.getObject({
+				id: encryptedUserSecretKeyShareID,
+				options: { showBcs: true },
+			})
+			.then((obj) => {
+				return CoordinatorInnerModule.EncryptedUserSecretKeyShare.fromBase64(objResToBcs(obj));
 			});
 	}
 

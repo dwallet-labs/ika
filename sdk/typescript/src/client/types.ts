@@ -42,3 +42,6 @@ export type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorI
 export type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
 export type DWallet = typeof CoordinatorInnerModule.DWallet.$inferType;
 export type DWalletCap = typeof CoordinatorInnerModule.DWalletCap.$inferType;
+export type Presign = typeof CoordinatorInnerModule.PresignSession.$inferType;
+export type EncryptedUserSecretKeyShare =
+	typeof CoordinatorInnerModule.EncryptedUserSecretKeyShare.$inferType;

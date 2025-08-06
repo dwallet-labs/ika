@@ -431,8 +431,8 @@ export function verifyPresignCap(
 
 export function requestSign(
 	ikaConfig: IkaConfig,
-	verifiedPresignCap: string,
-	messageApproval: string,
+	verifiedPresignCap: TransactionObjectArgument,
+	messageApproval: TransactionObjectArgument,
 	messageCentralizedSignature: Uint8Array,
 	sessionIdentifier: TransactionObjectArgument,
 	ikaCoin: TransactionObjectArgument,
@@ -443,8 +443,8 @@ export function requestSign(
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_sign`,
 		arguments: [
 			getCoordinatorObjectRef(ikaConfig, tx),
-			tx.object(verifiedPresignCap),
-			tx.object(messageApproval),
+			verifiedPresignCap,
+			messageApproval,
 			tx.pure(bcs.vector(bcs.u8()).serialize(messageCentralizedSignature)),
 			sessionIdentifier,
 			ikaCoin,

@@ -1,5 +1,7 @@
 import {
 	create_dkg_centralized_output,
+	create_sign_centralized_output,
+	decrypt_user_share,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
 } from '@dwallet-network/dwallet-mpc-wasm';
@@ -63,6 +65,24 @@ export function encryptSecretShare(
 	);
 
 	return encryptedUserShareAndProof;
+}
+
+export function decryptUserShare(
+	decryptionKey: Uint8Array,
+	encryptionKey: Uint8Array,
+	dWalletOutput: Uint8Array,
+	encryptedUserShareAndProof: Uint8Array,
+	networkDecryptionKeyPublicOutput: Uint8Array,
+): Uint8Array {
+	const decryptedUserShare = decrypt_user_share(
+		decryptionKey,
+		encryptionKey,
+		dWalletOutput,
+		encryptedUserShareAndProof,
+		networkDecryptionKeyPublicOutput,
+	);
+
+	return decryptedUserShare;
 }
 
 export function prepareDKGSecondRound(
@@ -133,6 +153,28 @@ export async function prepareDKGSecondRoundAsync(
 		centralizedSecretKeyShare,
 		encryptedUserShareAndProof,
 	};
+}
+
+export function createSignCentralizedOutput(
+	networkDecryptionKeyPublicOutput: Uint8Array,
+	activeDWallet: DWallet,
+	secretKey: Uint8Array,
+	presign: Uint8Array,
+	message: Uint8Array,
+	hash: number,
+): Uint8Array {
+	if (!activeDWallet.state.Active?.public_output) {
+		throw new Error('Active DWallet public output is undefined');
+	}
+
+	return create_sign_centralized_output(
+		networkDecryptionKeyPublicOutput,
+		Uint8Array.from(activeDWallet.state.Active?.public_output),
+		secretKey,
+		presign,
+		message,
+		hash,
+	);
 }
 
 function sessionIdentifierDigest(sessionIdentifier: Uint8Array): Uint8Array {
