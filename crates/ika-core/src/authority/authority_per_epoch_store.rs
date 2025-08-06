@@ -254,36 +254,58 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     }
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
-        self.tables()
-            .map_err(|e| e.into())
-            .and_then(|tables| tables.last_dwallet_mpc_message_round())
+        let tables = self.tables().map_err(|e| e.into())?;
+        Ok(tables
+            .dwallet_mpc_messages
+            .reversed_safe_iter_with_bounds(None, None)?
+            .next()
+            .transpose()?
+            .map(|(r, _)| r))
     }
 
     fn next_dwallet_mpc_message(
         &self,
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
-        self.tables()
-            .map_err(|e| e.into())
-            .and_then(|tables| tables.next_dwallet_mpc_message(last_consensus_round))
+        let tables = self.tables()?;
+        let mut iter = tables
+            .dwallet_mpc_messages
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
     }
 
     fn next_dwallet_mpc_output(
         &self,
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
-        self.tables()
-            .map_err(|e| e.into())
-            .and_then(|tables| tables.next_dwallet_mpc_output(last_consensus_round))
+        let tables = self.tables()?;
+        let mut iter = tables
+            .dwallet_mpc_outputs
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
     }
 
     fn next_verified_dwallet_checkpoint_message(
         &self,
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
-        self.tables().map_err(|e| e.into()).and_then(|tables| {
-            tables.next_verified_dwallet_checkpoint_message(last_consensus_round)
-        })
+        let tables = self.tables()?;
+        let mut iter = tables
+            .verified_dwallet_checkpoint_messages
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
     }
 }
 
@@ -503,57 +525,6 @@ impl AuthorityEpochTables {
 
     pub fn get_last_consensus_stats(&self) -> IkaResult<Option<ExecutionIndicesWithStats>> {
         Ok(self.last_consensus_stats.get(&LAST_CONSENSUS_STATS_ADDR)?)
-    }
-
-    pub fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
-        Ok(self
-            .dwallet_mpc_messages
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            .map(|(r, _)| r))
-    }
-
-    pub fn next_dwallet_mpc_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
-        let mut iter = self
-            .dwallet_mpc_messages
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
-    }
-
-    pub fn next_dwallet_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
-        let mut iter = self
-            .dwallet_mpc_outputs
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
-    }
-
-    pub fn next_verified_dwallet_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
-        let mut iter = self
-            .verified_dwallet_checkpoint_messages
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
     }
 }
 
