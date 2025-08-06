@@ -625,6 +625,7 @@ pub(crate) struct AuthorityCapabilitiesVotingResults {
     pub(crate) move_contracts_to_upgrade: Vec<(ObjectID, MovePackageDigest)>,
 }
 
+/// Trait for AuthorityState, which gets created once per validator (NOT recreated on epoch switch).
 pub trait AuthorityStateTrait: Sync + Send + 'static {
     fn insert_dwallet_mpc_computation_completed_sessions(
         &self,

@@ -218,6 +218,7 @@ pub struct ExecutionIndicesWithStats {
     pub stats: ConsensusStats,
 }
 
+/// Trait for the AuthorityPerEpochStore, which gets recreated at the beginning of each epoch.
 pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     fn insert_pending_dwallet_checkpoint(
         &self,
