@@ -160,6 +160,7 @@ impl DWalletMPCService {
             // Load events from Sui every 30 seconds (1500 * READ_INTERVAL_MS=20ms = 30,000ms = 30s).
             // Note: when we spawn, `loop_index == 0`, so we fetch uncompleted events on spawn.
             if loop_index % 1500 == 0 {
+                // TODO (this pr)
                 // events = self.fetch_uncompleted_events().await;
             }
             loop_index += 1;
