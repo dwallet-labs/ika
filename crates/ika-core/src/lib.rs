@@ -51,6 +51,7 @@ impl Clone for SuiDataReceivers {
             last_session_to_complete_in_current_epoch_receiver: self
                 .last_session_to_complete_in_current_epoch_receiver
                 .clone(),
+            end_of_publish_receiver: self.end_of_publish_receiver.clone(),
         }
     }
 }
