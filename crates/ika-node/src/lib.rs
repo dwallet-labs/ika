@@ -27,7 +27,7 @@ use ika_types::sui::SystemInner;
 use sui_types::base_types::{ConciseableName, ObjectID};
 use tap::tap::TapFallible;
 use tokio::runtime::Handle;
-use tokio::sync::{broadcast, watch, Mutex};
+use tokio::sync::{Mutex, broadcast, watch};
 use tokio::task::JoinSet;
 use tower::ServiceBuilder;
 use tracing::{debug, warn};
@@ -62,7 +62,7 @@ use ika_core::storage::RocksDbStore;
 use ika_network::discovery::TrustedPeerChangeEvent;
 use ika_network::{discovery, state_sync};
 use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
-use mysten_metrics::{spawn_monitored_task, RegistryService};
+use mysten_metrics::{RegistryService, spawn_monitored_task};
 use sui_json_rpc_types::SuiEvent;
 use sui_macros::{fail_point_async, replay_log};
 use sui_storage::{FileCompression, StorageFormat};
@@ -162,6 +162,7 @@ mod simulator {
     }
 }
 
+use ika_core::SuiDataReceivers;
 use ika_core::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use ika_core::consensus_handler::ConsensusHandlerInitializer;
 use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
@@ -183,7 +184,6 @@ pub use simulator::set_jwk_injector;
 #[cfg(msim)]
 use simulator::*;
 use tokio::sync::watch::Receiver;
-use ika_core::SuiDataReceivers;
 
 pub struct IkaNode {
     config: NodeConfig,
@@ -1129,7 +1129,10 @@ impl IkaNode {
         self: Arc<Self>,
         network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
         new_events_receiver: broadcast::Receiver<Vec<SuiEvent>>,
-        last_session_to_complete_in_current_epoch_receiver: tokio::sync::watch::Receiver<(EpochId, u64)>,
+        last_session_to_complete_in_current_epoch_receiver: tokio::sync::watch::Receiver<(
+            EpochId,
+            u64,
+        )>,
         next_epoch_committee_receiver: Receiver<Committee>,
         sui_client: Arc<SuiConnectorClient>,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,

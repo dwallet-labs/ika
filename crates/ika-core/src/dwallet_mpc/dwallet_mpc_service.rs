@@ -6,6 +6,7 @@
 //! local DB every [`READ_INTERVAL_MS`] seconds
 //! and forward them to the [`DWalletMPCManager`].
 
+use crate::SuiDataReceivers;
 use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
 };
@@ -54,7 +55,6 @@ use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
-use crate::SuiDataReceivers;
 
 const DELAY_NO_ROUNDS_SEC: u64 = 2;
 const READ_INTERVAL_MS: u64 = 20;

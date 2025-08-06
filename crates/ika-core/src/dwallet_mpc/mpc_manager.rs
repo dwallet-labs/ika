@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::SuiDataReceivers;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::build_messages_to_advance;
 use crate::dwallet_mpc::crytographic_computation::{
     ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
@@ -37,7 +38,6 @@ use sui_types::base_types::ObjectID;
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
-use crate::SuiDataReceivers;
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -497,10 +497,15 @@ impl DWalletMPCManager {
     }
 
     pub(crate) fn try_receiving_next_active_committee(&mut self) -> bool {
-        match self.next_epoch_committee_receiver.has_changed() {
+        match self
+            .sui_data_receivers
+            .next_epoch_committee_receiver
+            .has_changed()
+        {
             Ok(has_changed) => {
                 if has_changed {
                     let committee = self
+                        .sui_data_receivers
                         .next_epoch_committee_receiver
                         .borrow_and_update()
                         .clone();
@@ -521,7 +526,7 @@ impl DWalletMPCManager {
     }
 
     pub(crate) async fn maybe_update_network_keys(&mut self) -> Vec<ObjectID> {
-        match self.network_keys_receiver.has_changed() {
+        match self.sui_data_receivers.network_keys_receiver.has_changed() {
             Ok(has_changed) => {
                 if has_changed {
                     let new_keys = self.borrow_and_update_network_keys();
@@ -589,7 +594,10 @@ impl DWalletMPCManager {
     fn borrow_and_update_network_keys(
         &mut self,
     ) -> HashMap<ObjectID, DWalletNetworkEncryptionKeyData> {
-        let new_keys = self.network_keys_receiver.borrow_and_update();
+        let new_keys = self
+            .sui_data_receivers
+            .network_keys_receiver
+            .borrow_and_update();
 
         new_keys
             .iter()
