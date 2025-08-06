@@ -374,7 +374,7 @@ impl DWalletMPCService {
     /// Proactively pull uncompleted events from the Sui network.
     /// We do that to ensure we don't miss any events.
     /// These events might be from a different Epoch, not necessarily the current one
-    pub(crate) async fn fetch_new_uncompleted_events(&mut self) -> Vec<DBSuiEvent> {
+    pub(crate) async fn load_uncompleted_events(&mut self) -> Vec<DBSuiEvent> {
         let new_events_fetched = self
             .sui_data_receivers
             .uncompleted_events_receiver

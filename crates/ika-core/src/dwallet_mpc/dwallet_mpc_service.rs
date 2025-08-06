@@ -157,13 +157,6 @@ impl DWalletMPCService {
         );
         let mut loop_index = 0;
         loop {
-            let mut events = vec![];
-
-            // Load events from Sui every 30 seconds (1500 * READ_INTERVAL_MS=20ms = 30,000ms = 30s).
-            // Note: when we spawn, `loop_index == 0`, so we fetch uncompleted events on spawn.
-            if loop_index % 1500 == 0 {
-                events = self.fetch_new_uncompleted_events().await;
-            }
             loop_index += 1;
             match self.exit.has_changed() {
                 Ok(true) => {
@@ -198,10 +191,11 @@ impl DWalletMPCService {
 
             debug!("Running DWalletMPCService loop");
             self.sync_last_session_to_complete_in_current_epoch().await;
+            let uncompleted_events = self.load_uncompleted_events().await;
 
             // Receive **new** dWallet MPC events and save them in the local DB.
-            match self.receive_new_sui_events() {
-                Ok(new_events) => events.extend(new_events),
+            let pulled_events = match self.receive_new_sui_events() {
+                Ok(new_events) => new_events,
                 Err(e) => {
                     error!(
                     error=?e,
@@ -209,6 +203,7 @@ impl DWalletMPCService {
                     continue;
                 }
             };
+            let events = [uncompleted_events, pulled_events].concat();
 
             let events = self.dwallet_mpc_manager.parse_sui_events(events);
             let events_session_identifiers = events

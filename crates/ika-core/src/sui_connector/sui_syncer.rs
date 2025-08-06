@@ -133,7 +133,7 @@ where
                     "failed to send last session to complete in current epoch",
                 )
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 
@@ -167,7 +167,7 @@ where
                     );
                 }
             }
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
         }
     }
 
