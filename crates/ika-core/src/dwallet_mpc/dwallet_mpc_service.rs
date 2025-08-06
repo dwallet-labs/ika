@@ -65,7 +65,6 @@ pub struct DWalletMPCService {
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
     consensus_adapter: Arc<dyn DWalletMPCSubmitToConsensus>,
     state: Arc<dyn AuthorityStateTrait>,
-    pub(crate) sui_client: Arc<SuiConnectorClient>,
     dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
     dwallet_mpc_manager: DWalletMPCManager,
     exit: Receiver<()>,
@@ -80,7 +79,6 @@ impl DWalletMPCService {
         exit: Receiver<()>,
         consensus_adapter: Arc<dyn DWalletMPCSubmitToConsensus>,
         node_config: NodeConfig,
-        sui_client: Arc<SuiConnectorClient>,
         dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         state: Arc<AuthorityState>,
@@ -116,7 +114,6 @@ impl DWalletMPCService {
             epoch_store: epoch_store.clone(),
             consensus_adapter,
             state,
-            sui_client: sui_client.clone(),
             dwallet_checkpoint_service,
             dwallet_mpc_manager,
             exit,
@@ -126,17 +123,18 @@ impl DWalletMPCService {
         }
     }
 
-    async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
-        let coordinator_state = self.sui_client.must_get_dwallet_coordinator_inner().await;
-
-        let DWalletCoordinatorInner::V1(inner) = coordinator_state;
-        self.dwallet_mpc_manager
-            .sync_last_session_to_complete_in_current_epoch(
-                inner
-                    .sessions_manager
-                    .last_user_initiated_session_to_complete_in_current_epoch,
-            );
-    }
+    // TODO!!
+    // async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
+    //     let coordinator_state = self.sui_client.must_get_dwallet_coordinator_inner().await;
+    //
+    //     let DWalletCoordinatorInner::V1(inner) = coordinator_state;
+    //     self.dwallet_mpc_manager
+    //         .sync_last_session_to_complete_in_current_epoch(
+    //             inner
+    //                 .sessions_manager
+    //                 .last_user_initiated_session_to_complete_in_current_epoch,
+    //         );
+    // }
 
     /// Starts the DWallet MPC service.
     ///

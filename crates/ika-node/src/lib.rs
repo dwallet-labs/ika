@@ -510,7 +510,7 @@ impl IkaNode {
                 previous_epoch_last_system_checkpoint_sequence_number,
                 sui_client.clone(),
                 dwallet_mpc_metrics.clone(),
-                sui_data_receivers,
+                sui_data_receivers.clone(),
             )
             .await?;
             // This is only needed during cold start.
@@ -840,7 +840,6 @@ impl IkaNode {
             previous_epoch_last_dwallet_checkpoint_sequence_number,
             previous_epoch_last_system_checkpoint_sequence_number,
             sui_data_receivers,
-            sui_client,
         )
         .await
     }
@@ -862,7 +861,6 @@ impl IkaNode {
         ika_tx_validator_metrics: Arc<IkaTxValidatorMetrics>,
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
         previous_epoch_last_system_checkpoint_sequence_number: u64,
-        new_events_receiver: tokio::sync::broadcast::Receiver<Vec<SuiEvent>>,
         sui_data_receivers: SuiDataReceivers,
     ) -> Result<ValidatorComponents> {
         let (checkpoint_service, checkpoint_service_tasks) = Self::start_dwallet_checkpoint_service(
@@ -906,7 +904,6 @@ impl IkaNode {
             )),
             config.clone(),
             checkpoint_service.clone(),
-            new_events_receiver,
             dwallet_mpc_metrics.clone(),
             state.clone(),
             sui_data_receivers,
@@ -1354,8 +1351,6 @@ impl IkaNode {
                             ika_tx_validator_metrics,
                             previous_epoch_last_checkpoint_sequence_number,
                             previous_epoch_last_system_checkpoint_sequence_number,
-                            // safe to unwrap because we are a validator
-                            sui_client_clone2.clone(),
                             sui_data_receivers.clone(),
                         )
                         .await?,
