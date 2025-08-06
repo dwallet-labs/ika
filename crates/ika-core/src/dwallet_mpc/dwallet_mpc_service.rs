@@ -6,10 +6,10 @@
 //! local DB every [`READ_INTERVAL_MS`] seconds
 //! and forward them to the [`DWalletMPCManager`].
 
-use crate::authority::{AuthorityState, AuthorityStateTrait};
 use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
 };
+use crate::authority::{AuthorityState, AuthorityStateTrait};
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::consensus_manager::ReplayWaiter;
 use crate::dwallet_checkpoints::{
@@ -250,7 +250,6 @@ impl DWalletMPCService {
 
             match self
                 .state
-                .perpetual_tables
                 .get_dwallet_mpc_sessions_completed_status(events_session_identifiers.clone())
             {
                 Ok(mpc_session_identifier_to_computation_completed) => {
@@ -489,7 +488,6 @@ impl DWalletMPCService {
 
                 if let Err(e) = self
                     .state
-                    .perpetual_tables
                     .insert_dwallet_mpc_computation_completed_sessions(&completed_sessions)
                 {
                     error!(
