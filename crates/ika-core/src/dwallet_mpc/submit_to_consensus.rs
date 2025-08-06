@@ -1,8 +1,8 @@
+use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::consensus_adapter::SubmitToConsensus;
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::ConsensusTransaction;
 use std::sync::Arc;
-use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 
 #[async_trait::async_trait]
 pub trait DWalletMPCSubmitToConsensus: Sync + Send + 'static {

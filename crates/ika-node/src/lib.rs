@@ -27,7 +27,7 @@ use ika_types::sui::SystemInner;
 use sui_types::base_types::{ConciseableName, ObjectID};
 use tap::tap::TapFallible;
 use tokio::runtime::Handle;
-use tokio::sync::{broadcast, watch, Mutex};
+use tokio::sync::{Mutex, broadcast, watch};
 use tokio::task::JoinSet;
 use tower::ServiceBuilder;
 use tracing::{debug, warn};
@@ -62,7 +62,7 @@ use ika_core::storage::RocksDbStore;
 use ika_network::discovery::TrustedPeerChangeEvent;
 use ika_network::{discovery, state_sync};
 use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
-use mysten_metrics::{spawn_monitored_task, RegistryService};
+use mysten_metrics::{RegistryService, spawn_monitored_task};
 use sui_json_rpc_types::SuiEvent;
 use sui_macros::{fail_point_async, replay_log};
 use sui_storage::{FileCompression, StorageFormat};
@@ -166,6 +166,7 @@ use ika_core::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use ika_core::consensus_handler::ConsensusHandlerInitializer;
 use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use ika_core::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
+use ika_core::dwallet_mpc::submit_to_consensus::EpochStoreSubmitToConsensus;
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
 use ika_core::sui_connector::metrics::SuiConnectorMetrics;
@@ -182,7 +183,6 @@ pub use simulator::set_jwk_injector;
 #[cfg(msim)]
 use simulator::*;
 use tokio::sync::watch::Receiver;
-use ika_core::dwallet_mpc::submit_to_consensus::EpochStoreSubmitToConsensus;
 
 pub struct IkaNode {
     config: NodeConfig,

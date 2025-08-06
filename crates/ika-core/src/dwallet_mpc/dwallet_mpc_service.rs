@@ -21,7 +21,7 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::MPCEventData;
 use crate::dwallet_mpc::party_ids_to_authority_names;
-use crate::dwallet_mpc::submit_to_consensus::{DWalletMPCSubmitToConsensus};
+use crate::dwallet_mpc::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPCSessionStatus};
