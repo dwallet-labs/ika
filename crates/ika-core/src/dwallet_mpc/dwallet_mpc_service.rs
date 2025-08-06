@@ -28,6 +28,7 @@ use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPCSessionStatus};
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
+use ika_protocol_config::ProtocolConfig;
 use ika_sui_client::SuiConnectorClient;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
@@ -41,7 +42,8 @@ use ika_types::message::{
 };
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkEncryptionKeyData, MPCRequestInput, SessionIdentifier,
+    DBSuiEvent, DWalletNetworkEncryptionKeyData, IkaNetworkConfig, MPCRequestInput,
+    SessionIdentifier,
 };
 use ika_types::sui::{DWalletCoordinatorInner, EpochStartSystem};
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -72,6 +74,9 @@ pub struct DWalletMPCService {
     end_of_publish: bool,
     dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     pub sui_data_receivers: SuiDataReceivers,
+    pub name: AuthorityName,
+    pub epoch: EpochId,
+    pub protocol_config: ProtocolConfig,
 }
 
 impl DWalletMPCService {
@@ -84,11 +89,14 @@ impl DWalletMPCService {
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         state: Arc<AuthorityState>,
         sui_data_receivers: SuiDataReceivers,
+        name: AuthorityName,
+        epoch: sui_types::base_types::EpochId,
+        packages_config: IkaNetworkConfig,
+        committee: Arc<Committee>,
+        protocol_config: ProtocolConfig,
     ) -> Self {
         let validator_name = epoch_store.name();
-        let committee = epoch_store.committee().clone();
         let epoch_id = epoch_store.epoch();
-        let packages_config = epoch_store.packages_config().clone();
 
         let network_dkg_third_round_delay = epoch_store
             .protocol_config()
@@ -121,6 +129,9 @@ impl DWalletMPCService {
             end_of_publish: false,
             dwallet_mpc_metrics,
             sui_data_receivers: sui_data_receivers.clone(),
+            name,
+            epoch,
+            protocol_config,
         }
     }
 

@@ -240,15 +240,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         &self,
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>>;
-
-    fn name(&self) -> AuthorityName;
-
-    fn epoch(&self) -> EpochId;
-
-    fn packages_config(&self) -> &IkaNetworkConfig;
-
-    fn committee(&self) -> &Arc<Committee>;
-    fn protocol_config(&self) -> &ProtocolConfig;
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
@@ -318,7 +309,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
 
 pub struct AuthorityPerEpochStore {
     /// The name of this authority.
-    pub(crate) name: AuthorityName,
+    pub name: AuthorityName,
 
     /// Committee of validators for the current epoch.
     committee: Arc<Committee>,
@@ -364,7 +355,7 @@ pub struct AuthorityPerEpochStore {
     /// Chain identifier
     chain_identifier: ChainIdentifier,
 
-    pub(crate) packages_config: IkaNetworkConfig,
+    pub packages_config: IkaNetworkConfig,
     reconfig_state: RwLock<ReconfigState>,
     end_of_publish: Mutex<StakeAggregator<(), true>>,
 }

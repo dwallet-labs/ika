@@ -41,7 +41,9 @@ use ika_config::node_config_metrics::NodeConfigMetrics;
 use ika_config::object_storage_config::{ObjectStoreConfig, ObjectStoreType};
 use ika_config::{ConsensusConfig, NodeConfig};
 use ika_core::authority::AuthorityState;
-use ika_core::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use ika_core::authority::authority_per_epoch_store::{
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
+};
 use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
@@ -912,6 +914,11 @@ impl IkaNode {
             dwallet_mpc_metrics.clone(),
             state.clone(),
             sui_data_receivers,
+            epoch_store.name,
+            epoch_store.epoch(),
+            epoch_store.packages_config.clone(),
+            epoch_store.committee().clone(),
+            epoch_store.protocol_config().clone(),
         );
 
         // create a new map that gets injected into both the consensus handler and the consensus adapter
