@@ -6,7 +6,7 @@
 //! local DB every [`READ_INTERVAL_MS`] seconds
 //! and forward them to the [`DWalletMPCManager`].
 
-use crate::authority::AuthorityState;
+use crate::authority::{AuthorityState, AuthorityStateTrait};
 use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
 };
@@ -93,7 +93,7 @@ pub struct DWalletMPCService {
     last_read_consensus_round: Option<Round>,
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
     consensus_adapter: Arc<dyn MPCSubmitToConsensus>,
-    state: Arc<AuthorityState>,
+    state: Arc<dyn AuthorityStateTrait>,
     pub(crate) sui_client: Arc<SuiConnectorClient>,
     dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
     dwallet_mpc_manager: DWalletMPCManager,
