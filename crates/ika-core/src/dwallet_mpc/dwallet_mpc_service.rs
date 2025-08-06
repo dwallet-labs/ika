@@ -61,9 +61,21 @@ pub trait MPCSubmitToConsensus: Sync + Send + 'static {
     async fn submit_to_consensus(&self, transactions: &[ConsensusTransaction]) -> IkaResult;
 }
 
-struct EpochStoreSubmitToConsensus {
-    pub(crate) epoch_store: Arc<AuthorityPerEpochStore>,
+pub struct EpochStoreSubmitToConsensus {
+    epoch_store: Arc<AuthorityPerEpochStore>,
     consensus_adapter: Arc<dyn SubmitToConsensus>,
+}
+
+impl EpochStoreSubmitToConsensus {
+    pub fn new(
+        epoch_store: Arc<AuthorityPerEpochStore>,
+        consensus_adapter: Arc<dyn SubmitToConsensus>,
+    ) -> Self {
+        Self {
+            epoch_store,
+            consensus_adapter,
+        }
+    }
 }
 
 #[async_trait::async_trait]
