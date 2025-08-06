@@ -66,7 +66,7 @@ const FIVE_KILO_BYTES: usize = 5 * 1024;
 pub struct DWalletMPCService {
     last_read_consensus_round: Option<Round>,
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
-    consensus_adapter: Arc<dyn DWalletMPCSubmitToConsensus>,
+    dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
     state: Arc<dyn AuthorityStateTrait>,
     dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
     dwallet_mpc_manager: DWalletMPCManager,
@@ -116,7 +116,7 @@ impl DWalletMPCService {
         Self {
             last_read_consensus_round: None,
             epoch_store: epoch_store.clone(),
-            consensus_adapter,
+            dwallet_submit_to_consensus: consensus_adapter,
             state,
             dwallet_checkpoint_service,
             dwallet_mpc_manager,
@@ -496,7 +496,7 @@ impl DWalletMPCService {
         for (computation_id, computation_result) in completed_computation_results {
             let session_identifier = computation_id.session_identifier;
             let mpc_round = computation_id.mpc_round;
-            let consensus_adapter = self.consensus_adapter.clone();
+            let consensus_adapter = self.dwallet_submit_to_consensus.clone();
 
             if let Some(session) = self
                 .dwallet_mpc_manager
@@ -539,7 +539,7 @@ impl DWalletMPCService {
                                     validator=?validator_name,
                                     "Reached output for session"
                                 );
-                                let consensus_adapter = self.consensus_adapter.clone();
+                                let consensus_adapter = self.dwallet_submit_to_consensus.clone();
                                 let malicious_authorities = if !malicious_parties.is_empty() {
                                     let malicious_authorities = party_ids_to_authority_names(
                                         &malicious_parties,
@@ -609,7 +609,7 @@ impl DWalletMPCService {
                                     "failed to advance the MPC session, rejecting."
                                 );
 
-                                let consensus_adapter = self.consensus_adapter.clone();
+                                let consensus_adapter = self.dwallet_submit_to_consensus.clone();
 
                                 let rejected = true;
 
