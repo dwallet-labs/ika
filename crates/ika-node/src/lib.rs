@@ -439,8 +439,10 @@ impl IkaNode {
         let (new_events_sender, new_events_receiver) =
             broadcast::channel(EVENTS_CHANNEL_BUFFER_SIZE);
         let (end_of_publish_sender, end_of_publish_receiver) = watch::channel::<Option<u64>>(None);
-        let (last_session_to_complete_in_current_epoch_sender, last_session_to_complete_in_current_epoch_receiver) =
-            watch::channel((0, 0));
+        let (
+            last_session_to_complete_in_current_epoch_sender,
+            last_session_to_complete_in_current_epoch_receiver,
+        ) = watch::channel((0, 0));
         let (sui_connector_service, network_keys_receiver) = SuiConnectorService::new(
             dwallet_checkpoint_store.clone(),
             system_checkpoint_store.clone(),

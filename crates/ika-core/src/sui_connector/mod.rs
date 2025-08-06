@@ -104,7 +104,7 @@ impl SuiConnectorService {
             network_keys_sender,
             new_events_sender,
             end_of_publish_sender,
-            last_session_to_complete_in_current_epoch_sender
+            last_session_to_complete_in_current_epoch_sender,
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;
