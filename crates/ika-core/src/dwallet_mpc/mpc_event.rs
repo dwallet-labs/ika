@@ -371,42 +371,42 @@ impl DWalletMPCManager {
 }
 
 impl DWalletMPCService {
-    /// Proactively pull uncompleted events from the Sui network.
-    /// We do that to ensure we don't miss any events.
-    /// These events might be from a different Epoch, not necessarily the current one
-    pub(crate) async fn fetch_uncompleted_events(&mut self) -> Vec<DBSuiEvent> {
-        let epoch_store = self.epoch_store.clone();
-        loop {
-            match self
-                .sui_client
-                .pull_dwallet_mpc_uncompleted_events(epoch_store.epoch())
-                .await
-            {
-                Ok(events) => {
-                    for event in &events {
-                        debug!(
-                            event_type=?event.type_,
-                            current_epoch=?epoch_store.epoch(),
-                            contents=?event.contents.clone(),
-                            "Successfully fetched an uncompleted event from Sui"
-                        );
-                    }
-                    return events;
-                }
-                Err(err) => {
-                    warn!(
-                        error=?err,
-                        current_epoch=?self.epoch_store.epoch(),
-                         "failed to load missed events from Sui"
-                    );
-                    if let IkaError::EpochEnded(_) = err {
-                        return vec![];
-                    };
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                }
-            }
-        }
-    }
+    // /// Proactively pull uncompleted events from the Sui network.
+    // /// We do that to ensure we don't miss any events.
+    // /// These events might be from a different Epoch, not necessarily the current one
+    // pub(crate) async fn fetch_uncompleted_events(&mut self) -> Vec<DBSuiEvent> {
+    //     let epoch_store = self.epoch_store.clone();
+    //     loop {
+    //         match self
+    //             .sui_client
+    //             .pull_dwallet_mpc_uncompleted_events(epoch_store.epoch())
+    //             .await
+    //         {
+    //             Ok(events) => {
+    //                 for event in &events {
+    //                     debug!(
+    //                         event_type=?event.type_,
+    //                         current_epoch=?epoch_store.epoch(),
+    //                         contents=?event.contents.clone(),
+    //                         "Successfully fetched an uncompleted event from Sui"
+    //                     );
+    //                 }
+    //                 return events;
+    //             }
+    //             Err(err) => {
+    //                 warn!(
+    //                     error=?err,
+    //                     current_epoch=?self.epoch_store.epoch(),
+    //                      "failed to load missed events from Sui"
+    //                 );
+    //                 if let IkaError::EpochEnded(_) = err {
+    //                     return vec![];
+    //                 };
+    //                 tokio::time::sleep(Duration::from_secs(2)).await;
+    //             }
+    //         }
+    //     }
+    // }
 
     /// Read events from perpetual tables, remove them, and store in the current epoch tables.
     pub(crate) fn receive_new_sui_events(&mut self) -> IkaResult<Vec<DBSuiEvent>> {

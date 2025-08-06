@@ -160,7 +160,7 @@ impl DWalletMPCService {
             // Load events from Sui every 30 seconds (1500 * READ_INTERVAL_MS=20ms = 30,000ms = 30s).
             // Note: when we spawn, `loop_index == 0`, so we fetch uncompleted events on spawn.
             if loop_index % 1500 == 0 {
-                events = self.fetch_uncompleted_events().await;
+                // events = self.fetch_uncompleted_events().await;
             }
             loop_index += 1;
             match self.exit.has_changed() {
@@ -195,7 +195,7 @@ impl DWalletMPCService {
             }
 
             debug!("Running DWalletMPCService loop");
-            self.sync_last_session_to_complete_in_current_epoch().await;
+            // self.sync_last_session_to_complete_in_current_epoch().await;
 
             // Receive **new** dWallet MPC events and save them in the local DB.
             match self.receive_new_sui_events() {
