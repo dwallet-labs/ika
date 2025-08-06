@@ -257,6 +257,14 @@ export class IkaTransaction {
 		return this;
 	}
 
+	/**
+	 * Make the DWallet user secret key shares public.
+	 * @param params - The parameters for the make DWallet user secret key shares public.
+	 * @param params.dWallet - The DWallet to make the user secret key shares public for.
+	 * @param params.secretShare - The secret share to make public.
+	 * @param params.ikaCoin - The IKA coin to use for payment of the make DWallet user secret key shares public.
+	 * @param params.suiCoin - The SUI coin to use for payment of the make DWallet user secret key shares public.
+	 */
 	makeDWalletUserSecretKeySharesPublic({
 		dWallet,
 		secretShare,
@@ -277,6 +285,81 @@ export class IkaTransaction {
 			suiCoin,
 			this.transaction,
 		);
+
+		return this;
+	}
+
+	/**
+	 * Request a presign.
+	 * @param params - The parameters for the request presign.
+	 * @param params.dWallet - The DWallet to request the presign for.
+	 * @param params.signatureAlgorithm - The signature algorithm to use for the presign.
+	 * @param params.ikaCoin - The IKA coin to use for payment of the presign.
+	 * @param params.suiCoin - The SUI coin to use for payment of the presign.
+	 */
+	presign({
+		dWallet,
+		signatureAlgorithm,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: DWallet;
+		signatureAlgorithm: number;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): {
+		unverifiedPresignCap: TransactionObjectArgument;
+		transaction: IkaTransaction;
+	} {
+		const unverifiedPresignCap = coordinatorTx.requestPresign(
+			this.ikaClient.ikaConfig,
+			dWallet.id.id,
+			signatureAlgorithm,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		return {
+			unverifiedPresignCap,
+			transaction: this,
+		};
+	}
+
+	/**
+	 * Request a presign and keep the unverified presign cap.
+	 * @param params - The parameters for the request presign and keep.
+	 * @param params.dWallet - The DWallet to request the presign for.
+	 * @param params.signatureAlgorithm - The signature algorithm to use for the presign.
+	 * @param params.ikaCoin - The IKA coin to use for payment of the presign.
+	 * @param params.suiCoin - The SUI coin to use for payment of the presign.
+	 * @param params.receiver - The receiver of the unverified presign cap.
+	 */
+	presignAndKeep({
+		dWallet,
+		signatureAlgorithm,
+		ikaCoin,
+		suiCoin,
+		receiver,
+	}: {
+		dWallet: DWallet;
+		signatureAlgorithm: number;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+		receiver: string;
+	}) {
+		const unverifiedPresignCap = coordinatorTx.requestPresign(
+			this.ikaClient.ikaConfig,
+			dWallet.id.id,
+			signatureAlgorithm,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		this.transaction.transferObjects([unverifiedPresignCap], receiver);
 
 		return this;
 	}
