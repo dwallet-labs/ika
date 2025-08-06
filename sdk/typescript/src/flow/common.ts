@@ -7,6 +7,7 @@ import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 
 import { IkaClient, IkaTransaction } from '../client';
 import { PreparedImportDWalletVerification, PreparedSecondRound } from '../client/cryptography';
+import { getNetworkConfig } from '../client/network-configs';
 import {
 	Curve,
 	DWallet,
@@ -29,30 +30,8 @@ export function createSuiClient() {
 export function createIkaClient(suiClient: SuiClient) {
 	return new IkaClient({
 		suiClient,
-		config: {
-			packages: {
-				ikaPackage: '0x9df87437f4f0fb73bffe6fc6291f568da6e59ad4ad0770743b21cd4e1c030914',
-				ikaCommonPackage: '0x9df87437f4f0fb73bffe6fc6291f568da6e59ad4ad0770743b21cd4e1c030914',
-				ikaSystemPackage: '0x9df87437f4f0fb73bffe6fc6291f568da6e59ad4ad0770743b21cd4e1c030914',
-				ikaDwallet2pcMpcPackage:
-					'0x9df87437f4f0fb73bffe6fc6291f568da6e59ad4ad0770743b21cd4e1c030914',
-			},
-			objects: {
-				ikaSystemObject: {
-					objectID: '0x9df87437f4f0fb73bffe6fc6291f568da6e59ad4ad0770743b21cd4e1c030914',
-					initialSharedVersion: 0,
-				},
-				ikaDWalletCoordinator: {
-					objectID: '0x9df87437f4f0fb73bffe6fc6291f568da6e59ad4ad0770743b21cd4e1c030914',
-					initialSharedVersion: 0,
-				},
-			},
-		},
-		publicParameters: {
-			decryptionKeyPublicOutputID: '0x1',
-			epoch: 0,
-			publicParameters: new Uint8Array(32).fill(8),
-		},
+		network: 'testnet',
+		config: getNetworkConfig('testnet'),
 	});
 }
 

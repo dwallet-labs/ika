@@ -26,6 +26,8 @@ export interface IkaConfig {
 	objects: IkaObjectsConfig;
 }
 
+export type Network = 'localnet' | 'testnet' | 'mainnet';
+
 export interface IkaClientOptions {
 	config: IkaConfig;
 	suiClient: SuiClient;
@@ -36,6 +38,7 @@ export interface IkaClientOptions {
 		publicParameters: Uint8Array;
 	};
 	cache?: boolean;
+	network: Network;
 }
 
 export type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorInner.$inferType;
