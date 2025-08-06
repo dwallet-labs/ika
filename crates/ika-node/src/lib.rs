@@ -443,7 +443,8 @@ impl IkaNode {
             last_session_to_complete_in_current_epoch_sender,
             last_session_to_complete_in_current_epoch_receiver,
         ) = watch::channel((0, 0));
-        let (uncompleted_events_sender, uncompleted_events_receiver) = watch::channel(Vec::new());
+        let (uncompleted_events_sender, uncompleted_events_receiver) =
+            watch::channel((Vec::new(), 0));
         let (sui_connector_service, network_keys_receiver) = SuiConnectorService::new(
             dwallet_checkpoint_store.clone(),
             system_checkpoint_store.clone(),

@@ -40,7 +40,7 @@ pub struct SuiDataReceivers {
     pub next_epoch_committee_receiver: Receiver<Committee>,
     pub last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
     pub end_of_publish_receiver: Receiver<Option<u64>>,
-    pub uncompleted_events_receiver: Receiver<Vec<DBSuiEvent>>,
+    pub uncompleted_events_receiver: Receiver<(Vec<DBSuiEvent>, EpochId)>,
 }
 
 impl Clone for SuiDataReceivers {
