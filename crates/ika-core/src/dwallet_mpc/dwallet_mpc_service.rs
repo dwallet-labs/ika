@@ -137,38 +137,7 @@ impl DWalletMPCService {
                 )
         }
     }
-
-    async fn fetch_new_uncompleted_events(&mut self) -> Vec<DBSuiEvent> {
-        let new_events_fetched = self
-            .sui_data_receivers
-            .uncompleted_events_receiver
-            .has_changed()
-            .unwrap_or_else(|err| {
-                error!(
-                    error=?err,
-                    "failed to check if uncompleted events receiver has changed"
-                );
-                false
-            });
-        if !new_events_fetched {
-            return vec![];
-        }
-        let (uncompleted_events, epoch_id) = self
-            .sui_data_receivers
-            .uncompleted_events_receiver
-            .borrow_and_update()
-            .clone();
-        if epoch_id != self.epoch_store.epoch() {
-            info!(
-                ?epoch_id,
-                our_epoch_id = self.epoch_store.epoch(),
-                "Received uncompleted events for a different epoch, ignoring"
-            );
-            return vec![];
-        }
-        uncompleted_events
-    }
-
+    
     /// Starts the DWallet MPC service.
     ///
     /// This service periodically reads DWallet MPC messages from the local database

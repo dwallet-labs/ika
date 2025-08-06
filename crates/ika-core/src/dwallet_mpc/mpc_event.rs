@@ -32,7 +32,7 @@ use std::time::Duration;
 use sui_types::dynamic_field::Field;
 use sui_types::id::ID;
 use tokio::sync::broadcast;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 impl DWalletMPCManager {
     /// Handle a batch of MPC events.
@@ -371,42 +371,39 @@ impl DWalletMPCManager {
 }
 
 impl DWalletMPCService {
-    // /// Proactively pull uncompleted events from the Sui network.
-    // /// We do that to ensure we don't miss any events.
-    // /// These events might be from a different Epoch, not necessarily the current one
-    // pub(crate) async fn fetch_uncompleted_events(&mut self) -> Vec<DBSuiEvent> {
-    //     let epoch_store = self.epoch_store.clone();
-    //     loop {
-    //         match self
-    //             .sui_client
-    //             .pull_dwallet_mpc_uncompleted_events(epoch_store.epoch())
-    //             .await
-    //         {
-    //             Ok(events) => {
-    //                 for event in &events {
-    //                     debug!(
-    //                         event_type=?event.type_,
-    //                         current_epoch=?epoch_store.epoch(),
-    //                         contents=?event.contents.clone(),
-    //                         "Successfully fetched an uncompleted event from Sui"
-    //                     );
-    //                 }
-    //                 return events;
-    //             }
-    //             Err(err) => {
-    //                 warn!(
-    //                     error=?err,
-    //                     current_epoch=?self.epoch_store.epoch(),
-    //                      "failed to load missed events from Sui"
-    //                 );
-    //                 if let IkaError::EpochEnded(_) = err {
-    //                     return vec![];
-    //                 };
-    //                 tokio::time::sleep(Duration::from_secs(2)).await;
-    //             }
-    //         }
-    //     }
-    // }
+    /// Proactively pull uncompleted events from the Sui network.
+    /// We do that to ensure we don't miss any events.
+    /// These events might be from a different Epoch, not necessarily the current one
+    async fn fetch_new_uncompleted_events(&mut self) -> Vec<DBSuiEvent> {
+        let new_events_fetched = self
+            .sui_data_receivers
+            .uncompleted_events_receiver
+            .has_changed()
+            .unwrap_or_else(|err| {
+                error!(
+                    error=?err,
+                    "failed to check if uncompleted events receiver has changed"
+                );
+                false
+            });
+        if !new_events_fetched {
+            return vec![];
+        }
+        let (uncompleted_events, epoch_id) = self
+            .sui_data_receivers
+            .uncompleted_events_receiver
+            .borrow_and_update()
+            .clone();
+        if epoch_id != self.epoch_store.epoch() {
+            info!(
+                ?epoch_id,
+                our_epoch_id = self.epoch_store.epoch(),
+                "Received uncompleted events for a different epoch, ignoring"
+            );
+            return vec![];
+        }
+        uncompleted_events
+    }
 
     /// Read events from perpetual tables, remove them, and store in the current epoch tables.
     pub(crate) fn receive_new_sui_events(&mut self) -> IkaResult<Vec<DBSuiEvent>> {
