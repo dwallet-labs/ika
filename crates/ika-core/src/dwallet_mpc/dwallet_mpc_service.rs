@@ -21,7 +21,7 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::MPCEventData;
 use crate::dwallet_mpc::party_ids_to_authority_names;
-use crate::dwallet_mpc::submit_to_consensus::DWalletMPCSubmitToConsensus;
+use crate::dwallet_mpc::submit_to_consensus::{DWalletMPCSubmitToConsensus};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPCSessionStatus};
@@ -58,23 +58,6 @@ use tracing::{debug, error, info, warn};
 const DELAY_NO_ROUNDS_SEC: u64 = 2;
 const READ_INTERVAL_MS: u64 = 20;
 const FIVE_KILO_BYTES: usize = 5 * 1024;
-
-pub struct EpochStoreSubmitToConsensus {
-    pub(crate) epoch_store: Arc<AuthorityPerEpochStore>,
-    pub(crate) consensus_adapter: Arc<dyn SubmitToConsensus>,
-}
-
-impl EpochStoreSubmitToConsensus {
-    pub fn new(
-        epoch_store: Arc<AuthorityPerEpochStore>,
-        consensus_adapter: Arc<dyn SubmitToConsensus>,
-    ) -> Self {
-        Self {
-            epoch_store,
-            consensus_adapter,
-        }
-    }
-}
 
 pub struct DWalletMPCService {
     last_read_consensus_round: Option<Round>,
