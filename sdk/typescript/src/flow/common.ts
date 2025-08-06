@@ -2,10 +2,11 @@
 import { bcs } from '@mysten/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 
 import { IkaClient, IkaTransaction } from '../client';
-import { PreparedSecondRound } from '../client/cryptography';
+import { PreparedImportDWalletVerification, PreparedSecondRound } from '../client/cryptography';
 import {
 	DWallet,
 	EncryptedUserSecretKeyShare,
@@ -74,6 +75,24 @@ export function generateKeypair() {
 
 	return {
 		userShareEncryptionKeys,
+		signerAddress: userKeypair.getPublicKey().toSuiAddress(),
+		signerPublicKey: userKeypair.getPublicKey().toRawBytes(),
+	};
+}
+
+export function generateKeyparForImportedDWallet() {
+	const seed = new Uint8Array(32).fill(8);
+	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed('0x1');
+
+	const userShareEncryptionKeys = UserShareEncrytionKeys.fromHexString(
+		Buffer.from(seed).toString('hex'),
+	);
+
+	const dWalletKeypair = Secp256k1Keypair.deriveKeypair(userKeypair.getSecretKey());
+
+	return {
+		userShareEncryptionKeys,
+		dWalletKeypair,
 		signerAddress: userKeypair.getPublicKey().toSuiAddress(),
 		signerPublicKey: userKeypair.getPublicKey().toRawBytes(),
 	};
@@ -452,4 +471,76 @@ export async function futureSign(
 	});
 
 	await executeTransaction(suiClient, transaction);
+}
+
+export async function requestImportedDWalletVerification(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	preparedImportDWalletVerification: PreparedImportDWalletVerification,
+	curve: number,
+	signerPublicKey: Uint8Array,
+	sessionIdentifier: Uint8Array,
+	receiver: string,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+	});
+
+	await ikaTransaction.requestImportedDWalletVerificationAndKeep({
+		preparedImportDWalletVerification,
+		curve,
+		signerPublicKey,
+		sessionIdentifier,
+		ikaCoin: coinWithBalance({
+			type: '0x2::ika::IKA',
+			balance: 0,
+		})(transaction),
+		suiCoin: coinWithBalance({
+			type: '0x2::sui::SUI',
+			balance: 0,
+		})(transaction),
+		receiver,
+	});
+
+	const result = await executeTransaction(suiClient, transaction);
+
+	const importedKeyDWalletVerificationRequestEvent = result.events?.find((event) => {
+		return event.type.includes('ImportedKeyDWalletVerificationRequestEvent');
+	});
+
+	return SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.DWalletImportedKeyVerificationRequestEvent,
+	).fromBase64(importedKeyDWalletVerificationRequestEvent?.bcs as string);
+}
+
+export async function createSessionIdentifier(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	receiver: string,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+	});
+
+	const sessionIdentifier = ikaTransaction.createSessionIdentifier();
+
+	transaction.transferObjects([sessionIdentifier], receiver);
+
+	const result = await executeTransaction(suiClient, transaction);
+
+	const sessionIdentifierRegisteredEvent = result.events?.find((event) => {
+		return event.type.includes('SessionIdentifierRegisteredEvent');
+	});
+
+	return new Uint8Array(
+		SessionsManagerModule.UserSessionIdentifierRegisteredEvent.fromBase64(
+			sessionIdentifierRegisteredEvent?.bcs as string,
+		).session_identifier_preimage,
+	);
 }

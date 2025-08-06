@@ -1,7 +1,11 @@
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator';
-import { createSignCentralizedOutput, PreparedSecondRound } from './cryptography';
+import {
+	createSignCentralizedOutput,
+	PreparedImportDWalletVerification,
+	PreparedSecondRound,
+} from './cryptography';
 import { IkaClient } from './ika-client';
 import {
 	DWallet,
@@ -668,7 +672,91 @@ export class IkaTransaction {
 		return this;
 	}
 
-	private createSessionIdentifier() {
+	async requestImportedDWalletVerification({
+		preparedImportDWalletVerification,
+		curve,
+		signerPublicKey,
+		sessionIdentifier,
+		ikaCoin,
+		suiCoin,
+	}: {
+		preparedImportDWalletVerification: PreparedImportDWalletVerification;
+		curve: number;
+		signerPublicKey: Uint8Array;
+		sessionIdentifier: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<{
+		ImportedKeyDWalletCap: TransactionObjectArgument;
+		transaction: IkaTransaction;
+	}> {
+		if (!this.userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
+		const importedKeyDWalletVerificationCap = coordinatorTx.requestImportedKeyDwalletVerification(
+			this.ikaClient.ikaConfig,
+			await this.ikaClient.getDecryptionKeyID(),
+			curve,
+			preparedImportDWalletVerification.outgoing_message,
+			preparedImportDWalletVerification.encryptedUserShareAndProof,
+			this.userShareEncryptionKeys.getSuiAddress(),
+			preparedImportDWalletVerification.public_output,
+			signerPublicKey,
+			sessionIdentifier,
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		return {
+			ImportedKeyDWalletCap: importedKeyDWalletVerificationCap,
+			transaction: this,
+		};
+	}
+
+	async requestImportedDWalletVerificationAndKeep({
+		preparedImportDWalletVerification,
+		curve,
+		signerPublicKey,
+		sessionIdentifier,
+		ikaCoin,
+		suiCoin,
+		receiver,
+	}: {
+		preparedImportDWalletVerification: PreparedImportDWalletVerification;
+		curve: number;
+		signerPublicKey: Uint8Array;
+		sessionIdentifier: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+		receiver: string;
+	}) {
+		if (!this.userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
+		const importedKeyDWalletVerificationCap = coordinatorTx.requestImportedKeyDwalletVerification(
+			this.ikaClient.ikaConfig,
+			await this.ikaClient.getDecryptionKeyID(),
+			curve,
+			preparedImportDWalletVerification.outgoing_message,
+			preparedImportDWalletVerification.encryptedUserShareAndProof,
+			this.userShareEncryptionKeys.getSuiAddress(),
+			preparedImportDWalletVerification.public_output,
+			signerPublicKey,
+			sessionIdentifier,
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		this.transaction.transferObjects([importedKeyDWalletVerificationCap], receiver);
+
+		return this;
+	}
+
+	createSessionIdentifier() {
 		const freshObjectAddress = this.transaction.moveCall({
 			target: `0x2::tx_context::fresh_object_address`,
 			arguments: [],

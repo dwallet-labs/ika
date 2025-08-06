@@ -1,20 +1,30 @@
 import {
 	create_dkg_centralized_output,
+	create_imported_dwallet_centralized_step,
 	create_sign_centralized_output,
 	decrypt_user_share,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
 } from '@dwallet-network/dwallet-mpc-wasm';
+import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import sha3 from 'js-sha3';
 
 import { IkaClient } from './ika-client';
 import { DWallet } from './types';
-import { encodeToASCII, u64ToBytesBigEndian } from './utils';
+import { UserShareEncrytionKeys } from './user-share-encryption-keys';
+import { encodeToASCII, stringToUint8Array, u64ToBytesBigEndian } from './utils';
 
 export type PreparedSecondRound = {
 	centralizedPublicKeyShareAndProof: Uint8Array;
 	centralizedPublicOutput: Uint8Array;
 	centralizedSecretKeyShare: Uint8Array;
+	encryptedUserShareAndProof: Uint8Array;
+};
+
+export type PreparedImportDWalletVerification = {
+	secret_share: Uint8Array;
+	public_output: Uint8Array;
+	outgoing_message: Uint8Array;
 	encryptedUserShareAndProof: Uint8Array;
 };
 
@@ -151,6 +161,34 @@ export async function prepareDKGSecondRoundAsync(
 		centralizedPublicKeyShareAndProof,
 		centralizedPublicOutput,
 		centralizedSecretKeyShare,
+		encryptedUserShareAndProof,
+	};
+}
+
+export async function prepareImportDWalletVerification(
+	ikaClient: IkaClient,
+	sessionIdentifier: Uint8Array,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
+	keypair: Secp256k1Keypair,
+): Promise<PreparedImportDWalletVerification> {
+	const networkDecryptionKeyPublicOutput = await ikaClient.getNetworkPublicParameters();
+
+	const [secret_share, public_output, outgoing_message] = create_imported_dwallet_centralized_step(
+		networkDecryptionKeyPublicOutput,
+		sessionIdentifierDigest(sessionIdentifier),
+		stringToUint8Array(keypair.getSecretKey()),
+	);
+
+	const encryptedUserShareAndProof = encryptSecretShare(
+		secret_share,
+		userShareEncryptionKeys.encryptionKey,
+		networkDecryptionKeyPublicOutput,
+	);
+
+	return {
+		secret_share,
+		public_output,
+		outgoing_message,
 		encryptedUserShareAndProof,
 	};
 }

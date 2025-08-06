@@ -56,14 +56,12 @@ export type Hash = (typeof Hash)[keyof typeof Hash];
 
 export const Curve = {
 	SECP256K1: 0,
-	SECP256R1: 1,
 } as const;
 
 export type Curve = (typeof Curve)[keyof typeof Curve];
 
 export const SignatureAlgorithm = {
 	ECDSA: 0,
-	EDDSA: 1,
 } as const;
 
 export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];
