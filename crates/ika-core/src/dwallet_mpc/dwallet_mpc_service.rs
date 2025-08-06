@@ -125,14 +125,15 @@ impl DWalletMPCService {
     }
 
     async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
-        let last_session_to_complete_in_current_epoch = self
+        let (ika_current_epoch_on_sui, last_session_to_complete_in_current_epoch) = self
             .sui_data_receivers
             .last_session_to_complete_in_current_epoch_receiver
-            .borrow();
-        if last_session_to_complete_in_current_epoch.0 == self.epoch_store.epoch() {
+            .borrow()
+            .clone();
+        if ika_current_epoch_on_sui == self.epoch_store.epoch() {
             self.dwallet_mpc_manager
                 .sync_last_session_to_complete_in_current_epoch(
-                    last_session_to_complete_in_current_epoch.1,
+                    last_session_to_complete_in_current_epoch,
                 )
         }
     }
