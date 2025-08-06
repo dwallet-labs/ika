@@ -59,6 +59,7 @@ where
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
         new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
         end_of_publish_sender: Sender<Option<u64>>,
+        last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
         info!("Starting SuiSyncer");
         let mut task_handles = vec![];
@@ -77,8 +78,13 @@ where
             ));
             info!("Starting end of publish sync task");
             tokio::spawn(Self::sync_dwallet_end_of_publish(
-                sui_client_clone,
+                sui_client_clone.clone(),
                 end_of_publish_sender,
+            ));
+            info!("Syncing last session to complete in current epoch");
+            tokio::spawn(Self::sync_last_session_to_complete_in_current_epoch(
+                sui_client_clone,
+                last_session_to_complete_in_current_epoch_sender,
             ));
         }
 
@@ -100,10 +106,10 @@ where
     }
 
     async fn sync_last_session_to_complete_in_current_epoch(
-        &mut self,
+        sui_client: Arc<SuiClient<C>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
     ) {
-        let coordinator_state = self.sui_client.must_get_dwallet_coordinator_inner().await;
+        let coordinator_state = sui_client.must_get_dwallet_coordinator_inner().await;
 
         let DWalletCoordinatorInner::V1(inner) = coordinator_state;
         if let Err(err) = last_session_to_complete_in_current_epoch_sender.send((

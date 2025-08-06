@@ -67,6 +67,7 @@ impl SuiConnectorService {
         next_epoch_committee_sender: Sender<Committee>,
         new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
         end_of_publish_sender: Sender<Option<u64>>,
+        last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
     ) -> anyhow::Result<(
         Arc<Self>,
         watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -103,6 +104,7 @@ impl SuiConnectorService {
             network_keys_sender,
             new_events_sender,
             end_of_publish_sender,
+            last_session_to_complete_in_current_epoch_sender
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;
