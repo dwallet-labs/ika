@@ -410,7 +410,7 @@ impl DWalletMPCService {
 
     /// Read events from perpetual tables, remove them, and store in the current epoch tables.
     pub(crate) fn receive_new_sui_events(&mut self) -> IkaResult<Vec<DBSuiEvent>> {
-        let pending_events = match self.new_events_receiver.try_recv() {
+        let pending_events = match self.sui_data_receivers.new_events_receiver.try_recv() {
             Ok(events) => {
                 for event in &events {
                     debug!(
