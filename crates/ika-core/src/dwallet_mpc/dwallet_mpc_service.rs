@@ -21,6 +21,7 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::MPCEventData;
 use crate::dwallet_mpc::party_ids_to_authority_names;
+use crate::dwallet_mpc::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPCSessionStatus};
@@ -58,14 +59,9 @@ const DELAY_NO_ROUNDS_SEC: u64 = 2;
 const READ_INTERVAL_MS: u64 = 20;
 const FIVE_KILO_BYTES: usize = 5 * 1024;
 
-#[async_trait::async_trait]
-pub trait MPCSubmitToConsensus: Sync + Send + 'static {
-    async fn submit_to_consensus(&self, transactions: &[ConsensusTransaction]) -> IkaResult;
-}
-
 pub struct EpochStoreSubmitToConsensus {
-    epoch_store: Arc<AuthorityPerEpochStore>,
-    consensus_adapter: Arc<dyn SubmitToConsensus>,
+    pub(crate) epoch_store: Arc<AuthorityPerEpochStore>,
+    pub(crate) consensus_adapter: Arc<dyn SubmitToConsensus>,
 }
 
 impl EpochStoreSubmitToConsensus {
@@ -80,19 +76,10 @@ impl EpochStoreSubmitToConsensus {
     }
 }
 
-#[async_trait::async_trait]
-impl MPCSubmitToConsensus for EpochStoreSubmitToConsensus {
-    async fn submit_to_consensus(&self, transactions: &[ConsensusTransaction]) -> IkaResult {
-        self.consensus_adapter
-            .submit_to_consensus(transactions, &self.epoch_store)
-            .await
-    }
-}
-
 pub struct DWalletMPCService {
     last_read_consensus_round: Option<Round>,
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
-    consensus_adapter: Arc<dyn MPCSubmitToConsensus>,
+    consensus_adapter: Arc<dyn DWalletMPCSubmitToConsensus>,
     state: Arc<dyn AuthorityStateTrait>,
     pub(crate) sui_client: Arc<SuiConnectorClient>,
     dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
@@ -107,7 +94,7 @@ impl DWalletMPCService {
     pub fn new(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         exit: Receiver<()>,
-        consensus_adapter: Arc<dyn MPCSubmitToConsensus>,
+        consensus_adapter: Arc<dyn DWalletMPCSubmitToConsensus>,
         node_config: NodeConfig,
         sui_client: Arc<SuiConnectorClient>,
         dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
