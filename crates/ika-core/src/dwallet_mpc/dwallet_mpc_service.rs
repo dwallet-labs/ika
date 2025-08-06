@@ -123,7 +123,7 @@ impl DWalletMPCService {
         }
     }
 
-    // TODO!!
+    // TODO (this pr)
     // async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
     //     let coordinator_state = self.sui_client.must_get_dwallet_coordinator_inner().await;
     //
