@@ -6,7 +6,7 @@
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
-use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, StakeUnit};
+use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
@@ -97,6 +97,28 @@ where
             ));
         }
         Ok(task_handles)
+    }
+
+    async fn sync_last_session_to_complete_in_current_epoch(
+        &mut self,
+        last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
+    ) {
+        let coordinator_state = self.sui_client.must_get_dwallet_coordinator_inner().await;
+
+        let DWalletCoordinatorInner::V1(inner) = coordinator_state;
+        if let Err(err) = last_session_to_complete_in_current_epoch_sender.send((
+            inner.current_epoch,
+            inner
+                .sessions_manager
+                .last_user_initiated_session_to_complete_in_current_epoch,
+        )) {
+            error!(
+                error=?err,
+                epoch=?inner.current_epoch,
+                last_session_to_complete_in_current_epoch=?inner.sessions_manager.last_user_initiated_session_to_complete_in_current_epoch,
+                "failed to send last session to complete in current epoch",
+            )
+        }
     }
 
     async fn sync_next_committee(
