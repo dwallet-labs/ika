@@ -31,6 +31,7 @@ async function main() {
 	const secondRoundMoveResponse = await requestDkgSecondRound(
 		ikaClient,
 		suiClient,
+		dWallet,
 		preparedSecondRound,
 		userShareEncryptionKeys,
 		signerPublicKey,

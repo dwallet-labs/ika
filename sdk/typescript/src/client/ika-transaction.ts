@@ -1,20 +1,26 @@
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator';
+import { PreparedSecondRound, stringToUint8Array } from './cryptography';
 import { IkaClient } from './ika-client';
+import { DWallet } from './types';
+import { UserShareEncrytionKeys } from './user-share-encryption-keys';
 
 export type IkaTransactionParams = {
 	ikaClient: IkaClient;
 	transaction: Transaction;
+	userShareEncryptionKeys?: UserShareEncrytionKeys;
 };
 
 export class IkaTransaction {
 	private ikaClient: IkaClient;
 	private transaction: Transaction;
+	private userShareEncryptionKeys?: UserShareEncrytionKeys;
 
-	constructor({ ikaClient, transaction }: IkaTransactionParams) {
+	constructor({ ikaClient, transaction, userShareEncryptionKeys }: IkaTransactionParams) {
 		this.ikaClient = ikaClient;
 		this.transaction = transaction;
+		this.userShareEncryptionKeys = userShareEncryptionKeys;
 	}
 
 	/**
@@ -164,42 +170,36 @@ export class IkaTransaction {
 	/**
 	 * Request the DKG second round.
 	 * @param params - The parameters for the DKG second round.
-	 * @param params.dwalletCap - The DWalletCap to use for the DKG second round.
-	 * @param params.centralizedPublicKeyShareAndProof - The centralized public key share and proof to use for the DKG second round.
-	 * @param params.encryptedUserShareAndProof - The encrypted user share and proof to use for the DKG second round.
-	 * @param params.encryptionKeyAddress - The address of the encryption key to use for the DKG second round.
-	 * @param params.userPublicOutput - The user public output to use for the DKG second round.
+	 * @param params.dWallet - The DWallet to use for the DKG second round.
+	 * @param params.preparedSecondRound - The prepared second round to use for the DKG second round.
 	 * @param params.signerPublicKey - The signer public key to use for the DKG second round.
 	 * @param params.ikaCoin - The IKA coin to use for payment of the DKG second round.
 	 * @param params.suiCoin - The SUI coin to use for payment of the DKG second round.
 	 */
 	requestDWalletDKGSecondRound({
-		dwalletCap,
-		centralizedPublicKeyShareAndProof,
-		encryptedUserShareAndProof,
-		encryptionKeyAddress,
-		userPublicOutput,
+		dWallet,
+		preparedSecondRound,
 		signerPublicKey,
 		ikaCoin,
 		suiCoin,
 	}: {
-		dwalletCap: string | TransactionObjectArgument;
-		centralizedPublicKeyShareAndProof: Uint8Array;
-		encryptedUserShareAndProof: Uint8Array;
-		centralizedPublicOutput: Uint8Array;
-		encryptionKeyAddress: string;
-		userPublicOutput: Uint8Array;
+		dWallet: DWallet;
+		preparedSecondRound: PreparedSecondRound;
 		signerPublicKey: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
+		if (!this.userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
 		coordinatorTx.requestDWalletDKGSecondRound(
 			this.ikaClient.ikaConfig,
-			this.transaction.object(dwalletCap),
-			centralizedPublicKeyShareAndProof,
-			encryptedUserShareAndProof,
-			encryptionKeyAddress,
-			userPublicOutput,
+			this.transaction.object(dWallet.dwallet_cap_id),
+			preparedSecondRound.centralizedPublicKeyShareAndProof,
+			preparedSecondRound.encryptedUserShareAndProof,
+			this.userShareEncryptionKeys.getPublicKey().toSuiAddress(),
+			preparedSecondRound.centralizedPublicOutput,
 			signerPublicKey,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -217,43 +217,39 @@ export class IkaTransaction {
 	 * @param params.encryptedUserSecretKeyShareId - The ID of the encrypted user secret key share to accept.
 	 * @param params.userOutputSignature - The user output signature to use for the accept encrypted user share.
 	 */
-	acceptEncryptedUserShare({
-		dwalletId,
+	async acceptEncryptedUserShare({
+		dWallet,
 		encryptedUserSecretKeyShareId,
-		userOutputSignature,
 	}: {
-		dwalletId: string;
+		dWallet: DWallet;
 		encryptedUserSecretKeyShareId: string;
-		userOutputSignature: Uint8Array;
 	}) {
+		if (!this.userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
 		coordinatorTx.acceptEncryptedUserShare(
 			this.ikaClient.ikaConfig,
-			dwalletId,
+			dWallet.id.id,
 			encryptedUserSecretKeyShareId,
-			userOutputSignature,
+			await this.userShareEncryptionKeys.getUserOutputSignature(dWallet),
 			this.transaction,
 		);
 
 		return this;
 	}
 
-	registerEncryptionKey({
-		curve,
-		encryptionKey,
-		encryptionKeySignature,
-		encryptionKeyAddress,
-	}: {
-		curve: number;
-		encryptionKey: Uint8Array;
-		encryptionKeySignature: Uint8Array;
-		encryptionKeyAddress: Uint8Array;
-	}) {
+	async registerEncryptionKey({ curve }: { curve: number }) {
+		if (!this.userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
 		coordinatorTx.registerEncryptionKey(
 			this.ikaClient.ikaConfig,
 			curve,
-			encryptionKey,
-			encryptionKeySignature,
-			encryptionKeyAddress,
+			this.userShareEncryptionKeys.encryptionKey,
+			await this.userShareEncryptionKeys.getEncryptionKeySignature(),
+			stringToUint8Array(this.userShareEncryptionKeys.getPublicKey().toSuiAddress()),
 			this.transaction,
 		);
 
@@ -261,19 +257,19 @@ export class IkaTransaction {
 	}
 
 	makeDWalletUserSecretKeySharesPublic({
-		dWalletId,
+		dWallet,
 		secretShare,
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWalletId: string;
+		dWallet: DWallet;
 		secretShare: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
 		coordinatorTx.requestMakeDwalletUserSecretKeySharesPublic(
 			this.ikaClient.ikaConfig,
-			dWalletId,
+			dWallet.id.id,
 			secretShare,
 			this.createSessionIdentifier(),
 			ikaCoin,

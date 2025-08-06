@@ -1,5 +1,5 @@
 {
-	"include": ["src", "types", "generated"],
+	"include": ["src", "types", "generated", "flow", "client"],
 	"compilerOptions": {
 		"target": "ES2020",
 		"lib": ["dom", "esnext"],

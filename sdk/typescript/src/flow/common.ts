@@ -1,11 +1,12 @@
-// @ts-nocheck
+// @ts-ignore
 import { bcs } from '@mysten/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 
 import { IkaClient, IkaTransaction } from '../client';
-import { createClassGroupsKeypair } from '../client/cryptography';
+import { PreparedSecondRound } from '../client/cryptography';
+import { DWallet } from '../client/types';
 import { UserShareEncrytionKeys } from '../client/user-share-encryption-keys';
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../generated/ika_dwallet_2pc_mpc/sessions_manager.js';
@@ -87,7 +88,6 @@ export async function requestDKGFirstRound(
 
 	await ikaTransaction.requestDWalletDKGFirstRoundAndKeepAsync({
 		curve: 0,
-		decryptionKeyID,
 		ikaCoin: coinWithBalance({
 			type: '0x2::ika::IKA',
 			balance: 0,
@@ -131,15 +131,11 @@ export async function registerEncryptionKey(
 	const ikaTransaction = new IkaTransaction({
 		ikaClient,
 		transaction,
+		userShareEncryptionKeys,
 	});
-
-	const encryptionKeySignature = await userShareEncryptionKeys.getEncryptionKeySignature();
 
 	ikaTransaction.registerEncryptionKey({
 		curve: 0,
-		encryptionKey: userShareEncryptionKeys.encryptionKey,
-		encryptionKeySignature,
-		encryptionKeyAddress: userShareEncryptionKeys.getPublicKey().toSuiAddress(),
 	});
 
 	const result = await executeTransaction(suiClient, transaction);
@@ -156,6 +152,7 @@ export async function registerEncryptionKey(
 export async function requestDkgSecondRound(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
+	dWallet: DWallet,
 	preparedSecondRound: PreparedSecondRound,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	signerPublicKey: Uint8Array,
@@ -165,16 +162,13 @@ export async function requestDkgSecondRound(
 	const ikaTransaction = new IkaTransaction({
 		ikaClient,
 		transaction,
+		userShareEncryptionKeys,
 	});
 
 	ikaTransaction.requestDWalletDKGSecondRound({
-		dwalletCap: preparedSecondRound.dWalletCapId,
-		centralizedPublicKeyShareAndProof: preparedSecondRound.centralizedPublicKeyShareAndProof,
-		centralizedPublicOutput: preparedSecondRound.centralizedPublicOutput,
-		encryptedUserShareAndProof: preparedSecondRound.encryptedUserShareAndProof,
-		encryptionKeyAddress: userShareEncryptionKeys.getPublicKey().toSuiAddress(),
+		dWallet,
+		preparedSecondRound,
 		signerPublicKey,
-		userPublicOutput: preparedSecondRound.centralizedPublicOutput,
 		ikaCoin: coinWithBalance({
 			type: '0x2::ika::IKA',
 			balance: 0,
@@ -215,13 +209,13 @@ export async function acceptEncryptedUserShare(
 	const ikaTransaction = new IkaTransaction({
 		ikaClient,
 		transaction,
+		userShareEncryptionKeys,
 	});
 
 	ikaTransaction.acceptEncryptedUserShare({
-		dwalletId: dWallet.dwallet_id,
+		dWallet,
 		encryptedUserSecretKeyShareId:
 			secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
-		userOutputSignature: await userShareEncryptionKeys.getUserOutputSignature(dWallet),
 	});
 
 	await executeTransaction(suiClient, transaction);
@@ -241,7 +235,7 @@ export async function makeDWalletUserSecretKeySharesPublic(
 	});
 
 	ikaTransaction.makeDWalletUserSecretKeySharesPublic({
-		dWalletId: dWallet.dwallet_id,
+		dWallet,
 		secretShare: preparedSecondRound.centralizedSecretKeyShare,
 		ikaCoin: coinWithBalance({
 			type: '0x2::ika::IKA',

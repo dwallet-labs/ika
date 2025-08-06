@@ -13,7 +13,6 @@ export type PreparedSecondRound = {
 	centralizedPublicOutput: Uint8Array;
 	centralizedSecretKeyShare: Uint8Array;
 	encryptedUserShareAndProof: Uint8Array;
-	dWalletCapId: string;
 };
 
 export function createClassGroupsKeypair(seed: Uint8Array): {
@@ -95,7 +94,6 @@ export function prepareDKGSecondRound(
 		centralizedPublicOutput,
 		centralizedSecretKeyShare,
 		encryptedUserShareAndProof,
-		dWalletCapId: dWallet.dwallet_cap_id,
 	};
 }
 
@@ -133,7 +131,6 @@ export async function prepareDKGSecondRoundAsync(
 		centralizedPublicOutput,
 		centralizedSecretKeyShare,
 		encryptedUserShareAndProof,
-		dWalletCapId: dWallet.dwallet_cap_id,
 	};
 }
 
