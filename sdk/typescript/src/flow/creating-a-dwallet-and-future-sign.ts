@@ -1,3 +1,4 @@
+import { Hash, SignatureAlgorithm } from '../client';
 import { prepareDKGSecondRoundAsync } from '../client/cryptography';
 import {
 	acceptEncryptedUserShare,
@@ -66,7 +67,7 @@ async function main() {
 		userShareEncryptionKeys,
 		encryptedUserSecretKeyShare,
 		Buffer.from('hello world'),
-		0,
+		Hash.KECCAK256,
 	);
 
 	const partialUserSignature = await ikaClient.getPartialUserSignature(
@@ -80,8 +81,8 @@ async function main() {
 		partialUserSignature,
 		userShareEncryptionKeys,
 		Buffer.from('hello world'),
-		0,
-		0,
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
 	);
 }
 

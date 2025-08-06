@@ -46,3 +46,24 @@ export type Presign = typeof CoordinatorInnerModule.PresignSession.$inferType;
 export type EncryptedUserSecretKeyShare =
 	typeof CoordinatorInnerModule.EncryptedUserSecretKeyShare.$inferType;
 export type PartialUserSignature = typeof CoordinatorInnerModule.PartialUserSignature.$inferType;
+
+export const Hash = {
+	KECCAK256: 0,
+	SHA256: 1,
+} as const;
+
+export type Hash = (typeof Hash)[keyof typeof Hash];
+
+export const Curve = {
+	SECP256K1: 0,
+	SECP256R1: 1,
+} as const;
+
+export type Curve = (typeof Curve)[keyof typeof Curve];
+
+export const SignatureAlgorithm = {
+	ECDSA: 0,
+	EDDSA: 1,
+} as const;
+
+export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];

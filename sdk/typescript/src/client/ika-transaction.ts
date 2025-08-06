@@ -3,7 +3,14 @@ import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions
 import * as coordinatorTx from '../tx/coordinator';
 import { createSignCentralizedOutput, PreparedSecondRound } from './cryptography';
 import { IkaClient } from './ika-client';
-import { DWallet, EncryptedUserSecretKeyShare, PartialUserSignature, Presign } from './types';
+import {
+	DWallet,
+	EncryptedUserSecretKeyShare,
+	Hash,
+	PartialUserSignature,
+	Presign,
+	SignatureAlgorithm,
+} from './types';
 import { UserShareEncrytionKeys } from './user-share-encryption-keys';
 import { stringToUint8Array } from './utils';
 
@@ -375,8 +382,8 @@ export class IkaTransaction {
 		suiCoin,
 	}: {
 		dWallet: DWallet;
-		signatureAlgorithm: number;
-		hashScheme: number;
+		signatureAlgorithm: SignatureAlgorithm;
+		hashScheme: Hash;
 		presign: Presign;
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		message: Uint8Array;

@@ -9,8 +9,10 @@ import { PreparedSecondRound } from '../client/cryptography';
 import {
 	DWallet,
 	EncryptedUserSecretKeyShare,
+	Hash,
 	PartialUserSignature,
 	Presign,
+	SignatureAlgorithm,
 } from '../client/types';
 import { UserShareEncrytionKeys } from '../client/user-share-encryption-keys';
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
@@ -301,8 +303,8 @@ export async function sign(
 	presign: Presign,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	message: Uint8Array,
-	hashScheme: number,
-	signatureAlgorithm: number,
+	hashScheme: Hash,
+	signatureAlgorithm: SignatureAlgorithm,
 ) {
 	const transaction = new Transaction();
 

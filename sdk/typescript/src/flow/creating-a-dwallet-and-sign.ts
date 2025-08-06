@@ -1,3 +1,4 @@
+import { Hash, SignatureAlgorithm } from '../client';
 import { prepareDKGSecondRoundAsync } from '../client/cryptography';
 import {
 	acceptEncryptedUserShare,
@@ -65,8 +66,8 @@ async function main() {
 		presignObject,
 		encryptedUserSecretKeyShare,
 		Buffer.from('hello world'),
-		0,
-		0,
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
 	);
 }
 
