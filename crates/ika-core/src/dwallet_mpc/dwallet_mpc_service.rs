@@ -28,7 +28,7 @@ use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPC
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
 use ika_sui_client::SuiConnectorClient;
-use ika_types::committee::Committee;
+use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
@@ -67,8 +67,9 @@ pub struct DWalletMPCService {
     pub(crate) sui_client: Arc<SuiConnectorClient>,
     dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
     dwallet_mpc_manager: DWalletMPCManager,
-    pub exit: Receiver<()>,
-    pub new_events_receiver: tokio::sync::broadcast::Receiver<Vec<SuiEvent>>,
+    exit: Receiver<()>,
+    new_events_receiver: tokio::sync::broadcast::Receiver<Vec<SuiEvent>>,
+    last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
     end_of_publish: bool,
     dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 }
@@ -81,11 +82,9 @@ impl DWalletMPCService {
         node_config: NodeConfig,
         sui_client: Arc<SuiConnectorClient>,
         dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
-        network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        new_events_receiver: tokio::sync::broadcast::Receiver<Vec<SuiEvent>>,
-        next_epoch_committee_receiver: Receiver<Committee>,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         state: Arc<AuthorityState>,
+        sui_data_receivers: SuiDataReceivers,
     ) -> Self {
         let validator_name = epoch_store.name();
         let committee = epoch_store.committee().clone();
@@ -125,6 +124,7 @@ impl DWalletMPCService {
             exit,
             end_of_publish: false,
             dwallet_mpc_metrics,
+            last_session_to_complete_in_current_epoch_receiver,
         }
     }
 
