@@ -443,6 +443,8 @@ impl IkaNode {
             last_session_to_complete_in_current_epoch_sender,
             last_session_to_complete_in_current_epoch_receiver,
         ) = watch::channel((0, 0));
+        let (uncompleted_events_sender, uncompleted_events_receiver) =
+            watch::channel(Vec::new());
         let (sui_connector_service, network_keys_receiver) = SuiConnectorService::new(
             dwallet_checkpoint_store.clone(),
             system_checkpoint_store.clone(),
@@ -454,6 +456,7 @@ impl IkaNode {
             new_events_sender,
             end_of_publish_sender.clone(),
             last_session_to_complete_in_current_epoch_sender,
+            uncompleted_events_sender,
         )
         .await?;
 
@@ -497,6 +500,7 @@ impl IkaNode {
             next_epoch_committee_receiver,
             last_session_to_complete_in_current_epoch_receiver,
             end_of_publish_receiver,
+            uncompleted_events_receiver,
         };
         let validator_components = if state.is_validator(&epoch_store) {
             let components = Self::construct_validator_components(

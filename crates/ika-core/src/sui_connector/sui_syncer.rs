@@ -11,7 +11,8 @@ use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
+    DBSuiEvent, DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData,
+    DWalletNetworkEncryptionKeyState,
 };
 use ika_types::sui::{DWalletCoordinatorInner, SystemInner, SystemInnerTrait};
 use mysten_metrics::spawn_logged_monitored_task;
@@ -60,6 +61,7 @@ where
         new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
+        uncompleted_events_sender: Sender<(Vec<DBSuiEvent>, EpochId)>,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
         info!("Starting SuiSyncer");
         let mut task_handles = vec![];
@@ -83,8 +85,13 @@ where
             ));
             info!("Syncing last session to complete in current epoch");
             tokio::spawn(Self::sync_last_session_to_complete_in_current_epoch(
-                sui_client_clone,
+                sui_client_clone.clone(),
                 last_session_to_complete_in_current_epoch_sender,
+            ));
+            info!("Syncing uncompleted events");
+            tokio::spawn(Self::sync_uncompleted_events(
+                sui_client_clone,
+                uncompleted_events_sender,
             ));
         }
 
@@ -124,6 +131,40 @@ where
                 last_session_to_complete_in_current_epoch=?inner.sessions_manager.last_user_initiated_session_to_complete_in_current_epoch,
                 "failed to send last session to complete in current epoch",
             )
+        }
+    }
+
+    async fn sync_uncompleted_events(
+        sui_client: Arc<SuiClient<C>>,
+        uncompleted_events_sender: Sender<(Vec<DBSuiEvent>, EpochId)>,
+    ) {
+        loop {
+            match sui_client.pull_dwallet_mpc_uncompleted_events().await {
+                Ok((events, epoch)) => {
+                    for event in &events {
+                        debug!(
+                            event_type=?event.type_,
+                            current_epoch=?epoch,
+                            contents=?event.contents.clone(),
+                            "Successfully fetched an uncompleted event from Sui"
+                        );
+                    }
+                    if let Err(err) = uncompleted_events_sender.send((events, epoch)) {
+                        error!(
+                            error=?err,
+                            current_epoch=?epoch,
+                            "failed to send uncompleted events to the channel"
+                        );
+                    };
+                }
+                Err(err) => {
+                    warn!(
+                        error=?err,
+                         "failed to load missed events from Sui"
+                    );
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
         }
     }
 

@@ -5,7 +5,7 @@
 extern crate core;
 
 use ika_types::committee::Committee;
-use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
+use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletNetworkEncryptionKeyData};
 use std::collections::HashMap;
 use std::sync::Arc;
 use sui_json_rpc_types::SuiEvent;
@@ -40,6 +40,7 @@ pub struct SuiDataReceivers {
     pub next_epoch_committee_receiver: Receiver<Committee>,
     pub last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
     pub end_of_publish_receiver: Receiver<Option<u64>>,
+    pub uncompleted_events_receiver: Receiver<Vec<DBSuiEvent>>,
 }
 
 impl Clone for SuiDataReceivers {
@@ -52,6 +53,7 @@ impl Clone for SuiDataReceivers {
                 .last_session_to_complete_in_current_epoch_receiver
                 .clone(),
             end_of_publish_receiver: self.end_of_publish_receiver.clone(),
+            uncompleted_events_receiver: self.uncompleted_events_receiver.clone(),
         }
     }
 }

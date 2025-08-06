@@ -160,29 +160,9 @@ where
     /// Remaining sessions not processed during previous Epochs.
     pub async fn pull_dwallet_mpc_uncompleted_events(
         &self,
-        epoch_id: EpochId,
-    ) -> IkaResult<Vec<DBSuiEvent>> {
+    ) -> IkaResult<(Vec<DBSuiEvent>, EpochId)> {
         loop {
             let dwallet_coordinator_inner = self.must_get_dwallet_coordinator_inner_v1().await;
-
-            // Make sure we are synced with Sui to fetch the missed events.
-            // If Sui's epoch number matches ours,
-            // all the necessary missed events must be synced as well.
-            // Note that we make sure that the coordinator's epoch number matches ours,
-            // so that we know for sure that our Sui state is synced.
-            if dwallet_coordinator_inner.current_epoch > epoch_id {
-                return Err(IkaError::EpochEnded(epoch_id));
-            }
-            if dwallet_coordinator_inner.current_epoch != epoch_id {
-                warn!(
-                    sui_state_current_epoch=?dwallet_coordinator_inner.current_epoch,
-                    our_current_epoch=?epoch_id,
-                    "Sui's epoch number doesn't match ours "
-                );
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                continue;
-            }
-
             let user_missed_events = self
                 .inner
                 .get_uncompleted_events(
@@ -227,10 +207,13 @@ where
                 debug!("retrieved zero missed events from Sui");
             }
 
-            return Ok(user_missed_events
-                .into_iter()
-                .chain(system_missed_events.into_iter())
-                .collect());
+            return Ok((
+                user_missed_events
+                    .into_iter()
+                    .chain(system_missed_events.into_iter())
+                    .collect(),
+                dwallet_coordinator_inner.current_epoch,
+            ));
         }
     }
 
