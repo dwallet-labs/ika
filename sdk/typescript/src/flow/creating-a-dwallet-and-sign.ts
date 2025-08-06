@@ -50,7 +50,12 @@ async function main() {
 		userShareEncryptionKeys,
 	);
 
-	const presignRequestEvent = await presign(ikaClient, suiClient, activeDWallet, 0);
+	const presignRequestEvent = await presign(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		SignatureAlgorithm.ECDSA,
+	);
 
 	const presignObject = await ikaClient.getPresign(presignRequestEvent.event_data.presign_id);
 
