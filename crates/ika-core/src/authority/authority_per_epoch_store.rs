@@ -219,6 +219,11 @@ pub struct ExecutionIndicesWithStats {
 }
 
 pub trait AuthorityPerEpochStoreTrait {
+    fn insert_pending_dwallet_checkpoint(
+        &self,
+        checkpoint: PendingDWalletCheckpoint,
+    ) -> IkaResult<()>;
+    
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>>;
 
     fn next_dwallet_mpc_message(
@@ -247,6 +252,16 @@ pub trait AuthorityPerEpochStoreTrait {
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
+    fn insert_pending_dwallet_checkpoint(
+        &self,
+        checkpoint: PendingDWalletCheckpoint,
+    ) -> IkaResult<()> {
+        let tables = self.tables()?;
+        Ok(tables
+            .pending_dwallet_checkpoints
+            .insert(&checkpoint.height(), &checkpoint)?)
+    }
+
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
         self.tables()
             .map_err(|e| e.into())
@@ -1428,17 +1443,7 @@ impl AuthorityPerEpochStore {
             }
         }
     }
-
-    pub fn insert_pending_dwallet_checkpoint(
-        &self,
-        checkpoint: PendingDWalletCheckpoint,
-    ) -> IkaResult<()> {
-        let tables = self.tables()?;
-        Ok(tables
-            .pending_dwallet_checkpoints
-            .insert(&checkpoint.height(), &checkpoint)?)
-    }
-
+    
     pub fn get_pending_dwallet_checkpoints(
         &self,
         last: Option<DWalletCheckpointHeight>,

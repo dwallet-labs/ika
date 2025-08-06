@@ -66,6 +66,7 @@ struct EpochStoreSubmitToConsensus {
     consensus_adapter: Arc<dyn SubmitToConsensus>,
 }
 
+#[async_trait::async_trait]
 impl MPCSubmitToConsensus for EpochStoreSubmitToConsensus {
     async fn submit_to_consensus(&self, transactions: &[ConsensusTransaction]) -> IkaResult {
         self.consensus_adapter
@@ -92,7 +93,7 @@ impl DWalletMPCService {
     pub fn new(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         exit: Receiver<()>,
-        consensus_adapter: Arc<dyn SubmitToConsensus>,
+        consensus_adapter: Arc<dyn MPCSubmitToConsensus>,
         node_config: NodeConfig,
         sui_client: Arc<SuiConnectorClient>,
         dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
