@@ -65,6 +65,8 @@ async function main() {
 		sourceEncryptedUserSecretKeyShare,
 		userShareEncryptionKeys,
 	);
+
+	// AFTER TRANSFER, DESTINATION NEEDS TO ACCEPT ENCRYPTED USER SECRET KEY SHARE.
 }
 
 export { main };
