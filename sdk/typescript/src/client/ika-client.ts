@@ -14,6 +14,7 @@ import {
 	IkaConfig,
 	PartialUserSignature,
 	Presign,
+	SharedObjectOwner,
 	SystemInner,
 } from './types';
 import { objResToBcs } from './utils';
@@ -269,7 +270,7 @@ export class IkaClient {
 					this.ikaConfig.objects.ikaDWalletCoordinator.objectID,
 					this.ikaConfig.objects.ikaSystemObject.objectID,
 				],
-				options: { showBcs: true },
+				options: { showBcs: true, showOwner: true },
 			});
 
 			const coordinatorParsed = CoordinatorModule.DWalletCoordinator.fromBase64(
@@ -316,6 +317,12 @@ export class IkaClient {
 
 			this.ikaConfig.packages.ikaSystemPackage = systemParsed.package_id;
 			this.ikaConfig.packages.ikaDwallet2pcMpcPackage = coordinatorParsed.package_id;
+
+			this.ikaConfig.objects.ikaSystemObject.initialSharedVersion =
+				(system.data?.owner as unknown as SharedObjectOwner)?.Shared?.initial_shared_version ?? 0;
+			this.ikaConfig.objects.ikaDWalletCoordinator.initialSharedVersion =
+				(coordinator.data?.owner as unknown as SharedObjectOwner)?.Shared?.initial_shared_version ??
+				0;
 
 			return {
 				coordinatorInner: coordinatorInnerParsed,

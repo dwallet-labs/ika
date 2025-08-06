@@ -68,3 +68,9 @@ export const SignatureAlgorithm = {
 } as const;
 
 export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];
+
+export type SharedObjectOwner = {
+	Shared: {
+		initial_shared_version: number;
+	};
+};
