@@ -137,7 +137,7 @@ impl DWalletMPCService {
                 )
         }
     }
-    
+
     /// Starts the DWallet MPC service.
     ///
     /// This service periodically reads DWallet MPC messages from the local database
