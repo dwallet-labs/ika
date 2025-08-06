@@ -3,7 +3,7 @@ import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions
 import * as coordinatorTx from '../tx/coordinator';
 import { createSignCentralizedOutput, PreparedSecondRound } from './cryptography';
 import { IkaClient } from './ika-client';
-import { DWallet, EncryptedUserSecretKeyShare, Presign } from './types';
+import { DWallet, EncryptedUserSecretKeyShare, PartialUserSignature, Presign } from './types';
 import { UserShareEncrytionKeys } from './user-share-encryption-keys';
 import { stringToUint8Array } from './utils';
 
@@ -559,7 +559,7 @@ export class IkaTransaction {
 
 	futureSign({
 		dWallet,
-		unverifiedPartialUserSignatureCap,
+		partialUserSignature,
 		message,
 		hashScheme,
 		signatureAlgorithm,
@@ -567,7 +567,7 @@ export class IkaTransaction {
 		suiCoin,
 	}: {
 		dWallet: DWallet;
-		unverifiedPartialUserSignatureCap: string;
+		partialUserSignature: PartialUserSignature;
 		message: Uint8Array;
 		hashScheme: number;
 		signatureAlgorithm: number;
@@ -587,7 +587,7 @@ export class IkaTransaction {
 			this.ikaClient.ikaConfig,
 			coordinatorTx.verifyPartialUserSignatureCap(
 				this.ikaClient.ikaConfig,
-				this.transaction.object(unverifiedPartialUserSignatureCap),
+				this.transaction.object(partialUserSignature.cap_id),
 				this.transaction,
 			),
 			approvedMessage,

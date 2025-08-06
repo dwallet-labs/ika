@@ -45,3 +45,4 @@ export type DWalletCap = typeof CoordinatorInnerModule.DWalletCap.$inferType;
 export type Presign = typeof CoordinatorInnerModule.PresignSession.$inferType;
 export type EncryptedUserSecretKeyShare =
 	typeof CoordinatorInnerModule.EncryptedUserSecretKeyShare.$inferType;
+export type PartialUserSignature = typeof CoordinatorInnerModule.PartialUserSignature.$inferType;

@@ -69,11 +69,15 @@ async function main() {
 		0,
 	);
 
+	const partialUserSignature = await ikaClient.getPartialUserSignature(
+		futureSignRequest.event_data.partial_centralized_signed_message_id,
+	);
+
 	await futureSign(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		futureSignRequest.event_data.partial_centralized_signed_message_id,
+		partialUserSignature,
 		userShareEncryptionKeys,
 		Buffer.from('hello world'),
 		0,

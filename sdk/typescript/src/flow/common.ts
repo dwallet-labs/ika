@@ -6,7 +6,12 @@ import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 
 import { IkaClient, IkaTransaction } from '../client';
 import { PreparedSecondRound } from '../client/cryptography';
-import { DWallet, EncryptedUserSecretKeyShare, Presign } from '../client/types';
+import {
+	DWallet,
+	EncryptedUserSecretKeyShare,
+	PartialUserSignature,
+	Presign,
+} from '../client/types';
 import { UserShareEncrytionKeys } from '../client/user-share-encryption-keys';
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../generated/ika_dwallet_2pc_mpc/sessions_manager.js';
@@ -379,7 +384,7 @@ export async function futureSign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	unverifiedPartialUserSignatureCap: string,
+	partialUserSignature: PartialUserSignature,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	message: Uint8Array,
 	hashScheme: number,
@@ -395,7 +400,7 @@ export async function futureSign(
 
 	ikaTransaction.futureSign({
 		dWallet,
-		unverifiedPartialUserSignatureCap,
+		partialUserSignature,
 		message,
 		hashScheme,
 		signatureAlgorithm,

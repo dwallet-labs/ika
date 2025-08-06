@@ -12,6 +12,7 @@ import {
 	EncryptedUserSecretKeyShare,
 	IkaClientOptions,
 	IkaConfig,
+	PartialUserSignature,
 	Presign,
 	SystemInner,
 } from './types';
@@ -114,6 +115,19 @@ export class IkaClient {
 			})
 			.then((obj) => {
 				return CoordinatorInnerModule.EncryptedUserSecretKeyShare.fromBase64(objResToBcs(obj));
+			});
+	}
+
+	async getPartialUserSignature(
+		partialCentralizedSignedMessageID: string,
+	): Promise<PartialUserSignature> {
+		return this.client
+			.getObject({
+				id: partialCentralizedSignedMessageID,
+				options: { showBcs: true },
+			})
+			.then((obj) => {
+				return CoordinatorInnerModule.PartialUserSignature.fromBase64(objResToBcs(obj));
 			});
 	}
 
