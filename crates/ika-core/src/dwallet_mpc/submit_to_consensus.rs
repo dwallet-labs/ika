@@ -10,7 +10,7 @@ pub trait DWalletMPCSubmitToConsensus: Sync + Send + 'static {
 }
 
 #[async_trait::async_trait]
-impl DWalletMPCSubmitToConsensus for EpochStoreSubmitToConsensus {
+impl<T: SubmitToConsensus> DWalletMPCSubmitToConsensus for EpochStoreSubmitToConsensus<T> {
     async fn submit_to_consensus(&self, transactions: &[ConsensusTransaction]) -> IkaResult {
         self.consensus_adapter
             .submit_to_consensus(transactions, &self.epoch_store)
@@ -18,19 +18,16 @@ impl DWalletMPCSubmitToConsensus for EpochStoreSubmitToConsensus {
     }
 }
 
-pub struct EpochStoreSubmitToConsensus {
+pub struct EpochStoreSubmitToConsensus<T: SubmitToConsensus> {
     pub(crate) epoch_store: Arc<AuthorityPerEpochStore>,
-    pub(crate) consensus_adapter: Arc<dyn SubmitToConsensus>,
+    pub(crate) consensus_adapter: T,
 }
 
-impl EpochStoreSubmitToConsensus {
-    pub fn new(
-        epoch_store: Arc<AuthorityPerEpochStore>,
-        consensus_adapter: Arc<dyn SubmitToConsensus>,
-    ) -> Self {
-        Self {
+impl<T: SubmitToConsensus> EpochStoreSubmitToConsensus<T> {
+    pub fn new(epoch_store: Arc<AuthorityPerEpochStore>, consensus_adapter: T) -> Arc<Self> {
+        Arc::new(Self {
             epoch_store,
             consensus_adapter,
-        }
+        })
     }
 }

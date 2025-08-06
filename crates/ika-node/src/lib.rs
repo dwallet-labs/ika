@@ -906,10 +906,7 @@ impl IkaNode {
         let mut dwallet_mpc_service = DWalletMPCService::new(
             epoch_store.clone(),
             dwallet_mpc_service_exit_receiver,
-            Arc::new(EpochStoreSubmitToConsensus::new(
-                epoch_store.clone(),
-                Arc::new(consensus_adapter.clone()),
-            )),
+            EpochStoreSubmitToConsensus::new(epoch_store.clone(), consensus_adapter.clone()),
             config.clone(),
             checkpoint_service.clone(),
             dwallet_mpc_metrics.clone(),
