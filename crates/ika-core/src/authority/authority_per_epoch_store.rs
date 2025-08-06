@@ -218,6 +218,33 @@ pub struct ExecutionIndicesWithStats {
     pub stats: ConsensusStats,
 }
 
+pub trait AuthorityPerEpochStoreTrait {
+    fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>>;
+
+    fn next_dwallet_mpc_message(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>>;
+
+    fn next_dwallet_mpc_output(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>>;
+
+    fn next_verified_dwallet_checkpoint_message(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>>;
+    
+    fn name(&self) -> &AuthorityName;
+    
+    fn epoch(&self) -> EpochId;
+    
+    fn packages_config(&self) -> &IkaNetworkConfig;
+    
+    fn committee(&self) -> &Arc<Committee>;
+}
+
 pub struct AuthorityPerEpochStore {
     /// The name of this authority.
     pub(crate) name: AuthorityName,
