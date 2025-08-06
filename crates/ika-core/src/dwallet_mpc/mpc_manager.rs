@@ -140,8 +140,6 @@ impl DWalletMPCManager {
 
         let mpc_computations_orchestrator =
             CryptographicComputationsOrchestrator::try_new(root_seed.clone())?;
-        let party_id = authority_name_to_party_id_from_committee(&committee, &validator_name)?;
-
         let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
 
         let validator_private_data = ValidatorPrivateDecryptionKeyData {
@@ -155,7 +153,7 @@ impl DWalletMPCManager {
         // We want to "forget" the malicious actors from the previous epoch and start from scratch.
         Ok(Self {
             mpc_sessions: HashMap::new(),
-            party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
+            party_id,
             epoch_id,
             packages_config,
             access_structure,
