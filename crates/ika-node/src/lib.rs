@@ -558,7 +558,7 @@ impl IkaNode {
                 node_copy,
                 sui_client_clone,
                 dwallet_mpc_metrics,
-                sui_data_receivers.clone()
+                sui_data_receivers.clone(),
             )
             .await;
             if let Err(error) = result {
