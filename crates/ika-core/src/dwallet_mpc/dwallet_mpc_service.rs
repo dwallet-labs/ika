@@ -41,7 +41,7 @@ use ika_types::message::{
 };
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKeyData, MPCRequestInput, SessionIdentifier,
+    DBSuiEvent, DWalletNetworkEncryptionKeyData, MPCRequestInput, SessionIdentifier,
 };
 use ika_types::sui::{DWalletCoordinatorInner, EpochStartSystem};
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -53,6 +53,7 @@ use std::time::Duration;
 use sui_json_rpc_types::SuiEvent;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
+use tokio::sync::watch::error::RecvError;
 use tokio::sync::watch::{Receiver, Ref};
 use tracing::{debug, error, info, warn};
 
@@ -136,6 +137,37 @@ impl DWalletMPCService {
         }
     }
 
+    async fn fetch_new_uncompleted_events(&mut self) -> Vec<DBSuiEvent> {
+        let new_events_fetched = self
+            .sui_data_receivers
+            .uncompleted_events_receiver
+            .has_changed()
+            .unwrap_or_else(|err| {
+                error!(
+                    error=?err,
+                    "failed to check if uncompleted events receiver has changed"
+                );
+                false
+            });
+        if !new_events_fetched {
+            return vec![];
+        }
+        let (uncompleted_events, epoch_id) = self
+            .sui_data_receivers
+            .uncompleted_events_receiver
+            .borrow_and_update()
+            .clone();
+        if epoch_id != self.epoch_store.epoch() {
+            info!(
+                ?epoch_id,
+                our_epoch_id = self.epoch_store.epoch(),
+                "Received uncompleted events for a different epoch, ignoring"
+            );
+            return vec![];
+        }
+        uncompleted_events
+    }
+
     /// Starts the DWallet MPC service.
     ///
     /// This service periodically reads DWallet MPC messages from the local database
@@ -161,7 +193,7 @@ impl DWalletMPCService {
             // Note: when we spawn, `loop_index == 0`, so we fetch uncompleted events on spawn.
             if loop_index % 1500 == 0 {
                 // TODO (this pr)
-                // events = self.fetch_uncompleted_events().await;
+                events = self.fetch_new_uncompleted_events().await;
             }
             loop_index += 1;
             match self.exit.has_changed() {
