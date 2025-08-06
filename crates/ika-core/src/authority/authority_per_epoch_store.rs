@@ -285,26 +285,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
             tables.next_verified_dwallet_checkpoint_message(last_consensus_round)
         })
     }
-
-    fn name(&self) -> AuthorityName {
-        self.name
-    }
-
-    fn epoch(&self) -> EpochId {
-        self.committee.epoch
-    }
-
-    fn packages_config(&self) -> &IkaNetworkConfig {
-        &self.packages_config
-    }
-
-    fn committee(&self) -> &Arc<Committee> {
-        &self.committee
-    }
-
-    fn protocol_config(&self) -> &ProtocolConfig {
-        &self.protocol_config
-    }
 }
 
 pub struct AuthorityPerEpochStore {
