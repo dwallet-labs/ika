@@ -334,6 +334,41 @@ export async function sign(
 	await executeTransaction(suiClient, transaction);
 }
 
+export async function signPublicUserShare(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	presign: Presign,
+	message: Uint8Array,
+	hashScheme: Hash,
+	signatureAlgorithm: SignatureAlgorithm,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+	});
+
+	await ikaTransaction.signPublicUserShare({
+		dWallet,
+		presign,
+		message,
+		hashScheme,
+		signatureAlgorithm,
+		ikaCoin: coinWithBalance({
+			type: '0x2::ika::IKA',
+			balance: 0,
+		})(transaction),
+		suiCoin: coinWithBalance({
+			type: '0x2::sui::SUI',
+			balance: 0,
+		})(transaction),
+	});
+
+	await executeTransaction(suiClient, transaction);
+}
+
 export async function requestFutureSign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,

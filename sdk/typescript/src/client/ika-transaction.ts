@@ -12,7 +12,7 @@ import {
 	SignatureAlgorithm,
 } from './types';
 import { UserShareEncrytionKeys } from './user-share-encryption-keys';
-import { stringToUint8Array } from './utils';
+import { parseNumbersToBytes, stringToUint8Array } from './utils';
 
 export type IkaTransactionParams = {
 	ikaClient: IkaClient;
@@ -425,6 +425,67 @@ export class IkaTransaction {
 					encryptedUserSecretKeyShare,
 					await this.ikaClient.getNetworkPublicParameters(),
 				),
+				Uint8Array.from(presign.state.Completed?.presign),
+				message,
+				hashScheme,
+			),
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		return this;
+	}
+
+	async signPublicUserShare({
+		dWallet,
+		signatureAlgorithm,
+		hashScheme,
+		presign,
+		message,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: DWallet;
+		signatureAlgorithm: SignatureAlgorithm;
+		hashScheme: Hash;
+		presign: Presign;
+		message: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		if (!presign.state.Completed?.presign) {
+			throw new Error('Presign is not completed');
+		}
+
+		if (!dWallet.public_user_secret_key_share) {
+			throw new Error('User share must be public to use this method');
+		}
+
+		const messageApproval = coordinatorTx.approveMessage(
+			this.ikaClient.ikaConfig,
+			dWallet.dwallet_cap_id,
+			signatureAlgorithm,
+			hashScheme,
+			message,
+			this.transaction,
+		);
+
+		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
+			this.ikaClient.ikaConfig,
+			presign.id.id,
+			this.transaction,
+		);
+
+		coordinatorTx.requestSign(
+			this.ikaClient.ikaConfig,
+			verifiedPresignCap,
+			messageApproval,
+			createSignCentralizedOutput(
+				await this.ikaClient.getNetworkPublicParameters(),
+				dWallet,
+				parseNumbersToBytes(dWallet.public_user_secret_key_share),
 				Uint8Array.from(presign.state.Completed?.presign),
 				message,
 				hashScheme,
