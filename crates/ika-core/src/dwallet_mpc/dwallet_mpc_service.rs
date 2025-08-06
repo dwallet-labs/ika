@@ -53,7 +53,7 @@ use std::time::Duration;
 use sui_json_rpc_types::SuiEvent;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
-use tokio::sync::watch::Receiver;
+use tokio::sync::watch::{Receiver, Ref};
 use tracing::{debug, error, info, warn};
 
 const DELAY_NO_ROUNDS_SEC: u64 = 2;
@@ -123,18 +123,18 @@ impl DWalletMPCService {
         }
     }
 
-    // TODO (this pr)
-    // async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
-    //     let coordinator_state = self.sui_client.must_get_dwallet_coordinator_inner().await;
-    //
-    //     let DWalletCoordinatorInner::V1(inner) = coordinator_state;
-    //     self.dwallet_mpc_manager
-    //         .sync_last_session_to_complete_in_current_epoch(
-    //             inner
-    //                 .sessions_manager
-    //                 .last_user_initiated_session_to_complete_in_current_epoch,
-    //         );
-    // }
+    async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
+        let last_session_to_complete_in_current_epoch = self
+            .sui_data_receivers
+            .last_session_to_complete_in_current_epoch_receiver
+            .borrow();
+        if last_session_to_complete_in_current_epoch.0 == self.epoch_store.epoch() {
+            self.dwallet_mpc_manager
+                .sync_last_session_to_complete_in_current_epoch(
+                    last_session_to_complete_in_current_epoch.1,
+                )
+        }
+    }
 
     /// Starts the DWallet MPC service.
     ///
@@ -196,7 +196,7 @@ impl DWalletMPCService {
             }
 
             debug!("Running DWalletMPCService loop");
-            // self.sync_last_session_to_complete_in_current_epoch().await;
+            self.sync_last_session_to_complete_in_current_epoch().await;
 
             // Receive **new** dWallet MPC events and save them in the local DB.
             match self.receive_new_sui_events() {
