@@ -1,10 +1,11 @@
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator';
-import { PreparedSecondRound, stringToUint8Array } from './cryptography';
+import { PreparedSecondRound } from './cryptography';
 import { IkaClient } from './ika-client';
 import { DWallet } from './types';
 import { UserShareEncrytionKeys } from './user-share-encryption-keys';
+import { stringToUint8Array } from './utils';
 
 export type IkaTransactionParams = {
 	ikaClient: IkaClient;

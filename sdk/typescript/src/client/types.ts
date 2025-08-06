@@ -38,53 +38,6 @@ export interface IkaClientOptions {
 	cache?: boolean;
 }
 
-export interface Coordinator {
-	fields: {
-		id: {
-			id: string;
-		};
-		migration_epoch: null;
-		new_package_id: null;
-		package_id: string;
-		version: string;
-	};
-}
-
-export interface System extends Coordinator {}
-
-export interface DWalletNetworkDecryptionKey {
-	fields: {
-		id: { id: string };
-		network_dkg_public_output: MoveObject<{
-			contents: {
-				fields: {
-					id: { id: string };
-				};
-			};
-		}>;
-	};
-}
-
-export interface MoveObject<TFields> {
-	fields: TFields;
-}
-
-export interface MoveDynamicField {
-	fields: {
-		name: string;
-		value: Uint8Array;
-	};
-}
-
-export interface StartDKGFirstRoundEvent {
-	event_data: {
-		dwallet_id: string;
-		dwallet_cap_id: string;
-		dwallet_network_encryption_key_id: string;
-	};
-	session_identifier_preimage: Uint8Array;
-}
-
 export type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorInner.$inferType;
 export type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
 export type DWallet = typeof CoordinatorInnerModule.DWallet.$inferType;

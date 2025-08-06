@@ -1,8 +1,8 @@
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
-import { createClassGroupsKeypair, stringToUint8Array } from './cryptography';
+import { createClassGroupsKeypair } from './cryptography';
 import { DWallet } from './types';
-import { parseNumbersToBytes } from './utils';
+import { parseNumbersToBytes, stringToUint8Array } from './utils';
 
 export class UserShareEncrytionKeys {
 	encryptionKey: Uint8Array;
