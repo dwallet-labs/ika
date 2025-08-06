@@ -14,7 +14,9 @@ use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId};
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::MovePackageDigest;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME};
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
+};
 use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -104,7 +106,7 @@ impl SuiConnectorService {
             new_events_sender,
             end_of_publish_sender,
             last_session_to_complete_in_current_epoch_sender,
-            uncompleted_events_sender
+            uncompleted_events_sender,
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;
