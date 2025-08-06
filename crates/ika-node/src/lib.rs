@@ -490,7 +490,9 @@ impl IkaNode {
             network_keys_receiver,
             new_events_receiver,
             next_epoch_committee_receiver,
+            // TODO
             last_session_to_complete_in_current_epoch_receiver: watch::channel((0, 0)).1,
+            end_of_publish_receiver,
         };
         let validator_components = if state.is_validator(&epoch_store) {
             let components = Self::construct_validator_components(
@@ -554,12 +556,9 @@ impl IkaNode {
         spawn_monitored_task!(async move {
             let result = Self::monitor_reconfiguration(
                 node_copy,
-                network_keys_receiver.clone(),
-                new_events_receiver.resubscribe(),
-                next_epoch_committee_receiver.clone(),
                 sui_client_clone,
                 dwallet_mpc_metrics,
-                end_of_publish_receiver.clone(),
+                sui_data_receivers.clone()
             )
             .await;
             if let Err(error) = result {
@@ -1127,16 +1126,9 @@ impl IkaNode {
     /// after which it initiates reconfiguration of the entire system.
     pub async fn monitor_reconfiguration(
         self: Arc<Self>,
-        network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        new_events_receiver: broadcast::Receiver<Vec<SuiEvent>>,
-        last_session_to_complete_in_current_epoch_receiver: tokio::sync::watch::Receiver<(
-            EpochId,
-            u64,
-        )>,
-        next_epoch_committee_receiver: Receiver<Committee>,
         sui_client: Arc<SuiConnectorClient>,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-        end_of_publish_receiver: Receiver<Option<u64>>,
+        sui_data_receivers: SuiDataReceivers,
     ) -> Result<()> {
         let sui_client_clone2 = sui_client.clone();
         loop {
@@ -1181,7 +1173,7 @@ impl IkaNode {
                     let end_of_publish_sender = EndOfPublishSender::new(
                         Arc::downgrade(&cur_epoch_store),
                         Arc::new(components.consensus_adapter.clone()),
-                        end_of_publish_receiver.clone(),
+                        sui_data_receivers.end_of_publish_receiver.clone(),
                         cur_epoch_store.epoch(),
                     );
 

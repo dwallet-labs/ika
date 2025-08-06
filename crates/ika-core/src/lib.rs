@@ -39,6 +39,7 @@ pub struct SuiDataReceivers {
     pub new_events_receiver: broadcast::Receiver<Vec<SuiEvent>>,
     pub next_epoch_committee_receiver: Receiver<Committee>,
     pub last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
+    pub end_of_publish_receiver: Receiver<Option<u64>>,
 }
 
 impl Clone for SuiDataReceivers {
