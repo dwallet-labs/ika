@@ -1,15 +1,19 @@
 import { SuiClient } from '@mysten/sui/client';
+import { Transaction } from '@mysten/sui/dist/cjs/transactions';
+import { toHex } from '@mysten/sui/dist/cjs/utils';
 
 import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator';
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner';
 import * as SystemModule from '../generated/ika_system/system';
 import * as SystemInnerModule from '../generated/ika_system/system_inner';
+import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors';
 import {
 	CoordinatorInner,
 	DWallet,
 	DWalletCap,
 	EncryptedUserSecretKeyShare,
+	EncryptionKey,
 	IkaClientOptions,
 	IkaConfig,
 	PartialUserSignature,
@@ -227,6 +231,26 @@ export class IkaClient {
 
 			throw new NetworkError('Failed to get decryption key public output ID', error as Error);
 		}
+	}
+
+	async getActiveEncryptionKey(address: string): Promise<EncryptionKey> {
+		const tx = new Transaction();
+		getActiveEncryptionKeyFromCoordinator(this.ikaConfig, address, tx);
+
+		const res = await this.client.devInspectTransactionBlock({
+			sender: address,
+			transactionBlock: tx,
+		});
+
+		const objIDArray = new Uint8Array(res.results?.at(0)?.returnValues?.at(0)?.at(0) as number[]);
+		const objID = toHex(objIDArray);
+
+		const obj = await this.client.getObject({
+			id: objID,
+			options: { showBcs: true },
+		});
+
+		return CoordinatorInnerModule.EncryptionKey.fromBase64(objResToBcs(obj));
 	}
 
 	async getEpoch(): Promise<number> {

@@ -3,6 +3,7 @@ import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions
 import * as coordinatorTx from '../tx/coordinator';
 import {
 	createSignCentralizedOutput,
+	encryptSecretShare,
 	PreparedImportDWalletVerification,
 	PreparedSecondRound,
 } from './cryptography';
@@ -883,6 +884,51 @@ export class IkaTransaction {
 			suiCoin,
 			this.transaction,
 		);
+	}
+
+	async transferEncryptedUserShare({
+		dWallet,
+		destinationSuiAddress,
+		sourceEncryptedUserSecretKeyShare,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: DWallet;
+		destinationSuiAddress: string;
+		sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		if (!this.userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
+		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+
+		const destinationEncryptionKeyObj =
+			await this.ikaClient.getActiveEncryptionKey(destinationSuiAddress);
+
+		coordinatorTx.requestReEncryptUserShareFor(
+			this.ikaClient.ikaConfig,
+			dWallet.id.id,
+			destinationSuiAddress,
+			encryptSecretShare(
+				await this.userShareEncryptionKeys.decryptUserShare(
+					dWallet,
+					sourceEncryptedUserSecretKeyShare,
+					publicParameters,
+				),
+				new Uint8Array(destinationEncryptionKeyObj.encryption_key),
+				publicParameters,
+			),
+			sourceEncryptedUserSecretKeyShare.id.id,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		return this;
 	}
 
 	createSessionIdentifier() {

@@ -597,6 +597,39 @@ export async function signWithImportedDWalletPublic(
 	await executeTransaction(suiClient, transaction);
 }
 
+export async function transferEncryptedUserShare(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	destinationSuiAddress: string,
+	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+		userShareEncryptionKeys,
+	});
+
+	await ikaTransaction.transferEncryptedUserShare({
+		dWallet,
+		destinationSuiAddress,
+		sourceEncryptedUserSecretKeyShare,
+		ikaCoin: coinWithBalance({
+			type: '0x2::ika::IKA',
+			balance: 0,
+		})(transaction),
+		suiCoin: coinWithBalance({
+			type: '0x2::sui::SUI',
+			balance: 0,
+		})(transaction),
+	});
+
+	await executeTransaction(suiClient, transaction);
+}
+
 export async function createSessionIdentifier(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,

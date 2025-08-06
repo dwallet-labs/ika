@@ -49,6 +49,7 @@ export type Presign = typeof CoordinatorInnerModule.PresignSession.$inferType;
 export type EncryptedUserSecretKeyShare =
 	typeof CoordinatorInnerModule.EncryptedUserSecretKeyShare.$inferType;
 export type PartialUserSignature = typeof CoordinatorInnerModule.PartialUserSignature.$inferType;
+export type EncryptionKey = typeof CoordinatorInnerModule.EncryptionKey.$inferType;
 
 export const Hash = {
 	KECCAK256: 0,
