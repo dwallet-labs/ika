@@ -235,14 +235,15 @@ pub trait AuthorityPerEpochStoreTrait {
         &self,
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>>;
-    
-    fn name(&self) -> &AuthorityName;
-    
+
+    fn name(&self) -> AuthorityName;
+
     fn epoch(&self) -> EpochId;
-    
+
     fn packages_config(&self) -> &IkaNetworkConfig;
-    
+
     fn committee(&self) -> &Arc<Committee>;
+    fn protocol_config(&self) -> &ProtocolConfig;
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
@@ -270,8 +271,8 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
             .and_then(|tables| tables.next_verified_dwallet_checkpoint_message(last_consensus_round))
     }
 
-    fn name(&self) -> &AuthorityName {
-        &self.name
+    fn name(&self) -> AuthorityName {
+        self.name
     }
 
     fn epoch(&self) -> EpochId {
@@ -284,6 +285,10 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
 
     fn committee(&self) -> &Arc<Committee> {
         &self.committee
+    }
+
+    fn protocol_config(&self) -> &ProtocolConfig {
+        &self.protocol_config
     }
 }
 
