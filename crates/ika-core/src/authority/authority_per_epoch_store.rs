@@ -245,6 +245,48 @@ pub trait AuthorityPerEpochStoreTrait {
     fn committee(&self) -> &Arc<Committee>;
 }
 
+impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
+    fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
+        self.tables()
+            .map_err(|e| e.into())
+            .and_then(|tables| tables.last_dwallet_mpc_message_round())
+    }
+
+    fn next_dwallet_mpc_message(&self, last_consensus_round: Option<Round>) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
+        self.tables()
+            .map_err(|e| e.into())
+            .and_then(|tables| tables.next_dwallet_mpc_message(last_consensus_round))
+    }
+
+    fn next_dwallet_mpc_output(&self, last_consensus_round: Option<Round>) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
+        self.tables()
+            .map_err(|e| e.into())
+            .and_then(|tables| tables.next_dwallet_mpc_output(last_consensus_round))
+    }
+
+    fn next_verified_dwallet_checkpoint_message(&self, last_consensus_round: Option<Round>) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
+        self.tables()
+            .map_err(|e| e.into())
+            .and_then(|tables| tables.next_verified_dwallet_checkpoint_message(last_consensus_round))
+    }
+
+    fn name(&self) -> &AuthorityName {
+        &self.name
+    }
+
+    fn epoch(&self) -> EpochId {
+        self.committee.epoch
+    }
+
+    fn packages_config(&self) -> &IkaNetworkConfig {
+        &self.packages_config
+    }
+
+    fn committee(&self) -> &Arc<Committee> {
+        &self.committee
+    }
+}
+
 pub struct AuthorityPerEpochStore {
     /// The name of this authority.
     pub(crate) name: AuthorityName,
