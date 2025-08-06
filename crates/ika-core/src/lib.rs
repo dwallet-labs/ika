@@ -4,6 +4,15 @@
 
 extern crate core;
 
+use tokio::sync::watch::Receiver;
+use std::sync::Arc;
+use std::collections::HashMap;
+use sui_types::base_types::{EpochId, ObjectID};
+use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
+use tokio::sync::broadcast;
+use sui_json_rpc_types::SuiEvent;
+use ika_types::committee::Committee;
+
 pub mod authority;
 pub mod consensus_adapter;
 pub mod consensus_handler;
@@ -24,3 +33,23 @@ pub mod dwallet_mpc;
 pub mod sui_connector;
 
 pub mod runtime;
+
+pub struct SuiDataReceivers {
+    pub network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
+    pub new_events_receiver: broadcast::Receiver<Vec<SuiEvent>>,
+    pub next_epoch_committee_receiver: Receiver<Committee>,
+    pub last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
+}
+
+impl Clone for SuiDataReceivers {
+    fn clone(&self) -> Self {
+        Self {
+            network_keys_receiver: self.network_keys_receiver.clone(),
+            new_events_receiver: self.new_events_receiver.resubscribe(),
+            next_epoch_committee_receiver: self.next_epoch_committee_receiver.clone(),
+            last_session_to_complete_in_current_epoch_receiver: self
+                .last_session_to_complete_in_current_epoch_receiver
+                .clone(),
+        }
+    }
+}

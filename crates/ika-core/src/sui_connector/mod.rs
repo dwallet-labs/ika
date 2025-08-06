@@ -46,7 +46,7 @@ pub struct SuiNotifier {
 pub struct SuiConnectorService {
     sui_client: Arc<SuiClient<SuiSdkClient>>,
     sui_executor: SuiExecutor<SuiSdkClient>,
-    network_keys_receiver: watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
+    sui_data_receivers: SuiDataReceivers,
     // todo(zeev): this needs a refactor.
     #[allow(dead_code)]
     task_handles: Vec<JoinHandle<()>>,

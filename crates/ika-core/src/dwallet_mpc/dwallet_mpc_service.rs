@@ -54,6 +54,7 @@ use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
+use crate::SuiDataReceivers;
 
 const DELAY_NO_ROUNDS_SEC: u64 = 2;
 const READ_INTERVAL_MS: u64 = 20;
@@ -68,10 +69,9 @@ pub struct DWalletMPCService {
     dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
     dwallet_mpc_manager: DWalletMPCManager,
     exit: Receiver<()>,
-    new_events_receiver: tokio::sync::broadcast::Receiver<Vec<SuiEvent>>,
-    last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
     end_of_publish: bool,
     dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+    pub sui_data_receivers: SuiDataReceivers,
 }
 
 impl DWalletMPCService {
@@ -104,12 +104,11 @@ impl DWalletMPCService {
             committee,
             epoch_id,
             packages_config,
-            network_keys_receiver,
-            next_epoch_committee_receiver,
             node_config,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics.clone(),
+            sui_data_receivers.clone(),
         );
 
         Self {
@@ -120,11 +119,10 @@ impl DWalletMPCService {
             sui_client: sui_client.clone(),
             dwallet_checkpoint_service,
             dwallet_mpc_manager,
-            new_events_receiver,
             exit,
             end_of_publish: false,
             dwallet_mpc_metrics,
-            last_session_to_complete_in_current_epoch_receiver,
+            sui_data_receivers: sui_data_receivers.clone(),
         }
     }
 

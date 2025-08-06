@@ -37,6 +37,7 @@ use sui_types::base_types::ObjectID;
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
+use crate::SuiDataReceivers;
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -73,17 +74,16 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) last_session_to_complete_in_current_epoch: u64,
     pub(crate) recognized_self_as_malicious: bool,
     pub(crate) network_keys: Box<DwalletMPCNetworkKeys>,
-    network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     /// Events that wait for the network key to update.
     /// Once we get the network key, these events will be executed.
     pub(crate) events_pending_for_network_key: HashMap<ObjectID, Vec<DWalletMPCEvent>>,
     pub(crate) events_pending_for_next_active_committee: Vec<DWalletMPCEvent>,
-    pub(crate) next_epoch_committee_receiver: watch::Receiver<Committee>,
     pub(crate) next_active_committee: Option<Committee>,
     pub(crate) dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 
     network_dkg_third_round_delay: u64,
     decryption_key_reconfiguration_third_round_delay: u64,
+    sui_data_receivers: SuiDataReceivers,
 }
 
 impl DWalletMPCManager {
@@ -92,24 +92,22 @@ impl DWalletMPCManager {
         committee: Arc<Committee>,
         epoch_id: EpochId,
         packages_config: IkaNetworkConfig,
-        network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        next_epoch_committee_receiver: Receiver<Committee>,
         node_config: NodeConfig,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        sui_data_receivers: SuiDataReceivers,
     ) -> Self {
         Self::try_new(
             validator_name,
             committee,
             epoch_id,
             packages_config,
-            network_keys_receiver,
-            next_epoch_committee_receiver,
             node_config.clone(),
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics,
+            sui_data_receivers,
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -123,12 +121,11 @@ impl DWalletMPCManager {
         committee: Arc<Committee>,
         epoch_id: EpochId,
         packages_config: IkaNetworkConfig,
-        network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        next_epoch_committee_receiver: watch::Receiver<Committee>,
         node_config: NodeConfig,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        sui_data_receivers: SuiDataReceivers,
     ) -> DwalletMPCResult<Self> {
         let root_seed = node_config
             .root_seed_key_pair
@@ -167,8 +164,7 @@ impl DWalletMPCManager {
             last_session_to_complete_in_current_epoch: 0,
             recognized_self_as_malicious: false,
             network_keys: Box::new(dwallet_network_keys),
-            network_keys_receiver,
-            next_epoch_committee_receiver,
+            sui_data_receivers,
             events_pending_for_next_active_committee: Vec::new(),
             events_pending_for_network_key: HashMap::new(),
             dwallet_mpc_metrics,

@@ -27,7 +27,7 @@ use ika_types::sui::SystemInner;
 use sui_types::base_types::{ConciseableName, ObjectID};
 use tap::tap::TapFallible;
 use tokio::runtime::Handle;
-use tokio::sync::{Mutex, broadcast, watch};
+use tokio::sync::{broadcast, watch, Mutex};
 use tokio::task::JoinSet;
 use tower::ServiceBuilder;
 use tracing::{debug, warn};
@@ -62,7 +62,7 @@ use ika_core::storage::RocksDbStore;
 use ika_network::discovery::TrustedPeerChangeEvent;
 use ika_network::{discovery, state_sync};
 use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
-use mysten_metrics::{RegistryService, spawn_monitored_task};
+use mysten_metrics::{spawn_monitored_task, RegistryService};
 use sui_json_rpc_types::SuiEvent;
 use sui_macros::{fail_point_async, replay_log};
 use sui_storage::{FileCompression, StorageFormat};
@@ -183,6 +183,7 @@ pub use simulator::set_jwk_injector;
 #[cfg(msim)]
 use simulator::*;
 use tokio::sync::watch::Receiver;
+use ika_core::SuiDataReceivers;
 
 pub struct IkaNode {
     config: NodeConfig,
@@ -224,26 +225,6 @@ impl fmt::Debug for IkaNode {
 }
 
 const EVENTS_CHANNEL_BUFFER_SIZE: usize = 10_000;
-
-pub struct SuiDataReceivers {
-    pub network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-    pub new_events_receiver: broadcast::Receiver<Vec<SuiEvent>>,
-    pub next_epoch_committee_receiver: Receiver<Committee>,
-    pub last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
-}  
-
-impl Clone for SuiDataReceivers {
-    fn clone(&self) -> Self {
-        Self {
-            network_keys_receiver: self.network_keys_receiver.clone(),
-            new_events_receiver: self.new_events_receiver.resubscribe(),
-            next_epoch_committee_receiver: self.next_epoch_committee_receiver.clone(),
-            last_session_to_complete_in_current_epoch_receiver: self
-                .last_session_to_complete_in_current_epoch_receiver
-                .clone(),
-        }
-    }
-}
 
 impl IkaNode {
     pub async fn start(
