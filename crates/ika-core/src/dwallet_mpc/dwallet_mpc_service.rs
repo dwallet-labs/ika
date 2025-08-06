@@ -7,7 +7,9 @@
 //! and forward them to the [`DWalletMPCManager`].
 
 use crate::authority::AuthorityState;
-use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStore, AuthorityPerEpochStoreTrait};
+use crate::authority::authority_per_epoch_store::{
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
+};
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::consensus_manager::ReplayWaiter;
 use crate::dwallet_checkpoints::{
@@ -314,7 +316,9 @@ impl DWalletMPCService {
         };
 
         while Some(last_consensus_round) > self.last_read_consensus_round {
-            let mpc_messages = self.epoch_store.next_dwallet_mpc_message(self.last_read_consensus_round);
+            let mpc_messages = self
+                .epoch_store
+                .next_dwallet_mpc_message(self.last_read_consensus_round);
             let (mpc_messages_consensus_round, mpc_messages) = match mpc_messages {
                 Ok(mpc_messages) => {
                     if let Some(mpc_messages) = mpc_messages {
@@ -335,7 +339,9 @@ impl DWalletMPCService {
                 }
             };
 
-            let mpc_outputs = self.epoch_store.next_dwallet_mpc_output(self.last_read_consensus_round);
+            let mpc_outputs = self
+                .epoch_store
+                .next_dwallet_mpc_output(self.last_read_consensus_round);
             let (mpc_outputs_consensus_round, mpc_outputs) = match mpc_outputs {
                 Ok(mpc_outputs) => {
                     if let Some(mpc_outputs) = mpc_outputs {
@@ -355,8 +361,9 @@ impl DWalletMPCService {
                 }
             };
 
-            let verified_dwallet_checkpoint_messages =
-                self.epoch_store.next_verified_dwallet_checkpoint_message(self.last_read_consensus_round);
+            let verified_dwallet_checkpoint_messages = self
+                .epoch_store
+                .next_verified_dwallet_checkpoint_message(self.last_read_consensus_round);
             let (
                 verified_dwallet_checkpoint_messages_consensus_round,
                 verified_dwallet_checkpoint_messages,
@@ -542,9 +549,8 @@ impl DWalletMPCService {
                                 let message =
                                     self.new_dwallet_mpc_message(session_identifier, message);
 
-                                if let Err(err) = consensus_adapter
-                                    .submit_to_consensus(&[message])
-                                    .await
+                                if let Err(err) =
+                                    consensus_adapter.submit_to_consensus(&[message]).await
                                 {
                                     error!(
                                         ?session_identifier,
