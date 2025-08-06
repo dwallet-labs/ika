@@ -326,3 +326,88 @@ export async function sign(
 
 	await executeTransaction(suiClient, transaction);
 }
+
+export async function requestFutureSign(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	presign: Presign,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
+	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+	message: Uint8Array,
+	hashScheme: number,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+		userShareEncryptionKeys,
+	});
+
+	await ikaTransaction.requestFutureSignAndKeep({
+		dWallet,
+		presign,
+		encryptedUserSecretKeyShare,
+		message,
+		hashScheme,
+		ikaCoin: coinWithBalance({
+			type: '0x2::ika::IKA',
+			balance: 0,
+		})(transaction),
+		suiCoin: coinWithBalance({
+			type: '0x2::sui::SUI',
+			balance: 0,
+		})(transaction),
+		receiver: '0x0',
+	});
+
+	const result = await executeTransaction(suiClient, transaction);
+
+	const futureSignRequestEvent = result.events?.find((event) => {
+		return (
+			event.type.includes('FutureSignRequestEvent') && event.type.includes('DWalletSessionEvent')
+		);
+	});
+
+	return SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.FutureSignRequestEvent,
+	).fromBase64(futureSignRequestEvent?.bcs as string);
+}
+
+export async function futureSign(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	unverifiedPartialUserSignatureCap: string,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
+	message: Uint8Array,
+	hashScheme: number,
+	signatureAlgorithm: number,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+		userShareEncryptionKeys,
+	});
+
+	ikaTransaction.futureSign({
+		dWallet,
+		unverifiedPartialUserSignatureCap,
+		message,
+		hashScheme,
+		signatureAlgorithm,
+		ikaCoin: coinWithBalance({
+			type: '0x2::ika::IKA',
+			balance: 0,
+		})(transaction),
+		suiCoin: coinWithBalance({
+			type: '0x2::sui::SUI',
+			balance: 0,
+		})(transaction),
+	});
+
+	await executeTransaction(suiClient, transaction);
+}

@@ -480,7 +480,7 @@ export function requestImportedKeySign(
 export function requestFutureSign(
 	ikaConfig: IkaConfig,
 	dwalletId: string,
-	verifiedPresignCap: string,
+	verifiedPresignCap: TransactionObjectArgument,
 	message: Uint8Array,
 	hashScheme: number,
 	messageCentralizedSignature: Uint8Array,
@@ -494,7 +494,7 @@ export function requestFutureSign(
 		arguments: [
 			getCoordinatorObjectRef(ikaConfig, tx),
 			tx.pure.id(dwalletId),
-			tx.object(verifiedPresignCap),
+			verifiedPresignCap,
 			tx.pure(bcs.vector(bcs.u8()).serialize(message)),
 			tx.pure.u32(hashScheme),
 			tx.pure(bcs.vector(bcs.u8()).serialize(messageCentralizedSignature)),
@@ -521,7 +521,7 @@ export function isPartialUserSignatureValid(
 
 export function verifyPartialUserSignatureCap(
 	ikaConfig: IkaConfig,
-	unverifiedPartialUserSignatureCap: string,
+	unverifiedPartialUserSignatureCap: TransactionObjectArgument,
 	tx: Transaction,
 ): TransactionObjectArgument {
 	return tx.moveCall({
@@ -535,8 +535,8 @@ export function verifyPartialUserSignatureCap(
 
 export function requestSignWithPartialUserSignature(
 	ikaConfig: IkaConfig,
-	verifiedPartialUserSignatureCap: string,
-	messageApproval: string,
+	verifiedPartialUserSignatureCap: TransactionObjectArgument,
+	messageApproval: TransactionObjectArgument,
 	sessionIdentifier: TransactionObjectArgument,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,

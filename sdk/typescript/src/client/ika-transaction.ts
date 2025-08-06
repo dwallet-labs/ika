@@ -431,6 +431,175 @@ export class IkaTransaction {
 		return this;
 	}
 
+	async requestFutureSign({
+		dWallet,
+		presign,
+		encryptedUserSecretKeyShare,
+		message,
+		hashScheme,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: DWallet;
+		hashScheme: number;
+		presign: Presign;
+		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+		message: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<{
+		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
+		transaction: IkaTransaction;
+	}> {
+		if (!this.userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
+		if (!presign.state.Completed?.presign) {
+			throw new Error('Presign is not completed');
+		}
+
+		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
+			this.ikaClient.ikaConfig,
+			presign.id.id,
+			this.transaction,
+		);
+
+		const unverifiedPartialUserSignatureCap = coordinatorTx.requestFutureSign(
+			this.ikaClient.ikaConfig,
+			dWallet.id.id,
+			verifiedPresignCap,
+			message,
+			hashScheme,
+			createSignCentralizedOutput(
+				await this.ikaClient.getNetworkPublicParameters(),
+				dWallet,
+				await this.userShareEncryptionKeys.decryptUserShare(
+					dWallet,
+					encryptedUserSecretKeyShare,
+					await this.ikaClient.getNetworkPublicParameters(),
+				),
+				Uint8Array.from(presign.state.Completed?.presign),
+				message,
+				hashScheme,
+			),
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		return {
+			unverifiedPartialUserSignatureCap,
+			transaction: this,
+		};
+	}
+
+	async requestFutureSignAndKeep({
+		dWallet,
+		presign,
+		encryptedUserSecretKeyShare,
+		message,
+		hashScheme,
+		receiver,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: DWallet;
+		presign: Presign;
+		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+		message: Uint8Array;
+		hashScheme: number;
+		receiver: string;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		if (!this.userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
+		if (!presign.state.Completed?.presign) {
+			throw new Error('Presign is not completed');
+		}
+
+		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
+			this.ikaClient.ikaConfig,
+			presign.id.id,
+			this.transaction,
+		);
+
+		const unverifiedPartialUserSignatureCap = coordinatorTx.requestFutureSign(
+			this.ikaClient.ikaConfig,
+			dWallet.id.id,
+			verifiedPresignCap,
+			message,
+			hashScheme,
+			createSignCentralizedOutput(
+				await this.ikaClient.getNetworkPublicParameters(),
+				dWallet,
+				await this.userShareEncryptionKeys.decryptUserShare(
+					dWallet,
+					encryptedUserSecretKeyShare,
+					await this.ikaClient.getNetworkPublicParameters(),
+				),
+				Uint8Array.from(presign.state.Completed?.presign),
+				message,
+				hashScheme,
+			),
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		this.transaction.transferObjects([unverifiedPartialUserSignatureCap], receiver);
+
+		return this;
+	}
+
+	futureSign({
+		dWallet,
+		unverifiedPartialUserSignatureCap,
+		message,
+		hashScheme,
+		signatureAlgorithm,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: DWallet;
+		unverifiedPartialUserSignatureCap: string;
+		message: Uint8Array;
+		hashScheme: number;
+		signatureAlgorithm: number;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		const approvedMessage = coordinatorTx.approveMessage(
+			this.ikaClient.ikaConfig,
+			dWallet.dwallet_cap_id,
+			signatureAlgorithm,
+			hashScheme,
+			message,
+			this.transaction,
+		);
+
+		coordinatorTx.requestSignWithPartialUserSignature(
+			this.ikaClient.ikaConfig,
+			coordinatorTx.verifyPartialUserSignatureCap(
+				this.ikaClient.ikaConfig,
+				this.transaction.object(unverifiedPartialUserSignatureCap),
+				this.transaction,
+			),
+			approvedMessage,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.transaction,
+		);
+
+		return this;
+	}
+
 	private createSessionIdentifier() {
 		const freshObjectAddress = this.transaction.moveCall({
 			target: `0x2::tx_context::fresh_object_address`,
