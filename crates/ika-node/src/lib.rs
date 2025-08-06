@@ -905,7 +905,7 @@ impl IkaNode {
             dwallet_mpc_service_exit_receiver,
             Arc::new(EpochStoreSubmitToConsensus::new(
                 epoch_store.clone(),
-                consensus_adapter.clone(),
+                Arc::new(consensus_adapter.clone()),
             )),
             config.clone(),
             sui_client,
