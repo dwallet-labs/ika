@@ -350,7 +350,7 @@ export async function signPublicUserShare(
 		transaction,
 	});
 
-	await ikaTransaction.signPublicUserShare({
+	await ikaTransaction.signPublic({
 		dWallet,
 		presign,
 		message,

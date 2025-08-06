@@ -438,7 +438,7 @@ export class IkaTransaction {
 		return this;
 	}
 
-	async signPublicUserShare({
+	async signPublic({
 		dWallet,
 		signatureAlgorithm,
 		hashScheme,
