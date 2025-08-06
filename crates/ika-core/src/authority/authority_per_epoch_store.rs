@@ -254,7 +254,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     }
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
-        let tables = self.tables().map_err(|e| e.into())?;
+        let tables = self.tables()?;
         Ok(tables
             .dwallet_mpc_messages
             .reversed_safe_iter_with_bounds(None, None)?
