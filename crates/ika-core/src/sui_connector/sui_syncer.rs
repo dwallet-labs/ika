@@ -116,21 +116,24 @@ where
         sui_client: Arc<SuiClient<C>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
     ) {
-        let coordinator_state = sui_client.must_get_dwallet_coordinator_inner().await;
+        loop {
+            let coordinator_state = sui_client.must_get_dwallet_coordinator_inner().await;
 
-        let DWalletCoordinatorInner::V1(inner) = coordinator_state;
-        if let Err(err) = last_session_to_complete_in_current_epoch_sender.send((
-            inner.current_epoch,
-            inner
-                .sessions_manager
-                .last_user_initiated_session_to_complete_in_current_epoch,
-        )) {
-            error!(
-                error=?err,
-                epoch=?inner.current_epoch,
-                last_session_to_complete_in_current_epoch=?inner.sessions_manager.last_user_initiated_session_to_complete_in_current_epoch,
-                "failed to send last session to complete in current epoch",
-            )
+            let DWalletCoordinatorInner::V1(inner) = coordinator_state;
+            if let Err(err) = last_session_to_complete_in_current_epoch_sender.send((
+                inner.current_epoch,
+                inner
+                    .sessions_manager
+                    .last_user_initiated_session_to_complete_in_current_epoch,
+            )) {
+                error!(
+                    error=?err,
+                    epoch=?inner.current_epoch,
+                    last_session_to_complete_in_current_epoch=?inner.sessions_manager.last_user_initiated_session_to_complete_in_current_epoch,
+                    "failed to send last session to complete in current epoch",
+                )
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
