@@ -129,7 +129,7 @@
 		"cross-env": "^7.0.3",
 		"graphql-config": "^5.1.5",
 		"msw": "^2.8.4",
-		"tmp": "^0.2.3",
+		"tmp": "^0.2.4",
 		"ts-retry-promise": "^0.8.1",
 		"typescript": "^5.8.3",
 		"vite": "6.3.5",
