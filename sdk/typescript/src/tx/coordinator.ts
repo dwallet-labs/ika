@@ -455,8 +455,8 @@ export function requestSign(
 
 export function requestImportedKeySign(
 	ikaConfig: IkaConfig,
-	verifiedPresignCap: string,
-	importedKeyMessageApproval: string,
+	verifiedPresignCap: TransactionObjectArgument,
+	importedKeyMessageApproval: TransactionObjectArgument,
 	messageCentralizedSignature: Uint8Array,
 	sessionIdentifier: TransactionObjectArgument,
 	ikaCoin: TransactionObjectArgument,
@@ -467,8 +467,8 @@ export function requestImportedKeySign(
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_imported_key_sign`,
 		arguments: [
 			getCoordinatorObjectRef(ikaConfig, tx),
-			tx.object(verifiedPresignCap),
-			tx.object(importedKeyMessageApproval),
+			verifiedPresignCap,
+			importedKeyMessageApproval,
 			tx.pure(bcs.vector(bcs.u8()).serialize(messageCentralizedSignature)),
 			sessionIdentifier,
 			ikaCoin,

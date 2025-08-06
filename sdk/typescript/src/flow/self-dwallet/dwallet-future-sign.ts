@@ -1,17 +1,17 @@
-import { Hash, SignatureAlgorithm } from '../client';
-import { prepareDKGSecondRoundAsync } from '../client/cryptography';
+import { Hash, SignatureAlgorithm } from '../../client';
+import { prepareDKGSecondRoundAsync } from '../../client/cryptography';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
 	createSuiClient,
+	futureSign,
 	generateKeypair,
-	makeDWalletUserSecretKeySharesPublic,
 	presign,
 	registerEncryptionKey,
 	requestDKGFirstRound,
 	requestDkgSecondRound,
-	signPublicUserShare,
-} from './common';
+	requestFutureSign,
+} from '../common';
 
 const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);
@@ -51,13 +51,6 @@ async function main() {
 		userShareEncryptionKeys,
 	);
 
-	await makeDWalletUserSecretKeySharesPublic(
-		ikaClient,
-		suiClient,
-		activeDWallet,
-		preparedSecondRound,
-	);
-
 	const presignRequestEvent = await presign(
 		ikaClient,
 		suiClient,
@@ -67,13 +60,31 @@ async function main() {
 
 	const presignObject = await ikaClient.getPresign(presignRequestEvent.event_data.presign_id);
 
-	const publicDWallet = await ikaClient.getDWallet(dwalletID);
+	const encryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeyShare(
+		secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
+	);
 
-	await signPublicUserShare(
+	const futureSignRequest = await requestFutureSign(
 		ikaClient,
 		suiClient,
-		publicDWallet,
+		activeDWallet,
 		presignObject,
+		userShareEncryptionKeys,
+		encryptedUserSecretKeyShare,
+		Buffer.from('hello world'),
+		Hash.KECCAK256,
+	);
+
+	const partialUserSignature = await ikaClient.getPartialUserSignature(
+		futureSignRequest.event_data.partial_centralized_signed_message_id,
+	);
+
+	await futureSign(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		partialUserSignature,
+		userShareEncryptionKeys,
 		Buffer.from('hello world'),
 		Hash.KECCAK256,
 		SignatureAlgorithm.ECDSA,

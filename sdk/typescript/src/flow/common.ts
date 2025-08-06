@@ -8,6 +8,7 @@ import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 import { IkaClient, IkaTransaction } from '../client';
 import { PreparedImportDWalletVerification, PreparedSecondRound } from '../client/cryptography';
 import {
+	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
 	Hash,
@@ -276,6 +277,35 @@ export async function makeDWalletUserSecretKeySharesPublic(
 	await executeTransaction(suiClient, transaction);
 }
 
+export async function makeImportedDWalletUserSecretKeySharesPublic(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	preparedImportDWalletVerification: PreparedImportDWalletVerification,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+	});
+
+	ikaTransaction.makeDWalletUserSecretKeySharesPublic({
+		dWallet,
+		secretShare: preparedImportDWalletVerification.secret_share,
+		ikaCoin: coinWithBalance({
+			type: '0x2::ika::IKA',
+			balance: 0,
+		})(transaction),
+		suiCoin: coinWithBalance({
+			type: '0x2::sui::SUI',
+			balance: 0,
+		})(transaction),
+	});
+
+	await executeTransaction(suiClient, transaction);
+}
+
 export async function presign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
@@ -477,7 +507,7 @@ export async function requestImportedDWalletVerification(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	preparedImportDWalletVerification: PreparedImportDWalletVerification,
-	curve: number,
+	curve: Curve,
 	signerPublicKey: Uint8Array,
 	sessionIdentifier: Uint8Array,
 	receiver: string,
@@ -514,6 +544,78 @@ export async function requestImportedDWalletVerification(
 	return SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.DWalletImportedKeyVerificationRequestEvent,
 	).fromBase64(importedKeyDWalletVerificationRequestEvent?.bcs as string);
+}
+
+export async function signWithImportedDWallet(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	presign: Presign,
+	message: Uint8Array,
+	hashScheme: Hash,
+	signatureAlgorithm: SignatureAlgorithm,
+	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+	});
+
+	await ikaTransaction.signWithImportedDWallet({
+		dWallet,
+		encryptedUserSecretKeyShare,
+		presign,
+		hashScheme,
+		message,
+		signatureAlgorithm,
+		ikaCoin: coinWithBalance({
+			type: '0x2::ika::IKA',
+			balance: 0,
+		})(transaction),
+		suiCoin: coinWithBalance({
+			type: '0x2::sui::SUI',
+			balance: 0,
+		})(transaction),
+	});
+
+	await executeTransaction(suiClient, transaction);
+}
+
+export async function signWithImportedDWalletPublic(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	presign: Presign,
+	message: Uint8Array,
+	hashScheme: Hash,
+	signatureAlgorithm: SignatureAlgorithm,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+	});
+
+	await ikaTransaction.signWithImportedDWalletPublic({
+		dWallet,
+		presign,
+		hashScheme,
+		message,
+		signatureAlgorithm,
+		ikaCoin: coinWithBalance({
+			type: '0x2::ika::IKA',
+			balance: 0,
+		})(transaction),
+		suiCoin: coinWithBalance({
+			type: '0x2::sui::SUI',
+			balance: 0,
+		})(transaction),
+	});
+
+	await executeTransaction(suiClient, transaction);
 }
 
 export async function createSessionIdentifier(

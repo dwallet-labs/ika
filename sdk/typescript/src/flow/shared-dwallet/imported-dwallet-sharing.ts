@@ -1,13 +1,14 @@
-import { Curve } from '../client';
-import { prepareImportDWalletVerification } from '../client/cryptography';
+import { Curve } from '../../client';
+import { prepareImportDWalletVerification } from '../../client/cryptography';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
 	createSessionIdentifier,
 	createSuiClient,
 	generateKeyparForImportedDWallet,
+	makeImportedDWalletUserSecretKeySharesPublic,
 	requestImportedDWalletVerification,
-} from './common';
+} from '../common';
 
 const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);
@@ -45,6 +46,17 @@ async function main() {
 		importedKeyDWallet,
 		importedKeyDWalletVerificationRequestEvent,
 		userShareEncryptionKeys,
+	);
+
+	const activeDWallet = await ikaClient.getDWallet(
+		importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+	);
+
+	await makeImportedDWalletUserSecretKeySharesPublic(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		preparedImportDWalletVerification,
 	);
 }
 
