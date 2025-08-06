@@ -29,7 +29,7 @@ use sui_types::crypto::{Signature, SuiKeyPair};
 use sui_types::digests::{get_mainnet_chain_identifier, get_testnet_chain_identifier};
 use sui_types::transaction::{ProgrammableTransaction, Transaction, TransactionData};
 use tokio::sync::watch;
-use tokio::sync::watch::Sender;
+use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
 use tracing::info;
 

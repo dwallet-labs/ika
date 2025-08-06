@@ -1355,10 +1355,8 @@ impl IkaNode {
                             previous_epoch_last_checkpoint_sequence_number,
                             previous_epoch_last_system_checkpoint_sequence_number,
                             // safe to unwrap because we are a validator
-                            network_keys_receiver.clone(),
-                            new_events_receiver.resubscribe(),
-                            next_epoch_committee_receiver.clone(),
                             sui_client_clone2.clone(),
+                            sui_data_receivers.clone(),
                         )
                         .await?,
                     )
@@ -1393,11 +1391,9 @@ impl IkaNode {
                             previous_epoch_last_checkpoint_sequence_number,
                             previous_epoch_last_system_checkpoint_sequence_number,
                             // safe to unwrap because we are a validator
-                            network_keys_receiver.clone(),
-                            new_events_receiver.resubscribe(),
-                            next_epoch_committee_receiver.clone(),
                             sui_client.clone(),
                             dwallet_mpc_metrics.clone(),
+                            sui_data_receivers.clone(),
                         )
                         .await?,
                     )
