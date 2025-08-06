@@ -218,12 +218,12 @@ pub struct ExecutionIndicesWithStats {
     pub stats: ConsensusStats,
 }
 
-pub trait AuthorityPerEpochStoreTrait {
+pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     fn insert_pending_dwallet_checkpoint(
         &self,
         checkpoint: PendingDWalletCheckpoint,
     ) -> IkaResult<()>;
-    
+
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>>;
 
     fn next_dwallet_mpc_message(
@@ -1443,7 +1443,7 @@ impl AuthorityPerEpochStore {
             }
         }
     }
-    
+
     pub fn get_pending_dwallet_checkpoints(
         &self,
         last: Option<DWalletCheckpointHeight>,
