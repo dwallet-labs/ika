@@ -77,6 +77,7 @@ pub struct DWalletMPCService {
     pub name: AuthorityName,
     pub epoch: EpochId,
     pub protocol_config: ProtocolConfig,
+    pub committee: Arc<Committee>,
 }
 
 impl DWalletMPCService {
@@ -89,26 +90,20 @@ impl DWalletMPCService {
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         state: Arc<AuthorityState>,
         sui_data_receivers: SuiDataReceivers,
-        name: AuthorityName,
-        epoch: sui_types::base_types::EpochId,
+        validator_name: AuthorityName,
+        epoch_id: sui_types::base_types::EpochId,
         packages_config: IkaNetworkConfig,
         committee: Arc<Committee>,
         protocol_config: ProtocolConfig,
     ) -> Self {
-        let validator_name = epoch_store.name();
-        let epoch_id = epoch_store.epoch();
+        let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
-        let network_dkg_third_round_delay = epoch_store
-            .protocol_config()
-            .network_dkg_third_round_delay();
-
-        let decryption_key_reconfiguration_third_round_delay = epoch_store
-            .protocol_config()
-            .decryption_key_reconfiguration_third_round_delay();
+        let decryption_key_reconfiguration_third_round_delay =
+            protocol_config.decryption_key_reconfiguration_third_round_delay();
 
         let dwallet_mpc_manager = DWalletMPCManager::new(
             validator_name,
-            committee,
+            committee.clone(),
             epoch_id,
             packages_config,
             node_config,
@@ -129,9 +124,10 @@ impl DWalletMPCService {
             end_of_publish: false,
             dwallet_mpc_metrics,
             sui_data_receivers: sui_data_receivers.clone(),
-            name,
-            epoch,
+            name: validator_name,
+            epoch: epoch_id,
             protocol_config,
+            committee,
         }
     }
 
@@ -141,7 +137,7 @@ impl DWalletMPCService {
             .last_session_to_complete_in_current_epoch_receiver
             .borrow()
             .clone();
-        if ika_current_epoch_on_sui == self.epoch_store.epoch() {
+        if ika_current_epoch_on_sui == self.epoch {
             self.dwallet_mpc_manager
                 .sync_last_session_to_complete_in_current_epoch(
                     last_session_to_complete_in_current_epoch,
@@ -163,7 +159,7 @@ impl DWalletMPCService {
         info!("Consensus commits finished replaying");
 
         info!(
-            validator=?self.epoch_store.name(),
+            validator=?self.name,
             "Spawning dWallet MPC Service"
         );
         let mut loop_index = 0;
@@ -173,7 +169,7 @@ impl DWalletMPCService {
                 Ok(true) => {
                     warn!(
                         our_epoch_id=self.dwallet_mpc_manager.epoch_id,
-                        authority=?self.epoch_store.name(),
+                        authority=?self.name,
                         "DWalletMPCService exit signal received"
                     );
                     break;
@@ -181,7 +177,7 @@ impl DWalletMPCService {
                 Err(err) => {
                     warn!(
                         error=?err,
-                        authority=?self.epoch_store.name(),
+                        authority=?self.name,
                         our_epoch_id=self.dwallet_mpc_manager.epoch_id,
                         "DWalletMPCService exit channel was shutdown incorrectly"
                     );
@@ -192,7 +188,7 @@ impl DWalletMPCService {
 
             if self.dwallet_mpc_manager.recognized_self_as_malicious {
                 error!(
-                    authority=?self.epoch_store.name(),
+                    authority=?self.name,
                     "the node has identified itself as malicious, breaking from MPC service loop"
                 );
 
@@ -413,8 +409,8 @@ impl DWalletMPCService {
                     self.end_of_publish = true;
 
                     info!(
-                        authority=?self.epoch_store.name(),
-                        epoch=?self.epoch_store.epoch(),
+                        authority=?self.name,
+                        epoch=?self.epoch,
                         consensus_round,
                         "End of publish reached, no more dwallet checkpoints will be processed for this epoch"
                     );
@@ -493,8 +489,8 @@ impl DWalletMPCService {
             DwalletMPCResult<GuaranteedOutputDeliveryRoundResult>,
         >,
     ) {
-        let committee = self.epoch_store.committee().clone();
-        let validator_name = &self.epoch_store.name();
+        let committee = self.committee.clone();
+        let validator_name = &self.name;
         let party_id = self.dwallet_mpc_manager.party_id;
 
         for (computation_id, computation_result) in completed_computation_results {
@@ -674,11 +670,7 @@ impl DWalletMPCService {
         session_identifier: SessionIdentifier,
         message: MPCMessage,
     ) -> ConsensusTransaction {
-        ConsensusTransaction::new_dwallet_mpc_message(
-            self.epoch_store.name(),
-            session_identifier,
-            message,
-        )
+        ConsensusTransaction::new_dwallet_mpc_message(self.name, session_identifier, message)
     }
 
     /// Create a new consensus transaction with the flow result (output) to be
@@ -699,7 +691,7 @@ impl DWalletMPCService {
             rejected,
         );
         ConsensusTransaction::new_dwallet_mpc_output(
-            self.epoch_store.name(),
+            self.name,
             session_identifier,
             output,
             malicious_authorities,

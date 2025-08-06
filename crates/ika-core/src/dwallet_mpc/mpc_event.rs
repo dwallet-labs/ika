@@ -394,10 +394,10 @@ impl DWalletMPCService {
             .uncompleted_events_receiver
             .borrow_and_update()
             .clone();
-        if epoch_id != self.epoch_store.epoch() {
+        if epoch_id != self.epoch {
             info!(
                 ?epoch_id,
-                our_epoch_id = self.epoch_store.epoch(),
+                our_epoch_id = self.epoch,
                 "Received uncompleted events for a different epoch, ignoring"
             );
             return vec![];
@@ -414,7 +414,7 @@ impl DWalletMPCService {
                         event_type=?event.type_,
                         id=?event.id,
                         contents=?event.bcs.clone().into_bytes(),
-                        current_epoch=?self.epoch_store.epoch(),
+                        current_epoch=?self.epoch,
                         "Received an event from Sui"
                     );
                 }
