@@ -89,6 +89,8 @@ export class IkaClient {
 	}
 
 	async getDWallet(dwalletID: string): Promise<DWallet> {
+		await this.ensureInitialized();
+
 		return this.client
 			.getObject({
 				id: dwalletID,
@@ -100,6 +102,8 @@ export class IkaClient {
 	}
 
 	async getPresign(presignID: string): Promise<Presign> {
+		await this.ensureInitialized();
+
 		return this.client
 			.getObject({
 				id: presignID,
@@ -113,6 +117,8 @@ export class IkaClient {
 	async getEncryptedUserSecretKeyShare(
 		encryptedUserSecretKeyShareID: string,
 	): Promise<EncryptedUserSecretKeyShare> {
+		await this.ensureInitialized();
+
 		return this.client
 			.getObject({
 				id: encryptedUserSecretKeyShareID,
@@ -126,6 +132,8 @@ export class IkaClient {
 	async getPartialUserSignature(
 		partialCentralizedSignedMessageID: string,
 	): Promise<PartialUserSignature> {
+		await this.ensureInitialized();
+
 		return this.client
 			.getObject({
 				id: partialCentralizedSignedMessageID,
@@ -137,6 +145,8 @@ export class IkaClient {
 	}
 
 	async getMultipleDWallets(dwalletIDs: string[]): Promise<DWallet[]> {
+		await this.ensureInitialized();
+
 		return this.client
 			.multiGetObjects({
 				ids: dwalletIDs,
@@ -156,6 +166,8 @@ export class IkaClient {
 		cursor: string | null | undefined;
 		hasNextPage: boolean;
 	}> {
+		await this.ensureInitialized();
+
 		const response = await this.client.getOwnedObjects({
 			owner: address,
 			filter: {
@@ -234,6 +246,8 @@ export class IkaClient {
 	}
 
 	async getActiveEncryptionKey(address: string): Promise<EncryptionKey> {
+		await this.ensureInitialized();
+
 		const tx = new Transaction();
 		getActiveEncryptionKeyFromCoordinator(this.ikaConfig, address, tx);
 
