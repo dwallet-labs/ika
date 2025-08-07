@@ -991,6 +991,7 @@ mod tests {
     use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
     use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionType};
     use prometheus::Registry;
+    use rayon::vec;
     use std::cell::RefCell;
     use std::sync::Mutex;
     use tokio::sync::watch;
@@ -1052,7 +1053,7 @@ mod tests {
                         vec![DWalletMPCOutput {
                             authority: Default::default(),
                             session_identifier: SessionIdentifier::new(SessionType::User, [0; 32]),
-                            output: vec![1, 2, 3],
+                            output: vec![DWalletCheckpointMessageKind::EndOfPublish],
                             malicious_authorities: vec![],
                         }],
                     )))
