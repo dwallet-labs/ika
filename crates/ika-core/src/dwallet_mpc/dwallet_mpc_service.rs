@@ -970,3 +970,64 @@ impl DWalletMPCService {
         Ok(())
     }
 }
+
+mod tests {
+    use super::*;
+    use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionType};
+    use std::cell::RefCell;
+    use std::sync::Mutex;
+
+    fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
+        struct TestingAuthorityPerEpochStore {
+            pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
+            current_round: Arc<Mutex<Round>>,
+        }
+
+        impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
+            fn insert_pending_dwallet_checkpoint(
+                &self,
+                checkpoint: PendingDWalletCheckpoint,
+            ) -> IkaResult<()> {
+                self.pending_checkpoints.lock().unwrap().push(checkpoint);
+                Ok(())
+            }
+
+            fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
+                Ok(Some(*self.current_round.lock().unwrap()))
+            }
+
+            fn next_dwallet_mpc_message(
+                &self,
+                last_consensus_round: Option<Round>,
+            ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
+                if last_consensus_round == Some(5) {
+                    Ok(Some((
+                        6,
+                        vec![DWalletMPCMessage {
+                            message: vec![1],
+                            authority: Default::default(),
+                            session_identifier: SessionIdentifier::new(SessionType::User, [0; 32]),
+                        }],
+                    )))
+                } else {
+                    Ok(None)
+                }
+            }
+
+            fn next_dwallet_mpc_output(
+                &self,
+                last_consensus_round: Option<Round>,
+            ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
+                todo!()
+            }
+
+            fn next_verified_dwallet_checkpoint_message(
+                &self,
+                last_consensus_round: Option<Round>,
+            ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
+                todo!()
+            }
+        }
+        let dwallet_mpc_service = DWalletMPCService::new();
+    }
+}
