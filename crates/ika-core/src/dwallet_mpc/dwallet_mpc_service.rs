@@ -218,16 +218,20 @@ impl DWalletMPCService {
 
             self.process_consensus_rounds_from_storage().await;
 
-            let completed_computation_results = self
-                .dwallet_mpc_manager
-                .perform_cryptographic_computation()
-                .await;
-
-            self.handle_computation_results_and_submit_to_consensus(completed_computation_results)
-                .await;
+            self.process_cryptographic_computations().await;
 
             tokio::time::sleep(Duration::from_millis(READ_INTERVAL_MS)).await;
         }
+    }
+
+    async fn process_cryptographic_computations(&mut self) {
+        let completed_computation_results = self
+            .dwallet_mpc_manager
+            .perform_cryptographic_computation()
+            .await;
+
+        self.handle_computation_results_and_submit_to_consensus(completed_computation_results)
+            .await;
     }
 
     async fn handle_new_events(&mut self) -> DwalletMPCResult<()> {
@@ -1077,6 +1081,7 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
     struct TestingSubmitToConsensus {
         submitted_messages: Arc<Mutex<Vec<ConsensusTransaction>>>,
     }
@@ -1175,7 +1180,8 @@ mod tests {
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
         );
-        let (mut dwallet_mpc_services, sui_data_senders) = create_dwallet_mpc_services();
+        let (mut dwallet_mpc_services, sui_data_senders, mut sent_consensus_messages_collectors) =
+            create_dwallet_mpc_services();
         sui_data_senders.iter().for_each(|mut sui_data_sender| {
             let _ = sui_data_sender.uncompleted_events_sender.send((
                 vec![DBSuiEvent {
@@ -1187,14 +1193,30 @@ mod tests {
                 }],
                 1,
             ));
-
         });
-        for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
+        for i in 0..4 {
+            let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
             let _ = dwallet_mpc_service.handle_new_events().await;
+            let _ = dwallet_mpc_service
+                .process_cryptographic_computations()
+                .await;
+            let consensus_messages_store = sent_consensus_messages_collectors[i]
+                .submitted_messages
+                .clone();
+            loop {
+                if !consensus_messages_store.lock().unwrap().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
         }
     }
 
-    fn create_dwallet_mpc_services() -> (Vec<DWalletMPCService>, Vec<SuiDataSenders>) {
+    fn create_dwallet_mpc_services() -> (
+        Vec<DWalletMPCService>,
+        Vec<SuiDataSenders>,
+        Vec<TestingSubmitToConsensus>,
+    ) {
         let (committee, keypairs) = Committee::new_simple_test_committee();
         let committee_clone = committee.clone();
         let names: Vec<_> = committee_clone.names().collect();
@@ -1210,22 +1232,33 @@ mod tests {
             .iter()
             .map(|i| create_dwallet_mpc_service(*i, committee.clone(), ika_network_config.clone()))
             .collect::<Vec<_>>();
-        dwallet_mpc_services.into_iter().unzip()
+        let mut services = Vec::new();
+        let mut sui_data_senders = Vec::new();
+        let mut consensus_stores = Vec::new();
+        for (dwallet_mpc_service, sui_data_sender, dwallet_submit_to_consensus) in
+            dwallet_mpc_services
+        {
+            services.push(dwallet_mpc_service);
+            sui_data_senders.push(sui_data_sender);
+            consensus_stores.push(dwallet_submit_to_consensus);
+        }
+        (services, sui_data_senders, consensus_stores)
     }
 
     fn create_dwallet_mpc_service(
         val_index: usize,
         committee: Committee,
         ika_network_config: IkaNetworkConfig,
-    ) -> (DWalletMPCService, SuiDataSenders) {
+    ) -> (DWalletMPCService, SuiDataSenders, TestingSubmitToConsensus) {
         let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
         let committee_clone = committee.clone();
         let names: Vec<_> = committee_clone.names().collect();
+        let dwallet_submit_to_consensus = Arc::new(TestingSubmitToConsensus::new());
         (
             DWalletMPCService {
                 last_read_consensus_round: Some(0),
                 epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
-                dwallet_submit_to_consensus: Arc::new(TestingSubmitToConsensus::new()),
+                dwallet_submit_to_consensus: dwallet_submit_to_consensus.clone(),
                 state: Arc::new(TestingAuthorityState::new()),
                 dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
                 dwallet_mpc_manager: DWalletMPCManager::new(
@@ -1249,6 +1282,7 @@ mod tests {
                 committee: Arc::new(committee),
             },
             sui_data_senders,
+            dwallet_submit_to_consensus,
         )
     }
 }
