@@ -1,15 +1,15 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-
 pub(super) mod mpc_computations;
 pub(super) mod native_computations;
 mod orchestrator;
 mod request;
 
-pub(crate) use request::Request as ComputationRequest;
-pub(crate) use mpc_computations::advance;
+use ika_types::messages_dwallet_mpc::SessionIdentifier;
 pub(crate) use orchestrator::CryptographicComputationsOrchestrator;
+pub(crate) use request::ProtocolSpecificData;
+pub(crate) use request::Request as ComputationRequest;
 
 const MPC_SIGN_SECOND_ROUND: u64 = 2;
 
