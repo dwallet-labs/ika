@@ -756,6 +756,28 @@ export class IkaTransaction {
 			throw new Error('Presign is not completed');
 		}
 
+		if (!dWallet.state.Active?.public_output) {
+			throw new Error('DWallet is not active');
+		}
+
+		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+
+		const userShare = await this.userShareEncryptionKeys.decryptUserShare(
+			dWallet,
+			encryptedUserSecretKeyShare,
+			publicParameters,
+		);
+
+		const userShareVerified = verify_user_share(
+			userShare,
+			Uint8Array.from(dWallet.state.Active?.public_output),
+			publicParameters,
+		);
+
+		if (!userShareVerified) {
+			throw new Error('User share verification failed');
+		}
+
 		const unverifiedPartialUserSignatureCap = coordinatorTx.requestFutureSign(
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
@@ -833,6 +855,28 @@ export class IkaTransaction {
 			throw new Error('Presign is not completed');
 		}
 
+		if (!dWallet.state.Active?.public_output) {
+			throw new Error('DWallet is not active');
+		}
+
+		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+
+		const userShare = await this.userShareEncryptionKeys.decryptUserShare(
+			dWallet,
+			encryptedUserSecretKeyShare,
+			publicParameters,
+		);
+
+		const userShareVerified = verify_user_share(
+			userShare,
+			Uint8Array.from(dWallet.state.Active?.public_output),
+			publicParameters,
+		);
+
+		if (!userShareVerified) {
+			throw new Error('User share verification failed');
+		}
+
 		const unverifiedPartialUserSignatureCap = coordinatorTx.requestFutureSign(
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
@@ -841,13 +885,9 @@ export class IkaTransaction {
 			message,
 			hashScheme,
 			createSignCentralizedOutput(
-				await this.ikaClient.getNetworkPublicParameters(),
+				publicParameters,
 				dWallet,
-				await this.userShareEncryptionKeys.decryptUserShare(
-					dWallet,
-					encryptedUserSecretKeyShare,
-					await this.ikaClient.getNetworkPublicParameters(),
-				),
+				userShare,
 				Uint8Array.from(presign.state.Completed?.presign),
 				message,
 				hashScheme,
