@@ -378,7 +378,7 @@ impl DWalletMPCService {
 
             if mpc_messages_consensus_round != mpc_outputs_consensus_round
                 || mpc_messages_consensus_round
-                != verified_dwallet_checkpoint_messages_consensus_round
+                    != verified_dwallet_checkpoint_messages_consensus_round
             {
                 error!(
                     ?mpc_messages_consensus_round,
@@ -549,10 +549,10 @@ impl DWalletMPCService {
                                 }
                             }
                             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                                   malicious_parties,
-                                   private_output: _,
-                                   public_output_value,
-                               }) => {
+                                malicious_parties,
+                                private_output: _,
+                                public_output_value,
+                            }) => {
                                 info!(
                                     ?session_identifier,
                                     validator=?validator_name,
@@ -993,6 +993,7 @@ impl DWalletMPCService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SuiDataSenders;
     use dwallet_rng::RootSeed;
     use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
     use ika_types::messages_dwallet_mpc::{
@@ -1163,8 +1164,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_network_dkg_full_flow() {
-        let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
-
         let (committee, keypairs) = Committee::new_simple_test_committee();
         let committee_clone = committee.clone();
         let names: Vec<_> = committee_clone.names().collect();
@@ -1176,67 +1175,80 @@ mod tests {
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
         );
-        let dwallet_mpc_services = create_dwallet_mpc_services();
-        let _ = sui_data_senders.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
-                    &ika_network_config,
-                ),
-                contents: base64::decode("Z7MmXd0I4lvGWLDA969YOVo7wrZlXr21RMvixIFabCqAU3voWC2pRFG3QwPYD+ta0sX5poLEkq77ovCi3BBQDgEAAAAAAAAAgFN76FgtqURRt0MD2A/rWtLF+aaCxJKu+6LwotwQUA4BAQAAAAAAAAAggZwXRQsb/ha4mk5xZZfqItaokplduZGMnsuEQzdm7UTt2Z+ktotfGXHn2YVaxxqVhDM8UaafXejIDXnaPLxaMAA=").unwrap(),
-                pulled: false,
-            }],
-            1,
-        ));
-        let _ = dwallet_mpc_service.handle_new_events();
-    }
-
-    fn create_dwallet_mpc_services() -> Vec<DWalletMPCService> {
-        let (committee, keypairs) = Committee::new_simple_test_committee();
-        let committee_clone = committee.clone();
-        let names: Vec<_> = committee_clone.names().collect();
-        let ika_network_config = IkaNetworkConfig::new(
-            ObjectID::from_single_byte(1),
-            ObjectID::from_single_byte(1),
-            ObjectID::from_single_byte(1),
-            ObjectID::from_single_byte(1),
-            ObjectID::from_single_byte(1),
-            ObjectID::from_single_byte(1),
-        );
-        let dwallet_mpc_services = vec![0, 1, 2, 3].iter().map(|i| { 
-            create_dwallet_mpc_service(*i, committee.clone(), ika_network_config.clone())
-        }).collect::<Vec<_>>();
-        dwallet_mpc_services
-    }
-
-    fn create_dwallet_mpc_service(val_index: usize, committee: Committee, ika_network_config: IkaNetworkConfig) -> DWalletMPCService {
-        let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
-        let committee_clone = committee.clone();
-        let names: Vec<_> = committee_clone.names().collect();
-        DWalletMPCService {
-            last_read_consensus_round: Some(0),
-            epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
-            dwallet_submit_to_consensus: Arc::new(TestingSubmitToConsensus::new()),
-            state: Arc::new(TestingAuthorityState::new()),
-            dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
-            dwallet_mpc_manager: DWalletMPCManager::new(
-                names[0].clone(),
-                Arc::new(committee.clone()),
+        let (mut dwallet_mpc_services, sui_data_senders) = create_dwallet_mpc_services();
+        sui_data_senders.iter().for_each(|mut sui_data_sender| {
+            let _ = sui_data_sender.uncompleted_events_sender.send((
+                vec![DBSuiEvent {
+                    type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
+                        &ika_network_config,
+                    ),
+                    contents: base64::decode("Z7MmXd0I4lvGWLDA969YOVo7wrZlXr21RMvixIFabCqAU3voWC2pRFG3QwPYD+ta0sX5poLEkq77ovCi3BBQDgEAAAAAAAAAgFN76FgtqURRt0MD2A/rWtLF+aaCxJKu+6LwotwQUA4BAQAAAAAAAAAggZwXRQsb/ha4mk5xZZfqItaokplduZGMnsuEQzdm7UTt2Z+ktotfGXHn2YVaxxqVhDM8UaafXejIDXnaPLxaMAA=").unwrap(),
+                    pulled: false,
+                }],
                 1,
-                ika_network_config,
-                RootSeed::new([1; 32]),
-                0,
-                0,
-                DWalletMPCMetrics::new(&Registry::new()),
-                sui_data_receivers.clone(),
-            ),
-            exit: watch::channel(()).1,
-            end_of_publish: false,
-            dwallet_mpc_metrics: DWalletMPCMetrics::new(&Registry::new()),
-            sui_data_receivers,
-            name: Default::default(),
-            epoch: 0,
-            protocol_config: ProtocolConfig::get_for_min_version(),
-            committee: Arc::new(committee),
+            ));
+
+        });
+        for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
+            let _ = dwallet_mpc_service.handle_new_events().await;
         }
+    }
+
+    fn create_dwallet_mpc_services() -> (Vec<DWalletMPCService>, Vec<SuiDataSenders>) {
+        let (committee, keypairs) = Committee::new_simple_test_committee();
+        let committee_clone = committee.clone();
+        let names: Vec<_> = committee_clone.names().collect();
+        let ika_network_config = IkaNetworkConfig::new(
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+        );
+        let dwallet_mpc_services = vec![0, 1, 2, 3]
+            .iter()
+            .map(|i| create_dwallet_mpc_service(*i, committee.clone(), ika_network_config.clone()))
+            .collect::<Vec<_>>();
+        dwallet_mpc_services.into_iter().unzip()
+    }
+
+    fn create_dwallet_mpc_service(
+        val_index: usize,
+        committee: Committee,
+        ika_network_config: IkaNetworkConfig,
+    ) -> (DWalletMPCService, SuiDataSenders) {
+        let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
+        let committee_clone = committee.clone();
+        let names: Vec<_> = committee_clone.names().collect();
+        (
+            DWalletMPCService {
+                last_read_consensus_round: Some(0),
+                epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
+                dwallet_submit_to_consensus: Arc::new(TestingSubmitToConsensus::new()),
+                state: Arc::new(TestingAuthorityState::new()),
+                dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
+                dwallet_mpc_manager: DWalletMPCManager::new(
+                    names[0].clone(),
+                    Arc::new(committee.clone()),
+                    1,
+                    ika_network_config,
+                    RootSeed::new([1; 32]),
+                    0,
+                    0,
+                    DWalletMPCMetrics::new(&Registry::new()),
+                    sui_data_receivers.clone(),
+                ),
+                exit: watch::channel(()).1,
+                end_of_publish: false,
+                dwallet_mpc_metrics: DWalletMPCMetrics::new(&Registry::new()),
+                sui_data_receivers,
+                name: Default::default(),
+                epoch: 0,
+                protocol_config: ProtocolConfig::get_for_min_version(),
+                committee: Arc::new(committee),
+            },
+            sui_data_senders,
+        )
     }
 }
