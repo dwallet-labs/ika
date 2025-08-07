@@ -28,6 +28,7 @@ use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPCSessionStatus};
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
+use ika_config::node::RootSeedWithPath;
 use ika_protocol_config::ProtocolConfig;
 use ika_sui_client::SuiConnectorClient;
 use ika_types::committee::{Committee, EpochId};
@@ -101,17 +102,24 @@ impl DWalletMPCService {
         let decryption_key_reconfiguration_third_round_delay =
             protocol_config.decryption_key_reconfiguration_third_round_delay();
 
+        let root_seed = match node_config.root_seed_key_pair {
+            None => {
+                error!(
+                    "root_seed_key_pair is not set in the node config, cannot start DWallet MPC service"
+                );
+                panic!(
+                    "root_seed_key_pair is not set in the node config, cannot start DWallet MPC service"
+                );
+            }
+            Some(root_seed_keypair) => root_seed_keypair.root_seed().clone(),
+        };
+
         let dwallet_mpc_manager = DWalletMPCManager::new(
             validator_name,
             committee.clone(),
             epoch_id,
             packages_config,
-            node_config
-                .root_seed_key_pair
-                .clone()
-                .ok_or(DwalletMPCError::MissingRootSeed)?
-                .root_seed()
-                .clone(),
+            root_seed,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics.clone(),
@@ -979,13 +987,13 @@ impl DWalletMPCService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dwallet_rng::RootSeed;
     use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
     use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionType};
+    use prometheus::Registry;
     use std::cell::RefCell;
     use std::sync::Mutex;
-    use prometheus::Registry;
     use tokio::sync::watch;
-    use dwallet_rng::RootSeed;
 
     #[tokio::test]
     async fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
@@ -1144,7 +1152,7 @@ mod tests {
                 0,
                 0,
                 DWalletMPCMetrics::new(&Registry::new()),
-                sui_data_receivers.clone()
+                sui_data_receivers.clone(),
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
