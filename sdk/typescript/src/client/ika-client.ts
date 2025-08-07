@@ -1,4 +1,5 @@
 import { SuiClient } from '@mysten/sui/client';
+//
 import { Transaction } from '@mysten/sui/transactions';
 import { toHex } from '@mysten/sui/utils';
 
@@ -681,24 +682,53 @@ export class IkaClient {
 				}
 			} while (cursor);
 
-			const data: Uint8Array[] = [];
+			const dataMap: Map<number, Uint8Array> = new Map();
 
 			const objectIds = new Set(allTableRows.map((tableRowResult) => tableRowResult.objectId));
 
-			await this.processBatchedObjects([...objectIds], (dynField) => {
-				const tableIndex = parseInt(dynField.data.content.fields.name);
+			await this.processBatchedObjects([...objectIds], ({ objectId, fields }) => {
+				const tableIndex = parseInt(fields.name);
 
 				if (isNaN(tableIndex)) {
-					throw new InvalidObjectError(
-						'Table index (expected numeric name)',
-						dynField.data?.objectId,
-					);
+					throw new InvalidObjectError('Table index (expected numeric name)', objectId);
 				}
 
-				data[tableIndex] = dynField.data.content.fields.value;
+				dataMap.set(tableIndex, fields.value);
 			});
 
-			return new Uint8Array(data.flatMap((arr) => Array.from(arr)));
+			const indices = Array.from(dataMap.keys()).sort((a, b) => a - b);
+
+			if (indices.length === 0) {
+				throw new ObjectNotFoundError('No table chunks found', tableID);
+			}
+
+			const expectedStart = indices[0];
+
+			if (expectedStart !== 0) {
+				throw new InvalidObjectError('Table chunks do not start at index 0', tableID);
+			}
+
+			const maxIndex = indices[indices.length - 1];
+			const orderedChunks: Uint8Array[] = [];
+
+			for (let idx = 0; idx <= maxIndex; idx++) {
+				const chunk = dataMap.get(idx);
+				if (!chunk) {
+					throw new InvalidObjectError('Missing table chunk at index', `${tableID}:${idx}`);
+				}
+				orderedChunks.push(chunk);
+			}
+
+			const totalLength = orderedChunks.reduce((acc, arr) => acc + arr.length, 0);
+			const result = new Uint8Array(totalLength);
+			let offset = 0;
+
+			for (const chunk of orderedChunks) {
+				result.set(chunk, offset);
+				offset += chunk.length;
+			}
+
+			return result;
 		} catch (error) {
 			if (
 				error instanceof InvalidObjectError ||
@@ -725,23 +755,17 @@ export class IkaClient {
 	 * @throws {InvalidObjectError} If any object processing fails
 	 * @private
 	 */
-	private async processBatchedObjects(
+	private async processBatchedObjects<TReturn = void>(
 		objectIds: string[],
-		processor: (dynField: {
-			data: {
-				objectId: string;
-				content: {
-					fields: {
-						name: string;
-						value: Uint8Array;
-					};
-				};
-			};
-		}) => void,
-	): Promise<void> {
+		processor: (input: {
+			objectId: string;
+			fields: { name: string; value: Uint8Array };
+		}) => TReturn,
+	): Promise<TReturn[]> {
 		const batchSize = 50;
 
 		try {
+			const results: TReturn[] = [];
 			for (let i = 0; i < objectIds.length; i += batchSize) {
 				const batchIds = objectIds.slice(i, i + batchSize);
 
@@ -759,11 +783,31 @@ export class IkaClient {
 						throw new NetworkError(`Failed to fetch ${errorInfo}: ${dynField.error.code}`);
 					}
 
-					// TODO(fesal): Find a way to get DF type
-					// @ts-expect-error Find a way to get DF type
-					processor(dynField);
+					const objectIdForError = dynField.data?.objectId;
+					const content = dynField.data?.content;
+					if (!content || content.dataType !== 'moveObject') {
+						throw new InvalidObjectError('Object content (expected moveObject)', objectIdForError);
+					}
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					const fields = (content as any).fields as { name?: unknown; value?: unknown } | undefined;
+					if (!fields) {
+						throw new InvalidObjectError('Object content.fields missing', objectIdForError);
+					}
+					const name = typeof fields.name === 'string' ? fields.name : String(fields.name);
+					const value =
+						fields.value instanceof Uint8Array
+							? fields.value
+							: new Uint8Array(fields.value as ArrayLike<number>);
+
+					results.push(
+						processor({
+							objectId: objectIdForError ?? 'unknown',
+							fields: { name, value },
+						}),
+					);
 				}
 			}
+			return results;
 		} catch (error) {
 			if (error instanceof NetworkError || error instanceof InvalidObjectError) {
 				throw error;
