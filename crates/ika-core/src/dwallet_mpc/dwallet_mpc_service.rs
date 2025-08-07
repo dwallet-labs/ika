@@ -982,7 +982,9 @@ mod tests {
     use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionType};
     use std::cell::RefCell;
     use std::sync::Mutex;
+    use prometheus::Registry;
     use tokio::sync::watch;
+    use dwallet_rng::RootSeed;
 
     fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
         struct TestingAuthorityPerEpochStore {
@@ -1136,7 +1138,11 @@ mod tests {
                     ObjectID::random(),
                     ObjectID::random(),
                 ),
-                NodeConfig::default(),
+                RootSeed::random_seed(),
+                0,
+                0,
+                DWalletMPCMetrics::new(Registry::new()),
+                sui_data_receivers.clone()
             ),
             exit: (),
             end_of_publish: false,
