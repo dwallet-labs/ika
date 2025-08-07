@@ -106,7 +106,12 @@ impl DWalletMPCService {
             committee.clone(),
             epoch_id,
             packages_config,
-            node_config,
+            node_config
+                .root_seed_key_pair
+                .clone()
+                .ok_or(DwalletMPCError::MissingRootSeed)?
+                .root_seed()
+                .clone(),
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics.clone(),
@@ -973,11 +978,11 @@ impl DWalletMPCService {
 
 mod tests {
     use super::*;
+    use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
     use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionType};
     use std::cell::RefCell;
     use std::sync::Mutex;
     use tokio::sync::watch;
-    use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 
     fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
         struct TestingAuthorityPerEpochStore {
@@ -1051,11 +1056,11 @@ mod tests {
                 Ok(None)
             }
         }
-        
+
         struct TestingSubmitToConsensus {
             submitted_messages: Arc<Mutex<Vec<ConsensusTransaction>>>,
         }
-        
+
         impl TestingSubmitToConsensus {
             fn new() -> Self {
                 Self {
@@ -1063,33 +1068,46 @@ mod tests {
                 }
             }
         }
-        
+
         #[async_trait::async_trait]
         impl DWalletMPCSubmitToConsensus for TestingSubmitToConsensus {
             async fn submit_to_consensus(
                 &self,
                 messages: &[ConsensusTransaction],
             ) -> IkaResult<()> {
-                self.submitted_messages.lock().unwrap().extend_from_slice(messages);
+                self.submitted_messages
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(messages);
                 Ok(())
             }
         }
-        
+
         struct TestingAuthorityState {}
-        
+
         impl AuthorityStateTrait for TestingAuthorityState {
-            fn insert_dwallet_mpc_computation_completed_sessions(&self, newly_completed_session_ids: &[SessionIdentifier]) -> IkaResult {
+            fn insert_dwallet_mpc_computation_completed_sessions(
+                &self,
+                newly_completed_session_ids: &[SessionIdentifier],
+            ) -> IkaResult {
                 Ok(())
             }
 
-            fn get_dwallet_mpc_sessions_completed_status(&self, session_identifiers: Vec<SessionIdentifier>) -> IkaResult<HashMap<SessionIdentifier, bool>> {
+            fn get_dwallet_mpc_sessions_completed_status(
+                &self,
+                session_identifiers: Vec<SessionIdentifier>,
+            ) -> IkaResult<HashMap<SessionIdentifier, bool>> {
                 todo!()
             }
         }
-        
+
         struct TestingDWalletCheckpointNotify {}
         impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
-            fn notify_checkpoint_signature(&self, epoch_store: &AuthorityPerEpochStore, info: &DWalletCheckpointSignatureMessage) -> IkaResult {
+            fn notify_checkpoint_signature(
+                &self,
+                epoch_store: &AuthorityPerEpochStore,
+                info: &DWalletCheckpointSignatureMessage,
+            ) -> IkaResult {
                 todo!()
             }
 
@@ -1097,8 +1115,9 @@ mod tests {
                 todo!()
             }
         }
-        
-        
+
+        let sui_data_receivers = SuiDataReceivers::new_for_testing();
+
         let dwallet_mpc_service = DWalletMPCService {
             last_read_consensus_round: Some(5),
             epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
@@ -1106,12 +1125,23 @@ mod tests {
             state: Arc::new(TestingAuthorityState {}),
             dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
             dwallet_mpc_manager: DWalletMPCManager::new(
-                
+                AuthorityName::default(),
+                Arc::new(Committee::new_simple_test_committee().0),
+                1,
+                IkaNetworkConfig::new(
+                    ObjectID::random(),
+                    ObjectID::random(),
+                    ObjectID::random(),
+                    ObjectID::random(),
+                    ObjectID::random(),
+                    ObjectID::random(),
+                ),
+                NodeConfig::default(),
             ),
             exit: (),
             end_of_publish: false,
             dwallet_mpc_metrics: Arc::new(()),
-            sui_data_receivers: SuiDataReceivers {},
+            sui_data_receivers,
             name: Default::default(),
             epoch: 0,
             protocol_config: ProtocolConfig::get_for_min_version(),

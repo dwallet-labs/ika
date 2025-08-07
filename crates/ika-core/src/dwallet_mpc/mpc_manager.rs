@@ -38,6 +38,7 @@ use sui_types::base_types::ObjectID;
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
+use dwallet_rng::RootSeed;
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -92,7 +93,7 @@ impl DWalletMPCManager {
         committee: Arc<Committee>,
         epoch_id: EpochId,
         packages_config: IkaNetworkConfig,
-        node_config: NodeConfig,
+        root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
@@ -103,7 +104,7 @@ impl DWalletMPCManager {
             committee,
             epoch_id,
             packages_config,
-            node_config.clone(),
+            root_seed,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics,
@@ -121,19 +122,12 @@ impl DWalletMPCManager {
         committee: Arc<Committee>,
         epoch_id: EpochId,
         packages_config: IkaNetworkConfig,
-        node_config: NodeConfig,
+        root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
     ) -> DwalletMPCResult<Self> {
-        let root_seed = node_config
-            .root_seed_key_pair
-            .clone()
-            .ok_or(DwalletMPCError::MissingRootSeed)?
-            .root_seed()
-            .clone();
-
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
         let mpc_computations_orchestrator =
