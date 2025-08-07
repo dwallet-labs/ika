@@ -1131,6 +1131,7 @@ mod tests {
 
         let sui_data_receivers = SuiDataReceivers::new_for_testing();
 
+        let committee = Committee::new_simple_test_committee();
         let dwallet_mpc_service = DWalletMPCService {
             last_read_consensus_round: Some(5),
             epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
@@ -1138,8 +1139,8 @@ mod tests {
             state: Arc::new(TestingAuthorityState {}),
             dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
             dwallet_mpc_manager: DWalletMPCManager::new(
-                AuthorityName::default(),
-                Arc::new(Committee::new_simple_test_committee().0),
+                *committee.0.clone().names().next().unwrap(),
+                Arc::new(committee.0.clone()),
                 1,
                 IkaNetworkConfig::new(
                     ObjectID::random(),
@@ -1162,7 +1163,7 @@ mod tests {
             name: Default::default(),
             epoch: 0,
             protocol_config: ProtocolConfig::get_for_min_version(),
-            committee: Arc::new(Committee::new_simple_test_committee().0),
+            committee: Arc::new(committee.0),
         };
     }
 }
