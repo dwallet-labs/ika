@@ -1290,7 +1290,7 @@ mod tests {
                 dwallet_mpc_metrics: DWalletMPCMetrics::new(&Registry::new()),
                 sui_data_receivers,
                 name: Default::default(),
-                epoch: 0,
+                epoch: 1,
                 protocol_config: ProtocolConfig::get_for_min_version(),
                 committee: Arc::new(committee),
             },
