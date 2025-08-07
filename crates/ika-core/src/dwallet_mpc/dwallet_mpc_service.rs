@@ -983,6 +983,15 @@ mod tests {
             current_round: Arc<Mutex<Round>>,
         }
 
+        impl TestingAuthorityPerEpochStore {
+            fn new() -> Self {
+                Self {
+                    pending_checkpoints: Arc::new(Mutex::new(vec![])),
+                    current_round: Arc::new(Mutex::new(5)),
+                }
+            }
+        }
+
         impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             fn insert_pending_dwallet_checkpoint(
                 &self,
@@ -1040,6 +1049,45 @@ mod tests {
                 Ok(None)
             }
         }
-        let dwallet_mpc_service = DWalletMPCService::new();
+        
+        struct TestingSubmitToConsensus {
+            submitted_messages: Arc<Mutex<Vec<ConsensusTransaction>>>,
+        }
+        
+        impl TestingSubmitToConsensus {
+            fn new() -> Self {
+                Self {
+                    submitted_messages: Arc::new(Mutex::new(vec![])),
+                }
+            }
+        }
+        
+        #[async_trait::async_trait]
+        impl DWalletMPCSubmitToConsensus for TestingSubmitToConsensus {
+            async fn submit_to_consensus(
+                &self,
+                messages: &[ConsensusTransaction],
+            ) -> IkaResult<()> {
+                self.submitted_messages.lock().unwrap().extend_from_slice(messages);
+                Ok(())
+            }
+        }
+        
+        let dwallet_mpc_service = DWalletMPCService {
+            last_read_consensus_round: Some(5),
+            epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
+            dwallet_submit_to_consensus: Arc::new(TestingSubmitToConsensus::new()),
+            state: Arc::new(()),
+            dwallet_checkpoint_service: Arc::new(()),
+            dwallet_mpc_manager: (),
+            exit: (),
+            end_of_publish: false,
+            dwallet_mpc_metrics: Arc::new(()),
+            sui_data_receivers: SuiDataReceivers {},
+            name: Default::default(),
+            epoch: 0,
+            protocol_config: (),
+            committee: Arc::new(()),
+        };
     }
 }
