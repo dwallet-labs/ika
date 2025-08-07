@@ -1169,9 +1169,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_network_dkg_full_flow() {
-        let _ = tracing_subscriber::fmt()
-            .with_test_writer()
-            .try_init();
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let (committee, keypairs) = Committee::new_simple_test_committee();
         let committee_clone = committee.clone();
         let names: Vec<_> = committee_clone.names().collect();
