@@ -605,16 +605,18 @@ export class IkaTransaction {
 			throw new Error('DWallet is not active');
 		}
 
+		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+
 		const userShare = await this.userShareEncryptionKeys.decryptUserShare(
 			dWallet,
 			encryptedUserSecretKeyShare,
-			await this.ikaClient.getNetworkPublicParameters(),
+			publicParameters,
 		);
 
 		const userShareVerified = verify_user_share(
 			userShare,
 			Uint8Array.from(dWallet.state.Active?.public_output),
-			await this.ikaClient.getNetworkPublicParameters(),
+			publicParameters,
 		);
 
 		if (!userShareVerified) {
@@ -627,7 +629,7 @@ export class IkaTransaction {
 			verifiedPresignCap,
 			messageApproval,
 			createSignCentralizedOutput(
-				await this.ikaClient.getNetworkPublicParameters(),
+				publicParameters,
 				dWallet,
 				userShare,
 				Uint8Array.from(presign.state.Completed.presign),
