@@ -12,12 +12,15 @@ import {
 	CoordinatorInner,
 	DWallet,
 	DWalletCap,
+	DWalletState,
 	EncryptedUserSecretKeyShare,
 	EncryptionKey,
 	IkaClientOptions,
 	IkaConfig,
 	PartialUserSignature,
+	PartialUserSignatureState,
 	Presign,
+	PresignState,
 	SharedObjectOwner,
 	SystemInner,
 } from './types';
@@ -152,6 +155,44 @@ export class IkaClient {
 	}
 
 	/**
+	 * Retrieve a DWallet in a particular state, waiting until it reaches that state.
+	 * This method polls the DWallet until it matches the specified state.
+	 *
+	 * @param dwalletID - The unique identifier of the DWallet to retrieve
+	 * @param state - The target state to wait for
+	 * @param options - Optional configuration for polling behavior
+	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
+	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @returns Promise resolving to the DWallet object when it reaches the target state
+	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 * @throws {Error} If timeout is reached before the target state is achieved
+	 */
+	async getDWalletInParticularState(
+		dwalletID: string,
+		state: DWalletState,
+		options: { timeout?: number; interval?: number } = {},
+	): Promise<DWallet> {
+		await this.ensureInitialized();
+
+		const { timeout = 30000, interval = 1000 } = options;
+		const startTime = Date.now();
+
+		while (Date.now() - startTime < timeout) {
+			const dWallet = await this.getDWallet(dwalletID);
+
+			if (dWallet.state.$kind === state) {
+				return dWallet;
+			}
+
+			// Wait for the specified interval before next poll
+			await new Promise((resolve) => setTimeout(resolve, interval));
+		}
+
+		throw new Error(`Timeout waiting for DWallet ${dwalletID} to reach state ${state}`);
+	}
+
+	/**
 	 * Retrieve a presign session object by its ID.
 	 *
 	 * @param presignID - The unique identifier of the presign session to retrieve
@@ -170,6 +211,43 @@ export class IkaClient {
 			.then((obj) => {
 				return CoordinatorInnerModule.PresignSession.fromBase64(objResToBcs(obj));
 			});
+	}
+
+	/**
+	 * Retrieve a presign session object in a particular state, waiting until it reaches that state.
+	 * This method polls the presign until it matches the specified state.
+	 *
+	 * @param presignID - The unique identifier of the presign session to retrieve
+	 * @param state - The target state to wait for
+	 * @param options - Optional configuration for polling behavior
+	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
+	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @returns Promise resolving to the Presign object when it reaches the target state
+	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 * @throws {Error} If timeout is reached before the target state is achieved
+	 */
+	async getPresignInParticularState(
+		presignID: string,
+		state: PresignState,
+		options: { timeout?: number; interval?: number } = {},
+	): Promise<Presign> {
+		await this.ensureInitialized();
+
+		const { timeout = 30000, interval = 1000 } = options;
+		const startTime = Date.now();
+
+		while (Date.now() - startTime < timeout) {
+			const presign = await this.getPresign(presignID);
+
+			if (presign.state.$kind === state) {
+				return presign;
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, interval));
+		}
+
+		throw new Error(`Timeout waiting for presign ${presignID} to reach state ${state}`);
 	}
 
 	/**
@@ -216,6 +294,33 @@ export class IkaClient {
 			.then((obj) => {
 				return CoordinatorInnerModule.PartialUserSignature.fromBase64(objResToBcs(obj));
 			});
+	}
+
+	async getPartialUserSignatureInParticularState(
+		partialCentralizedSignedMessageID: string,
+		state: PartialUserSignatureState,
+		options: { timeout?: number; interval?: number } = {},
+	): Promise<PartialUserSignature> {
+		await this.ensureInitialized();
+
+		const { timeout = 30000, interval = 1000 } = options;
+		const startTime = Date.now();
+
+		while (Date.now() - startTime < timeout) {
+			const partialUserSignature = await this.getPartialUserSignature(
+				partialCentralizedSignedMessageID,
+			);
+
+			if (partialUserSignature.state.$kind === state) {
+				return partialUserSignature;
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, interval));
+		}
+
+		throw new Error(
+			`Timeout waiting for partial user signature ${partialCentralizedSignedMessageID} to reach state ${state}`,
+		);
 	}
 
 	/**

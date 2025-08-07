@@ -50,6 +50,10 @@ export type EncryptedUserSecretKeyShare =
 	typeof CoordinatorInnerModule.EncryptedUserSecretKeyShare.$inferType;
 export type PartialUserSignature = typeof CoordinatorInnerModule.PartialUserSignature.$inferType;
 export type EncryptionKey = typeof CoordinatorInnerModule.EncryptionKey.$inferType;
+export type DWalletState = typeof CoordinatorInnerModule.DWalletState.$inferType.$kind;
+export type PresignState = typeof CoordinatorInnerModule.PresignState.$inferType.$kind;
+export type PartialUserSignatureState =
+	typeof CoordinatorInnerModule.PartialUserSignatureState.$inferType.$kind;
 
 export const Hash = {
 	KECCAK256: 0,

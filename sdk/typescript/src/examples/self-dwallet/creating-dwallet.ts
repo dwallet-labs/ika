@@ -19,7 +19,10 @@ async function main() {
 
 	await registerEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys);
 
-	const dWallet = await ikaClient.getDWallet(dwalletID);
+	const dWallet = await ikaClient.getDWalletInParticularState(
+		dwalletID,
+		'AwaitingUserDKGVerificationInitiation',
+	);
 
 	const preparedSecondRound = await prepareDKGSecondRoundAsync(
 		ikaClient,
@@ -37,7 +40,7 @@ async function main() {
 		signerPublicKey,
 	);
 
-	const activeDWallet = await ikaClient.getDWallet(dwalletID);
+	const activeDWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
 
 	await acceptEncryptedUserShare(
 		ikaClient,

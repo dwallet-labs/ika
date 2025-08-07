@@ -38,8 +38,9 @@ async function main() {
 		signerAddress,
 	);
 
-	const importedKeyDWallet = await ikaClient.getDWallet(
+	const importedKeyDWallet = await ikaClient.getDWalletInParticularState(
 		importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+		'Active',
 	);
 
 	await acceptEncryptedUserShare(
@@ -50,8 +51,9 @@ async function main() {
 		userShareEncryptionKeys,
 	);
 
-	const activeDWallet = await ikaClient.getDWallet(
+	const activeDWallet = await ikaClient.getDWalletInParticularState(
 		importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+		'Active',
 	);
 
 	await makeImportedDWalletUserSecretKeySharesPublic(
@@ -68,7 +70,10 @@ async function main() {
 		SignatureAlgorithm.ECDSA,
 	);
 
-	const presignObject = await ikaClient.getPresign(presignRequestEvent.event_data.presign_id);
+	const presignObject = await ikaClient.getPresignInParticularState(
+		presignRequestEvent.event_data.presign_id,
+		'Completed',
+	);
 
 	await signWithImportedDWalletPublic(
 		ikaClient,

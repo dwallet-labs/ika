@@ -35,8 +35,9 @@ async function main() {
 		signerAddress,
 	);
 
-	const importedKeyDWallet = await ikaClient.getDWallet(
+	const importedKeyDWallet = await ikaClient.getDWalletInParticularState(
 		importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+		'Active',
 	);
 
 	await acceptEncryptedUserShare(
