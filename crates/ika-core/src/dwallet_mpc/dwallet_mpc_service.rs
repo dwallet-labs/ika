@@ -1215,7 +1215,7 @@ mod tests {
     fn create_dwallet_mpc_services() -> (
         Vec<DWalletMPCService>,
         Vec<SuiDataSenders>,
-        Vec<TestingSubmitToConsensus>,
+        Vec<Arc<TestingSubmitToConsensus>>,
     ) {
         let (committee, keypairs) = Committee::new_simple_test_committee();
         let committee_clone = committee.clone();
@@ -1249,7 +1249,11 @@ mod tests {
         val_index: usize,
         committee: Committee,
         ika_network_config: IkaNetworkConfig,
-    ) -> (DWalletMPCService, SuiDataSenders, TestingSubmitToConsensus) {
+    ) -> (
+        DWalletMPCService,
+        SuiDataSenders,
+        Arc<TestingSubmitToConsensus>,
+    ) {
         let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
         let committee_clone = committee.clone();
         let names: Vec<_> = committee_clone.names().collect();
