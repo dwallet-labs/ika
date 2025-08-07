@@ -702,22 +702,9 @@ export class IkaClient {
 				throw new ObjectNotFoundError('No table chunks found', tableID);
 			}
 
-			const expectedStart = indices[0];
-
-			if (expectedStart !== 0) {
-				throw new InvalidObjectError('Table chunks do not start at index 0', tableID);
-			}
-
-			const maxIndex = indices[indices.length - 1];
-			const orderedChunks: Uint8Array[] = [];
-
-			for (let idx = 0; idx <= maxIndex; idx++) {
-				const chunk = dataMap.get(idx);
-				if (!chunk) {
-					throw new InvalidObjectError('Missing table chunk at index', `${tableID}:${idx}`);
-				}
-				orderedChunks.push(chunk);
-			}
+			const orderedChunks: Uint8Array[] = indices
+				.map((idx) => dataMap.get(idx)!)
+				.filter((chunk): chunk is Uint8Array => !!chunk);
 
 			const totalLength = orderedChunks.reduce((acc, arr) => acc + arr.length, 0);
 			const result = new Uint8Array(totalLength);
