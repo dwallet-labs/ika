@@ -6,7 +6,6 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::crytographic_computation::advance;
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationSecp256k1Party,
@@ -32,7 +31,10 @@ use ika_types::messages_dwallet_mpc::{
     DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
     DWalletNetworkEncryptionKeyState, DWalletSessionEvent, MPCRequestInput, MPCSessionRequest,
 };
-use mpc::{GuaranteedOutputDeliveryRoundResult, WeightedThresholdAccessStructure};
+use mpc::guaranteed_output_delivery::{AdvanceRequest, Party};
+use mpc::{
+    GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
+};
 use rand_chacha::ChaCha20Rng;
 use std::collections::HashMap;
 use sui_types::base_types::ObjectID;
@@ -263,40 +265,44 @@ pub(crate) fn advance_network_dkg(
     public_input: &PublicInput,
     party_id: PartyID,
     key_scheme: &DWalletMPCNetworkKeyScheme,
-    messages: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
     class_groups_decryption_key: ClassGroupsDecryptionKey,
-    rng: ChaCha20Rng,
+    advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
+    rng: &mut ChaCha20Rng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let res = match key_scheme {
         DWalletMPCNetworkKeyScheme::Secp256k1 => {
             let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
                 unreachable!();
             };
-            let result = advance::<Secp256k1Party>(
+
+            let result = Party::<Secp256k1Party>::advance_with_guaranteed_output(
                 session_id,
                 party_id,
-                access_structure,
-                messages,
+                &access_structure,
+                advance_request,
+                Some(class_groups_decryption_key),
                 public_input,
-                class_groups_decryption_key,
                 rng,
-            );
+            )?;
+
             match result.clone() {
-                Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                GuaranteedOutputDeliveryRoundResult::Finalize {
                     public_output_value,
                     malicious_parties,
                     private_output,
-                }) => {
+                } => {
                     let public_output_value =
                         bcs::to_bytes(&VersionedNetworkDkgOutput::V1(public_output_value))?;
 
-                    Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                        public_output_value,
-                        malicious_parties,
-                        private_output,
-                    })
+                    Ok::<GuaranteedOutputDeliveryRoundResult, DwalletMPCError>(
+                        GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        },
+                    )
                 }
-                _ => result,
+                _ => Ok(result),
             }
         }
         DWalletMPCNetworkKeyScheme::Ristretto => todo!(),

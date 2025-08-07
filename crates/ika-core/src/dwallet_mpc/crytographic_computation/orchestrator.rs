@@ -21,6 +21,7 @@ use crate::dwallet_mpc::crytographic_computation::{ComputationId, ComputationReq
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
+use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -36,10 +37,14 @@ use tracing::{debug, error, info};
 const COMPUTATION_UPDATE_CHANNEL_SIZE: usize = 10_000;
 
 struct ComputationCompletionUpdate {
+    party_id: PartyID,
     computation_id: ComputationId,
-    computation_request: ComputationRequest,
     computation_result: DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>,
     elapsed_ms: u128,
+    protocol: String,
+    curve: String,
+    hash_scheme: String,
+    signature_algorithm: String,
 }
 
 /// The orchestrator for DWallet MPC cryptographic computations.
@@ -114,12 +119,15 @@ impl CryptographicComputationsOrchestrator {
     ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
         let mut completed_computation_results = HashMap::new();
         while let Ok(computation_update) = self.completed_computation_receiver.try_recv() {
-            let party_id = computation_update.computation_request.party_id;
-            let request_input = computation_update.computation_request.request_input.clone();
             let session_identifier = computation_update.computation_id.session_identifier;
             let mpc_round = computation_update.computation_id.mpc_round;
             let attempt_number = computation_update.computation_id.attempt_number;
             let elapsed_ms = computation_update.elapsed_ms;
+            let protocol = computation_update.protocol;
+            let hash_scheme = computation_update.hash_scheme;
+            let signature_algorithm = computation_update.signature_algorithm;
+            let curve = computation_update.curve;
+            let party_id = computation_update.party_id;
 
             debug!(
                 session_identifier=?computation_update.computation_id.session_identifier,
@@ -135,7 +143,7 @@ impl CryptographicComputationsOrchestrator {
                     ?session_identifier,
                     mpc_round,
                     attempt_number,
-                    mpc_protocol=?request_input,
+                    ?protocol,
                     error=?err,
                     "Cryptographic computation failed"
                 );
@@ -145,20 +153,26 @@ impl CryptographicComputationsOrchestrator {
                     ?session_identifier,
                     mpc_round,
                     attempt_number,
-                    mpc_protocol=?request_input,
+                    ?protocol,
                     duration_ms = elapsed_ms,
                     duration_seconds = elapsed_ms / 1000,
                     "Cryptographic computation completed successfully"
                 );
 
                 dwallet_mpc_metrics.add_advance_completion(
-                    &request_input,
+                    &protocol,
+                    &curve,
+                    &hash_scheme,
+                    &signature_algorithm,
                     &mpc_round.to_string(),
                     elapsed_ms as i64,
                 );
 
                 dwallet_mpc_metrics.set_last_completion_duration(
-                    &request_input,
+                    &protocol,
+                    &curve,
+                    &hash_scheme,
+                    &signature_algorithm,
                     &mpc_round.to_string(),
                     elapsed_ms as i64,
                 );
@@ -200,7 +214,7 @@ impl CryptographicComputationsOrchestrator {
                 session_identifier=?computation_id.session_identifier,
                 mpc_round=?computation_id.mpc_round,
                 attempt_number=?computation_id.attempt_number,
-                mpc_protocol=?computation_request.request_input,
+                mpc_protocol=?computation_request.protocol_name,
                 "No available CPU cores to perform cryptographic computation"
             );
 
@@ -221,18 +235,32 @@ impl CryptographicComputationsOrchestrator {
         let handle = Handle::current();
 
         dwallet_mpc_metrics.add_advance_call(
-            &computation_request.request_input,
+            &computation_request.protocol_name,
+            &computation_request.protocol_specific_data.curve_name(),
+            &computation_request
+                .protocol_specific_data
+                .hash_scheme_name(),
+            &computation_request
+                .protocol_specific_data
+                .signature_algorithm_name(),
             &computation_id.mpc_round.to_string(),
         );
 
         let party_id = computation_request.party_id;
-        let request_input = computation_request.request_input.clone();
+        let protocol = computation_request.protocol_name.to_string();
+        let curve = computation_request.protocol_specific_data.curve_name();
+        let hash_scheme = computation_request
+            .protocol_specific_data
+            .hash_scheme_name();
+        let signature_algorithm = computation_request
+            .protocol_specific_data
+            .signature_algorithm_name();
         info!(
             party_id,
             session_identifier=?computation_id.session_identifier,
             mpc_round=?computation_id.mpc_round,
             attempt_number=?computation_id.attempt_number,
-            mpc_protocol=?request_input,
+            mpc_protocol=?computation_request.protocol_name,
             "Starting cryptographic computation",
         );
 
@@ -241,11 +269,8 @@ impl CryptographicComputationsOrchestrator {
         rayon::spawn_fifo(move || {
             let advance_start_time = Instant::now();
 
-            let computation_result = computation_request.clone().compute(
-                computation_id,
-                root_seed,
-                dwallet_mpc_metrics.clone(),
-            );
+            let computation_result =
+                computation_request.compute(computation_id, root_seed, dwallet_mpc_metrics.clone());
 
             let elapsed = advance_start_time.elapsed();
             let elapsed_ms = elapsed.as_millis();
@@ -253,10 +278,14 @@ impl CryptographicComputationsOrchestrator {
             handle.spawn(async move {
                 if let Err(err) = computation_channel_sender
                     .send(ComputationCompletionUpdate {
+                        party_id,
                         computation_id,
-                        computation_request,
                         computation_result,
                         elapsed_ms,
+                        protocol,
+                        curve,
+                        hash_scheme,
+                        signature_algorithm,
                     })
                     .await
                 {
