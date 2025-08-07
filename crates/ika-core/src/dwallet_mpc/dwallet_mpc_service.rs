@@ -994,6 +994,8 @@ mod tests {
     use std::sync::Mutex;
     use tokio::sync::watch;
 
+    const TEST_SESSION_ID: [u8; 32] = [0; 32];
+
     #[tokio::test]
     async fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
         struct TestingAuthorityPerEpochStore {
@@ -1009,7 +1011,6 @@ mod tests {
                 }
             }
         }
-
         impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             fn insert_pending_dwallet_checkpoint(
                 &self,
@@ -1033,7 +1034,7 @@ mod tests {
                         vec![DWalletMPCMessage {
                             message: vec![1],
                             authority: Default::default(),
-                            session_identifier: SessionIdentifier::new(SessionType::User, [0; 32]),
+                            session_identifier: SessionIdentifier::new(SessionType::User, TEST_SESSION_ID),
                         }],
                     )))
                 } else {
@@ -1166,5 +1167,16 @@ mod tests {
         dwallet_mpc_service
             .process_consensus_rounds_from_storage()
             .await;
+        let currently_running_computations = dwallet_mpc_service
+            .dwallet_mpc_manager
+            .cryptographic_computations_orchestrator
+            .currently_running_cryptographic_computations;
+        let computation_id = ComputationId {
+            session_identifier: SessionIdentifier::new(SessionType::User, TEST_SESSION_ID),
+            mpc_round: 2,
+            consensus_round: Some(6),
+            attempt_number: 0
+        };
+        assert!(currently_running_computations.contains(&computation_id))
     }
 }
