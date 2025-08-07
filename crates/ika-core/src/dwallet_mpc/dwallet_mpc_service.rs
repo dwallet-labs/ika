@@ -986,6 +986,7 @@ mod tests {
     use tokio::sync::watch;
     use dwallet_rng::RootSeed;
 
+    #[cfg(test)]    
     fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
         struct TestingAuthorityPerEpochStore {
             pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
@@ -1141,12 +1142,12 @@ mod tests {
                 RootSeed::random_seed(),
                 0,
                 0,
-                DWalletMPCMetrics::new(Registry::new()),
+                DWalletMPCMetrics::new(&Registry::new()),
                 sui_data_receivers.clone()
             ),
-            exit: (),
+            exit: watch::channel(()).1,
             end_of_publish: false,
-            dwallet_mpc_metrics: Arc::new(()),
+            dwallet_mpc_metrics: DWalletMPCMetrics::new(&Registry::new()),
             sui_data_receivers,
             name: Default::default(),
             epoch: 0,
