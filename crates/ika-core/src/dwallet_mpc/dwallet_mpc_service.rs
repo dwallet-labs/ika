@@ -976,6 +976,7 @@ impl DWalletMPCService {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
@@ -986,7 +987,7 @@ mod tests {
     use tokio::sync::watch;
     use dwallet_rng::RootSeed;
 
-    #[cfg(test)]    
+    #[tokio::test]
     fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
         struct TestingAuthorityPerEpochStore {
             pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
