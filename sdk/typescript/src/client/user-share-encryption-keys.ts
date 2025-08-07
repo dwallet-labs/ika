@@ -1,8 +1,9 @@
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { keccak256 } from 'js-sha3';
 
 import { createClassGroupsKeypair, decryptUserShare } from './cryptography';
 import { DWallet, EncryptedUserSecretKeyShare } from './types';
-import { parseNumbersToBytes, stringToUint8Array } from './utils';
+import { parseNumbersToBytes } from './utils';
 
 /**
  * UserShareEncrytionKeys manages encryption/decryption keys and signing keypairs for user shares.
@@ -17,93 +18,39 @@ export class UserShareEncrytionKeys {
 	/** The Ed25519 keypair used for signing encrypted secret share operations */
 	encryptedSecretShareSigningKeypair: Ed25519Keypair;
 
+	private domainSeperators = {
+		classGroups: 'CLASS_GROUPS_V1',
+		encryptionSignerKey: 'ENCRYPTION_SIGNER_KEY_V1',
+	};
+
 	/**
-	 * Create a new UserShareEncrytionKeys instance from various input types.
+	 * Create a new UserShareEncrytionKeys instance from a root seed key.
 	 *
-	 * @param input - Can be a Uint8Array seed, number array, hex string, or Ed25519Keypair
+	 * @param rootSeedKey - Can be a Uint8Array seed, please keep it secret.
 	 */
-	constructor(input: Uint8Array | number[] | string | Ed25519Keypair) {
-		let seed: Uint8Array;
-		let keypair: Ed25519Keypair;
+	constructor(rootSeedKey: Uint8Array) {
+		const classGroupsSeed = this.hash(this.domainSeperators.classGroups, rootSeedKey);
+		const encryptionSignerKeySeed = this.hash(
+			this.domainSeperators.encryptionSignerKey,
+			rootSeedKey,
+		);
 
-		if (input instanceof Ed25519Keypair) {
-			// If input is already a keypair, use it directly
-			keypair = input;
-			// Generate a seed for class groups keypair (using public key bytes as seed)
-			seed = stringToUint8Array(keypair.getSecretKey());
-		} else {
-			// Convert input to seed
-			if (typeof input === 'string') {
-				// Handle hex string input
-				const hexString = input.startsWith('0x') ? input.slice(2) : input;
-				seed = new Uint8Array(Buffer.from(hexString, 'hex'));
-			} else if (Array.isArray(input)) {
-				// Handle number array input
-				seed = new Uint8Array(input);
-			} else {
-				// Handle Uint8Array input
-				seed = input;
-			}
-
-			// Create keypair from seed
-			keypair = Ed25519Keypair.deriveKeypairFromSeed(Buffer.from(seed).toString('hex'));
-		}
-
-		// Create class groups keypair for encryption/decryption
-		const classGroupsKeypair = createClassGroupsKeypair(seed);
+		const classGroupsKeypair = createClassGroupsKeypair(classGroupsSeed);
 		this.encryptionKey = classGroupsKeypair.encryptionKey;
 		this.decryptionKey = classGroupsKeypair.decryptionKey;
-		this.encryptedSecretShareSigningKeypair = keypair;
+		this.encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+			Buffer.from(encryptionSignerKeySeed).toString('hex'),
+		);
 	}
 
 	/**
-	 * Creates UserShareEncrytionKeys from a seed (Uint8Array).
+	 * Creates UserShareEncrytionKeys from a root seed key (Uint8Array).
 	 *
-	 * @param seed - The seed bytes to generate keys from
+	 * @param rootSeedKey - The root seed key to generate keys from
 	 * @returns A new UserShareEncrytionKeys instance
 	 */
-	static fromSeed(seed: Uint8Array): UserShareEncrytionKeys {
-		return new UserShareEncrytionKeys(seed);
-	}
-
-	/**
-	 * Creates UserShareEncrytionKeys from a number array.
-	 *
-	 * @param numbers - Array of numbers representing seed bytes
-	 * @returns A new UserShareEncrytionKeys instance
-	 */
-	static fromNumberArray(numbers: number[]): UserShareEncrytionKeys {
-		return new UserShareEncrytionKeys(numbers);
-	}
-
-	/**
-	 * Creates UserShareEncrytionKeys from a hex string.
-	 *
-	 * @param hexString - Hex string (with or without '0x' prefix) representing seed bytes
-	 * @returns A new UserShareEncrytionKeys instance
-	 */
-	static fromHexString(hexString: string): UserShareEncrytionKeys {
-		return new UserShareEncrytionKeys(hexString);
-	}
-
-	/**
-	 * Creates UserShareEncrytionKeys from an existing Ed25519Keypair.
-	 *
-	 * @param keypair - An existing Ed25519Keypair to use for signing operations
-	 * @returns A new UserShareEncrytionKeys instance
-	 */
-	static fromKeypair(keypair: Ed25519Keypair): UserShareEncrytionKeys {
-		return new UserShareEncrytionKeys(keypair);
-	}
-
-	/**
-	 * Generates a new random UserShareEncrytionKeys with fresh cryptographic keys.
-	 *
-	 * @returns A new UserShareEncrytionKeys instance with randomly generated keys
-	 */
-	static generate(): UserShareEncrytionKeys {
-		const keypair = Ed25519Keypair.generate();
-		return new UserShareEncrytionKeys(keypair);
+	static fromRootSeedKey(rootSeedKey: Uint8Array): UserShareEncrytionKeys {
+		return new UserShareEncrytionKeys(rootSeedKey);
 	}
 
 	/**
@@ -131,15 +78,6 @@ export class UserShareEncrytionKeys {
 	 */
 	getPublicKeyBytes(): Uint8Array {
 		return this.encryptedSecretShareSigningKeypair.getPublicKey().toRawBytes();
-	}
-
-	/**
-	 * Gets the secret key as a string.
-	 *
-	 * @returns The secret key of the signing keypair as a hex string
-	 */
-	getSecretKey(): string {
-		return this.encryptedSecretShareSigningKeypair.getSecretKey();
 	}
 
 	/**
@@ -188,5 +126,16 @@ export class UserShareEncrytionKeys {
 			Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
 			networkDecryptionKeyPublicOutput,
 		);
+	}
+
+	/**
+	 * Hashes a domain separator and root seed to produce a seed for a keypair.
+	 *
+	 * @param domainSeparator - The domain separator to use
+	 * @param rootSeed - The root seed to use
+	 * @returns The hashed seed as a Uint8Array
+	 */
+	private hash(domainSeparator: string, rootSeed: Uint8Array): Uint8Array {
+		return new Uint8Array(keccak256.digest(domainSeparator + rootSeed));
 	}
 }

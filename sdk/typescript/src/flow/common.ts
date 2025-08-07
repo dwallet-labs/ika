@@ -49,9 +49,7 @@ export function generateKeypair() {
 	const seed = new Uint8Array(32).fill(8);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed('0x1');
 
-	const userShareEncryptionKeys = UserShareEncrytionKeys.fromHexString(
-		Buffer.from(seed).toString('hex'),
-	);
+	const userShareEncryptionKeys = UserShareEncrytionKeys.fromRootSeedKey(seed);
 
 	return {
 		userShareEncryptionKeys,
@@ -64,9 +62,7 @@ export function generateKeyparForImportedDWallet() {
 	const seed = new Uint8Array(32).fill(8);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed('0x1');
 
-	const userShareEncryptionKeys = UserShareEncrytionKeys.fromHexString(
-		Buffer.from(seed).toString('hex'),
-	);
+	const userShareEncryptionKeys = UserShareEncrytionKeys.fromRootSeedKey(seed);
 
 	const dWalletKeypair = Secp256k1Keypair.deriveKeypair(userKeypair.getSecretKey());
 
@@ -141,7 +137,7 @@ export async function registerEncryptionKey(
 	});
 
 	ikaTransaction.registerEncryptionKey({
-		curve: 0,
+		curve: Curve.SECP256K1,
 	});
 
 	const result = await executeTransaction(suiClient, transaction);
