@@ -988,7 +988,7 @@ mod tests {
     use dwallet_rng::RootSeed;
 
     #[tokio::test]
-    fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
+    async fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
         struct TestingAuthorityPerEpochStore {
             pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
             current_round: Arc<Mutex<Round>>,
