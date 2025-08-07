@@ -377,10 +377,85 @@ export class IkaTransaction {
 		return this;
 	}
 
-	async sign({
+	approveMessage({
 		dWallet,
 		signatureAlgorithm,
 		hashScheme,
+		message,
+	}: {
+		dWallet: DWallet;
+		signatureAlgorithm: SignatureAlgorithm;
+		hashScheme: Hash;
+		message: Uint8Array;
+	}): {
+		messageApproval: TransactionObjectArgument;
+		transaction: IkaTransaction;
+	} {
+		const messageApproval = coordinatorTx.approveMessage(
+			this.ikaClient.ikaConfig,
+			dWallet.dwallet_cap_id,
+			signatureAlgorithm,
+			hashScheme,
+			message,
+			this.transaction,
+		);
+
+		return {
+			messageApproval,
+			transaction: this,
+		};
+	}
+
+	verifyPresignCap({ presign }: { presign: Presign }): {
+		verifiedPresignCap: TransactionObjectArgument;
+		transaction: IkaTransaction;
+	} {
+		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
+			this.ikaClient.ikaConfig,
+			presign.id.id,
+			this.transaction,
+		);
+
+		return {
+			verifiedPresignCap,
+			transaction: this,
+		};
+	}
+
+	approveImportedKeyMessage({
+		dWallet,
+		signatureAlgorithm,
+		hashScheme,
+		message,
+	}: {
+		dWallet: DWallet;
+		signatureAlgorithm: SignatureAlgorithm;
+		hashScheme: Hash;
+		message: Uint8Array;
+	}): {
+		importedKeyMessageApproval: TransactionObjectArgument;
+		transaction: IkaTransaction;
+	} {
+		const importedKeyMessageApproval = coordinatorTx.approveImportedKeyMessage(
+			this.ikaClient.ikaConfig,
+			dWallet.dwallet_cap_id,
+			signatureAlgorithm,
+			hashScheme,
+			message,
+			this.transaction,
+		);
+
+		return {
+			importedKeyMessageApproval,
+			transaction: this,
+		};
+	}
+
+	async sign({
+		dWallet,
+		messageApproval,
+		hashScheme,
+		verifiedPresignCap,
 		presign,
 		encryptedUserSecretKeyShare,
 		message,
@@ -388,8 +463,9 @@ export class IkaTransaction {
 		suiCoin,
 	}: {
 		dWallet: DWallet;
-		signatureAlgorithm: SignatureAlgorithm;
+		messageApproval: TransactionObjectArgument;
 		hashScheme: Hash;
+		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		message: Uint8Array;
@@ -403,21 +479,6 @@ export class IkaTransaction {
 		if (!presign.state.Completed?.presign) {
 			throw new Error('Presign is not completed');
 		}
-
-		const messageApproval = coordinatorTx.approveMessage(
-			this.ikaClient.ikaConfig,
-			dWallet.dwallet_cap_id,
-			signatureAlgorithm,
-			hashScheme,
-			message,
-			this.transaction,
-		);
-
-		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
-			this.ikaClient.ikaConfig,
-			presign.id.id,
-			this.transaction,
-		);
 
 		coordinatorTx.requestSign(
 			this.ikaClient.ikaConfig,
@@ -446,7 +507,8 @@ export class IkaTransaction {
 
 	async signPublic({
 		dWallet,
-		signatureAlgorithm,
+		verifiedPresignCap,
+		messageApproval,
 		hashScheme,
 		presign,
 		message,
@@ -454,7 +516,8 @@ export class IkaTransaction {
 		suiCoin,
 	}: {
 		dWallet: DWallet;
-		signatureAlgorithm: SignatureAlgorithm;
+		verifiedPresignCap: TransactionObjectArgument;
+		messageApproval: TransactionObjectArgument;
 		hashScheme: Hash;
 		presign: Presign;
 		message: Uint8Array;
@@ -468,21 +531,6 @@ export class IkaTransaction {
 		if (!dWallet.public_user_secret_key_share) {
 			throw new Error('User share must be public to use this method');
 		}
-
-		const messageApproval = coordinatorTx.approveMessage(
-			this.ikaClient.ikaConfig,
-			dWallet.dwallet_cap_id,
-			signatureAlgorithm,
-			hashScheme,
-			message,
-			this.transaction,
-		);
-
-		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
-			this.ikaClient.ikaConfig,
-			presign.id.id,
-			this.transaction,
-		);
 
 		coordinatorTx.requestSign(
 			this.ikaClient.ikaConfig,
@@ -507,6 +555,7 @@ export class IkaTransaction {
 
 	async requestFutureSign({
 		dWallet,
+		verifiedPresignCap,
 		presign,
 		encryptedUserSecretKeyShare,
 		message,
@@ -516,6 +565,7 @@ export class IkaTransaction {
 	}: {
 		dWallet: DWallet;
 		hashScheme: number;
+		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		message: Uint8Array;
@@ -532,12 +582,6 @@ export class IkaTransaction {
 		if (!presign.state.Completed?.presign) {
 			throw new Error('Presign is not completed');
 		}
-
-		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
-			this.ikaClient.ikaConfig,
-			presign.id.id,
-			this.transaction,
-		);
 
 		const unverifiedPartialUserSignatureCap = coordinatorTx.requestFutureSign(
 			this.ikaClient.ikaConfig,
@@ -571,6 +615,7 @@ export class IkaTransaction {
 
 	async requestFutureSignAndKeep({
 		dWallet,
+		verifiedPresignCap,
 		presign,
 		encryptedUserSecretKeyShare,
 		message,
@@ -580,6 +625,7 @@ export class IkaTransaction {
 		suiCoin,
 	}: {
 		dWallet: DWallet;
+		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		message: Uint8Array;
@@ -595,12 +641,6 @@ export class IkaTransaction {
 		if (!presign.state.Completed?.presign) {
 			throw new Error('Presign is not completed');
 		}
-
-		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
-			this.ikaClient.ikaConfig,
-			presign.id.id,
-			this.transaction,
-		);
 
 		const unverifiedPartialUserSignatureCap = coordinatorTx.requestFutureSign(
 			this.ikaClient.ikaConfig,
@@ -632,31 +672,16 @@ export class IkaTransaction {
 	}
 
 	futureSign({
-		dWallet,
 		partialUserSignature,
-		message,
-		hashScheme,
-		signatureAlgorithm,
+		messageApproval,
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
 		partialUserSignature: PartialUserSignature;
-		message: Uint8Array;
-		hashScheme: number;
-		signatureAlgorithm: number;
+		messageApproval: TransactionObjectArgument;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		const approvedMessage = coordinatorTx.approveMessage(
-			this.ikaClient.ikaConfig,
-			dWallet.dwallet_cap_id,
-			signatureAlgorithm,
-			hashScheme,
-			message,
-			this.transaction,
-		);
-
 		coordinatorTx.requestSignWithPartialUserSignature(
 			this.ikaClient.ikaConfig,
 			coordinatorTx.verifyPartialUserSignatureCap(
@@ -664,7 +689,7 @@ export class IkaTransaction {
 				this.transaction.object(partialUserSignature.cap_id),
 				this.transaction,
 			),
-			approvedMessage,
+			messageApproval,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
@@ -760,19 +785,21 @@ export class IkaTransaction {
 
 	async signWithImportedDWallet({
 		dWallet,
+		importedKeyMessageApproval,
+		verifiedPresignCap,
 		presign,
 		hashScheme,
 		message,
-		signatureAlgorithm,
 		encryptedUserSecretKeyShare,
 		ikaCoin,
 		suiCoin,
 	}: {
 		dWallet: DWallet;
+		importedKeyMessageApproval: TransactionObjectArgument;
+		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		hashScheme: Hash;
 		message: Uint8Array;
-		signatureAlgorithm: SignatureAlgorithm;
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -784,21 +811,6 @@ export class IkaTransaction {
 		if (!presign.state.Completed?.presign) {
 			throw new Error('Presign is not completed');
 		}
-
-		const importedKeyMessageApproval = coordinatorTx.approveImportedKeyMessage(
-			this.ikaClient.ikaConfig,
-			dWallet.dwallet_cap_id,
-			signatureAlgorithm,
-			hashScheme,
-			message,
-			this.transaction,
-		);
-
-		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
-			this.ikaClient.ikaConfig,
-			presign.id.id,
-			this.transaction,
-		);
 
 		coordinatorTx.requestImportedKeySign(
 			this.ikaClient.ikaConfig,
@@ -825,18 +837,20 @@ export class IkaTransaction {
 
 	async signWithImportedDWalletPublic({
 		dWallet,
+		importedKeyMessageApproval,
+		verifiedPresignCap,
 		presign,
 		hashScheme,
 		message,
-		signatureAlgorithm,
 		ikaCoin,
 		suiCoin,
 	}: {
 		dWallet: DWallet;
+		importedKeyMessageApproval: TransactionObjectArgument;
+		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		hashScheme: Hash;
 		message: Uint8Array;
-		signatureAlgorithm: SignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
@@ -851,21 +865,6 @@ export class IkaTransaction {
 		if (!dWallet.public_user_secret_key_share) {
 			throw new Error('DWallet public output is not set');
 		}
-
-		const importedKeyMessageApproval = coordinatorTx.approveImportedKeyMessage(
-			this.ikaClient.ikaConfig,
-			dWallet.dwallet_cap_id,
-			signatureAlgorithm,
-			hashScheme,
-			message,
-			this.transaction,
-		);
-
-		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
-			this.ikaClient.ikaConfig,
-			presign.id.id,
-			this.transaction,
-		);
 
 		coordinatorTx.requestImportedKeySign(
 			this.ikaClient.ikaConfig,

@@ -342,9 +342,21 @@ export async function sign(
 		userShareEncryptionKeys,
 	});
 
-	await ikaTransaction.sign({
+	const { messageApproval } = ikaTransaction.approveMessage({
 		dWallet,
 		signatureAlgorithm,
+		hashScheme,
+		message,
+	});
+
+	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+		presign,
+	});
+
+	await ikaTransaction.sign({
+		dWallet,
+		messageApproval,
+		verifiedPresignCap,
 		hashScheme,
 		presign,
 		encryptedUserSecretKeyShare,
@@ -378,12 +390,24 @@ export async function signPublicUserShare(
 		transaction,
 	});
 
+	const { messageApproval } = ikaTransaction.approveMessage({
+		dWallet,
+		signatureAlgorithm,
+		hashScheme,
+		message,
+	});
+
+	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+		presign,
+	});
+
 	await ikaTransaction.signPublic({
 		dWallet,
+		messageApproval,
+		verifiedPresignCap,
 		presign,
 		message,
 		hashScheme,
-		signatureAlgorithm,
 		ikaCoin: coinWithBalance({
 			type: '0x2::ika::IKA',
 			balance: 0,
@@ -415,9 +439,14 @@ export async function requestFutureSign(
 		userShareEncryptionKeys,
 	});
 
+	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+		presign,
+	});
+
 	await ikaTransaction.requestFutureSignAndKeep({
 		dWallet,
 		presign,
+		verifiedPresignCap,
 		encryptedUserSecretKeyShare,
 		message,
 		hashScheme,
@@ -452,8 +481,8 @@ export async function futureSign(
 	partialUserSignature: PartialUserSignature,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	message: Uint8Array,
-	hashScheme: number,
-	signatureAlgorithm: number,
+	hashScheme: Hash,
+	signatureAlgorithm: SignatureAlgorithm,
 ) {
 	const transaction = new Transaction();
 
@@ -463,12 +492,16 @@ export async function futureSign(
 		userShareEncryptionKeys,
 	});
 
-	ikaTransaction.futureSign({
+	const { messageApproval } = ikaTransaction.approveMessage({
 		dWallet,
-		partialUserSignature,
-		message,
-		hashScheme,
 		signatureAlgorithm,
+		hashScheme,
+		message,
+	});
+
+	ikaTransaction.futureSign({
+		messageApproval,
+		partialUserSignature,
 		ikaCoin: coinWithBalance({
 			type: '0x2::ika::IKA',
 			balance: 0,
@@ -542,13 +575,25 @@ export async function signWithImportedDWallet(
 		transaction,
 	});
 
+	const { importedKeyMessageApproval } = ikaTransaction.approveImportedKeyMessage({
+		dWallet,
+		signatureAlgorithm,
+		hashScheme,
+		message,
+	});
+
+	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+		presign,
+	});
+
 	await ikaTransaction.signWithImportedDWallet({
 		dWallet,
 		encryptedUserSecretKeyShare,
 		presign,
 		hashScheme,
 		message,
-		signatureAlgorithm,
+		importedKeyMessageApproval,
+		verifiedPresignCap,
 		ikaCoin: coinWithBalance({
 			type: '0x2::ika::IKA',
 			balance: 0,
@@ -578,12 +623,24 @@ export async function signWithImportedDWalletPublic(
 		transaction,
 	});
 
+	const { importedKeyMessageApproval } = ikaTransaction.approveImportedKeyMessage({
+		dWallet,
+		signatureAlgorithm,
+		hashScheme,
+		message,
+	});
+
+	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+		presign,
+	});
+
 	await ikaTransaction.signWithImportedDWalletPublic({
 		dWallet,
 		presign,
 		hashScheme,
 		message,
-		signatureAlgorithm,
+		importedKeyMessageApproval,
+		verifiedPresignCap,
 		ikaCoin: coinWithBalance({
 			type: '0x2::ika::IKA',
 			balance: 0,
