@@ -40,6 +40,7 @@ pub enum PublicInput {
     MakeDWalletUserSecretKeySharesPublic(
         twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
     ),
+    Testing,
 }
 
 // TODO (#542): move this logic to run before writing the event to the DB, maybe include within the session info
@@ -224,5 +225,6 @@ pub(crate) fn session_input_from_event(
                 None,
             ))
         }
+        MPCRequestInput::Testing => Ok((PublicInput::Testing, None)),
     }
 }

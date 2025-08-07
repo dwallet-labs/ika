@@ -90,6 +90,19 @@ impl MPCEventData {
 
         Ok(mpc_event_data)
     }
+
+    pub(crate) fn new_for_testing(session_type: SessionType, session_sequence_number: u64) -> Self {
+        Self {
+            private_input: None,
+            request_input: MPCRequestInput::Testing,
+            decryption_key_shares: None,
+            session_type,
+            session_sequence_number,
+            public_input: PublicInput::Testing,
+            requires_network_key_data: false,
+            requires_next_active_committee: false,
+        }
+    }
 }
 
 impl PartialOrd<Self> for MPCEventData {

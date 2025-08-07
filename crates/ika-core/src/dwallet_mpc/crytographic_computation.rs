@@ -640,6 +640,9 @@ impl ComputationRequest {
                     }
                 }
             }
+            MPCRequestInput::Testing => {
+                Ok(GuaranteedOutputDeliveryRoundResult::Advance { message: vec![] })
+            }
         }
     }
 }

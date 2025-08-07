@@ -907,6 +907,9 @@ impl DWalletMPCService {
                 );
                 vec![tx]
             }
+            MPCRequestInput::Testing => {
+                vec![]
+            }
         }
     }
 
@@ -1034,7 +1037,10 @@ mod tests {
                         vec![DWalletMPCMessage {
                             message: vec![1],
                             authority: Default::default(),
-                            session_identifier: SessionIdentifier::new(SessionType::User, TEST_SESSION_ID),
+                            session_identifier: SessionIdentifier::new(
+                                SessionType::User,
+                                TEST_SESSION_ID,
+                            ),
                         }],
                     )))
                 } else {
@@ -1164,6 +1170,13 @@ mod tests {
             protocol_config: ProtocolConfig::get_for_min_version(),
             committee: Arc::new(committee.0),
         };
+        let session_identifier = SessionIdentifier::new(SessionType::User, TEST_SESSION_ID);
+        dwallet_mpc_service
+            .dwallet_mpc_manager
+            .mpc_sessions
+            .get_mut(&session_identifier)
+            .expect("Session should exist after messages have been received for it")
+            .mpc_event_data = Some(MPCEventData::try_new());
         dwallet_mpc_service
             .process_consensus_rounds_from_storage()
             .await;
@@ -1172,10 +1185,10 @@ mod tests {
             .cryptographic_computations_orchestrator
             .currently_running_cryptographic_computations;
         let computation_id = ComputationId {
-            session_identifier: SessionIdentifier::new(SessionType::User, TEST_SESSION_ID),
+            session_identifier,
             mpc_round: 2,
             consensus_round: Some(6),
-            attempt_number: 0
+            attempt_number: 0,
         };
         assert!(currently_running_computations.contains(&computation_id))
     }

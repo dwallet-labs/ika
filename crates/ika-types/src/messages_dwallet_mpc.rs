@@ -95,6 +95,7 @@ pub enum MPCRequestInput {
     NetworkEncryptionKeyReconfiguration(
         DWalletSessionEvent<DWalletEncryptionKeyReconfigurationRequestEvent>,
     ),
+    Testing,
 }
 
 impl Display for MPCRequestInput {
@@ -122,6 +123,9 @@ impl Display for MPCRequestInput {
             MPCRequestInput::DWalletImportedKeyVerificationRequest(_) => {
                 write!(f, "DWalletImportedKeyVerificationRequestEvent")
             }
+            MPCRequestInput::Testing => {
+                write!(f, "Testing")
+            }
         }
     }
 }
@@ -144,6 +148,7 @@ impl MPCRequestInput {
             MPCRequestInput::DWalletImportedKeyVerificationRequest(event) => {
                 Some(event.event_data.curve)
             }
+            MPCRequestInput::Testing => None,
         };
         match &curve {
             None => "".to_string(),
@@ -171,6 +176,7 @@ impl MPCRequestInput {
             MPCRequestInput::NetworkEncryptionKeyReconfiguration(_event) => None,
             MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(_) => None,
             MPCRequestInput::DWalletImportedKeyVerificationRequest(_) => None,
+            MPCRequestInput::Testing => None,
         };
         match &hash_scheme {
             None => "".to_string(),
@@ -200,6 +206,7 @@ impl MPCRequestInput {
             MPCRequestInput::NetworkEncryptionKeyReconfiguration(_event) => None,
             MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(_) => None,
             MPCRequestInput::DWalletImportedKeyVerificationRequest(_event) => None,
+            MPCRequestInput::Testing => None,
         };
         match &signature_alg {
             None => "".to_string(),
@@ -245,6 +252,7 @@ impl MPCRequestInput {
             MPCRequestInput::DWalletImportedKeyVerificationRequest(event) => {
                 Some(event.event_data.dwallet_network_encryption_key_id)
             }
+            MPCRequestInput::Testing => None,
         }
     }
 }
@@ -271,6 +279,9 @@ impl Debug for MPCRequestInput {
             }
             MPCRequestInput::DWalletImportedKeyVerificationRequest(_) => {
                 write!(f, "DWalletImportedKeyVerificationRequestEvent")
+            }
+            MPCRequestInput::Testing => {
+                write!(f, "Testing")
             }
         }
     }
