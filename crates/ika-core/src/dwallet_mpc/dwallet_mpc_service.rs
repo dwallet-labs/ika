@@ -1018,14 +1018,26 @@ mod tests {
                 &self,
                 last_consensus_round: Option<Round>,
             ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
-                todo!()
+                if last_consensus_round == Some(5) {
+                    Ok(Some((
+                        6,
+                        vec![DWalletMPCOutput {
+                            authority: Default::default(),
+                            session_identifier: SessionIdentifier::new(SessionType::User, [0; 32]),
+                            output: vec![1, 2, 3],
+                            malicious_authorities: vec![],
+                        }],
+                    )))
+                } else {
+                    Ok(None)
+                }
             }
 
             fn next_verified_dwallet_checkpoint_message(
                 &self,
                 last_consensus_round: Option<Round>,
             ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
-                todo!()
+                Ok(None)
             }
         }
         let dwallet_mpc_service = DWalletMPCService::new();
