@@ -1102,7 +1102,11 @@ mod tests {
             self.dwallet_mpc_computation_completed_sessions
                 .lock()
                 .unwrap()
-                .extend(newly_completed_session_ids.iter().map(|id| (id.clone(), true)));
+                .extend(
+                    newly_completed_session_ids
+                        .iter()
+                        .map(|id| (id.clone(), true)),
+                );
             Ok(())
         }
 
