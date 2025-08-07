@@ -1086,8 +1086,8 @@ mod tests {
             sui_data_receivers: SuiDataReceivers {},
             name: Default::default(),
             epoch: 0,
-            protocol_config: (),
-            committee: Arc::new(()),
+            protocol_config: ProtocolConfig::get_for_min_version(),
+            committee: Arc::new(Committee::new_simple_test_committee().0),
         };
     }
 }
