@@ -989,7 +989,10 @@ mod tests {
     use super::*;
     use dwallet_rng::RootSeed;
     use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
-    use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionType};
+    use ika_types::messages_dwallet_mpc::{
+        DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
+        DWalletSessionEvent, DWalletSessionEventTrait, SessionType,
+    };
     use prometheus::Registry;
     use std::sync::Mutex;
     use tokio::sync::watch;
@@ -1159,7 +1162,15 @@ mod tests {
         let (committee, keypairs) = Committee::new_simple_test_committee();
         let committee_clone = committee.clone();
         let names: Vec<_> = committee_clone.names().collect();
-        let mut dwallet_mpc_service = DWalletMPCService {
+        let ika_network_config = IkaNetworkConfig::new(
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+        );
+        let dwallet_mpc_service = DWalletMPCService {
             last_read_consensus_round: Some(0),
             epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
             dwallet_submit_to_consensus: Arc::new(TestingSubmitToConsensus::new()),
@@ -1169,14 +1180,7 @@ mod tests {
                 names[0].clone(),
                 Arc::new(committee.clone()),
                 1,
-                IkaNetworkConfig::new(
-                    ObjectID::from_single_byte(1),
-                    ObjectID::from_single_byte(1),
-                    ObjectID::from_single_byte(1),
-                    ObjectID::from_single_byte(1),
-                    ObjectID::from_single_byte(1),
-                    ObjectID::from_single_byte(1),
-                ),
+                ika_network_config.clone(),
                 RootSeed::new([1; 32]),
                 0,
                 0,
@@ -1192,8 +1196,15 @@ mod tests {
             protocol_config: ProtocolConfig::get_for_min_version(),
             committee: Arc::new(committee),
         };
-        dwallet_mpc_service
-            .process_consensus_rounds_from_storage()
-            .await;
+        let _ = sui_data_senders.uncompleted_events_sender.send((
+            vec![DBSuiEvent {
+                type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
+                    &ika_network_config,
+                ),
+                contents: vec![],
+                pulled: false,
+            }],
+            1,
+        ));
     }
 }
