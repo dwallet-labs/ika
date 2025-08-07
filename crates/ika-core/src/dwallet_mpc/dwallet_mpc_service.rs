@@ -1005,7 +1005,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 pending_checkpoints: Arc::new(Mutex::new(vec![])),
-                current_round: Arc::new(Mutex::new(5)),
+                current_round: Arc::new(Mutex::new(0)),
                 round_to_messages: Arc::new(Mutex::new(Default::default())),
                 round_to_outputs: Arc::new(Mutex::new(Default::default())),
             }
