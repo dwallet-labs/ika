@@ -994,139 +994,137 @@ mod tests {
     use std::sync::Mutex;
     use tokio::sync::watch;
 
+    struct TestingAuthorityPerEpochStore {
+        pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
+        current_round: Arc<Mutex<Round>>,
+        round_to_messages: Arc<Mutex<HashMap<Round, Vec<DWalletMPCMessage>>>>,
+        round_to_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletMPCOutput>>>>,
+    }
+
+    impl TestingAuthorityPerEpochStore {
+        fn new() -> Self {
+            Self {
+                pending_checkpoints: Arc::new(Mutex::new(vec![])),
+                current_round: Arc::new(Mutex::new(5)),
+                round_to_messages: Arc::new(Mutex::new(Default::default())),
+                round_to_outputs: Arc::new(Mutex::new(Default::default())),
+            }
+        }
+    }
+
+    impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
+        fn insert_pending_dwallet_checkpoint(
+            &self,
+            checkpoint: PendingDWalletCheckpoint,
+        ) -> IkaResult<()> {
+            self.pending_checkpoints.lock().unwrap().push(checkpoint);
+            Ok(())
+        }
+
+        fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
+            Ok(Some(*self.current_round.lock().unwrap()))
+        }
+
+        fn next_dwallet_mpc_message(
+            &self,
+            last_consensus_round: Option<Round>,
+        ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
+            let round_to_messages = self.round_to_messages.lock().unwrap();
+            if last_consensus_round.is_none() {
+                return Ok(round_to_messages
+                    .get(&0)
+                    .and_then(|messages| return Some((0, messages.clone()))));
+            }
+            Ok(round_to_messages
+                .get(&(last_consensus_round.unwrap() + 1))
+                .and_then(|messages| {
+                    return Some((last_consensus_round.unwrap() + 1, messages.clone()));
+                }))
+        }
+
+        fn next_dwallet_mpc_output(
+            &self,
+            last_consensus_round: Option<Round>,
+        ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
+            let round_to_outputs = self.round_to_outputs.lock().unwrap();
+            if last_consensus_round.is_none() {
+                return Ok(round_to_outputs
+                    .get(&0)
+                    .and_then(|outputs| return Some((0, outputs.clone()))));
+            }
+            Ok(round_to_outputs
+                .get(&(last_consensus_round.unwrap() + 1))
+                .and_then(|outputs| {
+                    return Some((last_consensus_round.unwrap() + 1, outputs.clone()));
+                }))
+        }
+
+        fn next_verified_dwallet_checkpoint_message(
+            &self,
+            last_consensus_round: Option<Round>,
+        ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
+            Ok(None)
+        }
+    }
+
+    struct TestingSubmitToConsensus {
+        submitted_messages: Arc<Mutex<Vec<ConsensusTransaction>>>,
+    }
+
+    impl TestingSubmitToConsensus {
+        fn new() -> Self {
+            Self {
+                submitted_messages: Arc::new(Mutex::new(vec![])),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DWalletMPCSubmitToConsensus for TestingSubmitToConsensus {
+        async fn submit_to_consensus(&self, messages: &[ConsensusTransaction]) -> IkaResult<()> {
+            self.submitted_messages
+                .lock()
+                .unwrap()
+                .extend_from_slice(messages);
+            Ok(())
+        }
+    }
+
+    struct TestingAuthorityState {}
+
+    impl AuthorityStateTrait for TestingAuthorityState {
+        fn insert_dwallet_mpc_computation_completed_sessions(
+            &self,
+            newly_completed_session_ids: &[SessionIdentifier],
+        ) -> IkaResult {
+            Ok(())
+        }
+
+        fn get_dwallet_mpc_sessions_completed_status(
+            &self,
+            session_identifiers: Vec<SessionIdentifier>,
+        ) -> IkaResult<HashMap<SessionIdentifier, bool>> {
+            todo!()
+        }
+    }
+
+    struct TestingDWalletCheckpointNotify {}
+    impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
+        fn notify_checkpoint_signature(
+            &self,
+            epoch_store: &AuthorityPerEpochStore,
+            info: &DWalletCheckpointSignatureMessage,
+        ) -> IkaResult {
+            todo!()
+        }
+
+        fn notify_checkpoint(&self) -> IkaResult {
+            todo!()
+        }
+    }
+
     #[tokio::test]
-    async fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
-        struct TestingAuthorityPerEpochStore {
-            pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
-            current_round: Arc<Mutex<Round>>,
-        }
-
-        impl TestingAuthorityPerEpochStore {
-            fn new() -> Self {
-                Self {
-                    pending_checkpoints: Arc::new(Mutex::new(vec![])),
-                    current_round: Arc::new(Mutex::new(5)),
-                }
-            }
-        }
-
-        impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
-            fn insert_pending_dwallet_checkpoint(
-                &self,
-                checkpoint: PendingDWalletCheckpoint,
-            ) -> IkaResult<()> {
-                self.pending_checkpoints.lock().unwrap().push(checkpoint);
-                Ok(())
-            }
-
-            fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
-                Ok(Some(*self.current_round.lock().unwrap()))
-            }
-
-            fn next_dwallet_mpc_message(
-                &self,
-                last_consensus_round: Option<Round>,
-            ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
-                if last_consensus_round == Some(5) {
-                    Ok(Some((
-                        6,
-                        vec![DWalletMPCMessage {
-                            message: vec![1],
-                            authority: Default::default(),
-                            session_identifier: SessionIdentifier::new(SessionType::User, [0; 32]),
-                        }],
-                    )))
-                } else {
-                    Ok(None)
-                }
-            }
-
-            fn next_dwallet_mpc_output(
-                &self,
-                last_consensus_round: Option<Round>,
-            ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
-                if last_consensus_round == Some(5) {
-                    Ok(Some((
-                        6,
-                        vec![DWalletMPCOutput {
-                            authority: Default::default(),
-                            session_identifier: SessionIdentifier::new(SessionType::User, [0; 32]),
-                            output: vec![DWalletCheckpointMessageKind::EndOfPublish],
-                            malicious_authorities: vec![],
-                        }],
-                    )))
-                } else {
-                    Ok(None)
-                }
-            }
-
-            fn next_verified_dwallet_checkpoint_message(
-                &self,
-                last_consensus_round: Option<Round>,
-            ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
-                Ok(None)
-            }
-        }
-
-        struct TestingSubmitToConsensus {
-            submitted_messages: Arc<Mutex<Vec<ConsensusTransaction>>>,
-        }
-
-        impl TestingSubmitToConsensus {
-            fn new() -> Self {
-                Self {
-                    submitted_messages: Arc::new(Mutex::new(vec![])),
-                }
-            }
-        }
-
-        #[async_trait::async_trait]
-        impl DWalletMPCSubmitToConsensus for TestingSubmitToConsensus {
-            async fn submit_to_consensus(
-                &self,
-                messages: &[ConsensusTransaction],
-            ) -> IkaResult<()> {
-                self.submitted_messages
-                    .lock()
-                    .unwrap()
-                    .extend_from_slice(messages);
-                Ok(())
-            }
-        }
-
-        struct TestingAuthorityState {}
-
-        impl AuthorityStateTrait for TestingAuthorityState {
-            fn insert_dwallet_mpc_computation_completed_sessions(
-                &self,
-                newly_completed_session_ids: &[SessionIdentifier],
-            ) -> IkaResult {
-                Ok(())
-            }
-
-            fn get_dwallet_mpc_sessions_completed_status(
-                &self,
-                session_identifiers: Vec<SessionIdentifier>,
-            ) -> IkaResult<HashMap<SessionIdentifier, bool>> {
-                todo!()
-            }
-        }
-
-        struct TestingDWalletCheckpointNotify {}
-        impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
-            fn notify_checkpoint_signature(
-                &self,
-                epoch_store: &AuthorityPerEpochStore,
-                info: &DWalletCheckpointSignatureMessage,
-            ) -> IkaResult {
-                todo!()
-            }
-
-            fn notify_checkpoint(&self) -> IkaResult {
-                todo!()
-            }
-        }
-
+    async fn test_network_dkg_full_flow() {
         let sui_data_receivers = SuiDataReceivers::new_for_testing();
 
         let committee = Committee::new_simple_test_committee();
