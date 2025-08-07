@@ -1157,7 +1157,8 @@ mod tests {
         let sui_data_receivers = SuiDataReceivers::new_for_testing();
 
         let (committee, keypairs) = Committee::new_simple_test_committee();
-        let names: Vec<_> = committee.clone().names().collect();
+        let committee_clone = committee.clone();
+        let names: Vec<_> = committee_clone.names().collect();
         let mut dwallet_mpc_service = DWalletMPCService {
             last_read_consensus_round: Some(0),
             epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
