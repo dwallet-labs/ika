@@ -23,27 +23,47 @@ import {
 } from './types';
 import { objResToBcs } from './utils';
 
+/**
+ * IkaClient provides a high-level interface for interacting with the Ika network.
+ * It handles network configuration, object fetching, caching, and provides methods
+ * for retrieving DWallets, presigns, and other network objects.
+ */
 export class IkaClient {
+	/** The Ika network configuration including package IDs and object references */
 	public ikaConfig: IkaConfig;
 
+	/** The underlying Sui client for blockchain interactions */
 	private client: SuiClient;
+	/** Whether to enable caching of network objects and parameters */
 	private cache: boolean;
+	/** Cached network public parameters to avoid repeated fetching */
 	private cachedPublicParameters?: {
 		decryptionKeyPublicOutputID: string;
 		epoch: number;
 		publicParameters: Uint8Array;
 	};
+	/** Cached network objects (coordinator and system inner objects) */
 	private cachedObjects?: {
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
 		decryptionKeyID: string;
 	};
+	/** Promise for ongoing object fetching to prevent duplicate requests */
 	private objectsPromise?: Promise<{
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
 		decryptionKeyID: string;
 	}>;
 
+	/**
+	 * Creates a new IkaClient instance
+	 *
+	 * @param options - Configuration options for the client
+	 * @param options.suiClient - The Sui client instance to use for blockchain interactions
+	 * @param options.config - The Ika network configuration
+	 * @param options.publicParameters - Optional cached public parameters
+	 * @param options.cache - Whether to enable caching (default: true)
+	 */
 	constructor({ suiClient, config, publicParameters, cache = true }: IkaClientOptions) {
 		this.client = suiClient;
 		this.ikaConfig = config;
@@ -51,21 +71,43 @@ export class IkaClient {
 		this.cache = cache;
 	}
 
+	/**
+	 * Invalidate all cached data including objects and public parameters.
+	 * This forces the client to refetch data on the next request.
+	 */
 	invalidateCache(): void {
 		this.cachedObjects = undefined;
 		this.cachedPublicParameters = undefined;
 		this.objectsPromise = undefined;
 	}
 
+	/**
+	 * Invalidate only the cached objects (coordinator and system inner objects).
+	 * Public parameters cache is preserved.
+	 */
 	invalidateObjectCache(): void {
 		this.cachedObjects = undefined;
 		this.objectsPromise = undefined;
 	}
 
+	/**
+	 * Initialize the client by fetching and caching network objects.
+	 * This method should be called before using other client methods.
+	 *
+	 * @returns Promise that resolves when initialization is complete
+	 */
 	async initialize(): Promise<void> {
 		await this.ensureInitialized();
 	}
 
+	/**
+	 * Ensure the client is initialized with core network objects.
+	 * This method handles caching and prevents duplicate initialization requests.
+	 *
+	 * @returns Promise resolving to the core network objects
+	 * @throws {NetworkError} If initialization fails
+	 * @private
+	 */
 	private async ensureInitialized(): Promise<{
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
@@ -88,6 +130,14 @@ export class IkaClient {
 		return this.cachedObjects!;
 	}
 
+	/**
+	 * Retrieve a DWallet object by its ID.
+	 *
+	 * @param dwalletID - The unique identifier of the DWallet to retrieve
+	 * @returns Promise resolving to the DWallet object
+	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 */
 	async getDWallet(dwalletID: string): Promise<DWallet> {
 		await this.ensureInitialized();
 
@@ -101,6 +151,14 @@ export class IkaClient {
 			});
 	}
 
+	/**
+	 * Retrieve a presign session object by its ID.
+	 *
+	 * @param presignID - The unique identifier of the presign session to retrieve
+	 * @returns Promise resolving to the Presign object
+	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 */
 	async getPresign(presignID: string): Promise<Presign> {
 		await this.ensureInitialized();
 
@@ -114,6 +172,14 @@ export class IkaClient {
 			});
 	}
 
+	/**
+	 * Retrieve an encrypted user secret key share object by its ID.
+	 *
+	 * @param encryptedUserSecretKeyShareID - The unique identifier of the encrypted share to retrieve
+	 * @returns Promise resolving to the EncryptedUserSecretKeyShare object
+	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 */
 	async getEncryptedUserSecretKeyShare(
 		encryptedUserSecretKeyShareID: string,
 	): Promise<EncryptedUserSecretKeyShare> {
@@ -129,6 +195,14 @@ export class IkaClient {
 			});
 	}
 
+	/**
+	 * Retrieve a partial user signature object by its ID.
+	 *
+	 * @param partialCentralizedSignedMessageID - The unique identifier of the partial signature to retrieve
+	 * @returns Promise resolving to the PartialUserSignature object
+	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 */
 	async getPartialUserSignature(
 		partialCentralizedSignedMessageID: string,
 	): Promise<PartialUserSignature> {
@@ -144,6 +218,15 @@ export class IkaClient {
 			});
 	}
 
+	/**
+	 * Retrieve multiple DWallet objects by their IDs in a single batch request.
+	 * This is more efficient than making individual requests for multiple DWallets.
+	 *
+	 * @param dwalletIDs - Array of unique identifiers for the DWallets to retrieve
+	 * @returns Promise resolving to an array of DWallet objects
+	 * @throws {InvalidObjectError} If any object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 */
 	async getMultipleDWallets(dwalletIDs: string[]): Promise<DWallet[]> {
 		await this.ensureInitialized();
 
@@ -157,6 +240,17 @@ export class IkaClient {
 			});
 	}
 
+	/**
+	 * Retrieve DWallet capabilities owned by a specific address.
+	 * DWallet capabilities grant the holder permission to use the associated DWallet.
+	 *
+	 * @param address - The Sui address to query for owned DWallet capabilities
+	 * @param cursor - Optional cursor for pagination (from previous request)
+	 * @param limit - Optional limit on the number of results to return
+	 * @returns Promise resolving to paginated results containing DWallet capabilities
+	 * @throws {InvalidObjectError} If any object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 */
 	async getOwnedDWalletCaps(
 		address: string,
 		cursor?: string,
@@ -189,6 +283,14 @@ export class IkaClient {
 		};
 	}
 
+	/**
+	 * Retrieve the network's public parameters used for cryptographic operations.
+	 * These parameters are cached and only refetched when the epoch or decryption key changes.
+	 *
+	 * @returns Promise resolving to the network public parameters as bytes
+	 * @throws {ObjectNotFoundError} If the public parameters cannot be found
+	 * @throws {NetworkError} If the network request fails
+	 */
 	async getNetworkPublicParameters(): Promise<Uint8Array> {
 		await this.ensureInitialized();
 
@@ -215,11 +317,25 @@ export class IkaClient {
 		return publicParameters;
 	}
 
+	/**
+	 * Get the current network decryption key ID.
+	 *
+	 * @returns Promise resolving to the decryption key ID
+	 * @throws {NetworkError} If the network objects cannot be fetched
+	 */
 	async getDecryptionKeyID(): Promise<string> {
 		const objects = await this.ensureInitialized();
 		return objects.decryptionKeyID;
 	}
 
+	/**
+	 * Get the public output ID for the current network decryption key.
+	 * This ID is used to fetch the network's public parameters.
+	 *
+	 * @returns Promise resolving to the decryption key public output ID
+	 * @throws {InvalidObjectError} If the decryption key object cannot be parsed
+	 * @throws {NetworkError} If the network request fails
+	 */
 	async getDecryptionKeyPublicOutputID(): Promise<string> {
 		const objects = await this.ensureInitialized();
 
@@ -245,6 +361,15 @@ export class IkaClient {
 		}
 	}
 
+	/**
+	 * Get the active encryption key for a specific address.
+	 * This key is used for encrypting user shares and other cryptographic operations.
+	 *
+	 * @param address - The Sui address to get the encryption key for
+	 * @returns Promise resolving to the EncryptionKey object
+	 * @throws {InvalidObjectError} If the encryption key object cannot be parsed
+	 * @throws {NetworkError} If the network request fails
+	 */
 	async getActiveEncryptionKey(address: string): Promise<EncryptionKey> {
 		await this.ensureInitialized();
 
@@ -267,11 +392,26 @@ export class IkaClient {
 		return CoordinatorInnerModule.EncryptionKey.fromBase64(objResToBcs(obj));
 	}
 
+	/**
+	 * Get the current network epoch number.
+	 * The epoch is used for versioning and determining when to refresh cached parameters.
+	 *
+	 * @returns Promise resolving to the current epoch number
+	 * @throws {NetworkError} If the network objects cannot be fetched
+	 */
 	async getEpoch(): Promise<number> {
 		const objects = await this.ensureInitialized();
 		return +objects.coordinatorInner.current_epoch;
 	}
 
+	/**
+	 * Get the core network objects (coordinator inner, system inner, and decryption key ID).
+	 * Uses caching to avoid redundant network requests.
+	 *
+	 * @returns Promise resolving to the core network objects
+	 * @throws {NetworkError} If the network request fails
+	 * @private
+	 */
 	private async getObjects() {
 		if (this.cachedObjects) {
 			return {
@@ -301,6 +441,16 @@ export class IkaClient {
 		}
 	}
 
+	/**
+	 * Fetch core network objects from the blockchain.
+	 * This method retrieves coordinator and system objects along with their dynamic fields.
+	 *
+	 * @returns Promise resolving to the fetched network objects
+	 * @throws {ObjectNotFoundError} If required objects or dynamic fields are not found
+	 * @throws {InvalidObjectError} If objects cannot be parsed
+	 * @throws {NetworkError} If network requests fail
+	 * @private
+	 */
 	private async fetchObjectsFromNetwork() {
 		try {
 			const [coordinator, system] = await this.client.multiGetObjects({
@@ -376,6 +526,17 @@ export class IkaClient {
 		}
 	}
 
+	/**
+	 * Read a table vector as raw bytes from the blockchain.
+	 * This method handles paginated dynamic field retrieval and assembles the data in order.
+	 *
+	 * @param tableID - The ID of the table object to read
+	 * @returns Promise resolving to the concatenated raw bytes from the table
+	 * @throws {ObjectNotFoundError} If the table or its dynamic fields are not found
+	 * @throws {InvalidObjectError} If table indices are invalid
+	 * @throws {NetworkError} If network requests fail
+	 * @private
+	 */
 	private async readTableVecAsRawBytes(tableID: string): Promise<Uint8Array> {
 		try {
 			let cursor: string | null = null;
@@ -434,6 +595,17 @@ export class IkaClient {
 		}
 	}
 
+	/**
+	 * Process multiple objects in batches to avoid overwhelming the network.
+	 * This method fetches objects in configurable batch sizes and applies a processor function to each.
+	 *
+	 * @param objectIds - Array of object IDs to fetch and process
+	 * @param processor - Function to apply to each fetched object
+	 * @returns Promise that resolves when all objects are processed
+	 * @throws {NetworkError} If any network request fails or object fetching fails
+	 * @throws {InvalidObjectError} If any object processing fails
+	 * @private
+	 */
 	private async processBatchedObjects(
 		objectIds: string[],
 		processor: (dynField: any) => void,

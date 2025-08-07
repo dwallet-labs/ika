@@ -4,11 +4,24 @@ import { createClassGroupsKeypair, decryptUserShare } from './cryptography';
 import { DWallet, EncryptedUserSecretKeyShare } from './types';
 import { parseNumbersToBytes, stringToUint8Array } from './utils';
 
+/**
+ * UserShareEncrytionKeys manages encryption/decryption keys and signing keypairs for user shares.
+ * This class handles the creation and management of cryptographic keys needed for secure
+ * user share operations in the DWallet network.
+ */
 export class UserShareEncrytionKeys {
+	/** The public encryption key used to encrypt secret shares */
 	encryptionKey: Uint8Array;
+	/** The private decryption key used to decrypt secret shares */
 	decryptionKey: Uint8Array;
+	/** The Ed25519 keypair used for signing encrypted secret share operations */
 	encryptedSecretShareSigningKeypair: Ed25519Keypair;
 
+	/**
+	 * Create a new UserShareEncrytionKeys instance from various input types.
+	 *
+	 * @param input - Can be a Uint8Array seed, number array, hex string, or Ed25519Keypair
+	 */
 	constructor(input: Uint8Array | number[] | string | Ed25519Keypair) {
 		let seed: Uint8Array;
 		let keypair: Ed25519Keypair;
@@ -44,35 +57,49 @@ export class UserShareEncrytionKeys {
 	}
 
 	/**
-	 * Creates UserShareEncrytionKeys from a seed (Uint8Array)
+	 * Creates UserShareEncrytionKeys from a seed (Uint8Array).
+	 *
+	 * @param seed - The seed bytes to generate keys from
+	 * @returns A new UserShareEncrytionKeys instance
 	 */
 	static fromSeed(seed: Uint8Array): UserShareEncrytionKeys {
 		return new UserShareEncrytionKeys(seed);
 	}
 
 	/**
-	 * Creates UserShareEncrytionKeys from a number array
+	 * Creates UserShareEncrytionKeys from a number array.
+	 *
+	 * @param numbers - Array of numbers representing seed bytes
+	 * @returns A new UserShareEncrytionKeys instance
 	 */
 	static fromNumberArray(numbers: number[]): UserShareEncrytionKeys {
 		return new UserShareEncrytionKeys(numbers);
 	}
 
 	/**
-	 * Creates UserShareEncrytionKeys from a hex string
+	 * Creates UserShareEncrytionKeys from a hex string.
+	 *
+	 * @param hexString - Hex string (with or without '0x' prefix) representing seed bytes
+	 * @returns A new UserShareEncrytionKeys instance
 	 */
 	static fromHexString(hexString: string): UserShareEncrytionKeys {
 		return new UserShareEncrytionKeys(hexString);
 	}
 
 	/**
-	 * Creates UserShareEncrytionKeys from an Ed25519Keypair
+	 * Creates UserShareEncrytionKeys from an existing Ed25519Keypair.
+	 *
+	 * @param keypair - An existing Ed25519Keypair to use for signing operations
+	 * @returns A new UserShareEncrytionKeys instance
 	 */
 	static fromKeypair(keypair: Ed25519Keypair): UserShareEncrytionKeys {
 		return new UserShareEncrytionKeys(keypair);
 	}
 
 	/**
-	 * Generates a new random UserShareEncrytionKeys
+	 * Generates a new random UserShareEncrytionKeys with fresh cryptographic keys.
+	 *
+	 * @returns A new UserShareEncrytionKeys instance with randomly generated keys
 	 */
 	static generate(): UserShareEncrytionKeys {
 		const keypair = Ed25519Keypair.generate();
@@ -80,46 +107,75 @@ export class UserShareEncrytionKeys {
 	}
 
 	/**
-	 * Gets the public key of the encrypted secret share signing keypair
+	 * Gets the public key of the encrypted secret share signing keypair.
+	 *
+	 * @returns The Ed25519 public key used for signature verification
 	 */
 	getPublicKey() {
 		return this.encryptedSecretShareSigningKeypair.getPublicKey();
 	}
 
 	/**
-	 * Gets the Sui address of the encrypted secret share signing keypair
+	 * Gets the Sui address derived from the encrypted secret share signing keypair.
+	 *
+	 * @returns The Sui address as a string
 	 */
 	getSuiAddress(): string {
 		return this.encryptedSecretShareSigningKeypair.getPublicKey().toSuiAddress();
 	}
 
 	/**
-	 * Gets the raw bytes of the public key
+	 * Gets the raw bytes of the public key.
+	 *
+	 * @returns The raw bytes of the Ed25519 public key
 	 */
 	getPublicKeyBytes(): Uint8Array {
 		return this.encryptedSecretShareSigningKeypair.getPublicKey().toRawBytes();
 	}
 
 	/**
-	 * Gets the secret key
+	 * Gets the secret key as a string.
+	 *
+	 * @returns The secret key of the signing keypair as a hex string
 	 */
 	getSecretKey(): string {
 		return this.encryptedSecretShareSigningKeypair.getSecretKey();
 	}
 
 	/**
-	 * Gets the signature of the encrypted secret share signing keypair
+	 * Creates a signature over the encryption key using the signing keypair.
+	 * This signature proves ownership of the encryption key.
+	 *
+	 * @returns Promise resolving to the signature bytes
 	 */
 	async getEncryptionKeySignature(): Promise<Uint8Array> {
 		return await this.encryptedSecretShareSigningKeypair.sign(this.encryptionKey);
 	}
 
+	/**
+	 * Creates a signature over the DWallet's public output.
+	 * This signature proves authorization to use the DWallet's encrypted share.
+	 *
+	 * @param dWallet - The DWallet to create a signature for
+	 * @returns Promise resolving to the signature bytes
+	 * @throws {Error} If the DWallet is not in active state or public output is missing
+	 */
 	async getUserOutputSignature(dWallet: DWallet): Promise<Uint8Array> {
 		return await this.encryptedSecretShareSigningKeypair.sign(
 			parseNumbersToBytes(dWallet.state.Active?.public_output),
 		);
 	}
 
+	/**
+	 * Decrypt an encrypted user secret key share for a specific DWallet.
+	 * This method uses the user's decryption key to recover the secret share.
+	 *
+	 * @param dWallet - The DWallet that the encrypted share belongs to
+	 * @param encryptedUserSecretKeyShare - The encrypted secret key share to decrypt
+	 * @param networkDecryptionKeyPublicOutput - The network's public parameters for decryption
+	 * @returns Promise resolving to the decrypted secret share bytes
+	 * @throws {Error} If decryption fails, the DWallet is not active, or verification fails
+	 */
 	async decryptUserShare(
 		dWallet: DWallet,
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,

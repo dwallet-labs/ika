@@ -14,20 +14,43 @@ import { DWallet } from './types';
 import { UserShareEncrytionKeys } from './user-share-encryption-keys';
 import { encodeToASCII, stringToUint8Array, u64ToBytesBigEndian } from './utils';
 
+/**
+ * Prepared data for the second round of Distributed Key Generation (DKG).
+ * Contains all cryptographic outputs needed to complete the DKG process.
+ */
 export type PreparedSecondRound = {
+	/** The centralized public key share along with its zero-knowledge proof */
 	centralizedPublicKeyShareAndProof: Uint8Array;
+	/** The centralized public output from the DKG process */
 	centralizedPublicOutput: Uint8Array;
+	/** The centralized secret key share (should be encrypted before storage) */
 	centralizedSecretKeyShare: Uint8Array;
+	/** The encrypted user share with its proof of correct encryption */
 	encryptedUserShareAndProof: Uint8Array;
 };
 
+/**
+ * Prepared data for importing an existing cryptographic key as a DWallet.
+ * Contains verification data needed to prove ownership of the imported key.
+ */
 export type PreparedImportDWalletVerification = {
+	/** The secret share derived from the imported key */
 	secret_share: Uint8Array;
+	/** The public output that can be verified against the imported key */
 	public_output: Uint8Array;
+	/** The outgoing message for the verification protocol */
 	outgoing_message: Uint8Array;
+	/** The encrypted user share with proof for the imported key */
 	encryptedUserShareAndProof: Uint8Array;
 };
 
+/**
+ * Create a class groups keypair from a seed for encryption/decryption operations.
+ * Uses SECP256k1 curve with class groups for homomorphic encryption capabilities.
+ *
+ * @param seed - The seed bytes to generate the keypair from
+ * @returns Object containing the encryption key (public) and decryption key (private)
+ */
 export function createClassGroupsKeypair(seed: Uint8Array): {
 	encryptionKey: Uint8Array;
 	decryptionKey: Uint8Array;
@@ -40,6 +63,15 @@ export function createClassGroupsKeypair(seed: Uint8Array): {
 	};
 }
 
+/**
+ * Create the centralized output for the Distributed Key Generation (DKG) process.
+ * This function takes the first round output and produces the centralized party's contribution.
+ *
+ * @param networkDecryptionKeyPublicOutput - The network's public parameters for decryption
+ * @param firstRoundOutput - The output from the first round of DKG
+ * @param sessionIdentifier - Unique identifier for this DKG session
+ * @returns Object containing the centralized public key share with proof, public output, and secret key share
+ */
 export function createDKGCentralizedOutput(
 	networkDecryptionKeyPublicOutput: Uint8Array,
 	firstRoundOutput: Uint8Array,
@@ -63,6 +95,15 @@ export function createDKGCentralizedOutput(
 	};
 }
 
+/**
+ * Encrypt a secret share using the provided encryption key.
+ * This creates an encrypted share that can only be decrypted by the corresponding decryption key.
+ *
+ * @param centralizedSecretKeyShare - The secret key share to encrypt
+ * @param encryptionKey - The public encryption key to encrypt with
+ * @param networkDecryptionKeyPublicOutput - The network's public parameters for encryption
+ * @returns The encrypted secret share with proof of correct encryption
+ */
 export function encryptSecretShare(
 	centralizedSecretKeyShare: Uint8Array,
 	encryptionKey: Uint8Array,
@@ -77,6 +118,18 @@ export function encryptSecretShare(
 	return encryptedUserShareAndProof;
 }
 
+/**
+ * Decrypt a user's encrypted secret share.
+ * This function verifies the encryption proof and decrypts the share using the private decryption key.
+ *
+ * @param decryptionKey - The private decryption key
+ * @param encryptionKey - The corresponding public encryption key
+ * @param dWalletOutput - The DWallet's public output for verification
+ * @param encryptedUserShareAndProof - The encrypted share with proof to decrypt
+ * @param networkDecryptionKeyPublicOutput - The network's public parameters
+ * @returns The decrypted secret share
+ * @throws {Error} If decryption fails or proof verification fails
+ */
 export function decryptUserShare(
 	decryptionKey: Uint8Array,
 	encryptionKey: Uint8Array,
@@ -95,6 +148,17 @@ export function decryptUserShare(
 	return decryptedUserShare;
 }
 
+/**
+ * Prepare all cryptographic data needed for the second round of DKG.
+ * This function combines the DKG output generation and secret share encryption.
+ *
+ * @param networkDecryptionKeyPublicOutput - The network's public parameters
+ * @param dWallet - The DWallet object containing first round output
+ * @param sessionIdentifier - Unique identifier for this DKG session
+ * @param encryptionKey - The user's public encryption key
+ * @returns Complete prepared data for the second DKG round
+ * @throws {Error} If the first round output is not available in the DWallet
+ */
 export function prepareDKGSecondRound(
 	networkDecryptionKeyPublicOutput: Uint8Array,
 	dWallet: DWallet,
@@ -128,6 +192,17 @@ export function prepareDKGSecondRound(
 	};
 }
 
+/**
+ * Asynchronously prepare all cryptographic data needed for the second round of DKG.
+ * This function fetches network parameters automatically and prepares the second round data.
+ *
+ * @param ikaClient - The IkaClient instance to fetch network parameters from
+ * @param dWallet - The DWallet object containing first round output
+ * @param sessionIdentifier - Unique identifier for this DKG session
+ * @param classGroupsKeypair - The user's class groups keypair for encryption
+ * @returns Promise resolving to complete prepared data for the second DKG round
+ * @throws {Error} If the first round output is not available or network parameters cannot be fetched
+ */
 export async function prepareDKGSecondRoundAsync(
 	ikaClient: IkaClient,
 	dWallet: DWallet,
@@ -165,6 +240,17 @@ export async function prepareDKGSecondRoundAsync(
 	};
 }
 
+/**
+ * Prepare verification data for importing an existing cryptographic key as a DWallet.
+ * This function creates all necessary proofs and encrypted data for the import process.
+ *
+ * @param ikaClient - The IkaClient instance to fetch network parameters from
+ * @param sessionIdentifier - Unique identifier for this import session
+ * @param userShareEncryptionKeys - The user's encryption keys for securing the imported share
+ * @param keypair - The existing Secp256k1 keypair to import as a DWallet
+ * @returns Promise resolving to complete verification data for the import process
+ * @throws {Error} If network parameters cannot be fetched or key import preparation fails
+ */
 export async function prepareImportDWalletVerification(
 	ikaClient: IkaClient,
 	sessionIdentifier: Uint8Array,
@@ -193,6 +279,19 @@ export async function prepareImportDWalletVerification(
 	};
 }
 
+/**
+ * Create the centralized output for a signature generation process.
+ * This function combines the user's secret key, presign, and message to create a signature component.
+ *
+ * @param networkDecryptionKeyPublicOutput - The network's public parameters
+ * @param activeDWallet - The active DWallet containing the public output
+ * @param secretKey - The user's secret key share
+ * @param presign - The presignature data from a completed presign operation
+ * @param message - The message bytes to sign
+ * @param hash - The hash scheme identifier to use for signing
+ * @returns The centralized signature output that can be combined with other signature components
+ * @throws {Error} If the DWallet is not in active state or public output is missing
+ */
 export function createSignCentralizedOutput(
 	networkDecryptionKeyPublicOutput: Uint8Array,
 	activeDWallet: DWallet,
@@ -215,6 +314,14 @@ export function createSignCentralizedOutput(
 	);
 }
 
+/**
+ * Create a digest of the session identifier for cryptographic operations.
+ * This function creates a versioned, domain-separated hash of the session identifier.
+ *
+ * @param sessionIdentifier - The raw session identifier bytes
+ * @returns The SHA3-256 digest of the versioned and domain-separated session identifier
+ * @private
+ */
 function sessionIdentifierDigest(sessionIdentifier: Uint8Array): Uint8Array {
 	const version = 0; // Version of the session identifier
 	// Calculate the user session identifier for digest

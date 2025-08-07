@@ -3,6 +3,21 @@ import path from 'path';
 
 import { IkaConfig, Network } from './types';
 
+/**
+ * Get the network configuration for a specific Ika network.
+ * This function returns the appropriate package IDs, object IDs, and shared versions
+ * for the specified network environment.
+ *
+ * @param network - The network environment to get configuration for ('localnet', 'testnet', or 'mainnet')
+ * @returns The complete Ika configuration object for the specified network
+ * @throws {Error} If reading the localnet config file fails
+ *
+ * @example
+ * ```typescript
+ * const config = getNetworkConfig('mainnet');
+ * console.log(config.packages.ikaSystemPackage);
+ * ```
+ */
 export function getNetworkConfig(network: Network): IkaConfig {
 	switch (network) {
 		case 'localnet':
