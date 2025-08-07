@@ -1094,6 +1094,14 @@ mod tests {
         dwallet_mpc_computation_completed_sessions: Arc<Mutex<HashMap<SessionIdentifier, bool>>>,
     }
 
+    impl TestingAuthorityState {
+        fn new() -> Self {
+            Self {
+                dwallet_mpc_computation_completed_sessions: Arc::new(Mutex::new(HashMap::new())),
+            }
+        }
+    }
+
     impl AuthorityStateTrait for TestingAuthorityState {
         fn insert_dwallet_mpc_computation_completed_sessions(
             &self,
@@ -1148,26 +1156,27 @@ mod tests {
     async fn test_network_dkg_full_flow() {
         let sui_data_receivers = SuiDataReceivers::new_for_testing();
 
-        let committee = Committee::new_simple_test_committee();
+        let (committee, keypairs) = Committee::new_simple_test_committee();
+        let names: Vec<_> = committee.clone().names().collect();
         let mut dwallet_mpc_service = DWalletMPCService {
-            last_read_consensus_round: Some(5),
+            last_read_consensus_round: Some(0),
             epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
             dwallet_submit_to_consensus: Arc::new(TestingSubmitToConsensus::new()),
-            state: Arc::new(TestingAuthorityState {}),
+            state: Arc::new(TestingAuthorityState::new()),
             dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
             dwallet_mpc_manager: DWalletMPCManager::new(
-                *committee.0.clone().names().next().unwrap(),
-                Arc::new(committee.0.clone()),
+                names[0].clone(),
+                Arc::new(committee.clone()),
                 1,
                 IkaNetworkConfig::new(
-                    ObjectID::random(),
-                    ObjectID::random(),
-                    ObjectID::random(),
-                    ObjectID::random(),
-                    ObjectID::random(),
-                    ObjectID::random(),
+                    ObjectID::from_single_byte(1),
+                    ObjectID::from_single_byte(1),
+                    ObjectID::from_single_byte(1),
+                    ObjectID::from_single_byte(1),
+                    ObjectID::from_single_byte(1),
+                    ObjectID::from_single_byte(1),
                 ),
-                RootSeed::random_seed(),
+                RootSeed::new([1; 32]),
                 0,
                 0,
                 DWalletMPCMetrics::new(&Registry::new()),
@@ -1180,7 +1189,7 @@ mod tests {
             name: Default::default(),
             epoch: 0,
             protocol_config: ProtocolConfig::get_for_min_version(),
-            committee: Arc::new(committee.0),
+            committee: Arc::new(committee),
         };
         dwallet_mpc_service
             .process_consensus_rounds_from_storage()
