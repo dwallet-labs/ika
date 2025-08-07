@@ -976,6 +976,7 @@ mod tests {
     use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionType};
     use std::cell::RefCell;
     use std::sync::Mutex;
+    use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 
     fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
         struct TestingAuthorityPerEpochStore {
@@ -1073,12 +1074,35 @@ mod tests {
             }
         }
         
+        struct TestingAuthorityState {}
+        
+        impl AuthorityStateTrait for TestingAuthorityState {
+            fn insert_dwallet_mpc_computation_completed_sessions(&self, newly_completed_session_ids: &[SessionIdentifier]) -> IkaResult {
+                Ok(())
+            }
+
+            fn get_dwallet_mpc_sessions_completed_status(&self, session_identifiers: Vec<SessionIdentifier>) -> IkaResult<HashMap<SessionIdentifier, bool>> {
+                todo!()
+            }
+        }
+        
+        struct TestingDWalletCheckpointNotify {}
+        impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
+            fn notify_checkpoint_signature(&self, epoch_store: &AuthorityPerEpochStore, info: &DWalletCheckpointSignatureMessage) -> IkaResult {
+                todo!()
+            }
+
+            fn notify_checkpoint(&self) -> IkaResult {
+                todo!()
+            }
+        }
+        
         let dwallet_mpc_service = DWalletMPCService {
             last_read_consensus_round: Some(5),
             epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
             dwallet_submit_to_consensus: Arc::new(TestingSubmitToConsensus::new()),
-            state: Arc::new(()),
-            dwallet_checkpoint_service: Arc::new(()),
+            state: Arc::new(TestingAuthorityState {}),
+            dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
             dwallet_mpc_manager: (),
             exit: (),
             end_of_publish: false,
