@@ -176,13 +176,14 @@ use ika_core::system_checkpoints::{
     SystemCheckpointService, SystemCheckpointStore,
 };
 use ika_sui_client::metrics::SuiClientMetrics;
+use ika_sui_client::system_receiver::{SystemFetcher, SystemReceiver};
 use ika_sui_client::{SuiClient, SuiConnectorClient};
 use ika_types::messages_dwallet_mpc::{DWalletNetworkEncryptionKeyData, IkaNetworkConfig};
 #[cfg(msim)]
 pub use simulator::set_jwk_injector;
 #[cfg(msim)]
 use simulator::*;
-use tokio::sync::watch::Receiver;
+use tokio::sync::watch::{Receiver, Sender};
 
 pub struct IkaNode {
     config: NodeConfig,
@@ -282,7 +283,15 @@ impl IkaNode {
             .await?,
         );
 
-        let latest_system_state = sui_client.must_get_system_inner_object().await;
+        let (system_inner_sender, system_inner_receiver) =
+            watch::channel::<Option<SystemInner>>(None);
+        let system_syncer = SystemFetcher::new(system_inner_sender, sui_client.clone());
+        tokio::spawn(async move {
+            system_syncer.spawn().await;
+        });
+        let system_receiver = SystemReceiver::new(system_inner_receiver);
+
+        let latest_system_state = system_receiver.must_get_system_inner().await;
         let previous_epoch_last_system_checkpoint_sequence_number =
             latest_system_state.previous_epoch_last_checkpoint_sequence_number();
         let epoch_start_system_state = sui_client
@@ -448,6 +457,7 @@ impl IkaNode {
             next_epoch_committee_sender,
             new_events_sender,
             end_of_publish_sender.clone(),
+            system_receiver.clone(),
         )
         .await?;
 
@@ -557,6 +567,7 @@ impl IkaNode {
                 sui_client_clone,
                 dwallet_mpc_metrics,
                 end_of_publish_receiver.clone(),
+                system_receiver.clone(),
             )
             .await;
             if let Err(error) = result {
@@ -1138,6 +1149,7 @@ impl IkaNode {
         sui_client: Arc<SuiConnectorClient>,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         end_of_publish_receiver: Receiver<Option<u64>>,
+        system_receiver: SystemReceiver,
     ) -> Result<()> {
         let sui_client_clone2 = sui_client.clone();
         loop {
@@ -1248,7 +1260,7 @@ impl IkaNode {
             let previous_epoch_last_checkpoint_sequence_number =
                 dwallet_coordinator_inner.previous_epoch_last_checkpoint_sequence_number;
 
-            let system_inner = sui_client.must_get_system_inner_object().await;
+            let system_inner = system_receiver.must_get_system_inner().await;
             let previous_epoch_last_system_checkpoint_sequence_number =
                 system_inner.previous_epoch_last_checkpoint_sequence_number();
 

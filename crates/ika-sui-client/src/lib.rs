@@ -52,6 +52,7 @@ use tracing::{debug, error, info, warn};
 pub mod ika_protocol_transactions;
 pub mod ika_validator_transactions;
 pub mod metrics;
+pub mod system_receiver;
 
 #[macro_export]
 macro_rules! retry_with_max_elapsed_time {

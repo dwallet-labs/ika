@@ -29,7 +29,7 @@ publish = false
 #opt-level = 3
 #lto = true
 #
-#[package.metadata.wasm-pack.profile.release]
+[package.metadata.wasm-pack.profile.release]
 ## Should `wasm-opt` be used to further optimize the wasm binary generated after
 ## the Rust compiler has finished? Using `wasm-opt` can often further decrease
 ## binary size or do clever tricks that haven't made their way into LLVM yet.
@@ -49,7 +49,7 @@ publish = false
 #    "--flexible-inline-max-function-size",
 #    "4294967295",
 #]
-
+wasm-opt = false
 [dependencies]
 dwallet-mpc-centralized-party = { path = "../../crates/dwallet-mpc-centralized-party", features = ["wasm_js"] }
 anyhow = "1.0.95"
