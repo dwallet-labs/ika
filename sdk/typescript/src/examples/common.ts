@@ -3,7 +3,7 @@ import { bcs } from '@mysten/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
-import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
+import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import { IkaClient, IkaTransaction } from '../client';
 import { PreparedImportDWalletVerification, PreparedSecondRound } from '../client/cryptography';
@@ -13,6 +13,7 @@ import {
 	DWallet,
 	EncryptedUserSecretKeyShare,
 	Hash,
+	IkaConfig,
 	PartialUserSignature,
 	Presign,
 	SignatureAlgorithm,
@@ -88,18 +89,16 @@ export async function requestDKGFirstRound(
 		transaction,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	await ikaTransaction.requestDWalletDKGFirstRoundAndKeepAsync({
 		curve: 0,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 		receiver: '0x0',
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	const result = await executeTransaction(suiClient, transaction);
 
@@ -167,19 +166,17 @@ export async function requestDkgSecondRound(
 		userShareEncryptionKeys,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	ikaTransaction.requestDWalletDKGSecondRound({
 		dWallet,
 		preparedSecondRound,
 		signerPublicKey,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	const result = await executeTransaction(suiClient, transaction);
 
@@ -236,18 +233,16 @@ export async function makeDWalletUserSecretKeySharesPublic(
 		transaction,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	ikaTransaction.makeDWalletUserSecretKeySharesPublic({
 		dWallet,
 		secretShare: preparedSecondRound.centralizedSecretKeyShare,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	await executeTransaction(suiClient, transaction);
 }
@@ -265,18 +260,16 @@ export async function makeImportedDWalletUserSecretKeySharesPublic(
 		transaction,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	ikaTransaction.makeDWalletUserSecretKeySharesPublic({
 		dWallet,
 		secretShare: preparedImportDWalletVerification.secret_share,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	await executeTransaction(suiClient, transaction);
 }
@@ -294,19 +287,16 @@ export async function presign(
 		transaction,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	ikaTransaction.presignAndKeep({
 		dWallet,
 		signatureAlgorithm,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 		receiver: '0x0',
 	});
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	const result = await executeTransaction(suiClient, transaction);
 
@@ -349,6 +339,8 @@ export async function sign(
 		presign,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	await ikaTransaction.sign({
 		dWallet,
 		messageApproval,
@@ -357,15 +349,11 @@ export async function sign(
 		presign,
 		encryptedUserSecretKeyShare,
 		message,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	await executeTransaction(suiClient, transaction);
 }
@@ -397,6 +385,8 @@ export async function signPublicUserShare(
 		presign,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	await ikaTransaction.signPublic({
 		dWallet,
 		messageApproval,
@@ -404,15 +394,11 @@ export async function signPublicUserShare(
 		presign,
 		message,
 		hashScheme,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	await executeTransaction(suiClient, transaction);
 }
@@ -439,6 +425,8 @@ export async function requestFutureSign(
 		presign,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	await ikaTransaction.requestFutureSignAndKeep({
 		dWallet,
 		presign,
@@ -446,16 +434,12 @@ export async function requestFutureSign(
 		encryptedUserSecretKeyShare,
 		message,
 		hashScheme,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 		receiver: '0x0',
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	const result = await executeTransaction(suiClient, transaction);
 
@@ -495,18 +479,16 @@ export async function futureSign(
 		message,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	ikaTransaction.futureSign({
 		messageApproval,
 		partialUserSignature,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	await executeTransaction(suiClient, transaction);
 }
@@ -527,21 +509,19 @@ export async function requestImportedDWalletVerification(
 		transaction,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	await ikaTransaction.requestImportedDWalletVerificationAndKeep({
 		preparedImportDWalletVerification,
 		curve,
 		signerPublicKey,
 		sessionIdentifier,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 		receiver,
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	const result = await executeTransaction(suiClient, transaction);
 
@@ -582,6 +562,8 @@ export async function signWithImportedDWallet(
 		presign,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	await ikaTransaction.signWithImportedDWallet({
 		dWallet,
 		encryptedUserSecretKeyShare,
@@ -590,15 +572,11 @@ export async function signWithImportedDWallet(
 		message,
 		importedKeyMessageApproval,
 		verifiedPresignCap,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	await executeTransaction(suiClient, transaction);
 }
@@ -630,6 +608,8 @@ export async function signWithImportedDWalletPublic(
 		presign,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	await ikaTransaction.signWithImportedDWalletPublic({
 		dWallet,
 		presign,
@@ -637,15 +617,11 @@ export async function signWithImportedDWalletPublic(
 		message,
 		importedKeyMessageApproval,
 		verifiedPresignCap,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	await executeTransaction(suiClient, transaction);
 }
@@ -666,19 +642,17 @@ export async function transferEncryptedUserShare(
 		userShareEncryptionKeys,
 	});
 
+	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
+
 	await ikaTransaction.transferEncryptedUserShare({
 		dWallet,
 		destinationSuiAddress,
 		sourceEncryptedUserSecretKeyShare,
-		ikaCoin: coinWithBalance({
-			type: '0x2::ika::IKA',
-			balance: 0,
-		})(transaction),
-		suiCoin: coinWithBalance({
-			type: '0x2::sui::SUI',
-			balance: 0,
-		})(transaction),
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 	});
+
+	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	await executeTransaction(suiClient, transaction);
 }
@@ -710,4 +684,24 @@ export async function createSessionIdentifier(
 			sessionIdentifierRegisteredEvent?.bcs as string,
 		).session_identifier_preimage,
 	);
+}
+
+export function createEmptyIkaToken(tx: Transaction, ikaConfig: IkaConfig) {
+	return tx.moveCall({
+		target: `0x2::coin::zero`,
+		arguments: [],
+		typeArguments: [`${ikaConfig.packages.ikaSystemPackage}::ika::IKA`],
+	});
+}
+
+export function destroyEmptyIkaToken(
+	tx: Transaction,
+	ikaConfig: IkaConfig,
+	ikaToken: TransactionObjectArgument,
+) {
+	return tx.moveCall({
+		target: `0x2::coin::destroy_zero`,
+		arguments: [ikaToken],
+		typeArguments: [`${ikaConfig.packages.ikaSystemPackage}::ika::IKA`],
+	});
 }
