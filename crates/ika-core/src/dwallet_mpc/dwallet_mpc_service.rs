@@ -28,6 +28,7 @@ use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPCSessionStatus};
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
+use ika_config::node::RootSeedWithPath;
 use ika_protocol_config::ProtocolConfig;
 use ika_sui_client::SuiConnectorClient;
 use ika_types::committee::{Committee, EpochId};
@@ -101,12 +102,24 @@ impl DWalletMPCService {
         let decryption_key_reconfiguration_third_round_delay =
             protocol_config.decryption_key_reconfiguration_third_round_delay();
 
+        let root_seed = match node_config.root_seed_key_pair {
+            None => {
+                error!(
+                    "root_seed_key_pair is not set in the node config, cannot start DWallet MPC service"
+                );
+                panic!(
+                    "root_seed_key_pair is not set in the node config, cannot start DWallet MPC service"
+                );
+            }
+            Some(root_seed_keypair) => root_seed_keypair.root_seed().clone(),
+        };
+
         let dwallet_mpc_manager = DWalletMPCManager::new(
             validator_name,
             committee.clone(),
             epoch_id,
             packages_config,
-            node_config,
+            root_seed,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics.clone(),
@@ -968,5 +981,189 @@ impl DWalletMPCService {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dwallet_rng::RootSeed;
+    use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
+    use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionType};
+    use prometheus::Registry;
+    use rayon::vec;
+    use std::cell::RefCell;
+    use std::sync::Mutex;
+    use tokio::sync::watch;
+
+    #[tokio::test]
+    async fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
+        struct TestingAuthorityPerEpochStore {
+            pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
+            current_round: Arc<Mutex<Round>>,
+        }
+
+        impl TestingAuthorityPerEpochStore {
+            fn new() -> Self {
+                Self {
+                    pending_checkpoints: Arc::new(Mutex::new(vec![])),
+                    current_round: Arc::new(Mutex::new(5)),
+                }
+            }
+        }
+
+        impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
+            fn insert_pending_dwallet_checkpoint(
+                &self,
+                checkpoint: PendingDWalletCheckpoint,
+            ) -> IkaResult<()> {
+                self.pending_checkpoints.lock().unwrap().push(checkpoint);
+                Ok(())
+            }
+
+            fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
+                Ok(Some(*self.current_round.lock().unwrap()))
+            }
+
+            fn next_dwallet_mpc_message(
+                &self,
+                last_consensus_round: Option<Round>,
+            ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
+                if last_consensus_round == Some(5) {
+                    Ok(Some((
+                        6,
+                        vec![DWalletMPCMessage {
+                            message: vec![1],
+                            authority: Default::default(),
+                            session_identifier: SessionIdentifier::new(SessionType::User, [0; 32]),
+                        }],
+                    )))
+                } else {
+                    Ok(None)
+                }
+            }
+
+            fn next_dwallet_mpc_output(
+                &self,
+                last_consensus_round: Option<Round>,
+            ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
+                if last_consensus_round == Some(5) {
+                    Ok(Some((
+                        6,
+                        vec![DWalletMPCOutput {
+                            authority: Default::default(),
+                            session_identifier: SessionIdentifier::new(SessionType::User, [0; 32]),
+                            output: vec![DWalletCheckpointMessageKind::EndOfPublish],
+                            malicious_authorities: vec![],
+                        }],
+                    )))
+                } else {
+                    Ok(None)
+                }
+            }
+
+            fn next_verified_dwallet_checkpoint_message(
+                &self,
+                last_consensus_round: Option<Round>,
+            ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
+                Ok(None)
+            }
+        }
+
+        struct TestingSubmitToConsensus {
+            submitted_messages: Arc<Mutex<Vec<ConsensusTransaction>>>,
+        }
+
+        impl TestingSubmitToConsensus {
+            fn new() -> Self {
+                Self {
+                    submitted_messages: Arc::new(Mutex::new(vec![])),
+                }
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl DWalletMPCSubmitToConsensus for TestingSubmitToConsensus {
+            async fn submit_to_consensus(
+                &self,
+                messages: &[ConsensusTransaction],
+            ) -> IkaResult<()> {
+                self.submitted_messages
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(messages);
+                Ok(())
+            }
+        }
+
+        struct TestingAuthorityState {}
+
+        impl AuthorityStateTrait for TestingAuthorityState {
+            fn insert_dwallet_mpc_computation_completed_sessions(
+                &self,
+                newly_completed_session_ids: &[SessionIdentifier],
+            ) -> IkaResult {
+                Ok(())
+            }
+
+            fn get_dwallet_mpc_sessions_completed_status(
+                &self,
+                session_identifiers: Vec<SessionIdentifier>,
+            ) -> IkaResult<HashMap<SessionIdentifier, bool>> {
+                todo!()
+            }
+        }
+
+        struct TestingDWalletCheckpointNotify {}
+        impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
+            fn notify_checkpoint_signature(
+                &self,
+                epoch_store: &AuthorityPerEpochStore,
+                info: &DWalletCheckpointSignatureMessage,
+            ) -> IkaResult {
+                todo!()
+            }
+
+            fn notify_checkpoint(&self) -> IkaResult {
+                todo!()
+            }
+        }
+
+        let sui_data_receivers = SuiDataReceivers::new_for_testing();
+
+        let committee = Committee::new_simple_test_committee();
+        let dwallet_mpc_service = DWalletMPCService {
+            last_read_consensus_round: Some(5),
+            epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
+            dwallet_submit_to_consensus: Arc::new(TestingSubmitToConsensus::new()),
+            state: Arc::new(TestingAuthorityState {}),
+            dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
+            dwallet_mpc_manager: DWalletMPCManager::new(
+                *committee.0.clone().names().next().unwrap(),
+                Arc::new(committee.0.clone()),
+                1,
+                IkaNetworkConfig::new(
+                    ObjectID::random(),
+                    ObjectID::random(),
+                    ObjectID::random(),
+                    ObjectID::random(),
+                    ObjectID::random(),
+                    ObjectID::random(),
+                ),
+                RootSeed::random_seed(),
+                0,
+                0,
+                DWalletMPCMetrics::new(&Registry::new()),
+                sui_data_receivers.clone(),
+            ),
+            exit: watch::channel(()).1,
+            end_of_publish: false,
+            dwallet_mpc_metrics: DWalletMPCMetrics::new(&Registry::new()),
+            sui_data_receivers,
+            name: Default::default(),
+            epoch: 0,
+            protocol_config: ProtocolConfig::get_for_min_version(),
+            committee: Arc::new(committee.0),
+        };
     }
 }

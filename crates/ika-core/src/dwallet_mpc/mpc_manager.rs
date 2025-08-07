@@ -16,6 +16,7 @@ use crate::dwallet_mpc::{
 };
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCSessionStatus};
+use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
 use ika_config::NodeConfig;
@@ -92,7 +93,7 @@ impl DWalletMPCManager {
         committee: Arc<Committee>,
         epoch_id: EpochId,
         packages_config: IkaNetworkConfig,
-        node_config: NodeConfig,
+        root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
@@ -103,7 +104,7 @@ impl DWalletMPCManager {
             committee,
             epoch_id,
             packages_config,
-            node_config.clone(),
+            root_seed,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics,
@@ -121,19 +122,12 @@ impl DWalletMPCManager {
         committee: Arc<Committee>,
         epoch_id: EpochId,
         packages_config: IkaNetworkConfig,
-        node_config: NodeConfig,
+        root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
     ) -> DwalletMPCResult<Self> {
-        let root_seed = node_config
-            .root_seed_key_pair
-            .clone()
-            .ok_or(DwalletMPCError::MissingRootSeed)?
-            .root_seed()
-            .clone();
-
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
         let mpc_computations_orchestrator =
