@@ -1154,7 +1154,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_network_dkg_full_flow() {
-        let sui_data_receivers = SuiDataReceivers::new_for_testing();
+        let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
 
         let (committee, keypairs) = Committee::new_simple_test_committee();
         let committee_clone = committee.clone();

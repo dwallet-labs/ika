@@ -58,26 +58,51 @@ impl Clone for SuiDataReceivers {
     }
 }
 
+#[cfg(test)]
+pub struct SuiDataSenders {
+    pub network_keys_sender:
+        tokio::sync::watch::Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
+    pub new_events_sender: broadcast::Sender<Vec<SuiEvent>>,
+    pub next_epoch_committee_sender: tokio::sync::watch::Sender<Committee>,
+    pub last_session_to_complete_in_current_epoch_sender:
+        tokio::sync::watch::Sender<(EpochId, u64)>,
+    pub end_of_publish_sender: tokio::sync::watch::Sender<Option<u64>>,
+    pub uncompleted_events_sender: tokio::sync::watch::Sender<(Vec<DBSuiEvent>, EpochId)>,
+}
+
+#[cfg(test)]
 impl SuiDataReceivers {
-    pub(crate) fn new_for_testing() -> Self {
-        Self {
-            network_keys_receiver: tokio::sync::watch::channel(Arc::new(HashMap::new())).1,
-            new_events_receiver: broadcast::channel(100).1,
-            next_epoch_committee_receiver: tokio::sync::watch::channel(
-                Committee::new_simple_test_committee().0,
-            )
-            .1,
-            last_session_to_complete_in_current_epoch_receiver: tokio::sync::watch::channel((
-                EpochId::default(),
-                0,
-            ))
-            .1,
-            end_of_publish_receiver: tokio::sync::watch::channel(None).1,
-            uncompleted_events_receiver: tokio::sync::watch::channel((
-                Vec::new(),
-                EpochId::default(),
-            ))
-            .1,
-        }
+    pub(crate) fn new_for_testing() -> (Self, SuiDataSenders) {
+        let (network_keys_sender, network_keys_receiver) =
+            tokio::sync::watch::channel(Arc::new(HashMap::new()));
+        let (new_events_sender, new_events_receiver) = broadcast::channel(100);
+        let (next_epoch_committee_sender, next_epoch_committee_receiver) =
+            tokio::sync::watch::channel(Committee::new_simple_test_committee().0);
+        let (
+            last_session_to_complete_in_current_epoch_sender,
+            last_session_to_complete_in_current_epoch_receiver,
+        ) = tokio::sync::watch::channel((EpochId::default(), 0));
+        let (end_of_publish_sender, end_of_publish_receiver) = tokio::sync::watch::channel(None);
+        let (uncompleted_events_sender, uncompleted_events_receiver) =
+            tokio::sync::watch::channel((Vec::new(), EpochId::default()));
+        let senders = SuiDataSenders {
+            network_keys_sender,
+            new_events_sender,
+            next_epoch_committee_sender,
+            last_session_to_complete_in_current_epoch_sender,
+            end_of_publish_sender,
+            uncompleted_events_sender,
+        };
+        (
+            SuiDataReceivers {
+                network_keys_receiver,
+                new_events_receiver,
+                next_epoch_committee_receiver,
+                last_session_to_complete_in_current_epoch_receiver,
+                end_of_publish_receiver,
+                uncompleted_events_receiver,
+            },
+            senders,
+        )
     }
 }
