@@ -175,9 +175,7 @@ impl DWalletMPCService {
             validator=?self.name,
             "Spawning dWallet MPC Service"
         );
-        let mut loop_index = 0;
         loop {
-            loop_index += 1;
             match self.exit.has_changed() {
                 Ok(true) => {
                     warn!(
@@ -214,56 +212,13 @@ impl DWalletMPCService {
             let uncompleted_events = self.load_uncompleted_events().await;
 
             // Receive **new** dWallet MPC events and save them in the local DB.
-            let pulled_events = match self.receive_new_sui_events() {
-                Ok(new_events) => new_events,
-                Err(e) => {
-                    error!(
-                    error=?e,
-                    "failed to receive dWallet MPC events");
-                    continue;
-                }
-            };
-            let events = [uncompleted_events, pulled_events].concat();
 
-            let events = self.dwallet_mpc_manager.parse_sui_events(events);
-            let events_session_identifiers = events
-                .iter()
-                .map(|e| e.session_request.session_identifier)
-                .collect_vec();
-
-            match self
-                .state
-                .get_dwallet_mpc_sessions_completed_status(events_session_identifiers.clone())
-            {
-                Ok(mpc_session_identifier_to_computation_completed) => {
-                    for (session_identifier, session_completed) in
-                        mpc_session_identifier_to_computation_completed
-                    {
-                        if session_completed {
-                            self.dwallet_mpc_manager
-                                .complete_computation_mpc_session_and_create_if_not_exists(
-                                    &session_identifier,
-                                );
-
-                            info!(
-                                ?session_identifier,
-                                "Got an event for a session that was previously computation completed, marking it as computation completed"
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        ?events_session_identifiers,
-                        error=?e,
-                        "Could not read from the DB completed sessions, got error"
-                    );
-                }
+            if let Err(err) = self.handle_new_events(uncompleted_events).await {
+                error!(
+                    ?err,
+                    "failed to handle new events from DWallet MPC service"
+                )
             }
-
-            self.dwallet_mpc_manager
-                .handle_mpc_event_batch(events)
-                .await;
 
             self.process_consensus_rounds_from_storage().await;
 
@@ -277,6 +232,60 @@ impl DWalletMPCService {
 
             tokio::time::sleep(Duration::from_millis(READ_INTERVAL_MS)).await;
         }
+    }
+
+    async fn handle_new_events(&mut self, uncompleted_events: Vec<DBSuiEvent>) -> DwalletMPCResult<()> {
+        let pulled_events = match self.receive_new_sui_events() {
+            Ok(new_events) => new_events,
+            Err(e) => {
+                error!(
+                    error=?e,
+                    "failed to receive dWallet MPC events");
+                return Err(DwalletMPCError::TokioRecv);
+            }
+        };
+        let events = [uncompleted_events, pulled_events].concat();
+
+        let events = self.dwallet_mpc_manager.parse_sui_events(events);
+        let events_session_identifiers = events
+            .iter()
+            .map(|e| e.session_request.session_identifier)
+            .collect_vec();
+
+        match self
+            .state
+            .get_dwallet_mpc_sessions_completed_status(events_session_identifiers.clone())
+        {
+            Ok(mpc_session_identifier_to_computation_completed) => {
+                for (session_identifier, session_completed) in
+                    mpc_session_identifier_to_computation_completed
+                {
+                    if session_completed {
+                        self.dwallet_mpc_manager
+                            .complete_computation_mpc_session_and_create_if_not_exists(
+                                &session_identifier,
+                            );
+
+                        info!(
+                                ?session_identifier,
+                                "Got an event for a session that was previously computation completed, marking it as computation completed"
+                            );
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                        ?events_session_identifiers,
+                        error=?e,
+                        "Could not read from the DB completed sessions, got error"
+                    );
+            }
+        }
+
+        self.dwallet_mpc_manager
+            .handle_mpc_event_batch(events)
+            .await;
+        Ok(())
     }
 
     async fn process_consensus_rounds_from_storage(&mut self) {
