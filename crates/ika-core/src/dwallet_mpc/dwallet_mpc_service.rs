@@ -1090,13 +1090,19 @@ mod tests {
         }
     }
 
-    struct TestingAuthorityState {}
+    struct TestingAuthorityState {
+        dwallet_mpc_computation_completed_sessions: Arc<Mutex<HashMap<SessionIdentifier, bool>>>,
+    }
 
     impl AuthorityStateTrait for TestingAuthorityState {
         fn insert_dwallet_mpc_computation_completed_sessions(
             &self,
             newly_completed_session_ids: &[SessionIdentifier],
         ) -> IkaResult {
+            self.dwallet_mpc_computation_completed_sessions
+                .lock()
+                .unwrap()
+                .extend(newly_completed_session_ids.iter().map(|id| (id.clone(), true)));
             Ok(())
         }
 
@@ -1104,7 +1110,19 @@ mod tests {
             &self,
             session_identifiers: Vec<SessionIdentifier>,
         ) -> IkaResult<HashMap<SessionIdentifier, bool>> {
-            todo!()
+            let multi_get_result = self
+                .dwallet_mpc_computation_completed_sessions
+                .lock()
+                .unwrap()
+                .get(&session_identifiers)?;
+
+            let mpc_session_identifier_to_computation_completed = session_identifiers
+                .into_iter()
+                .zip(multi_get_result)
+                .map(|(session_identifier, res)| (session_identifier, res.is_some()))
+                .collect();
+
+            Ok(mpc_session_identifier_to_computation_completed)
         }
     }
 
