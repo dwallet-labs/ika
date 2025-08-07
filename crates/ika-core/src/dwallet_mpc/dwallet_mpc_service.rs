@@ -1114,19 +1114,18 @@ mod tests {
             &self,
             session_identifiers: Vec<SessionIdentifier>,
         ) -> IkaResult<HashMap<SessionIdentifier, bool>> {
-            let multi_get_result = self
+            let dwallet_mpc_computation_completed_sessions = self
                 .dwallet_mpc_computation_completed_sessions
                 .lock()
-                .unwrap()
-                .get(&session_identifiers)?;
-
-            let mpc_session_identifier_to_computation_completed = session_identifiers
-                .into_iter()
-                .zip(multi_get_result)
-                .map(|(session_identifier, res)| (session_identifier, res.is_some()))
-                .collect();
-
-            Ok(mpc_session_identifier_to_computation_completed)
+                .unwrap();
+            Ok(session_identifiers
+                .iter()
+                .filter_map(|session_id| {
+                    dwallet_mpc_computation_completed_sessions
+                        .get(session_id)
+                        .and_then(|_| Some((*session_id, true)))
+                })
+                .collect())
         }
     }
 
