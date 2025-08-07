@@ -17,6 +17,7 @@ const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);
 
 async function main() {
+	await ikaClient.initialize();
 	const { userShareEncryptionKeys, signerPublicKey } = generateKeypair();
 
 	const { dwalletID, sessionIdentifierPreimage } = await requestDKGFirstRound(ikaClient, suiClient);
@@ -44,15 +45,20 @@ async function main() {
 		signerPublicKey,
 	);
 
-	const activeDWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
+	const awaitingKeyHolderSignatureDWallet = await ikaClient.getDWalletInParticularState(
+		dwalletID,
+		'AwaitingKeyHolderSignature',
+	);
 
 	await acceptEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		activeDWallet,
+		awaitingKeyHolderSignatureDWallet,
 		secondRoundMoveResponse,
 		userShareEncryptionKeys,
 	);
+
+	const activeDWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
 
 	const presignRequestEvent = await presign(
 		ikaClient,

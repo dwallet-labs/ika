@@ -1,5 +1,6 @@
 // @ts-ignore
-import { bcs } from '@mysten/bcs';
+import { randomBytes } from 'crypto';
+import { toHex } from '@mysten/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
@@ -47,8 +48,8 @@ export async function executeTransaction(suiClient: SuiClient, transaction: Tran
 }
 
 export function generateKeypair() {
-	const seed = new Uint8Array(32).fill(8);
-	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed('0x1');
+	const seed = new Uint8Array(randomBytes(32));
+	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(new Uint8Array(randomBytes(32))));
 
 	const userShareEncryptionKeys = UserShareEncrytionKeys.fromRootSeedKey(seed);
 
@@ -135,7 +136,7 @@ export async function registerEncryptionKey(
 		userShareEncryptionKeys,
 	});
 
-	ikaTransaction.registerEncryptionKey({
+	await ikaTransaction.registerEncryptionKey({
 		curve: Curve.SECP256K1,
 	});
 
@@ -211,7 +212,7 @@ export async function acceptEncryptedUserShare(
 		userShareEncryptionKeys,
 	});
 
-	ikaTransaction.acceptEncryptedUserShare({
+	await ikaTransaction.acceptEncryptedUserShare({
 		dWallet,
 		encryptedUserSecretKeyShareId:
 			secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
@@ -278,7 +279,7 @@ export async function presign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	signatureAlgorithm: number,
+	signatureAlgorithm: SignatureAlgorithm,
 ) {
 	const transaction = new Transaction();
 
@@ -296,6 +297,7 @@ export async function presign(
 		suiCoin: transaction.gas,
 		receiver: '0x0',
 	});
+
 	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	const result = await executeTransaction(suiClient, transaction);
@@ -411,7 +413,7 @@ export async function requestFutureSign(
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	message: Uint8Array,
-	hashScheme: number,
+	hashScheme: Hash,
 ) {
 	const transaction = new Transaction();
 
@@ -690,7 +692,7 @@ export function createEmptyIkaToken(tx: Transaction, ikaConfig: IkaConfig) {
 	return tx.moveCall({
 		target: `0x2::coin::zero`,
 		arguments: [],
-		typeArguments: [`${ikaConfig.packages.ikaSystemPackage}::ika::IKA`],
+		typeArguments: [`${ikaConfig.packages.ikaPackage}::ika::IKA`],
 	});
 }
 
@@ -702,6 +704,6 @@ export function destroyEmptyIkaToken(
 	return tx.moveCall({
 		target: `0x2::coin::destroy_zero`,
 		arguments: [ikaToken],
-		typeArguments: [`${ikaConfig.packages.ikaSystemPackage}::ika::IKA`],
+		typeArguments: [`${ikaConfig.packages.ikaPackage}::ika::IKA`],
 	});
 }

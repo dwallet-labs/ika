@@ -1,12 +1,13 @@
 import { SuiClient } from '@mysten/sui/client';
-import { Transaction } from '@mysten/sui/dist/cjs/transactions';
-import { toHex } from '@mysten/sui/dist/cjs/utils';
+import { Transaction } from '@mysten/sui/transactions';
+import { toHex } from '@mysten/sui/utils';
 
 import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator';
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner';
 import * as SystemModule from '../generated/ika_system/system';
-import * as SystemInnerModule from '../generated/ika_system/system_inner';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator';
+import { networkDkgPublicOutputToProtocolPp } from './cryptography';
+import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './df';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors';
 import {
 	CoordinatorInner,
@@ -411,7 +412,9 @@ export class IkaClient {
 			}
 		}
 
-		const publicParameters = await this.readTableVecAsRawBytes(decryptionKeyPublicOutputID);
+		const publicParameters = networkDkgPublicOutputToProtocolPp(
+			await this.readTableVecAsRawBytes(decryptionKeyPublicOutputID),
+		);
 
 		this.cachedPublicParameters = {
 			decryptionKeyPublicOutputID,
@@ -479,7 +482,17 @@ export class IkaClient {
 		await this.ensureInitialized();
 
 		const tx = new Transaction();
-		getActiveEncryptionKeyFromCoordinator(this.ikaConfig, address, tx);
+
+		getActiveEncryptionKeyFromCoordinator(
+			this.ikaConfig,
+			tx.sharedObjectRef({
+				objectId: this.ikaConfig.objects.ikaDWalletCoordinator.objectID,
+				initialSharedVersion: this.ikaConfig.objects.ikaDWalletCoordinator.initialSharedVersion,
+				mutable: true,
+			}),
+			address,
+			tx,
+		);
 
 		const res = await this.client.devInspectTransactionBlock({
 			sender: address,
@@ -584,19 +597,19 @@ export class IkaClient {
 				throw new ObjectNotFoundError('Dynamic fields for coordinator or system');
 			}
 
-			const systemInnerID = systemDFs.data[systemDFs.data.length - 1].name.value as string;
-			const coordinatorInnerID = coordinatorDFs.data[+coordinatorParsed.version].name
-				.value as string;
+			const coordinatorInnerDF = coordinatorDFs.data[coordinatorDFs.data.length - 1];
+			const systemInnerDF = systemDFs.data[systemDFs.data.length - 1];
 
-			const [systemInner, coordinatorInner] = await this.client.multiGetObjects({
-				ids: [systemInnerID, coordinatorInnerID],
-				options: { showContent: true },
+			const [coordinatorInner, systemInner] = await this.client.multiGetObjects({
+				ids: [coordinatorInnerDF.objectId, systemInnerDF.objectId],
+				options: { showBcs: true },
 			});
 
-			const systemInnerParsed = SystemInnerModule.SystemInner.fromBase64(objResToBcs(systemInner));
-			const coordinatorInnerParsed = CoordinatorInnerModule.DWalletCoordinatorInner.fromBase64(
+			const coordinatorInnerParsed = CoordinatorInnerDynamicField.fromBase64(
 				objResToBcs(coordinatorInner),
-			);
+			).value;
+
+			const systemInnerParsed = SystemInnerDynamicField.fromBase64(objResToBcs(systemInner)).value;
 
 			const keysDFs = await this.client.getDynamicFields({
 				parentId: coordinatorInnerParsed.dwallet_network_encryption_keys.id.id,
@@ -662,16 +675,19 @@ export class IkaClient {
 
 				allTableRows.push(...dynamicFieldPage.data);
 				cursor = dynamicFieldPage.nextCursor;
+
+				if (!dynamicFieldPage.hasNextPage) {
+					break;
+				}
 			} while (cursor);
 
 			const data: Uint8Array[] = [];
 
-			const objectIds = allTableRows.map((tableRowResult) => tableRowResult.objectId);
+			const objectIds = new Set(allTableRows.map((tableRowResult) => tableRowResult.objectId));
 
-			await this.processBatchedObjects(objectIds, (dynField) => {
-				// TODO(fesal): Find a way to get DF type
-				// @ts-expect-error Find a way to get DF type
-				const tableIndex = parseInt(dynamicFieldData.fields.name);
+			await this.processBatchedObjects([...objectIds], (dynField) => {
+				const tableIndex = parseInt(dynField.data.content.fields.name);
+
 				if (isNaN(tableIndex)) {
 					throw new InvalidObjectError(
 						'Table index (expected numeric name)',
@@ -679,9 +695,7 @@ export class IkaClient {
 					);
 				}
 
-				// TODO(fesal): Find a way to get DF type
-				// @ts-expect-error Find a way to get DF type
-				data[tableIndex] = dynamicFieldData.fields.value;
+				data[tableIndex] = dynField.data.content.fields.value;
 			});
 
 			return new Uint8Array(data.flatMap((arr) => Array.from(arr)));
@@ -713,7 +727,17 @@ export class IkaClient {
 	 */
 	private async processBatchedObjects(
 		objectIds: string[],
-		processor: (dynField: any) => void,
+		processor: (dynField: {
+			data: {
+				objectId: string;
+				content: {
+					fields: {
+						name: string;
+						value: Uint8Array;
+					};
+				};
+			};
+		}) => void,
 	): Promise<void> {
 		const batchSize = 50;
 
@@ -734,6 +758,9 @@ export class IkaClient {
 								: 'unknown object';
 						throw new NetworkError(`Failed to fetch ${errorInfo}: ${dynField.error.code}`);
 					}
+
+					// TODO(fesal): Find a way to get DF type
+					// @ts-expect-error Find a way to get DF type
 					processor(dynField);
 				}
 			}

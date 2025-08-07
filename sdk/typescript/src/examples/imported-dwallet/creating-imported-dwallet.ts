@@ -13,6 +13,8 @@ const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);
 
 async function main() {
+	await ikaClient.initialize();
+
 	const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
 		generateKeyparForImportedDWallet();
 

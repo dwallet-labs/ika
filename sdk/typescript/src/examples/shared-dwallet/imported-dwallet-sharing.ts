@@ -14,6 +14,8 @@ const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);
 
 async function main() {
+	await ikaClient.initialize();
+
 	const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
 		generateKeyparForImportedDWallet();
 
@@ -36,15 +38,15 @@ async function main() {
 		signerAddress,
 	);
 
-	const importedKeyDWallet = await ikaClient.getDWalletInParticularState(
+	const awaitingKeyHolderSignatureDWallet = await ikaClient.getDWalletInParticularState(
 		importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
-		'Active',
+		'AwaitingKeyHolderSignature',
 	);
 
 	await acceptEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		importedKeyDWallet,
+		awaitingKeyHolderSignatureDWallet,
 		importedKeyDWalletVerificationRequestEvent,
 		userShareEncryptionKeys,
 	);

@@ -5,6 +5,7 @@ import {
 	decrypt_user_share,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
+	network_dkg_public_output_to_protocol_pp,
 } from '@dwallet-network/dwallet-mpc-wasm';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import sha3 from 'js-sha3';
@@ -58,8 +59,8 @@ export function createClassGroupsKeypair(seed: Uint8Array): {
 	const [expectedEncryptionKey, decryptionKey] = generate_secp_cg_keypair_from_seed(seed);
 
 	return {
-		encryptionKey: expectedEncryptionKey,
-		decryptionKey,
+		encryptionKey: Uint8Array.from(expectedEncryptionKey),
+		decryptionKey: Uint8Array.from(decryptionKey),
 	};
 }
 
@@ -89,9 +90,9 @@ export function createDKGCentralizedOutput(
 		);
 
 	return {
-		centralizedPublicKeyShareAndProof,
-		centralizedPublicOutput,
-		centralizedSecretKeyShare,
+		centralizedPublicKeyShareAndProof: Uint8Array.from(centralizedPublicKeyShareAndProof),
+		centralizedPublicOutput: Uint8Array.from(centralizedPublicOutput),
+		centralizedSecretKeyShare: Uint8Array.from(centralizedSecretKeyShare),
 	};
 }
 
@@ -115,7 +116,7 @@ export function encryptSecretShare(
 		networkDecryptionKeyPublicOutput,
 	);
 
-	return encryptedUserShareAndProof;
+	return Uint8Array.from(encryptedUserShareAndProof);
 }
 
 /**
@@ -145,7 +146,7 @@ export function decryptUserShare(
 		networkDecryptionKeyPublicOutput,
 	);
 
-	return decryptedUserShare;
+	return Uint8Array.from(decryptedUserShare);
 }
 
 /**
@@ -185,10 +186,10 @@ export function prepareDKGSecondRound(
 	);
 
 	return {
-		centralizedPublicKeyShareAndProof,
-		centralizedPublicOutput,
-		centralizedSecretKeyShare,
-		encryptedUserShareAndProof,
+		centralizedPublicKeyShareAndProof: Uint8Array.from(centralizedPublicKeyShareAndProof),
+		centralizedPublicOutput: Uint8Array.from(centralizedPublicOutput),
+		centralizedSecretKeyShare: Uint8Array.from(centralizedSecretKeyShare),
+		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
 	};
 }
 
@@ -233,10 +234,10 @@ export async function prepareDKGSecondRoundAsync(
 	);
 
 	return {
-		centralizedPublicKeyShareAndProof,
-		centralizedPublicOutput,
-		centralizedSecretKeyShare,
-		encryptedUserShareAndProof,
+		centralizedPublicKeyShareAndProof: Uint8Array.from(centralizedPublicKeyShareAndProof),
+		centralizedPublicOutput: Uint8Array.from(centralizedPublicOutput),
+		centralizedSecretKeyShare: Uint8Array.from(centralizedSecretKeyShare),
+		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
 	};
 }
 
@@ -272,10 +273,10 @@ export async function prepareImportDWalletVerification(
 	);
 
 	return {
-		secret_share,
-		public_output,
-		outgoing_message,
-		encryptedUserShareAndProof,
+		secret_share: Uint8Array.from(secret_share),
+		public_output: Uint8Array.from(public_output),
+		outgoing_message: Uint8Array.from(outgoing_message),
+		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
 	};
 }
 
@@ -304,14 +305,28 @@ export function createSignCentralizedOutput(
 		throw new Error('Active DWallet public output is undefined');
 	}
 
-	return create_sign_centralized_output(
-		networkDecryptionKeyPublicOutput,
-		Uint8Array.from(activeDWallet.state.Active?.public_output),
-		secretKey,
-		presign,
-		message,
-		hash,
+	return Uint8Array.from(
+		create_sign_centralized_output(
+			networkDecryptionKeyPublicOutput,
+			Uint8Array.from(activeDWallet.state.Active?.public_output),
+			secretKey,
+			presign,
+			message,
+			hash,
+		),
 	);
+}
+
+/**
+ * Convert a network DKG public output to the protocol public parameters.
+ *
+ * @param network_dkg_public_output - The network DKG public output
+ * @returns The protocol public parameters
+ */
+export function networkDkgPublicOutputToProtocolPp(
+	network_dkg_public_output: Uint8Array,
+): Uint8Array {
+	return Uint8Array.from(network_dkg_public_output_to_protocol_pp(network_dkg_public_output));
 }
 
 /**

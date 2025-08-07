@@ -12,26 +12,12 @@ import { InvalidObjectError } from './errors';
  */
 export function objResToBcs(resp: SuiObjectResponse): string {
 	if (resp.data?.bcs?.dataType !== 'moveObject') {
-		throw new InvalidObjectError(`Response bcs missing: ${JSON.stringify(resp, null, 2)}`);
+		throw new InvalidObjectError(
+			`Response bcs missing: ${JSON.stringify(resp.data?.type, null, 2)}`,
+		);
 	}
 
 	return resp.data.bcs.bcsBytes;
-}
-
-/**
- * Convert an array of numbers to a Uint8Array.
- * This utility function safely converts number arrays to byte arrays with validation.
- *
- * @param numbers - Array of numbers to convert to bytes
- * @returns The numbers as a Uint8Array
- * @throws {Error} If the numbers array is undefined
- */
-export function parseNumbersToBytes(numbers: number[] | undefined): Uint8Array {
-	if (!numbers) {
-		throw new Error('Numbers are undefined');
-	}
-
-	return new Uint8Array(numbers);
 }
 
 /**

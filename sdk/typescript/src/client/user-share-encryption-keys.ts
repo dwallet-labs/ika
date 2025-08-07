@@ -3,7 +3,6 @@ import { keccak256 } from 'js-sha3';
 
 import { createClassGroupsKeypair, decryptUserShare } from './cryptography';
 import { DWallet, EncryptedUserSecretKeyShare } from './types';
-import { parseNumbersToBytes } from './utils';
 
 /**
  * UserShareEncrytionKeys manages encryption/decryption keys and signing keypairs for user shares.
@@ -36,8 +35,8 @@ export class UserShareEncrytionKeys {
 		);
 
 		const classGroupsKeypair = createClassGroupsKeypair(classGroupsSeed);
-		this.encryptionKey = classGroupsKeypair.encryptionKey;
-		this.decryptionKey = classGroupsKeypair.decryptionKey;
+		this.encryptionKey = new Uint8Array(classGroupsKeypair.encryptionKey);
+		this.decryptionKey = new Uint8Array(classGroupsKeypair.decryptionKey);
 		this.encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
 			Buffer.from(encryptionSignerKeySeed).toString('hex'),
 		);
@@ -99,8 +98,12 @@ export class UserShareEncrytionKeys {
 	 * @throws {Error} If the DWallet is not in active state or public output is missing
 	 */
 	async getUserOutputSignature(dWallet: DWallet): Promise<Uint8Array> {
+		if (!dWallet.state.AwaitingKeyHolderSignature?.public_output) {
+			throw new Error('DWallet is not in awaiting key holder signature state');
+		}
+
 		return await this.encryptedSecretShareSigningKeypair.sign(
-			parseNumbersToBytes(dWallet.state.Active?.public_output),
+			Uint8Array.from(dWallet.state.AwaitingKeyHolderSignature?.public_output),
 		);
 	}
 
@@ -119,10 +122,14 @@ export class UserShareEncrytionKeys {
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 		networkDecryptionKeyPublicOutput: Uint8Array,
 	): Promise<Uint8Array> {
+		if (!dWallet.state.Active?.public_output) {
+			throw new Error('DWallet is not active');
+		}
+
 		return decryptUserShare(
 			this.decryptionKey,
 			this.encryptionKey,
-			Uint8Array.from(parseNumbersToBytes(dWallet.state.Active?.public_output)),
+			Uint8Array.from(dWallet.state.Active?.public_output),
 			Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
 			networkDecryptionKeyPublicOutput,
 		);
