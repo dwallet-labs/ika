@@ -976,6 +976,7 @@ mod tests {
     use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionType};
     use std::cell::RefCell;
     use std::sync::Mutex;
+    use tokio::sync::watch;
     use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 
     fn test_process_consensus_rounds_from_storage_read_one_round_messages_successfully() {
@@ -1097,13 +1098,16 @@ mod tests {
             }
         }
         
+        
         let dwallet_mpc_service = DWalletMPCService {
             last_read_consensus_round: Some(5),
             epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
             dwallet_submit_to_consensus: Arc::new(TestingSubmitToConsensus::new()),
             state: Arc::new(TestingAuthorityState {}),
             dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
-            dwallet_mpc_manager: (),
+            dwallet_mpc_manager: DWalletMPCManager::new(
+                
+            ),
             exit: (),
             end_of_publish: false,
             dwallet_mpc_metrics: Arc::new(()),

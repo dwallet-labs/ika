@@ -57,3 +57,27 @@ impl Clone for SuiDataReceivers {
         }
     }
 }
+
+impl SuiDataReceivers {
+    pub(crate) fn new_for_testing() -> Self {
+        Self {
+            network_keys_receiver: tokio::sync::watch::channel(Arc::new(HashMap::new())).1,
+            new_events_receiver: broadcast::channel(100).1,
+            next_epoch_committee_receiver: tokio::sync::watch::channel(
+                Committee::new_simple_test_committee().0,
+            )
+            .1,
+            last_session_to_complete_in_current_epoch_receiver: tokio::sync::watch::channel((
+                EpochId::default(),
+                0,
+            ))
+            .1,
+            end_of_publish_receiver: tokio::sync::watch::channel(None).1,
+            uncompleted_events_receiver: tokio::sync::watch::channel((
+                Vec::new(),
+                EpochId::default(),
+            ))
+            .1,
+        }
+    }
+}
