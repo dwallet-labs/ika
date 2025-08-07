@@ -72,6 +72,7 @@ sui-sdk.workspace = true
 sui-types.workspace = true
 backoff.workspace = true
 base64 = "0.21.7"
+tracing-subscriber = "0.3.19"
 
 [dev-dependencies]
 ika-types = {workspace = true, features = ["test_helpers"]}

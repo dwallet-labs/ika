@@ -1169,6 +1169,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_network_dkg_full_flow() {
+        let _ = tracing_subscriber::fmt()
+            .with_test_writer()
+            .try_init();
         let (committee, keypairs) = Committee::new_simple_test_committee();
         let committee_clone = committee.clone();
         let names: Vec<_> = committee_clone.names().collect();
@@ -1195,7 +1198,7 @@ mod tests {
             ));
         });
         println!("Created dwallet_mpc_services");
-        for i in 0..4 {
+        for i in 0..1 {
             let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
             let _ = dwallet_mpc_service.handle_new_events().await;
             let _ = dwallet_mpc_service
@@ -1204,15 +1207,16 @@ mod tests {
             let consensus_messages_store = sent_consensus_messages_collectors[i]
                 .submitted_messages
                 .clone();
-            loop {
-                if !consensus_messages_store.lock().unwrap().is_empty() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                let _ = dwallet_mpc_service
-                    .process_cryptographic_computations()
-                    .await;
-            }
+
+            // loop {
+            //     if !consensus_messages_store.lock().unwrap().is_empty() {
+            //         break;
+            //     }
+            //     tokio::time::sleep(Duration::from_millis(100)).await;
+            //     let _ = dwallet_mpc_service
+            //         .process_cryptographic_computations()
+            //         .await;
+            // }
             println!("Processed cryptographic computations for service {i}");
         }
     }

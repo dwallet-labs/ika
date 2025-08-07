@@ -5809,6 +5809,7 @@ dependencies = [
  "test-fuzz",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "twopc_mpc",
  "typed-store",
 ]
