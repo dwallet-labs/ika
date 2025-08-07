@@ -1208,15 +1208,15 @@ mod tests {
                 .submitted_messages
                 .clone();
 
-            // loop {
-            //     if !consensus_messages_store.lock().unwrap().is_empty() {
-            //         break;
-            //     }
-            //     tokio::time::sleep(Duration::from_millis(100)).await;
-            //     let _ = dwallet_mpc_service
-            //         .process_cryptographic_computations()
-            //         .await;
-            // }
+            loop {
+                if !consensus_messages_store.lock().unwrap().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let _ = dwallet_mpc_service
+                    .process_cryptographic_computations()
+                    .await;
+            }
             println!("Processed cryptographic computations for service {i}");
         }
     }
