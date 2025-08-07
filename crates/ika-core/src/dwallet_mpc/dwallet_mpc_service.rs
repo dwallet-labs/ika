@@ -1194,6 +1194,7 @@ mod tests {
                 1,
             ));
         });
+        println!("Created dwallet_mpc_services");
         for i in 0..4 {
             let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
             let _ = dwallet_mpc_service.handle_new_events().await;
@@ -1212,6 +1213,7 @@ mod tests {
                     .process_cryptographic_computations()
                     .await;
             }
+            println!("Processed cryptographic computations for service {i}");
         }
     }
 
