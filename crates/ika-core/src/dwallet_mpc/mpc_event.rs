@@ -281,6 +281,8 @@ impl DWalletMPCManager {
                 &self.packages_config,
             )
         {
+            let event_contents_base64 = base64::encode(event.contents.clone());
+            error!(?event_contents_base64, "start network dkg event contents");
             let deserialized_event: DWalletSessionEvent<
                 DWalletNetworkDKGEncryptionKeyRequestEvent,
             > = deserialize_event_contents(&event.contents, event.pulled)?;
