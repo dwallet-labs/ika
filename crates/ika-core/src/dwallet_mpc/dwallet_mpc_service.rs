@@ -991,8 +991,6 @@ mod tests {
     use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
     use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionType};
     use prometheus::Registry;
-    use rayon::vec;
-    use std::cell::RefCell;
     use std::sync::Mutex;
     use tokio::sync::watch;
 
@@ -1132,7 +1130,7 @@ mod tests {
         let sui_data_receivers = SuiDataReceivers::new_for_testing();
 
         let committee = Committee::new_simple_test_committee();
-        let dwallet_mpc_service = DWalletMPCService {
+        let mut dwallet_mpc_service = DWalletMPCService {
             last_read_consensus_round: Some(5),
             epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
             dwallet_submit_to_consensus: Arc::new(TestingSubmitToConsensus::new()),
@@ -1165,5 +1163,8 @@ mod tests {
             protocol_config: ProtocolConfig::get_for_min_version(),
             committee: Arc::new(committee.0),
         };
+        dwallet_mpc_service
+            .process_consensus_rounds_from_storage()
+            .await;
     }
 }
