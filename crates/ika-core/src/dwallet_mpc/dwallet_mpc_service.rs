@@ -214,10 +214,7 @@ impl DWalletMPCService {
             // Receive **new** dWallet MPC events and save them in the local DB.
 
             if let Err(err) = self.handle_new_events(uncompleted_events).await {
-                error!(
-                    ?err,
-                    "failed to handle new events from DWallet MPC service"
-                )
+                error!(?err, "failed to handle new events from DWallet MPC service")
             }
 
             self.process_consensus_rounds_from_storage().await;
@@ -234,7 +231,10 @@ impl DWalletMPCService {
         }
     }
 
-    async fn handle_new_events(&mut self, uncompleted_events: Vec<DBSuiEvent>) -> DwalletMPCResult<()> {
+    async fn handle_new_events(
+        &mut self,
+        uncompleted_events: Vec<DBSuiEvent>,
+    ) -> DwalletMPCResult<()> {
         let pulled_events = match self.receive_new_sui_events() {
             Ok(new_events) => new_events,
             Err(e) => {
@@ -267,18 +267,18 @@ impl DWalletMPCService {
                             );
 
                         info!(
-                                ?session_identifier,
-                                "Got an event for a session that was previously computation completed, marking it as computation completed"
-                            );
+                            ?session_identifier,
+                            "Got an event for a session that was previously computation completed, marking it as computation completed"
+                        );
                     }
                 }
             }
             Err(e) => {
                 error!(
-                        ?events_session_identifiers,
-                        error=?e,
-                        "Could not read from the DB completed sessions, got error"
-                    );
+                    ?events_session_identifiers,
+                    error=?e,
+                    "Could not read from the DB completed sessions, got error"
+                );
             }
         }
 
