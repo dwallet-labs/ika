@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 import type { SuiObjectResponse } from '@mysten/sui/client';
 
 import { InvalidObjectError } from './errors.js';

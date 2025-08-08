@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator.js';

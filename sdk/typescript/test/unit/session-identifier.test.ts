@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 import { toHex } from '@mysten/bcs';
 import { describe, expect, it } from 'vitest';
 

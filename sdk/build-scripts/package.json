@@ -4,7 +4,7 @@
 	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
 	"description": "Build scripts for @ika.xyz packages",
 	"version": "0.0.0",
-	"license": "Apache-2.0",
+	"license": "BSD-3-Clause-Clear",
 	"engines": {
 		"node": ">=18"
 	},

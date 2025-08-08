@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 import { prepareImportDWalletVerification } from '../../src/client/cryptography.js';
 import { Curve } from '../../src/client/types.js';
 import {

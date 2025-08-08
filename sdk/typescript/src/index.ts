@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 import * as CoordinatorInnerModule from './generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as CoordinatorModule from './generated/ika_dwallet_2pc_mpc/coordinator.js';
 import * as SessionsManagerModule from './generated/ika_dwallet_2pc_mpc/sessions_manager.js';

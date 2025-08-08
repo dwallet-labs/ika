@@ -1,6 +1,5 @@
-/**
- * Custom error types for Ika Client operations
- */
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 
 export class IkaClientError extends Error {
 	constructor(

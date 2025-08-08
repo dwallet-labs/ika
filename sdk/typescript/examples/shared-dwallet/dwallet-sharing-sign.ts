@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
 import { Hash, SignatureAlgorithm } from '../../src/client/index.js';
 import {

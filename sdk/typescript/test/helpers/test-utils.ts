@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 import { randomBytes } from 'crypto';
 import { toHex } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';

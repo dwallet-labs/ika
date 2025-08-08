@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 import type { BcsType } from '@mysten/sui/bcs';
 import { bcs, BcsStruct } from '@mysten/sui/bcs';
 
