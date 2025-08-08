@@ -1,6 +1,5 @@
 import { bcs } from '@mysten/sui/bcs';
-import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
-import type { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
+import { decodeSuiPrivateKey, Keypair } from '@mysten/sui/cryptography';
 import sha3 from 'js-sha3';
 
 import {
@@ -222,30 +221,13 @@ export async function prepareDKGSecondRoundAsync(
 	},
 ): Promise<PreparedSecondRound> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
-	const networkFirstRoundOutput =
-		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
 
-	if (!networkFirstRoundOutput) {
-		throw new Error('First round output is undefined');
-	}
-
-	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
+	return prepareDKGSecondRound(
 		protocolPublicParameters,
-		Uint8Array.from(networkFirstRoundOutput),
-		sessionIdentifierDigest(sessionIdentifier),
-	);
-
-	const encryptedUserShareAndProof = encryptSecretShare(
-		userSecretKeyShare,
+		dWallet,
+		sessionIdentifier,
 		classGroupsKeypair.encryptionKey,
-		protocolPublicParameters,
 	);
-
-	return {
-		userDKGMessage: Uint8Array.from(userDKGMessage),
-		userPublicOutput: Uint8Array.from(userPublicOutput),
-		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
-	};
 }
 
 /**
@@ -255,7 +237,7 @@ export async function prepareDKGSecondRoundAsync(
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param sessionIdentifier - Unique identifier for this import session
  * @param userShareEncryptionKeys - The user's encryption keys for securing the imported share
- * @param keypair - The existing Secp256k1 keypair to import as a DWallet
+ * @param keypair - The existing keypair to import as a DWallet. WE SUPPORT ONLY SECP256K1 FOR NOW.
  * @returns Promise resolving to complete verification data for the import process
  * @throws {Error} If network parameters cannot be fetched or key import preparation fails
  */
@@ -263,7 +245,7 @@ export async function prepareImportDWalletVerification(
 	ikaClient: IkaClient,
 	sessionIdentifier: Uint8Array,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
-	keypair: Secp256k1Keypair,
+	keypair: Keypair,
 ): Promise<PreparedImportDWalletVerification> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
