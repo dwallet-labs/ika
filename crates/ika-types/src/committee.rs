@@ -89,10 +89,10 @@ impl Committee {
     /// of the Ika System object.
     pub fn new_for_testing_with_normalized_voting_power(
         epoch: EpochId,
-        mut voting_weights: BTreeMap<AuthorityName, StakeUnit>,
+        mut voting_weights: Vec<(AuthorityName, StakeUnit)>,
     ) -> Self {
         let num_nodes = voting_weights.len();
-        let total_votes: StakeUnit = voting_weights.values().cloned().sum();
+        let total_votes: StakeUnit = voting_weights.iter().map(|(_, stake)| stake).sum();
 
         let normalization_coef = num_nodes as f64 / total_votes as f64;
         let mut total_sum = 0;
