@@ -259,7 +259,7 @@ export class IkaTransaction {
 			preparedSecondRound.userPublicKeyShareAndProof,
 			preparedSecondRound.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getPublicKey().toSuiAddress(),
-			preparedSecondRound.userPartyPublicOutput,
+			preparedSecondRound.userPublicOutput,
 			signerPublicKey,
 			this.createSessionIdentifier(),
 			ikaCoin,
