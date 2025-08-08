@@ -41,10 +41,10 @@ export class IkaClient {
 	/** Whether to enable caching of network objects and parameters */
 	private cache: boolean;
 	/** Cached network public parameters to avoid repeated fetching */
-	private cachedPublicParameters?: {
+	private cachedProtocolPublicParameters?: {
 		decryptionKeyPublicOutputID: string;
 		epoch: number;
-		publicParameters: Uint8Array;
+		protocolPublicParameters: Uint8Array;
 	};
 	/** Cached network objects (coordinator and system inner objects) */
 	private cachedObjects?: {
@@ -65,13 +65,13 @@ export class IkaClient {
 	 * @param options - Configuration options for the client
 	 * @param options.suiClient - The Sui client instance to use for blockchain interactions
 	 * @param options.config - The Ika network configuration
-	 * @param options.publicParameters - Optional cached public parameters
+	 * @param options.protocolPublicParameters - Optional cached protocol public parameters
 	 * @param options.cache - Whether to enable caching (default: true)
 	 */
-	constructor({ suiClient, config, publicParameters, cache = true }: IkaClientOptions) {
+	constructor({ suiClient, config, protocolPublicParameters, cache = true }: IkaClientOptions) {
 		this.client = suiClient;
 		this.ikaConfig = config;
-		this.cachedPublicParameters = publicParameters;
+		this.cachedProtocolPublicParameters = protocolPublicParameters;
 		this.cache = cache;
 	}
 
@@ -81,7 +81,7 @@ export class IkaClient {
 	 */
 	invalidateCache(): void {
 		this.cachedObjects = undefined;
-		this.cachedPublicParameters = undefined;
+		this.cachedProtocolPublicParameters = undefined;
 		this.objectsPromise = undefined;
 	}
 
@@ -403,26 +403,27 @@ export class IkaClient {
 		const decryptionKeyPublicOutputID = await this.getDecryptionKeyPublicOutputID();
 		const epoch = await this.getEpoch();
 
-		if (this.cachedPublicParameters) {
+		if (this.cachedProtocolPublicParameters) {
 			if (
-				this.cachedPublicParameters.decryptionKeyPublicOutputID === decryptionKeyPublicOutputID &&
-				this.cachedPublicParameters.epoch === epoch
+				this.cachedProtocolPublicParameters.decryptionKeyPublicOutputID ===
+					decryptionKeyPublicOutputID &&
+				this.cachedProtocolPublicParameters.epoch === epoch
 			) {
-				return this.cachedPublicParameters.publicParameters;
+				return this.cachedProtocolPublicParameters.protocolPublicParameters;
 			}
 		}
 
-		const publicParameters = networkDkgPublicOutputToProtocolPp(
+		const protocolPublicParameters = networkDkgPublicOutputToProtocolPp(
 			await this.readTableVecAsRawBytes(decryptionKeyPublicOutputID),
 		);
 
-		this.cachedPublicParameters = {
+		this.cachedProtocolPublicParameters = {
 			decryptionKeyPublicOutputID,
 			epoch,
-			publicParameters,
+			protocolPublicParameters,
 		};
 
-		return publicParameters;
+		return protocolPublicParameters;
 	}
 
 	/**

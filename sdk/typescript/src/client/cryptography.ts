@@ -75,14 +75,14 @@ export function createClassGroupsKeypair(seed: Uint8Array): {
  *
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  *
- * @param networkDecryptionKeyPublicOutput - The network's public parameters for decryption
+ * @param protocolPublicParameters - The protocol public parameters for decryption
  * @param firstRoundOutput - The output from the network's first round of DKG
  * @param sessionIdentifier - Unique identifier for this DKG session
  * @returns Object containing the user's DKG message, public output, and secret key share
  *
  */
 export function createDKGUserOutput(
-	networkDecryptionKeyPublicOutput: Uint8Array,
+	protocolPublicParameters: Uint8Array,
 	firstRoundOutput: Uint8Array,
 	sessionIdentifier: Uint8Array,
 ): {
@@ -91,7 +91,7 @@ export function createDKGUserOutput(
 	userSecretKeyShare: Uint8Array;
 } {
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
-		networkDecryptionKeyPublicOutput,
+		protocolPublicParameters,
 		Uint8Array.from(firstRoundOutput),
 		sessionIdentifierDigest(sessionIdentifier),
 	);
@@ -109,18 +109,18 @@ export function createDKGUserOutput(
  *
  * @param userSecretKeyShare - The secret key share to encrypt
  * @param encryptionKey - The public encryption key to encrypt with
- * @param networkDecryptionKeyPublicOutput - The network's public parameters for encryption
+ * @param protocolPublicParameters - The protocol public parameters for encryption
  * @returns The encrypted secret share with proof of correct encryption
  */
 export function encryptSecretShare(
 	userSecretKeyShare: Uint8Array,
 	encryptionKey: Uint8Array,
-	networkDecryptionKeyPublicOutput: Uint8Array,
+	protocolPublicParameters: Uint8Array,
 ): Uint8Array {
 	const encryptedUserShareAndProof = encrypt_secret_share(
 		userSecretKeyShare,
 		encryptionKey,
-		networkDecryptionKeyPublicOutput,
+		protocolPublicParameters,
 	);
 
 	return Uint8Array.from(encryptedUserShareAndProof);
@@ -136,7 +136,7 @@ export function encryptSecretShare(
  * @param encryptionKey - The corresponding public encryption key
  * @param dWalletOutput - The DWallet's public output for verification
  * @param encryptedUserShareAndProof - The encrypted share with proof to decrypt
- * @param networkDecryptionKeyPublicOutput - The network's public parameters
+ * @param protocolPublicParameters - The protocol public parameters
  * @returns The decrypted secret share
  * @throws {Error} If decryption fails or proof verification fails
  */
@@ -145,14 +145,14 @@ export function decryptUserShare(
 	encryptionKey: Uint8Array,
 	dWalletOutput: Uint8Array,
 	encryptedUserShareAndProof: Uint8Array,
-	networkDecryptionKeyPublicOutput: Uint8Array,
+	protocolPublicParameters: Uint8Array,
 ): Uint8Array {
 	const decryptedUserShare = decrypt_user_share(
 		decryptionKey,
 		encryptionKey,
 		dWalletOutput,
 		encryptedUserShareAndProof,
-		networkDecryptionKeyPublicOutput,
+		protocolPublicParameters,
 	);
 
 	return Uint8Array.from(decryptedUserShare);
@@ -162,7 +162,7 @@ export function decryptUserShare(
  * Prepare all cryptographic data needed for the second round of DKG.
  * This function combines the DKG output generation and secret share encryption.
  *
- * @param networkDecryptionKeyPublicOutput - The network's public parameters
+ * @param protocolPublicParameters - The protocol public parameters
  * @param dWallet - The DWallet object containing first round output
  * @param sessionIdentifier - Unique identifier for this DKG session
  * @param encryptionKey - The user's public encryption key
@@ -170,7 +170,7 @@ export function decryptUserShare(
  * @throws {Error} If the first round output is not available in the DWallet
  */
 export function prepareDKGSecondRound(
-	networkDecryptionKeyPublicOutput: Uint8Array,
+	protocolPublicParameters: Uint8Array,
 	dWallet: DWallet,
 	sessionIdentifier: Uint8Array,
 	encryptionKey: Uint8Array,
@@ -182,7 +182,7 @@ export function prepareDKGSecondRound(
 	}
 
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
-		networkDecryptionKeyPublicOutput,
+		protocolPublicParameters,
 		Uint8Array.from(firstRoundOutput),
 		sessionIdentifierDigest(sessionIdentifier),
 	);
@@ -190,7 +190,7 @@ export function prepareDKGSecondRound(
 	const encryptedUserShareAndProof = encryptSecretShare(
 		userSecretKeyShare,
 		encryptionKey,
-		networkDecryptionKeyPublicOutput,
+		protocolPublicParameters,
 	);
 
 	return {
@@ -220,7 +220,7 @@ export async function prepareDKGSecondRoundAsync(
 		decryptionKey: Uint8Array;
 	},
 ): Promise<PreparedSecondRound> {
-	const networkDecryptionKeyPublicOutput = await ikaClient.getProtocolPublicParameters();
+	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 	const firstRoundOutput = dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
 
 	if (!firstRoundOutput) {
@@ -228,7 +228,7 @@ export async function prepareDKGSecondRoundAsync(
 	}
 
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
-		networkDecryptionKeyPublicOutput,
+		protocolPublicParameters,
 		Uint8Array.from(firstRoundOutput),
 		sessionIdentifierDigest(sessionIdentifier),
 	);
@@ -236,7 +236,7 @@ export async function prepareDKGSecondRoundAsync(
 	const encryptedUserShareAndProof = encryptSecretShare(
 		userSecretKeyShare,
 		classGroupsKeypair.encryptionKey,
-		networkDecryptionKeyPublicOutput,
+		protocolPublicParameters,
 	);
 
 	return {
@@ -263,10 +263,10 @@ export async function prepareImportDWalletVerification(
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	keypair: Secp256k1Keypair,
 ): Promise<PreparedImportDWalletVerification> {
-	const networkDecryptionKeyPublicOutput = await ikaClient.getProtocolPublicParameters();
+	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
 	const [userSecretShare, userPublicOutput, userMessage] = create_imported_dwallet_user_output(
-		networkDecryptionKeyPublicOutput,
+		protocolPublicParameters,
 		sessionIdentifierDigest(sessionIdentifier),
 		bcs.vector(bcs.u8()).serialize(decodeSuiPrivateKey(keypair.getSecretKey()).secretKey).toBytes(),
 	);
@@ -274,7 +274,7 @@ export async function prepareImportDWalletVerification(
 	const encryptedUserShareAndProof = encryptSecretShare(
 		userSecretShare,
 		userShareEncryptionKeys.encryptionKey,
-		networkDecryptionKeyPublicOutput,
+		protocolPublicParameters,
 	);
 
 	return {
@@ -288,7 +288,7 @@ export async function prepareImportDWalletVerification(
  * Create the user's sign message for the signature generation process.
  * This function combines the user's secret key, presign, and message to create a sign message to be sent to the network.
  *
- * @param networkDecryptionKeyPublicOutput - The network's public parameters
+ * @param protocolPublicParameters - The protocol public parameters
  * @param activeDWallet - The active DWallet containing the public output
  * @param secretKey - The user's secret key share
  * @param presign - The presignature data from a completed presign operation
@@ -298,7 +298,7 @@ export async function prepareImportDWalletVerification(
  * @throws {Error} If the DWallet is not in active state or public output is missing
  */
 export function createUserSignMessage(
-	networkDecryptionKeyPublicOutput: Uint8Array,
+	protocolPublicParameters: Uint8Array,
 	activeDWallet: DWallet,
 	secretKey: Uint8Array,
 	presign: Uint8Array,
@@ -311,7 +311,7 @@ export function createUserSignMessage(
 
 	return Uint8Array.from(
 		create_sign_user_output(
-			networkDecryptionKeyPublicOutput,
+			protocolPublicParameters,
 			Uint8Array.from(activeDWallet.state.Active?.public_output),
 			secretKey,
 			presign,

@@ -114,14 +114,14 @@ export class UserShareEncrytionKeys {
 	 *
 	 * @param dWallet - The DWallet that the encrypted share belongs to
 	 * @param encryptedUserSecretKeyShare - The encrypted secret key share to decrypt
-	 * @param networkDecryptionKeyPublicOutput - The network's public parameters for decryption
+	 * @param protocolPublicParameters - The protocol public parameters for decryption
 	 * @returns Promise resolving to the decrypted secret share bytes
 	 * @throws {Error} If decryption fails, the DWallet is not active, or verification fails
 	 */
 	async decryptUserShare(
 		dWallet: DWallet,
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
-		networkDecryptionKeyPublicOutput: Uint8Array,
+		protocolPublicParameters: Uint8Array,
 	): Promise<Uint8Array> {
 		if (!dWallet.state.Active?.public_output) {
 			throw new Error('DWallet is not active');
@@ -132,7 +132,7 @@ export class UserShareEncrytionKeys {
 			this.encryptionKey,
 			Uint8Array.from(dWallet.state.Active?.public_output),
 			Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
-			networkDecryptionKeyPublicOutput,
+			protocolPublicParameters,
 		);
 	}
 

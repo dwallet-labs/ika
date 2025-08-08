@@ -32,10 +32,10 @@ export interface IkaClientOptions {
 	config: IkaConfig;
 	suiClient: SuiClient;
 	timeout?: number;
-	publicParameters?: {
+	protocolPublicParameters?: {
 		decryptionKeyPublicOutputID: string;
 		epoch: number;
-		publicParameters: Uint8Array;
+		protocolPublicParameters: Uint8Array;
 	};
 	cache?: boolean;
 	network: Network;
