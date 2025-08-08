@@ -86,3 +86,6 @@ ika_config.json
 
 # AI
 .cursor
+
+# TypeDoc
+sdk/typescript/docs

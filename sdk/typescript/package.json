@@ -57,6 +57,7 @@
 		"@mysten/bcs": "^1.7.0",
 		"@mysten/codegen": "^0.3.0",
 		"@mysten/sui": "^1.37.1",
-		"@noble/hashes": "^1.8.0"
+		"@noble/hashes": "^1.8.0",
+		"typedoc": "^0.28.9"
 	}
 }
