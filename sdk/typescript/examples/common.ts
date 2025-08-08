@@ -6,22 +6,26 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
-import { IkaClient, IkaTransaction } from '../client';
-import { PreparedImportDWalletVerification, PreparedSecondRound } from '../client/cryptography';
-import { getNetworkConfig } from '../client/network-configs';
+import {
+	PreparedImportDWalletVerification,
+	PreparedSecondRound,
+} from '../src/client/cryptography.js';
+import { IkaClient, IkaTransaction } from '../src/client/index.js';
+import { getNetworkConfig } from '../src/client/network-configs.js';
 import {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
+	EncryptionKeyCurve,
 	Hash,
 	IkaConfig,
 	PartialUserSignature,
 	Presign,
 	SignatureAlgorithm,
-} from '../client/types';
-import { UserShareEncrytionKeys } from '../client/user-share-encryption-keys';
-import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
-import * as SessionsManagerModule from '../generated/ika_dwallet_2pc_mpc/sessions_manager.js';
+} from '../src/client/types.js';
+import { UserShareEncrytionKeys } from '../src/client/user-share-encryption-keys.js';
+import * as CoordinatorInnerModule from '../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
+import * as SessionsManagerModule from '../src/generated/ika_dwallet_2pc_mpc/sessions_manager.js';
 
 export function createSuiClient() {
 	return new SuiClient({
@@ -137,7 +141,7 @@ export async function registerEncryptionKey(
 	});
 
 	await ikaTransaction.registerEncryptionKey({
-		curve: Curve.SECP256K1,
+		curve: EncryptionKeyCurve.ED25519,
 	});
 
 	const result = await executeTransaction(suiClient, transaction);

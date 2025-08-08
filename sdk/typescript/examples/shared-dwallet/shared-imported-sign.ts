@@ -1,5 +1,5 @@
-import { Curve } from '../../client';
-import { prepareImportDWalletVerification } from '../../client/cryptography';
+import { Curve, Hash, SignatureAlgorithm } from '../../src/client';
+import { prepareImportDWalletVerification } from '../../src/client/cryptography';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -7,7 +7,9 @@ import {
 	createSuiClient,
 	generateKeypairForImportedDWallet,
 	makeImportedDWalletUserSecretKeySharesPublic,
+	presign,
 	requestImportedDWalletVerification,
+	signWithImportedDWalletPublic,
 } from '../common';
 
 const suiClient = createSuiClient();
@@ -65,6 +67,28 @@ async function main() {
 		suiClient,
 		activeDWallet,
 		preparedImportDWalletVerification,
+	);
+
+	const presignRequestEvent = await presign(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		SignatureAlgorithm.ECDSA,
+	);
+
+	const presignObject = await ikaClient.getPresignInParticularState(
+		presignRequestEvent.event_data.presign_id,
+		'Completed',
+	);
+
+	await signWithImportedDWalletPublic(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		presignObject,
+		Buffer.from('hello world'),
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
 	);
 }
 

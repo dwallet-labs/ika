@@ -1,12 +1,16 @@
-import { prepareDKGSecondRoundAsync } from '../../client/cryptography';
+import { Hash, SignatureAlgorithm } from '../../src/client';
+import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
 	createSuiClient,
 	generateKeypair,
+	makeDWalletUserSecretKeySharesPublic,
+	presign,
 	registerEncryptionKey,
 	requestDKGFirstRound,
 	requestDkgSecondRound,
+	signPublicUserShare,
 } from '../common';
 
 const suiClient = createSuiClient();
@@ -57,7 +61,36 @@ async function main() {
 
 	const activeDWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
 
-	console.log('activeDWallet', activeDWallet);
+	await makeDWalletUserSecretKeySharesPublic(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		preparedSecondRound,
+	);
+
+	const presignRequestEvent = await presign(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		SignatureAlgorithm.ECDSA,
+	);
+
+	const presignObject = await ikaClient.getPresignInParticularState(
+		presignRequestEvent.event_data.presign_id,
+		'Completed',
+	);
+
+	const publicDWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
+
+	await signPublicUserShare(
+		ikaClient,
+		suiClient,
+		publicDWallet,
+		presignObject,
+		Buffer.from('hello world'),
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
+	);
 }
 
 export { main };

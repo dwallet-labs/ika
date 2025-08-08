@@ -11,6 +11,7 @@ import {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
+	EncryptionKeyCurve,
 	Hash,
 	PartialUserSignature,
 	Presign,
@@ -204,7 +205,7 @@ export async function registerTestEncryptionKey(
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
 	await ikaTransaction.registerEncryptionKey({
-		curve: Curve.SECP256K1,
+		curve: EncryptionKeyCurve.ED25519,
 	});
 
 	const result = await executeTestTransaction(suiClient, transaction, testName);

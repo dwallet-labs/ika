@@ -1,12 +1,14 @@
-import { Curve } from '../../client';
-import { prepareImportDWalletVerification } from '../../client/cryptography';
+import { Curve, Hash, SignatureAlgorithm } from '../../src/client';
+import { prepareImportDWalletVerification } from '../../src/client/cryptography';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
 	createSessionIdentifier,
 	createSuiClient,
 	generateKeypairForImportedDWallet,
+	presign,
 	requestImportedDWalletVerification,
+	signWithImportedDWallet,
 } from '../common';
 
 const suiClient = createSuiClient();
@@ -51,6 +53,39 @@ async function main() {
 		suiClient,
 		importedKeyDWallet,
 		importedKeyDWalletVerificationRequestEvent,
+		userShareEncryptionKeys,
+	);
+
+	const activeDWallet = await ikaClient.getDWalletInParticularState(
+		importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+		'Active',
+	);
+
+	const encryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeyShare(
+		importedKeyDWalletVerificationRequestEvent.event_data.encrypted_user_secret_key_share_id,
+	);
+
+	const presignRequestEvent = await presign(
+		ikaClient,
+		suiClient,
+		importedKeyDWallet,
+		SignatureAlgorithm.ECDSA,
+	);
+
+	const presignObject = await ikaClient.getPresignInParticularState(
+		presignRequestEvent.event_data.presign_id,
+		'Completed',
+	);
+
+	await signWithImportedDWallet(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		presignObject,
+		Buffer.from('hello world'),
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
+		encryptedUserSecretKeyShare,
 		userShareEncryptionKeys,
 	);
 }

@@ -302,25 +302,16 @@ export function createSignCentralizedOutput(
 	presign: Uint8Array,
 	message: Uint8Array,
 	hash: number,
-	shared: boolean = false,
 ): Uint8Array {
 	if (!activeDWallet.state.Active?.public_output) {
 		throw new Error('Active DWallet public output is undefined');
 	}
 
-	// BCS-wrap the secret key share as VersionedDwalletUserSecretShare::V1(secretKey)
-	const versionedSecretShare = bcs
-		.enum('VersionedDwalletUserSecretShare', {
-			V1: bcs.vector(bcs.u8()),
-		})
-		.serialize({ V1: Array.from(secretKey) })
-		.toBytes();
-
 	return Uint8Array.from(
 		create_sign_centralized_output(
 			networkDecryptionKeyPublicOutput,
 			Uint8Array.from(activeDWallet.state.Active?.public_output),
-			shared ? secretKey : versionedSecretShare,
+			secretKey,
 			presign,
 			message,
 			hash,
