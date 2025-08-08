@@ -1,23 +1,23 @@
-import { SuiClient } from '@mysten/sui/client';
+import type { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 
-import { IkaClient } from '../../src/client';
-import {
+import type {
 	PreparedImportDWalletVerification,
-	prepareDKGSecondRoundAsync,
 	PreparedSecondRound,
-} from '../../src/client/cryptography';
-import {
+} from '../../src/client/cryptography.js';
+import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
+import type { IkaClient } from '../../src/client/ika-client.js';
+import type {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
-	EncryptionKeyCurve,
 	Hash,
 	PartialUserSignature,
 	Presign,
 	SignatureAlgorithm,
-} from '../../src/client/types';
-import { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-keys';
+} from '../../src/client/types.js';
+import { EncryptionKeyCurve } from '../../src/client/types.js';
+import type { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../../src/generated/ika_dwallet_2pc_mpc/sessions_manager.js';
 import {
@@ -29,7 +29,7 @@ import {
 	generateTestKeypair,
 	requestTestFaucetFunds,
 	retryUntil,
-} from './test-utils';
+} from './test-utils.js';
 
 /**
  * Complete DWallet creation process for testing.

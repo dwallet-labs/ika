@@ -1,4 +1,5 @@
-import { bcs, BcsStruct, BcsType } from '@mysten/sui/bcs';
+import type { BcsType } from '@mysten/sui/bcs';
+import { bcs, BcsStruct } from '@mysten/sui/bcs';
 
 import * as coordinator_inner from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as system_inner from '../generated/ika_system/system_inner.js';

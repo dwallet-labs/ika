@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { IkaConfig, Network } from './types';
+import type { IkaConfig, Network } from './types.js';
 
 /**
  * Get the network configuration for a specific Ika network.
@@ -21,9 +21,10 @@ import { IkaConfig, Network } from './types';
 export function getNetworkConfig(network: Network): IkaConfig {
 	switch (network) {
 		case 'localnet':
-			let parsedJson = JSON.parse(
+			const parsedJson = JSON.parse(
 				fs.readFileSync(path.resolve(process.cwd(), '../../ika_config.json'), 'utf8'),
 			);
+
 			return {
 				packages: {
 					ikaPackage: parsedJson.packages.ika_package_id,

@@ -1,5 +1,5 @@
-import { Curve, Hash, SignatureAlgorithm } from '../../src/client';
-import { prepareImportDWalletVerification } from '../../src/client/cryptography';
+import { prepareImportDWalletVerification } from '../../src/client/cryptography.js';
+import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -9,7 +9,7 @@ import {
 	presign,
 	requestImportedDWalletVerification,
 	signWithImportedDWallet,
-} from '../common';
+} from '../common.js';
 
 const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);
@@ -82,7 +82,8 @@ async function main() {
 		suiClient,
 		activeDWallet,
 		presignObject,
-		Buffer.from('hello world'),
+		// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+		new TextEncoder().encode('hello world'),
 		Hash.KECCAK256,
 		SignatureAlgorithm.ECDSA,
 		encryptedUserSecretKeyShare,

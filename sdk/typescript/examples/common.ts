@@ -4,25 +4,26 @@ import { toHex } from '@mysten/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
-import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+import type { TransactionObjectArgument } from '@mysten/sui/transactions';
+import { Transaction } from '@mysten/sui/transactions';
 
-import {
+import type {
 	PreparedImportDWalletVerification,
 	PreparedSecondRound,
 } from '../src/client/cryptography.js';
 import { IkaClient, IkaTransaction } from '../src/client/index.js';
 import { getNetworkConfig } from '../src/client/network-configs.js';
-import {
+import type {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
-	EncryptionKeyCurve,
 	Hash,
 	IkaConfig,
 	PartialUserSignature,
 	Presign,
 	SignatureAlgorithm,
 } from '../src/client/types.js';
+import { EncryptionKeyCurve } from '../src/client/types.js';
 import { UserShareEncrytionKeys } from '../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../src/generated/ika_dwallet_2pc_mpc/sessions_manager.js';

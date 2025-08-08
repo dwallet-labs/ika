@@ -1,5 +1,5 @@
-import { Hash, SignatureAlgorithm } from '../../src/client';
-import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
+import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
+import { Hash, SignatureAlgorithm } from '../../src/client/types.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -10,7 +10,7 @@ import {
 	requestDKGFirstRound,
 	requestDkgSecondRound,
 	sign,
-} from '../common';
+} from '../common.js';
 
 const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);
@@ -83,7 +83,7 @@ async function main() {
 		userShareEncryptionKeys,
 		presignObject,
 		encryptedUserSecretKeyShare,
-		Buffer.from('hello world'),
+		new TextEncoder().encode('hello world'),
 		Hash.KECCAK256,
 		SignatureAlgorithm.ECDSA,
 	);

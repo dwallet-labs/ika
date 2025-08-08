@@ -1,15 +1,10 @@
-import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
-import * as coordinatorTx from '../tx/coordinator';
-import {
-	createUserSignMessage,
-	encryptSecretShare,
-	PreparedImportDWalletVerification,
-	PreparedSecondRound,
-	verifyUserShare,
-} from './cryptography';
-import { IkaClient } from './ika-client';
-import {
+import * as coordinatorTx from '../tx/coordinator.js';
+import type { PreparedImportDWalletVerification, PreparedSecondRound } from './cryptography.js';
+import { createUserSignMessage, encryptSecretShare, verifyUserShare } from './cryptography.js';
+import type { IkaClient } from './ika-client.js';
+import type {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
@@ -18,20 +13,20 @@ import {
 	PartialUserSignature,
 	Presign,
 	SignatureAlgorithm,
-} from './types';
-import { UserShareEncrytionKeys } from './user-share-encryption-keys';
+} from './types.js';
+import type { UserShareEncrytionKeys } from './user-share-encryption-keys.js';
 
 /**
  * Parameters for creating an IkaTransaction instance
  */
-export type IkaTransactionParams = {
+export interface IkaTransactionParams {
 	/** The IkaClient instance to use for blockchain interactions */
 	ikaClient: IkaClient;
 	/** The Sui transaction to wrap */
 	transaction: Transaction;
 	/** Optional user share encryption keys for cryptographic operations */
 	userShareEncryptionKeys?: UserShareEncrytionKeys;
-};
+}
 
 /**
  * IkaTransaction class provides a high-level interface for interacting with the Ika network.
@@ -776,16 +771,6 @@ export class IkaTransaction {
 		}
 
 		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
-
-		const userShareVerified = verifyUserShare(
-			Uint8Array.from(dWallet.public_user_secret_key_share),
-			Uint8Array.from(dWallet.state.Active?.public_output),
-			publicParameters,
-		);
-
-		if (!userShareVerified) {
-			throw new Error('User share verification failed');
-		}
 
 		coordinatorTx.requestSign(
 			this.ikaClient.ikaConfig,
@@ -1543,16 +1528,6 @@ export class IkaTransaction {
 		}
 
 		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
-
-		const userShareVerified = verifyUserShare(
-			Uint8Array.from(dWallet.public_user_secret_key_share),
-			Uint8Array.from(dWallet.state.Active?.public_output),
-			publicParameters,
-		);
-
-		if (!userShareVerified) {
-			throw new Error('User share verification failed');
-		}
 
 		coordinatorTx.requestImportedKeySign(
 			this.ikaClient.ikaConfig,

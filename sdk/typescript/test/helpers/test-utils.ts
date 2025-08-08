@@ -4,12 +4,13 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
-import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
-import { IkaClient, IkaTransaction } from '../../src/client';
-import { getNetworkConfig } from '../../src/client/network-configs';
-import { IkaConfig } from '../../src/client/types';
-import { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-keys';
+import { IkaClient } from '../../src/client/ika-client.js';
+import { IkaTransaction } from '../../src/client/ika-transaction.js';
+import { getNetworkConfig } from '../../src/client/network-configs.js';
+import type { IkaConfig } from '../../src/client/types.js';
+import { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-keys.js';
 
 // Store random seeds per test to ensure deterministic behavior within each test
 const testSeeds = new Map<string, Uint8Array>();

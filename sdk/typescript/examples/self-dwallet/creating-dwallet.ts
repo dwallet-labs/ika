@@ -1,4 +1,4 @@
-import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
+import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -7,7 +7,7 @@ import {
 	registerEncryptionKey,
 	requestDKGFirstRound,
 	requestDkgSecondRound,
-} from '../common';
+} from '../common.js';
 
 const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);

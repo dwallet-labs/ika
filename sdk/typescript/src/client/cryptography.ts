@@ -1,6 +1,6 @@
 import { bcs } from '@mysten/sui/bcs';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
-import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
+import type { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import sha3 from 'js-sha3';
 
 import {
@@ -14,37 +14,37 @@ import {
 	public_key_from_dwallet_output,
 	verify_secp_signature,
 	verify_user_share,
-} from '../../../mpc-wasm/dist/node/dwallet_mpc_wasm';
-import { IkaClient } from './ika-client';
-import { DWallet } from './types';
-import { UserShareEncrytionKeys } from './user-share-encryption-keys';
-import { encodeToASCII, u64ToBytesBigEndian } from './utils';
+} from '../../../mpc-wasm/dist/node/dwallet_mpc_wasm.js';
+import type { IkaClient } from './ika-client.js';
+import type { DWallet } from './types.js';
+import type { UserShareEncrytionKeys } from './user-share-encryption-keys.js';
+import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 
 /**
  * Prepared data for the second round of Distributed Key Generation (DKG).
  * Contains all cryptographic outputs needed to complete the DKG process.
  */
-export type PreparedSecondRound = {
+export interface PreparedSecondRound {
 	/** The user's public key share along with its zero-knowledge proof */
 	userDKGMessage: Uint8Array;
 	/** The user's public output from the DKG process */
 	userPublicOutput: Uint8Array;
 	/** The encrypted user share with its proof of correct encryption */
 	encryptedUserShareAndProof: Uint8Array;
-};
+}
 
 /**
  * Prepared data for importing an existing cryptographic key as a DWallet.
  * Contains verification data needed to prove ownership of the imported key.
  */
-export type PreparedImportDWalletVerification = {
+export interface PreparedImportDWalletVerification {
 	/** The public output that can be verified against the imported key */
 	userPublicOutput: Uint8Array;
 	/** The outgoing message for the verification protocol */
 	userOutgoingMessage: Uint8Array;
 	/** The encrypted user share with proof for the imported key */
 	encryptedUserShareAndProof: Uint8Array;
-};
+}
 
 /**
  * Create a class groups keypair from a seed for encryption/decryption operations.
@@ -340,17 +340,17 @@ export function networkDkgPublicOutputToProtocolPp(
 /**
  * Verify a user's secret key share.
  *
- * @param userPublicOutput - The user's public output
- * @param userPublicKeyShareAndProof - The user's public key share and proof
+ * @param userSecretKeyShare - The user's unencrypted secret key share
+ * @param userDKGOutput - The user's DKG output
  * @param networkDkgPublicOutput - The network DKG public output
  * @returns True if the user's secret key share is valid, false otherwise
  */
 export function verifyUserShare(
-	userPublicOutput: Uint8Array,
-	userPublicKeyShareAndProof: Uint8Array,
+	userSecretKeyShare: Uint8Array,
+	userDKGOutput: Uint8Array,
 	networkDkgPublicOutput: Uint8Array,
 ): boolean {
-	return verify_user_share(userPublicKeyShareAndProof, userPublicOutput, networkDkgPublicOutput);
+	return verify_user_share(userSecretKeyShare, userDKGOutput, networkDkgPublicOutput);
 }
 
 /**

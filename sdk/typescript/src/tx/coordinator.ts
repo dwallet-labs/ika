@@ -1,7 +1,7 @@
 import { bcs } from '@mysten/sui/bcs';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
-import { IkaConfig } from '../client/types';
+import type { IkaConfig } from '../client/types.js';
 
 export function registerEncryptionKeyTx(
 	ikaConfig: IkaConfig,

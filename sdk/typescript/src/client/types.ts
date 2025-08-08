@@ -1,7 +1,7 @@
-import { SuiClient } from '@mysten/sui/client';
+import type { SuiClient } from '@mysten/sui/client';
 
-import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner';
-import * as SystemInnerModule from '../generated/ika_system/system_inner';
+import type * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
+import type * as SystemInnerModule from '../generated/ika_system/system_inner.js';
 
 export interface IkaPackageConfig {
 	ikaPackage: string;
@@ -80,8 +80,8 @@ export const SignatureAlgorithm = {
 
 export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];
 
-export type SharedObjectOwner = {
+export interface SharedObjectOwner {
 	Shared: {
 		initial_shared_version: number;
 	};
-};
+}

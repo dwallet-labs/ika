@@ -1,16 +1,15 @@
-import { SuiClient } from '@mysten/sui/client';
-//
+import type { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { toHex } from '@mysten/sui/utils';
 
-import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator';
-import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner';
-import * as SystemModule from '../generated/ika_system/system';
-import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator';
-import { networkDkgPublicOutputToProtocolPp } from './cryptography';
-import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './df';
-import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors';
-import {
+import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
+import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator.js';
+import * as SystemModule from '../generated/ika_system/system.js';
+import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
+import { networkDkgPublicOutputToProtocolPp } from './cryptography.js';
+import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './df.js';
+import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
+import type {
 	CoordinatorInner,
 	DWallet,
 	DWalletCap,
@@ -25,8 +24,8 @@ import {
 	PresignState,
 	SharedObjectOwner,
 	SystemInner,
-} from './types';
-import { objResToBcs } from './utils';
+} from './types.js';
+import { objResToBcs } from './utils.js';
 
 /**
  * IkaClient provides a high-level interface for interacting with the Ika network.
@@ -520,7 +519,7 @@ export class IkaClient {
 	 */
 	async getEpoch(): Promise<number> {
 		const objects = await this.ensureInitialized();
-		return +objects.coordinatorInner.current_epoch;
+		return Number(objects.coordinatorInner.current_epoch);
 	}
 
 	/**
@@ -682,7 +681,7 @@ export class IkaClient {
 				}
 			} while (cursor);
 
-			const dataMap: Map<number, Uint8Array> = new Map();
+			const dataMap = new Map<number, Uint8Array>();
 
 			const objectIds = new Set(allTableRows.map((tableRowResult) => tableRowResult.objectId));
 

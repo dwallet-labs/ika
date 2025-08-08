@@ -1,6 +1,6 @@
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
-import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
+import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -10,7 +10,7 @@ import {
 	requestDKGFirstRound,
 	requestDkgSecondRound,
 	transferEncryptedUserShare,
-} from '../common';
+} from '../common.js';
 
 const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);

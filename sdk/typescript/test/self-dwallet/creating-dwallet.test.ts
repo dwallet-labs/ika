@@ -81,7 +81,7 @@ describe('DWallet Creation', () => {
 
 			expect(preparedSecondRound).toBeDefined();
 			expect(preparedSecondRound.encryptedUserShareAndProof).toBeInstanceOf(Uint8Array);
-			expect(preparedSecondRound.userPublicKeyShareAndProof).toBeInstanceOf(Uint8Array);
+			expect(preparedSecondRound.userDKGMessage).toBeInstanceOf(Uint8Array);
 			expect(preparedSecondRound.userPublicOutput).toBeDefined();
 
 			// Step 5: Request DKG second round

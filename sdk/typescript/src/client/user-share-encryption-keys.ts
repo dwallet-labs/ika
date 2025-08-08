@@ -1,8 +1,9 @@
+import { toHex } from '@mysten/bcs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { keccak256 } from 'js-sha3';
 
-import { createClassGroupsKeypair, decryptUserShare } from './cryptography';
-import { DWallet, EncryptedUserSecretKeyShare } from './types';
+import { createClassGroupsKeypair, decryptUserShare } from './cryptography.js';
+import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
 
 /**
  * UserShareEncrytionKeys manages encryption/decryption keys and signing keypairs for user shares.
@@ -38,7 +39,7 @@ export class UserShareEncrytionKeys {
 		this.encryptionKey = new Uint8Array(classGroupsKeypair.encryptionKey);
 		this.decryptionKey = new Uint8Array(classGroupsKeypair.decryptionKey);
 		this.encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
-			Buffer.from(encryptionSignerKeySeed).toString('hex'),
+			toHex(encryptionSignerKeySeed),
 		);
 	}
 

@@ -1,6 +1,6 @@
-import { SuiObjectResponse } from '@mysten/sui/client';
+import type { SuiObjectResponse } from '@mysten/sui/client';
 
-import { InvalidObjectError } from './errors';
+import { InvalidObjectError } from './errors.js';
 
 /**
  * Extract BCS (Binary Canonical Serialization) bytes from a Sui object response.
