@@ -6,6 +6,9 @@ import {
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
 	network_dkg_public_output_to_protocol_pp,
+	public_key_from_dwallet_output,
+	verify_secp_signature,
+	verify_user_share,
 } from '@dwallet-network/dwallet-mpc-wasm';
 import { bcs } from '@mysten/sui/bcs';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
@@ -332,6 +335,52 @@ export function networkDkgPublicOutputToProtocolPp(
 	network_dkg_public_output: Uint8Array,
 ): Uint8Array {
 	return Uint8Array.from(network_dkg_public_output_to_protocol_pp(network_dkg_public_output));
+}
+
+/**
+ * Verify a user's secret key share.
+ *
+ * @param userPublicOutput - The user's public output
+ * @param userPublicKeyShareAndProof - The user's public key share and proof
+ * @param networkDkgPublicOutput - The network DKG public output
+ * @returns True if the user's secret key share is valid, false otherwise
+ */
+export function verifyUserShare(
+	userPublicOutput: Uint8Array,
+	userPublicKeyShareAndProof: Uint8Array,
+	networkDkgPublicOutput: Uint8Array,
+): boolean {
+	return verify_user_share(userPublicKeyShareAndProof, userPublicOutput, networkDkgPublicOutput);
+}
+
+/**
+ * Verify a user's signature.
+ *
+ * @param publicKey - The user's public key
+ * @param signature - The user's signature
+ * @param message - The message to verify
+ * @param networkDkgPublicOutput - The network DKG public output
+ * @param hash - The hash scheme identifier to use for verification
+ * @returns True if the signature is valid, false otherwise
+ */
+export function verifySecpSignature(
+	publicKey: Uint8Array,
+	signature: Uint8Array,
+	message: Uint8Array,
+	networkDkgPublicOutput: Uint8Array,
+	hash: number,
+): boolean {
+	return verify_secp_signature(publicKey, signature, message, networkDkgPublicOutput, hash);
+}
+
+/**
+ * Create a public key from a DWallet output.
+ *
+ * @param dWalletOutput - The DWallet output
+ * @returns The public key
+ */
+export function publicKeyFromDWalletOutput(dWalletOutput: Uint8Array): Uint8Array {
+	return Uint8Array.from(public_key_from_dwallet_output(dWalletOutput));
 }
 
 /**

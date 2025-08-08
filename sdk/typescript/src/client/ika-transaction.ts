@@ -1,4 +1,3 @@
-import { verify_user_share } from '@dwallet-network/dwallet-mpc-wasm';
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator';
@@ -7,6 +6,7 @@ import {
 	encryptSecretShare,
 	PreparedImportDWalletVerification,
 	PreparedSecondRound,
+	verifyUserShare,
 } from './cryptography';
 import { IkaClient } from './ika-client';
 import {
@@ -614,7 +614,7 @@ export class IkaTransaction {
 			publicParameters,
 		);
 
-		const userShareVerified = verify_user_share(
+		const userShareVerified = verifyUserShare(
 			userShare,
 			Uint8Array.from(dWallet.state.Active?.public_output),
 			publicParameters,
@@ -769,7 +769,7 @@ export class IkaTransaction {
 			publicParameters,
 		);
 
-		const userShareVerified = verify_user_share(
+		const userShareVerified = verifyUserShare(
 			userShare,
 			Uint8Array.from(dWallet.state.Active?.public_output),
 			publicParameters,
@@ -868,7 +868,7 @@ export class IkaTransaction {
 			publicParameters,
 		);
 
-		const userShareVerified = verify_user_share(
+		const userShareVerified = verifyUserShare(
 			userShare,
 			Uint8Array.from(dWallet.state.Active?.public_output),
 			publicParameters,
