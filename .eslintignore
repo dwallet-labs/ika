@@ -1,7 +1,7 @@
 CHANGELOG.md
 dist/
 build/
-sdk/typescript/src/graphql/generated
+sdk/typescript/src/graphql/generated/
 sdk/typescript/src/generated/
 sdk/typescript/examples/
 sdk/typescript/test/
@@ -9,3 +9,4 @@ sdk/typescript/test/
 **/typescript/examples/
 **/typescript/test/
 **/dist/
+**/generated/**

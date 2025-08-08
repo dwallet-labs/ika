@@ -1,8 +1,9 @@
 CHANGELOG.md
 dist/
 build/
-src/graphql/generated
+src/graphql/generated/
 src/generated/
 examples/
 test/
+**/generated/**
 

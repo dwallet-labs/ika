@@ -298,7 +298,7 @@ export function createUserSignMessage(
 	}
 
 	return Uint8Array.from(
-        create_sign_user_message(
+		create_sign_user_message(
 			protocolPublicParameters,
 			Uint8Array.from(activeDWallet.state.Active?.public_output),
 			secretKey,
