@@ -93,11 +93,25 @@ describe('Shared DWallet (make shares public)', () => {
 				2000,
 			);
 
+			const encryptedUserSecretKeyShare = await retryUntil(
+				() =>
+					ikaClient.getEncryptedUserSecretKeyShare(
+						secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
+					),
+				(share) => share !== null,
+				30,
+				2000,
+			);
+
 			await makeTestDWalletUserSecretKeySharesPublic(
 				ikaClient,
 				suiClient,
 				activeDWallet,
-				preparedSecondRound,
+				await userShareEncryptionKeys.decryptUserShare(
+					activeDWallet,
+					encryptedUserSecretKeyShare,
+					await ikaClient.getNetworkPublicParameters(),
+				),
 				testName,
 			);
 

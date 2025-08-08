@@ -3,7 +3,7 @@ import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions
 
 import * as coordinatorTx from '../tx/coordinator';
 import {
-	createSignCentralizedOutput,
+	createUserSignMessage,
 	encryptSecretShare,
 	PreparedImportDWalletVerification,
 	PreparedSecondRound,
@@ -256,10 +256,10 @@ export class IkaTransaction {
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
 			this.transaction.object(dWallet.dwallet_cap_id),
-			preparedSecondRound.centralizedPublicKeyShareAndProof,
+			preparedSecondRound.userPublicKeyShareAndProof,
 			preparedSecondRound.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getPublicKey().toSuiAddress(),
-			preparedSecondRound.centralizedPublicOutput,
+			preparedSecondRound.userPartyPublicOutput,
 			signerPublicKey,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -629,7 +629,7 @@ export class IkaTransaction {
 			this.getCoordinatorObjectRef(),
 			verifiedPresignCap,
 			messageApproval,
-			createSignCentralizedOutput(
+			createUserSignMessage(
 				publicParameters,
 				dWallet,
 				userShare,
@@ -694,7 +694,7 @@ export class IkaTransaction {
 			this.getCoordinatorObjectRef(),
 			verifiedPresignCap,
 			messageApproval,
-			createSignCentralizedOutput(
+			createUserSignMessage(
 				await this.ikaClient.getNetworkPublicParameters(),
 				dWallet,
 				Uint8Array.from(dWallet.public_user_secret_key_share),
@@ -786,7 +786,7 @@ export class IkaTransaction {
 			verifiedPresignCap,
 			message,
 			hashScheme,
-			createSignCentralizedOutput(
+			createUserSignMessage(
 				await this.ikaClient.getNetworkPublicParameters(),
 				dWallet,
 				await this.userShareEncryptionKeys.decryptUserShare(
@@ -885,7 +885,7 @@ export class IkaTransaction {
 			verifiedPresignCap,
 			message,
 			hashScheme,
-			createSignCentralizedOutput(
+			createUserSignMessage(
 				publicParameters,
 				dWallet,
 				userShare,
@@ -986,10 +986,10 @@ export class IkaTransaction {
 			this.getCoordinatorObjectRef(),
 			await this.ikaClient.getDecryptionKeyID(),
 			curve,
-			preparedImportDWalletVerification.outgoing_message,
+			preparedImportDWalletVerification.userOutgoingMessage,
 			preparedImportDWalletVerification.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getSuiAddress(),
-			preparedImportDWalletVerification.public_output,
+			preparedImportDWalletVerification.userPublicOutput,
 			signerPublicKey,
 			sessionIdentifier,
 			ikaCoin,
@@ -1044,10 +1044,10 @@ export class IkaTransaction {
 			this.getCoordinatorObjectRef(),
 			await this.ikaClient.getDecryptionKeyID(),
 			curve,
-			preparedImportDWalletVerification.outgoing_message,
+			preparedImportDWalletVerification.userOutgoingMessage,
 			preparedImportDWalletVerification.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getSuiAddress(),
-			preparedImportDWalletVerification.public_output,
+			preparedImportDWalletVerification.userPublicOutput,
 			signerPublicKey,
 			sessionIdentifier,
 			ikaCoin,
@@ -1111,7 +1111,7 @@ export class IkaTransaction {
 			this.getCoordinatorObjectRef(),
 			verifiedPresignCap,
 			importedKeyMessageApproval,
-			createSignCentralizedOutput(
+			createUserSignMessage(
 				await this.ikaClient.getNetworkPublicParameters(),
 				dWallet,
 				await this.userShareEncryptionKeys.decryptUserShare(
@@ -1178,7 +1178,7 @@ export class IkaTransaction {
 			this.getCoordinatorObjectRef(),
 			verifiedPresignCap,
 			importedKeyMessageApproval,
-			createSignCentralizedOutput(
+			createUserSignMessage(
 				await this.ikaClient.getNetworkPublicParameters(),
 				dWallet,
 				Uint8Array.from(dWallet.public_user_secret_key_share),

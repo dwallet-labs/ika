@@ -1,5 +1,5 @@
-import { Hash, SignatureAlgorithm } from '../../client';
-import { prepareDKGSecondRoundAsync } from '../../client/cryptography';
+import { Hash, SignatureAlgorithm } from '../../src/client';
+import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,

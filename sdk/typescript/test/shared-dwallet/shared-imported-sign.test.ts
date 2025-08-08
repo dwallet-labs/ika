@@ -100,11 +100,26 @@ describe('Shared Imported DWallet Signing (public user shares)', () => {
 				2000,
 			);
 
+			const encryptedUserSecretKeyShare = await retryUntil(
+				() =>
+					ikaClient.getEncryptedUserSecretKeyShare(
+						importedKeyDWalletVerificationRequestEvent.event_data
+							.encrypted_user_secret_key_share_id,
+					),
+				(share) => share !== null,
+				30,
+				2000,
+			);
+
 			await makeTestImportedDWalletUserSecretKeySharesPublic(
 				ikaClient,
 				suiClient,
 				activeDWallet,
-				preparedImportDWalletVerification,
+				await userShareEncryptionKeys.decryptUserShare(
+					activeDWallet,
+					encryptedUserSecretKeyShare,
+					await ikaClient.getNetworkPublicParameters(),
+				),
 				testName,
 			);
 

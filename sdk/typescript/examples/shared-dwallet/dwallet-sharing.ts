@@ -1,4 +1,4 @@
-import { prepareDKGSecondRoundAsync } from '../../client/cryptography';
+import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -58,11 +58,19 @@ async function main() {
 
 	const activeDWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
 
+	const secretShare = await ikaClient.getEncryptedUserSecretKeyShare(
+		secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
+	);
+
 	await makeDWalletUserSecretKeySharesPublic(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		preparedSecondRound,
+		await userShareEncryptionKeys.decryptUserShare(
+			activeDWallet,
+			secretShare,
+			await ikaClient.getNetworkPublicParameters(),
+		),
 	);
 }
 

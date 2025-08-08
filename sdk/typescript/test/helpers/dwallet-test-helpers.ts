@@ -302,7 +302,7 @@ export async function makeTestDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	preparedSecondRound: PreparedSecondRound,
+	secretShare: Uint8Array,
 	testName: string,
 ) {
 	const transaction = new Transaction();
@@ -312,7 +312,7 @@ export async function makeTestDWalletUserSecretKeySharesPublic(
 
 	ikaTransaction.makeDWalletUserSecretKeySharesPublic({
 		dWallet,
-		secretShare: preparedSecondRound.centralizedSecretKeyShare,
+		secretShare,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
 	});
@@ -329,7 +329,7 @@ export async function makeTestImportedDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	preparedImportDWalletVerification: PreparedImportDWalletVerification,
+	secretShare: Uint8Array,
 	testName: string,
 ) {
 	const transaction = new Transaction();
@@ -339,7 +339,7 @@ export async function makeTestImportedDWalletUserSecretKeySharesPublic(
 
 	ikaTransaction.makeDWalletUserSecretKeySharesPublic({
 		dWallet,
-		secretShare: preparedImportDWalletVerification.secret_share,
+		secretShare,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
 	});

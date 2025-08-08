@@ -80,8 +80,9 @@ describe('DWallet Creation', () => {
 			);
 
 			expect(preparedSecondRound).toBeDefined();
-			expect(preparedSecondRound.centralizedSecretKeyShare).toBeInstanceOf(Uint8Array);
-			expect(preparedSecondRound.centralizedPublicOutput).toBeDefined();
+			expect(preparedSecondRound.encryptedUserShareAndProof).toBeInstanceOf(Uint8Array);
+			expect(preparedSecondRound.userPublicKeyShareAndProof).toBeInstanceOf(Uint8Array);
+			expect(preparedSecondRound.userPublicOutput).toBeDefined();
 
 			// Step 5: Request DKG second round
 			const secondRoundMoveResponse = await requestTestDkgSecondRound(
