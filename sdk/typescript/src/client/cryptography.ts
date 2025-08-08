@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { randomBytes } from 'crypto';
 import { bcs } from '@mysten/sui/bcs';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import type { Keypair } from '@mysten/sui/cryptography';
@@ -288,7 +289,7 @@ export async function prepareImportDWalletVerification(
 export function createUserSignMessage(
 	protocolPublicParameters: Uint8Array,
 	activeDWallet: DWallet,
-	secretKey: Uint8Array,
+	userSecretKeyShare: Uint8Array,
 	presign: Uint8Array,
 	message: Uint8Array,
 	hash: number,
@@ -301,7 +302,7 @@ export function createUserSignMessage(
 		create_sign_user_message(
 			protocolPublicParameters,
 			Uint8Array.from(activeDWallet.state.Active?.public_output),
-			secretKey,
+			userSecretKeyShare,
 			presign,
 			message,
 			hash,
@@ -382,4 +383,13 @@ export function sessionIdentifierDigest(sessionIdentifier: Uint8Array): Uint8Arr
 	// Compute the SHA3-256 digest of the serialized data
 	const digest = sha3.keccak256.digest(data);
 	return Uint8Array.from(digest);
+}
+
+/**
+ * Create a random session identifier.
+ *
+ * @returns The random session identifier
+ */
+export function createRandomSessionIdentifier(): Uint8Array {
+	return Uint8Array.from(randomBytes(32));
 }

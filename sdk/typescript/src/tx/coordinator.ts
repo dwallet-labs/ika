@@ -12,7 +12,7 @@ export function registerEncryptionKeyTx(
 	curve: number,
 	encryptionKey: Uint8Array,
 	encryptionKeySignature: Uint8Array,
-	encryptionKeyAddress: Uint8Array,
+	signerPublicKey: Uint8Array,
 	tx: Transaction,
 ) {
 	tx.moveCall({
@@ -22,7 +22,7 @@ export function registerEncryptionKeyTx(
 			tx.pure.u32(curve),
 			tx.pure(bcs.vector(bcs.u8()).serialize(encryptionKey)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(encryptionKeySignature)),
-			tx.pure(bcs.vector(bcs.u8()).serialize(encryptionKeyAddress)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(signerPublicKey)),
 		],
 	});
 }
@@ -30,12 +30,12 @@ export function registerEncryptionKeyTx(
 export function registerSessionIdentifier(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
-	sessionIdentifier: TransactionObjectArgument,
+	sessionIdentifier: Uint8Array,
 	tx: Transaction,
 ): TransactionObjectArgument {
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::register_session_identifier`,
-		arguments: [coordinatorObjectRef, sessionIdentifier],
+		arguments: [coordinatorObjectRef, tx.pure(bcs.vector(bcs.u8()).serialize(sessionIdentifier))],
 	});
 }
 

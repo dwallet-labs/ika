@@ -22,8 +22,8 @@ export class UserShareEncrytionKeys {
 	encryptedSecretShareSigningKeypair: Ed25519Keypair;
 
 	private domainSeperators = {
-		classGroups: 'CLASS_GROUPS_V1',
-		encryptionSignerKey: 'ENCRYPTION_SIGNER_KEY_V1',
+		classGroups: 'CLASS_GROUPS_DECRYPTION_KEY_V1',
+		encryptionSignerKey: 'ED25519_SIGNING_KEY_V1',
 	};
 
 	/**
@@ -79,7 +79,7 @@ export class UserShareEncrytionKeys {
 	 *
 	 * @returns The raw bytes of the Ed25519 public key
 	 */
-	getPublicKeyBytes(): Uint8Array {
+	getSigningPublicKeyBytes(): Uint8Array {
 		return this.encryptedSecretShareSigningKeypair.getPublicKey().toRawBytes();
 	}
 

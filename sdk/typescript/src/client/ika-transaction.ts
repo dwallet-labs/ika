@@ -8,7 +8,12 @@ import type {
 	DKGSecondRoundRequestInput,
 	ImportDWalletVerificationRequestInput,
 } from './cryptography.js';
-import { createUserSignMessage, encryptSecretShare, verifyUserShare } from './cryptography.js';
+import {
+	createRandomSessionIdentifier,
+	createUserSignMessage,
+	encryptSecretShare,
+	verifyUserShare,
+} from './cryptography.js';
 import type { IkaClient } from './ika-client.js';
 import type {
 	Curve,
@@ -323,7 +328,7 @@ export class IkaTransaction {
 			curve,
 			this.userShareEncryptionKeys.encryptionKey,
 			await this.userShareEncryptionKeys.getEncryptionKeySignature(),
-			this.userShareEncryptionKeys.getPublicKeyBytes(),
+			this.userShareEncryptionKeys.getSigningPublicKeyBytes(),
 			this.transaction,
 		);
 
@@ -377,7 +382,7 @@ export class IkaTransaction {
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Object containing the unverified presign capability and updated transaction
 	 */
-	presign({
+	requestPresign({
 		dWallet,
 		signatureAlgorithm,
 		ikaCoin,
@@ -1681,22 +1686,10 @@ export class IkaTransaction {
 	 * @private
 	 */
 	createSessionIdentifier() {
-		const freshObjectAddress = this.transaction.moveCall({
-			target: `0x2::tx_context::fresh_object_address`,
-			arguments: [],
-			typeArguments: [],
-		});
-
-		const freshObjectAddressBytes = this.transaction.moveCall({
-			target: `0x2::address::to_bytes`,
-			arguments: [freshObjectAddress],
-			typeArguments: [],
-		});
-
 		return coordinatorTx.registerSessionIdentifier(
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
-			freshObjectAddressBytes,
+			createRandomSessionIdentifier(),
 			this.transaction,
 		);
 	}
