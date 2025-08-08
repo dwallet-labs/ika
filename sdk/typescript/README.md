@@ -1,6 +1,6 @@
-### @ika.xyz/sdk — TypeScript SDK for Ika dWallet Network
+### @ika.xyz/sdk — TypeScript SDK for Ika Network
 
-This package provides a TypeScript SDK for interacting with the Ika dWallet Network on Sui.
+This package provides a TypeScript SDK for interacting with the Ika Network on Sui.
 
 - Programmatically build transaction blocks for dWallet flows (DKG, presign, sign, imported-key
   flows)
