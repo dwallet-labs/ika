@@ -455,7 +455,8 @@ pub fn decrypt_user_share_inner(
         .decrypt(&ciphertext, &public_parameters).into() else {
         return Err(anyhow!("Decryption failed"));
     };
-    let secret_share_bytes = VersionedDwalletUserSecretShare::V1(bcs::to_bytes(&plaintext.value())?);
+    let secret_share_bytes =
+        VersionedDwalletUserSecretShare::V1(bcs::to_bytes(&plaintext.value())?);
     let secret_share_bytes = bcs::to_bytes(&secret_share_bytes)?;
     Ok(secret_share_bytes)
 }
