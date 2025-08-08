@@ -134,7 +134,7 @@ export function encryptSecretShare(
  *
  * @param decryptionKey - The private decryption key
  * @param encryptionKey - The corresponding public encryption key
- * @param dWalletOutput - The DWallet's public output for verification
+ * @param dWalletDKGOutput - The DWallet's DKG output for verification
  * @param encryptedUserShareAndProof - The encrypted share with proof to decrypt
  * @param protocolPublicParameters - The protocol public parameters
  * @returns The decrypted secret share
@@ -143,14 +143,14 @@ export function encryptSecretShare(
 export function decryptUserShare(
 	decryptionKey: Uint8Array,
 	encryptionKey: Uint8Array,
-	dWalletOutput: Uint8Array,
+	dWalletDKGOutput: Uint8Array,
 	encryptedUserShareAndProof: Uint8Array,
 	protocolPublicParameters: Uint8Array,
 ): Uint8Array {
 	const decryptedUserShare = decrypt_user_share(
 		decryptionKey,
 		encryptionKey,
-		dWalletOutput,
+		dWalletDKGOutput,
 		encryptedUserShareAndProof,
 		protocolPublicParameters,
 	);
