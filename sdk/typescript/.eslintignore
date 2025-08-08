@@ -3,6 +3,6 @@ dist/
 build/
 src/graphql/generated
 src/generated/
-src/examples/
-src/test/
+examples/
+test/
 

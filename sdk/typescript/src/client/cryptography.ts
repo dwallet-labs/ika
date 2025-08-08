@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { bcs } from '@mysten/sui/bcs';
-import { decodeSuiPrivateKey, Keypair } from '@mysten/sui/cryptography';
+import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
+import type { Keypair } from '@mysten/sui/cryptography';
 import sha3 from 'js-sha3';
 
 import {
