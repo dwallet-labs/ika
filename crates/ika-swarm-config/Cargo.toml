@@ -36,9 +36,11 @@ sui-sdk.workspace = true
 sui-types.workspace = true
 ika-move-contracts.workspace = true
 move-core-types.workspace = true
+clap.workspace = true
 serde_json.workspace = true
 move-package.workspace = true
 dwallet-mpc-types.workspace = true
+url.workspace = true
 
 [target.'cfg(msim)'.dependencies]
 sui-simulator.workspace = true
