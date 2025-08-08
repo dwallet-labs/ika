@@ -3,3 +3,5 @@ dist/
 build/
 sdk/typescript/src/graphql/generated
 sdk/typescript/src/generated/
+sdk/typescript/src/examples/
+sdk/typescript/src/test/
