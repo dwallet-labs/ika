@@ -584,12 +584,13 @@ export async function requestTestImportedDWalletVerification(
 	preparedImportDWalletVerification: PreparedImportDWalletVerification,
 	curve: Curve,
 	signerPublicKey: Uint8Array,
-	sessionIdentifier: Uint8Array,
+	sessionIdentifier: string,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
 	receiver: string,
 	testName: string,
 ) {
 	const transaction = new Transaction();
-	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction);
+	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
@@ -608,11 +609,11 @@ export async function requestTestImportedDWalletVerification(
 	const result = await executeTestTransaction(suiClient, transaction, testName);
 
 	const importedKeyDWalletVerificationRequestEvent = result.events?.find((event) => {
-		return event.type.includes('ImportedKeyDWalletVerificationRequestEvent');
+		return event.type.includes('DWalletImportedKeyVerificationRequestEvent');
 	});
 
 	if (!importedKeyDWalletVerificationRequestEvent) {
-		throw new Error('Failed to find ImportedKeyDWalletVerificationRequestEvent');
+		throw new Error('Failed to find DWalletImportedKeyVerificationRequestEvent');
 	}
 
 	return SessionsManagerModule.DWalletSessionEvent(
@@ -632,10 +633,11 @@ export async function testSignWithImportedDWallet(
 	hashScheme: Hash,
 	signatureAlgorithm: SignatureAlgorithm,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
 	testName: string,
 ) {
 	const transaction = new Transaction();
-	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction);
+	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
 	const { importedKeyMessageApproval } = ikaTransaction.approveImportedKeyMessage({
 		dWallet,
@@ -767,9 +769,15 @@ export async function createTestSessionIdentifier(
 		throw new Error('Failed to find SessionIdentifierRegisteredEvent');
 	}
 
-	return new Uint8Array(
+	const sessionIdentifierRegisteredEventParsed =
 		SessionsManagerModule.UserSessionIdentifierRegisteredEvent.fromBase64(
 			sessionIdentifierRegisteredEvent.bcs as string,
-		).session_identifier_preimage,
-	);
+		);
+
+	return {
+		sessionIdentifier: sessionIdentifierRegisteredEventParsed.session_object_id,
+		sessionIdentifierPreimage: new Uint8Array(
+			sessionIdentifierRegisteredEventParsed.session_identifier_preimage,
+		),
+	};
 }

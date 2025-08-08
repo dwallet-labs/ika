@@ -7,13 +7,15 @@ import {
 	generate_secp_cg_keypair_from_seed,
 	network_dkg_public_output_to_protocol_pp,
 } from '@dwallet-network/dwallet-mpc-wasm';
+import { bcs } from '@mysten/sui/bcs';
+import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import sha3 from 'js-sha3';
 
 import { IkaClient } from './ika-client';
 import { DWallet } from './types';
 import { UserShareEncrytionKeys } from './user-share-encryption-keys';
-import { encodeToASCII, stringToUint8Array, u64ToBytesBigEndian } from './utils';
+import { encodeToASCII, u64ToBytesBigEndian } from './utils';
 
 /**
  * Prepared data for the second round of Distributed Key Generation (DKG).
@@ -263,7 +265,7 @@ export async function prepareImportDWalletVerification(
 	const [secret_share, public_output, outgoing_message] = create_imported_dwallet_centralized_step(
 		networkDecryptionKeyPublicOutput,
 		sessionIdentifierDigest(sessionIdentifier),
-		stringToUint8Array(keypair.getSecretKey()),
+		bcs.vector(bcs.u8()).serialize(decodeSuiPrivateKey(keypair.getSecretKey()).secretKey).toBytes(),
 	);
 
 	const encryptedUserShareAndProof = encryptSecretShare(
@@ -300,16 +302,25 @@ export function createSignCentralizedOutput(
 	presign: Uint8Array,
 	message: Uint8Array,
 	hash: number,
+	shared: boolean = false,
 ): Uint8Array {
 	if (!activeDWallet.state.Active?.public_output) {
 		throw new Error('Active DWallet public output is undefined');
 	}
 
+	// BCS-wrap the secret key share as VersionedDwalletUserSecretShare::V1(secretKey)
+	const versionedSecretShare = bcs
+		.enum('VersionedDwalletUserSecretShare', {
+			V1: bcs.vector(bcs.u8()),
+		})
+		.serialize({ V1: Array.from(secretKey) })
+		.toBytes();
+
 	return Uint8Array.from(
 		create_sign_centralized_output(
 			networkDecryptionKeyPublicOutput,
 			Uint8Array.from(activeDWallet.state.Active?.public_output),
-			secretKey,
+			shared ? secretKey : versionedSecretShare,
 			presign,
 			message,
 			hash,

@@ -148,7 +148,7 @@ export function generateTestKeypairForImportedDWallet(testName: string) {
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
 	const userShareEncryptionKeys = UserShareEncrytionKeys.fromRootSeedKey(seed);
-	const dWalletKeypair = Secp256k1Keypair.deriveKeypair(userKeypair.getSecretKey());
+	const dWalletKeypair = Secp256k1Keypair.fromSeed(seed);
 
 	return {
 		userShareEncryptionKeys,

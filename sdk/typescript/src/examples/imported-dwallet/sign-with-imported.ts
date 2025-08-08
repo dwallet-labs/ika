@@ -5,7 +5,7 @@ import {
 	createIkaClient,
 	createSessionIdentifier,
 	createSuiClient,
-	generateKeyparForImportedDWallet,
+	generateKeypairForImportedDWallet,
 	presign,
 	requestImportedDWalletVerification,
 	signWithImportedDWallet,
@@ -18,13 +18,17 @@ async function main() {
 	await ikaClient.initialize();
 
 	const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-		generateKeyparForImportedDWallet();
+		generateKeypairForImportedDWallet();
 
-	const sessionIdentifier = await createSessionIdentifier(ikaClient, suiClient, signerAddress);
+	const { sessionIdentifier, sessionIdentifierPreimage } = await createSessionIdentifier(
+		ikaClient,
+		suiClient,
+		signerAddress,
+	);
 
 	const preparedImportDWalletVerification = await prepareImportDWalletVerification(
 		ikaClient,
-		sessionIdentifier,
+		sessionIdentifierPreimage,
 		userShareEncryptionKeys,
 		dWalletKeypair,
 	);
@@ -82,6 +86,7 @@ async function main() {
 		Hash.KECCAK256,
 		SignatureAlgorithm.ECDSA,
 		encryptedUserSecretKeyShare,
+		userShareEncryptionKeys,
 	);
 }
 

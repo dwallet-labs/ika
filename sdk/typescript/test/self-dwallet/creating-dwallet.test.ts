@@ -147,7 +147,7 @@ describe('DWallet Creation', () => {
 			const finalDWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
 			expect(finalDWallet).toBeDefined();
 			expect(finalDWallet.state.$kind).toBe('Active');
-			expect(finalDWallet.id).toBe(dwalletID);
+			expect(finalDWallet.id.id).toBe(dwalletID);
 		},
 		DEFAULT_TIMEOUT,
 	);

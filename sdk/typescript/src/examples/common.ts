@@ -60,7 +60,7 @@ export function generateKeypair() {
 	};
 }
 
-export function generateKeyparForImportedDWallet() {
+export function generateKeypairForImportedDWallet() {
 	const seed = new Uint8Array(32).fill(8);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed('0x1');
 
@@ -501,7 +501,7 @@ export async function requestImportedDWalletVerification(
 	preparedImportDWalletVerification: PreparedImportDWalletVerification,
 	curve: Curve,
 	signerPublicKey: Uint8Array,
-	sessionIdentifier: Uint8Array,
+	sessionIdentifier: string,
 	receiver: string,
 ) {
 	const transaction = new Transaction();
@@ -545,12 +545,14 @@ export async function signWithImportedDWallet(
 	hashScheme: Hash,
 	signatureAlgorithm: SignatureAlgorithm,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+	userShareEncryptionKeys: UserShareEncrytionKeys,
 ) {
 	const transaction = new Transaction();
 
 	const ikaTransaction = new IkaTransaction({
 		ikaClient,
 		transaction,
+		userShareEncryptionKeys,
 	});
 
 	const { importedKeyMessageApproval } = ikaTransaction.approveImportedKeyMessage({
@@ -681,11 +683,17 @@ export async function createSessionIdentifier(
 		return event.type.includes('SessionIdentifierRegisteredEvent');
 	});
 
-	return new Uint8Array(
+	const sessionIdentifierRegisteredEventParsed =
 		SessionsManagerModule.UserSessionIdentifierRegisteredEvent.fromBase64(
 			sessionIdentifierRegisteredEvent?.bcs as string,
-		).session_identifier_preimage,
-	);
+		);
+
+	return {
+		sessionIdentifier: sessionIdentifierRegisteredEventParsed.session_object_id,
+		sessionIdentifierPreimage: new Uint8Array(
+			sessionIdentifierRegisteredEventParsed.session_identifier_preimage,
+		),
+	};
 }
 
 export function createEmptyIkaToken(tx: Transaction, ikaConfig: IkaConfig) {

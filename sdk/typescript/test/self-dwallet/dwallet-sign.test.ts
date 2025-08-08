@@ -7,6 +7,7 @@ import {
 	createTestMessage,
 	createTestSuiClient,
 	DEFAULT_TIMEOUT,
+	delay,
 	retryUntil,
 } from '../helpers/test-utils';
 
@@ -135,6 +136,8 @@ describe('DWallet Signing', () => {
 					SignatureAlgorithm.ECDSA,
 					testName,
 				);
+
+				await delay(2);
 			}
 
 			// All signatures completed successfully
@@ -198,6 +201,8 @@ describe('DWallet Signing', () => {
 					SignatureAlgorithm.ECDSA,
 					testName,
 				);
+
+				await delay(2);
 			}
 
 			// All hash schemes worked

@@ -12,6 +12,7 @@ import {
 	createTestMessage,
 	createTestSuiClient,
 	DEFAULT_TIMEOUT,
+	delay,
 	retryUntil,
 } from '../helpers/test-utils';
 
@@ -177,6 +178,7 @@ describe('DWallet Future Signing', () => {
 				);
 
 				futureSignRequests.push(futureSignRequest);
+				await delay(2);
 			}
 
 			// Complete all future signs
@@ -203,6 +205,8 @@ describe('DWallet Future Signing', () => {
 					SignatureAlgorithm.ECDSA,
 					testName,
 				);
+
+				await delay(2);
 			}
 
 			// All future signatures completed successfully
@@ -291,6 +295,8 @@ describe('DWallet Future Signing', () => {
 					SignatureAlgorithm.ECDSA,
 					testName,
 				);
+
+				await delay(2);
 			}
 
 			// All hash schemes worked for future signing

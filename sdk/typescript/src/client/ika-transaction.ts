@@ -504,7 +504,7 @@ export class IkaTransaction {
 		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
-			presign.id.id,
+			presign.cap_id,
 			this.transaction,
 		);
 
@@ -700,6 +700,7 @@ export class IkaTransaction {
 				Uint8Array.from(presign.state.Completed?.presign),
 				message,
 				hashScheme,
+				true,
 			),
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -969,7 +970,7 @@ export class IkaTransaction {
 		preparedImportDWalletVerification: PreparedImportDWalletVerification;
 		curve: Curve;
 		signerPublicKey: Uint8Array;
-		sessionIdentifier: Uint8Array;
+		sessionIdentifier: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<{
@@ -1029,7 +1030,7 @@ export class IkaTransaction {
 		preparedImportDWalletVerification: PreparedImportDWalletVerification;
 		curve: Curve;
 		signerPublicKey: Uint8Array;
-		sessionIdentifier: Uint8Array;
+		sessionIdentifier: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 		receiver: string;
@@ -1164,10 +1165,6 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		if (!this.userShareEncryptionKeys) {
-			throw new Error('User share encryption keys are not set');
-		}
-
 		if (!presign.state.Completed?.presign) {
 			throw new Error('Presign is not completed');
 		}
@@ -1188,6 +1185,7 @@ export class IkaTransaction {
 				Uint8Array.from(presign.state.Completed?.presign),
 				message,
 				hashScheme,
+				true,
 			),
 			this.createSessionIdentifier(),
 			ikaCoin,
