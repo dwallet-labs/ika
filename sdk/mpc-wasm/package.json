@@ -20,7 +20,7 @@
 		"cross-env": "^7.0.3"
 	},
 	"bugs": {
-		"url": "https://github.com/dwallet-labs/dwallet-network/issues/new"
+		"url": "https://github.com/dwallet-labs/ika/issues/new"
 	},
 	"publishConfig": {
 		"access": "public"
