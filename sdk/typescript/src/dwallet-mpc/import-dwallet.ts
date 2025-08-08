@@ -40,7 +40,12 @@ function isSessionIdentifierRegisteredEvent(event: any): event is SessionIdentif
 
 // todo(zeev): refactor for a better API
 // https://github.com/dwallet-labs/dwallet-network/pull/1040/files#r2097645823
-export async function createImportedDWallet(conf: Config, secretKey: Uint8Array): Promise<DWallet> {
+export async function createImportedDWallet(
+	conf: Config,
+	secretKey: Uint8Array,
+	sui_coin_id?: string,
+	ika_coin_id?: string,
+): Promise<DWallet> {
 	const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
 	const sessionIdentifierRegisteredEvent = await createSessionIdentifierMoveCall(conf);
 
@@ -66,6 +71,8 @@ export async function createImportedDWallet(conf: Config, secretKey: Uint8Array)
 		outgoing_message,
 		encryptedUserShareAndProof,
 		public_output,
+		sui_coin_id,
+		ika_coin_id,
 	);
 	const dWalletID = verifyImportedDWalletEvent.event_data.dwallet_id;
 	const dWalletCapID = verifyImportedDWalletEvent.event_data.dwallet_cap_id;
@@ -128,6 +135,8 @@ export async function verifyImportedDWalletMoveCall(
 	centralized_party_message: Uint8Array,
 	encrypted_centralized_secret_share_and_proof: Uint8Array,
 	user_public_output: Uint8Array,
+	sui_coin_id?: string,
+	ika_coin_id: string = '0x9df87437f4f0fb73bffe6fc6291f568da6e59ad4ad0770743b21cd4e1c030914',
 ): Promise<DWalletImportedKeyVerificationRequestEvent> {
 	const tx = new Transaction();
 	const dwalletStateArg = tx.sharedObjectRef({
@@ -152,11 +161,21 @@ export async function verifyImportedDWalletMoveCall(
 			.serialize(conf.encryptedSecretShareSigningKeypair.getPublicKey().toRawBytes()),
 	);
 
-	const emptyIKACoin = tx.moveCall({
-		target: `${SUI_PACKAGE_ID}::coin::zero`,
-		arguments: [],
-		typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
-	});
+	let ikaCoinArg;
+	let suiCoinArg;
+	let destroyZero = false;
+	if (sui_coin_id) {
+		ikaCoinArg = tx.object(ika_coin_id);
+		suiCoinArg = tx.object(sui_coin_id);
+	} else {
+		ikaCoinArg = tx.moveCall({
+			target: `${SUI_PACKAGE_ID}::coin::zero`,
+			arguments: [],
+			typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
+		});
+		suiCoinArg = tx.gas;
+		destroyZero = true;
+	}
 	const cap = tx.moveCall({
 		target: `${conf.ikaConfig.packages.ika_dwallet_2pc_mpc_package_id}::${DWALLET_COORDINATOR_MOVE_MODULE_NAME}::request_imported_key_dwallet_verification`,
 		arguments: [
@@ -169,15 +188,17 @@ export async function verifyImportedDWalletMoveCall(
 			centralizedPublicOutputArg,
 			signerPublicKeyArg,
 			tx.object(sessionIdentifierObjectId),
-			emptyIKACoin,
-			tx.gas,
+			ikaCoinArg,
+			suiCoinArg,
 		],
 	});
-	tx.moveCall({
-		target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
-		arguments: [emptyIKACoin],
-		typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
-	});
+	if (destroyZero) {
+		tx.moveCall({
+			target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
+			arguments: [ikaCoinArg],
+			typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
+		});
+	}
 	tx.transferObjects([cap], conf.suiClientKeypair.toSuiAddress());
 	const result = await conf.client.signAndExecuteTransaction({
 		signer: conf.suiClientKeypair,

@@ -318,6 +318,8 @@ export async function transferEncryptedSecretShare(
 	encryptedUserKeyShareAndProofOfEncryption: Uint8Array,
 	dwalletID: string,
 	source_encrypted_user_secret_key_share_id: string,
+	sui_coin_id?: string,
+	ika_coin_id: string = '0x9df87437f4f0fb73bffe6fc6291f568da6e59ad4ad0770743b21cd4e1c030914',
 ): Promise<string> {
 	const destSuiPublicKey = await fetchPublicKeyByAddress(sourceConf, destSuiAddress);
 	const tx = new Transaction();
@@ -336,11 +338,21 @@ export async function transferEncryptedSecretShare(
 	const sourceEncryptedUserSecretKeyShareIDArg = tx.pure.id(
 		source_encrypted_user_secret_key_share_id,
 	);
-	const emptyIKACoin = tx.moveCall({
-		target: `${SUI_PACKAGE_ID}::coin::zero`,
-		arguments: [],
-		typeArguments: [`${sourceConf.ikaConfig.packages.ika_package_id}::ika::IKA`],
-	});
+	let ikaCoinArg;
+	let suiCoinArg;
+	let destroyZero = false;
+	if (sui_coin_id) {
+		ikaCoinArg = tx.object(ika_coin_id);
+		suiCoinArg = tx.object(sui_coin_id);
+	} else {
+		ikaCoinArg = tx.moveCall({
+			target: `${SUI_PACKAGE_ID}::coin::zero`,
+			arguments: [],
+			typeArguments: [`${sourceConf.ikaConfig.packages.ika_package_id}::ika::IKA`],
+		});
+		suiCoinArg = tx.gas;
+		destroyZero = true;
+	}
 	const sessionIdentifier = await createSessionIdentifier(
 		tx,
 		dwalletStateArg,
@@ -355,16 +367,18 @@ export async function transferEncryptedSecretShare(
 			encryptedCentralizedSecretShareAndProofArg,
 			sourceEncryptedUserSecretKeyShareIDArg,
 			sessionIdentifier,
-			emptyIKACoin,
-			tx.gas,
+			ikaCoinArg,
+			suiCoinArg,
 		],
 	});
 
-	tx.moveCall({
-		target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
-		arguments: [emptyIKACoin],
-		typeArguments: [`${sourceConf.ikaConfig.packages.ika_package_id}::ika::IKA`],
-	});
+	if (destroyZero) {
+		tx.moveCall({
+			target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
+			arguments: [ikaCoinArg],
+			typeArguments: [`${sourceConf.ikaConfig.packages.ika_package_id}::ika::IKA`],
+		});
+	}
 
 	const result = await sourceConf.client.signAndExecuteTransaction({
 		signer: sourceConf.suiClientKeypair,

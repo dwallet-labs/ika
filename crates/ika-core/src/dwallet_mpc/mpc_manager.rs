@@ -719,57 +719,58 @@ impl DWalletMPCManager {
     /// Builds the outputs to finalize based on the outputs received in the consensus rounds.
     /// If a majority vote is reached, it returns the malicious voters (didn't vote with majority) and the majority vote.
     /// If the threshold is not reached, it returns `None`.
+
     pub(crate) fn build_outputs_to_finalize(
         &self,
         session_identifier: &SessionIdentifier,
         outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
     ) -> Option<(HashSet<AuthorityName>, Vec<DWalletCheckpointMessageKind>)> {
-        let mut outputs_to_finalize: HashMap<PartyID, DWalletMPCSessionOutput> = HashMap::new();
+        let mut sorted_rounds: Vec<_> = outputs_by_consensus_round.into_iter().collect();
+        sorted_rounds.sort_by_key(|(round, _)| *round);
 
-        for (_, outputs) in outputs_by_consensus_round {
-            for (sender_party_id, output) in outputs {
-                // take the last output from each sender party ID
-                outputs_to_finalize.insert(sender_party_id, output);
-            }
-        }
-
-        match outputs_to_finalize.weighted_majority_vote(&self.access_structure) {
-            Ok((malicious_voters, majority_vote)) => {
-                let output = majority_vote.output;
-                let malicious_authorities_options = malicious_voters
-                    .iter()
-                    .map(|party_id| party_id_to_authority_name(*party_id, &self.committee))
-                    .collect_vec();
-                let any_not_found_malicious_voters =
-                    malicious_authorities_options.iter().any(|ma| ma.is_none());
-                let malicious_authorities: HashSet<AuthorityName> = malicious_authorities_options
-                    .into_iter()
-                    .flatten()
-                    .collect();
-                if any_not_found_malicious_voters {
+        for (consensus_round, outputs) in sorted_rounds {
+            match outputs.weighted_majority_vote(&self.access_structure) {
+                Ok((malicious_voters, majority_vote)) => {
+                    let output = majority_vote.output;
+                    let malicious_authorities_options = malicious_voters
+                        .iter()
+                        .map(|party_id| party_id_to_authority_name(*party_id, &self.committee))
+                        .collect_vec();
+                    let any_not_found_malicious_voters =
+                        malicious_authorities_options.iter().any(|ma| ma.is_none());
+                    let malicious_authorities: HashSet<AuthorityName> =
+                        malicious_authorities_options
+                            .into_iter()
+                            .flatten()
+                            .collect();
+                    if any_not_found_malicious_voters {
+                        error!(
+                            ?session_identifier,
+                            ?consensus_round,
+                            ?malicious_voters,
+                            ?malicious_authorities,
+                            committee=?self.committee,
+                            "Failed to convert some malicious party IDs to authority names",
+                        );
+                    }
+                    let malicious_authorities: HashSet<AuthorityName> = malicious_authorities
+                        .into_iter()
+                        .chain(majority_vote.malicious_authorities)
+                        .collect();
+                    return Some((malicious_authorities, output));
+                }
+                Err(mpc::Error::ThresholdNotReached) => continue,
+                Err(e) => {
                     error!(
                         ?session_identifier,
-                        ?malicious_voters,
-                        ?malicious_authorities,
-                        committee=?self.committee,
-                        "Failed to convert some malicious party IDs to authority names"
+                        ?consensus_round,
+                        "Failed to build outputs to finalize: {e}"
                     );
                 }
-                let malicious_authorities: HashSet<AuthorityName> = malicious_authorities
-                    .into_iter()
-                    .chain(majority_vote.malicious_authorities)
-                    .collect();
-                Some((malicious_authorities, output))
-            }
-            Err(mpc::Error::ThresholdNotReached) => None,
-            Err(e) => {
-                error!(
-                    ?session_identifier,
-                    "Failed to build outputs to finalize: {e}"
-                );
-                None
             }
         }
+
+        None
     }
 
     pub(crate) fn complete_mpc_session(&mut self, session_identifier: &SessionIdentifier) {

@@ -14,13 +14,25 @@ export async function makeDWalletUserSecretKeySharesPublicRequestEvent(
 	conf: Config,
 	dwallet_id: string,
 	secret_share: Uint8Array,
+	sui_coin_id?: string,
+	ika_coin_id: string = '0x9df87437f4f0fb73bffe6fc6291f568da6e59ad4ad0770743b21cd4e1c030914',
 ) {
 	const tx = new Transaction();
-	const emptyIKACoin = tx.moveCall({
-		target: `${SUI_PACKAGE_ID}::coin::zero`,
-		arguments: [],
-		typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
-	});
+	let ikaCoinArg;
+	let suiCoinArg;
+	let destroyZero = false;
+	if (sui_coin_id) {
+		ikaCoinArg = tx.object(ika_coin_id);
+		suiCoinArg = tx.object(sui_coin_id);
+	} else {
+		ikaCoinArg = tx.moveCall({
+			target: `${SUI_PACKAGE_ID}::coin::zero`,
+			arguments: [],
+			typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
+		});
+		suiCoinArg = tx.gas;
+		destroyZero = true;
+	}
 	const dWalletStateData = await getDWalletSecpState(conf);
 	const dwalletStateArg = tx.sharedObjectRef({
 		objectId: dWalletStateData.object_id,
@@ -39,16 +51,18 @@ export async function makeDWalletUserSecretKeySharesPublicRequestEvent(
 			tx.pure.id(dwallet_id),
 			tx.pure(bcs.vector(bcs.u8()).serialize(secret_share)),
 			sessionIdentifier,
-			emptyIKACoin,
-			tx.gas,
+			ikaCoinArg,
+			suiCoinArg,
 		],
 	});
 
-	tx.moveCall({
-		target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
-		arguments: [emptyIKACoin],
-		typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
-	});
+	if (destroyZero) {
+		tx.moveCall({
+			target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
+			arguments: [ikaCoinArg],
+			typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
+		});
+	}
 
 	await conf.client.signAndExecuteTransaction({
 		signer: conf.suiClientKeypair,
