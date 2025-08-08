@@ -256,7 +256,7 @@ export class IkaTransaction {
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
 			this.transaction.object(dWallet.dwallet_cap_id),
-			preparedSecondRound.userPublicKeyShareAndProof,
+			preparedSecondRound.userDKGMessage,
 			preparedSecondRound.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getPublicKey().toSuiAddress(),
 			preparedSecondRound.userPublicOutput,

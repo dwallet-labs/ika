@@ -26,7 +26,7 @@ import { encodeToASCII, u64ToBytesBigEndian } from './utils';
  */
 export type PreparedSecondRound = {
 	/** The user's public key share along with its zero-knowledge proof */
-	userPublicKeyShareAndProof: Uint8Array;
+	userDKGMessage: Uint8Array;
 	/** The user's public output from the DKG process */
 	userPublicOutput: Uint8Array;
 	/** The encrypted user share with its proof of correct encryption */
@@ -181,7 +181,7 @@ export function prepareDKGSecondRound(
 		throw new Error('First round output is undefined');
 	}
 
-	const [userPublicKeyShareAndProof, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
+	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
 		networkDecryptionKeyPublicOutput,
 		Uint8Array.from(firstRoundOutput),
 		sessionIdentifierDigest(sessionIdentifier),
@@ -194,7 +194,7 @@ export function prepareDKGSecondRound(
 	);
 
 	return {
-		userPublicKeyShareAndProof: Uint8Array.from(userPublicKeyShareAndProof),
+		userDKGMessage: Uint8Array.from(userDKGMessage),
 		userPublicOutput: Uint8Array.from(userPublicOutput),
 		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
 	};
@@ -227,7 +227,7 @@ export async function prepareDKGSecondRoundAsync(
 		throw new Error('First round output is undefined');
 	}
 
-	const [userPublicKeyShareAndProof, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
+	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
 		networkDecryptionKeyPublicOutput,
 		Uint8Array.from(firstRoundOutput),
 		sessionIdentifierDigest(sessionIdentifier),
@@ -240,7 +240,7 @@ export async function prepareDKGSecondRoundAsync(
 	);
 
 	return {
-		userPublicKeyShareAndProof: Uint8Array.from(userPublicKeyShareAndProof),
+		userDKGMessage: Uint8Array.from(userDKGMessage),
 		userPublicOutput: Uint8Array.from(userPublicOutput),
 		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
 	};
