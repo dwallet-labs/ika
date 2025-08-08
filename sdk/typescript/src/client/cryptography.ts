@@ -76,14 +76,14 @@ export function createClassGroupsKeypair(seed: Uint8Array): {
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  *
  * @param protocolPublicParameters - The protocol public parameters for decryption
- * @param firstRoundOutput - The output from the network's first round of DKG
+ * @param networkFirstRoundOutput - The output from the network's first round of DKG
  * @param sessionIdentifier - Unique identifier for this DKG session
  * @returns Object containing the user's DKG message, public output, and secret key share
  *
  */
 export function createDKGUserOutput(
 	protocolPublicParameters: Uint8Array,
-	firstRoundOutput: Uint8Array,
+	networkFirstRoundOutput: Uint8Array,
 	sessionIdentifier: Uint8Array,
 ): {
 	userDKGMessage: Uint8Array;
@@ -92,7 +92,7 @@ export function createDKGUserOutput(
 } {
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
 		protocolPublicParameters,
-		Uint8Array.from(firstRoundOutput),
+		Uint8Array.from(networkFirstRoundOutput),
 		sessionIdentifierDigest(sessionIdentifier),
 	);
 
@@ -175,15 +175,16 @@ export function prepareDKGSecondRound(
 	sessionIdentifier: Uint8Array,
 	encryptionKey: Uint8Array,
 ): PreparedSecondRound {
-	const firstRoundOutput = dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
+	const networkFirstRoundOutput =
+		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
 
-	if (!firstRoundOutput) {
+	if (!networkFirstRoundOutput) {
 		throw new Error('First round output is undefined');
 	}
 
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
 		protocolPublicParameters,
-		Uint8Array.from(firstRoundOutput),
+		Uint8Array.from(networkFirstRoundOutput),
 		sessionIdentifierDigest(sessionIdentifier),
 	);
 
@@ -221,15 +222,16 @@ export async function prepareDKGSecondRoundAsync(
 	},
 ): Promise<PreparedSecondRound> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
-	const firstRoundOutput = dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
+	const networkFirstRoundOutput =
+		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
 
-	if (!firstRoundOutput) {
+	if (!networkFirstRoundOutput) {
 		throw new Error('First round output is undefined');
 	}
 
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
 		protocolPublicParameters,
-		Uint8Array.from(firstRoundOutput),
+		Uint8Array.from(networkFirstRoundOutput),
 		sessionIdentifierDigest(sessionIdentifier),
 	);
 
