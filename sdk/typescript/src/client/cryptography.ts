@@ -1,11 +1,11 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { randomBytes } from 'crypto';
 import { bcs } from '@mysten/sui/bcs';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import type { Keypair } from '@mysten/sui/cryptography';
-import sha3 from 'js-sha3';
+import { keccak_256 } from '@noble/hashes/sha3';
+import { randomBytes } from '@noble/hashes/utils.js';
 
 import {
 	create_dkg_centralized_output as create_dkg_user_output,
@@ -379,9 +379,13 @@ export function publicKeyFromDWalletOutput(dWalletOutput: Uint8Array): Uint8Arra
 export function sessionIdentifierDigest(sessionIdentifier: Uint8Array): Uint8Array {
 	const version = 0; // Version of the session identifier
 	// Calculate the user session identifier for digest
-	const data = [...u64ToBytesBigEndian(version), ...encodeToASCII('USER'), ...sessionIdentifier];
+	const data = Uint8Array.from([
+		...u64ToBytesBigEndian(version),
+		...encodeToASCII('USER'),
+		...sessionIdentifier,
+	]);
 	// Compute the SHA3-256 digest of the serialized data
-	const digest = sha3.keccak256.digest(data);
+	const digest = keccak_256(data);
 	return Uint8Array.from(digest);
 }
 

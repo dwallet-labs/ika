@@ -48,37 +48,15 @@
 	},
 	"devDependencies": {
 		"@ika.xyz/build-scripts": "workspace:*",
-		"@iarna/toml": "^2.2.5",
 		"@types/node": "^22.15.21",
-		"@types/tmp": "^0.2.6",
-		"@types/ws": "^8.18.1",
-		"cross-env": "^7.0.3",
-		"graphql-config": "^5.1.5",
-		"msw": "^2.8.4",
-		"tmp": "^0.2.3",
-		"ts-retry-promise": "^0.8.1",
 		"typescript": "^5.8.3",
-		"vite": "6.3.5",
-		"vitest": "3.1.4",
-		"wait-on": "^8.0.3",
-		"ws": "^8.18.2"
+		"vitest": "3.1.4"
 	},
 	"dependencies": {
 		"@ika.xyz/mpc-wasm": "workspace:*",
-		"@graphql-typed-document-node/core": "^3.2.0",
 		"@mysten/bcs": "^1.7.0",
 		"@mysten/codegen": "^0.3.0",
 		"@mysten/sui": "^1.37.1",
-		"@noble/curves": "^1.9.1",
-		"@noble/hashes": "^1.8.0",
-		"@scure/bip32": "^1.7.0",
-		"@scure/bip39": "^1.6.0",
-		"@suchipi/femver": "^1.0.0",
-		"bech32": "^2.0.0",
-		"gql.tada": "^1.8.10",
-		"graphql": "^16.11.0",
-		"js-sha3": "^0.9.3",
-		"tweetnacl": "^1.0.3",
-		"valibot": "^1.1.0"
+		"@noble/hashes": "^1.8.0"
 	}
 }

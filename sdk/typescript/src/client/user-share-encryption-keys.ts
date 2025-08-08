@@ -3,10 +3,11 @@
 
 import { toHex } from '@mysten/bcs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { keccak256 } from 'js-sha3';
+import { keccak_256 } from '@noble/hashes/sha3';
 
 import { createClassGroupsKeypair, decryptUserShare } from './cryptography.js';
 import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
+import { encodeToASCII } from './utils.js';
 
 /**
  * UserShareEncrytionKeys manages encryption/decryption keys and signing keypairs for user shares.
@@ -147,6 +148,8 @@ export class UserShareEncrytionKeys {
 	 * @returns The hashed seed as a Uint8Array
 	 */
 	private hash(domainSeparator: string, rootSeed: Uint8Array): Uint8Array {
-		return new Uint8Array(keccak256.digest(domainSeparator + rootSeed));
+		return new Uint8Array(
+			keccak_256(Uint8Array.from([...encodeToASCII(domainSeparator), ...rootSeed])),
+		);
 	}
 }
