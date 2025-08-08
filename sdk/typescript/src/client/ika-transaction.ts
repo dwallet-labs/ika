@@ -86,7 +86,7 @@ export class IkaTransaction {
 		const dwalletCap = coordinatorTx.requestDWalletDKGFirstRound(
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
-			await this.ikaClient.getDecryptionKeyID(),
+			await this.ikaClient.getNetworkEncryptionKeyID(),
 			curve,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -106,19 +106,19 @@ export class IkaTransaction {
 	 *
 	 * @param params - The parameters for the DKG first round
 	 * @param params.curve - The elliptic curve identifier to use for key generation
-	 * @param params.decryptionKeyID - The specific decryption key ID to use
+	 * @param params.networkEncryptionKeyID - The specific network encryption key ID to use
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Object containing the DWallet capability and updated transaction
 	 */
 	requestDWalletDKGFirstRound({
 		curve,
-		decryptionKeyID,
+		networkEncryptionKeyID,
 		ikaCoin,
 		suiCoin,
 	}: {
 		curve: Curve;
-		decryptionKeyID: string;
+		networkEncryptionKeyID: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): {
@@ -128,7 +128,7 @@ export class IkaTransaction {
 		const dwalletCap = coordinatorTx.requestDWalletDKGFirstRound(
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
-			decryptionKeyID,
+			networkEncryptionKeyID,
 			curve,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -168,7 +168,7 @@ export class IkaTransaction {
 		const cap = coordinatorTx.requestDWalletDKGFirstRound(
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
-			await this.ikaClient.getDecryptionKeyID(),
+			await this.ikaClient.getNetworkEncryptionKeyID(),
 			curve,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -187,7 +187,7 @@ export class IkaTransaction {
 	 *
 	 * @param params - The parameters for the DKG first round
 	 * @param params.curve - The elliptic curve identifier to use for key generation
-	 * @param params.decryptionKeyID - The specific decryption key ID to use
+	 * @param params.networkEncryptionKeyID - The specific network encryption key ID to use
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @param params.receiver - The address that will receive the DWalletCap
@@ -195,13 +195,13 @@ export class IkaTransaction {
 	 */
 	requestDWalletDKGFirstRoundAndKeep({
 		curve,
-		decryptionKeyID,
+		networkEncryptionKeyID,
 		ikaCoin,
 		suiCoin,
 		receiver,
 	}: {
 		curve: Curve;
-		decryptionKeyID: string;
+		networkEncryptionKeyID: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 		receiver: string;
@@ -209,7 +209,7 @@ export class IkaTransaction {
 		const cap = coordinatorTx.requestDWalletDKGFirstRound(
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
-			decryptionKeyID,
+			networkEncryptionKeyID,
 			curve,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -1241,7 +1241,7 @@ export class IkaTransaction {
 		const importedKeyDWalletVerificationCap = coordinatorTx.requestImportedKeyDwalletVerification(
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
-			await this.ikaClient.getDecryptionKeyID(),
+			await this.ikaClient.getNetworkEncryptionKeyID(),
 			curve,
 			importDWalletVerificationRequestInput.userMessage,
 			importDWalletVerificationRequestInput.encryptedUserShareAndProof,
@@ -1299,7 +1299,7 @@ export class IkaTransaction {
 		const importedKeyDWalletVerificationCap = coordinatorTx.requestImportedKeyDwalletVerification(
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
-			await this.ikaClient.getDecryptionKeyID(),
+			await this.ikaClient.getNetworkEncryptionKeyID(),
 			curve,
 			importDWalletVerificationRequestInput.userMessage,
 			importDWalletVerificationRequestInput.encryptedUserShareAndProof,

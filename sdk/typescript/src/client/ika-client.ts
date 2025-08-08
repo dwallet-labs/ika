@@ -53,13 +53,13 @@ export class IkaClient {
 	private cachedObjects?: {
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
-		decryptionKeyID: string;
+		networkEncryptionKeyID: string;
 	};
 	/** Promise for ongoing object fetching to prevent duplicate requests */
 	private objectsPromise?: Promise<{
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
-		decryptionKeyID: string;
+		networkEncryptionKeyID: string;
 	}>;
 
 	/**
@@ -118,7 +118,7 @@ export class IkaClient {
 	private async ensureInitialized(): Promise<{
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
-		decryptionKeyID: string;
+		networkEncryptionKeyID: string;
 	}> {
 		if (!this.cache) {
 			return this.getObjects();
@@ -435,9 +435,9 @@ export class IkaClient {
 	 * @returns Promise resolving to the decryption key ID
 	 * @throws {NetworkError} If the network objects cannot be fetched
 	 */
-	async getDecryptionKeyID(): Promise<string> {
+	async getNetworkEncryptionKeyID(): Promise<string> {
 		const objects = await this.ensureInitialized();
-		return objects.decryptionKeyID;
+		return objects.networkEncryptionKeyID;
 	}
 
 	/**
@@ -452,10 +452,10 @@ export class IkaClient {
 		const objects = await this.ensureInitialized();
 
 		try {
-			const decryptionKeyID = objects.decryptionKeyID;
+			const networkEncryptionKeyID = objects.networkEncryptionKeyID;
 
 			const decryptionKey = await this.client.getObject({
-				id: decryptionKeyID,
+				id: networkEncryptionKeyID,
 				options: { showBcs: true },
 			});
 
@@ -539,7 +539,7 @@ export class IkaClient {
 			return {
 				coordinatorInner: this.cachedObjects.coordinatorInner,
 				systemInner: this.cachedObjects.systemInner,
-				decryptionKeyID: this.cachedObjects.decryptionKeyID,
+				networkEncryptionKeyID: this.cachedObjects.networkEncryptionKeyID,
 			};
 		}
 
@@ -554,7 +554,7 @@ export class IkaClient {
 			this.cachedObjects = {
 				coordinatorInner: result.coordinatorInner,
 				systemInner: result.systemInner,
-				decryptionKeyID: result.decryptionKeyID,
+				networkEncryptionKeyID: result.networkEncryptionKeyID,
 			};
 			return result;
 		} catch (error) {
@@ -623,7 +623,7 @@ export class IkaClient {
 				throw new ObjectNotFoundError('Network encryption keys');
 			}
 
-			const decryptionKeyID = keysDFs.data[keysDFs.data.length - 1].name.value as string;
+			const networkEncryptionKeyID = keysDFs.data[keysDFs.data.length - 1].name.value as string;
 
 			this.ikaConfig.packages.ikaSystemPackage = systemParsed.package_id;
 			this.ikaConfig.packages.ikaDwallet2pcMpcPackage = coordinatorParsed.package_id;
@@ -637,7 +637,7 @@ export class IkaClient {
 			return {
 				coordinatorInner: coordinatorInnerParsed,
 				systemInner: systemInnerParsed,
-				decryptionKeyID,
+				networkEncryptionKeyID,
 			};
 		} catch (error) {
 			if (error instanceof InvalidObjectError || error instanceof ObjectNotFoundError) {
