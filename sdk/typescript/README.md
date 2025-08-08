@@ -7,8 +7,6 @@ This package provides a TypeScript SDK for interacting with the Ika Network on S
 - Query network state (coordinator/system, DWallets, presigns, encryption keys objects)
 - Handle user share encryption and decryption with MPC WASM helpers
 
-Documentation below is derived from the public APIs in `src/` and kept minimal for fast onboarding.
-
 ### Install
 
 Use bun (preferred):
@@ -42,7 +40,7 @@ pnpm run build
 Use `getNetworkConfig(network)` to obtain package/object IDs for `localnet`, `testnet`, or
 `mainnet`.
 
-For `localnet`, the SDK reads `../../ika_config.json` at process cwd time.
+_For `localnet`, the SDK reads `../../ika_config.json` at process cwd time._
 
 ```ts
 import { getNetworkConfig } from '@ika.xyz/sdk';
