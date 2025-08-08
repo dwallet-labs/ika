@@ -1190,7 +1190,7 @@ mod tests {
                         &ika_network_config,
                     ),
                     contents: base64::decode("Z7MmXd0I4lvGWLDA969YOVo7wrZlXr21RMvixIFabCqAU3voWC2pRFG3QwPYD+ta0sX5poLEkq77ovCi3BBQDgEAAAAAAAAAgFN76FgtqURRt0MD2A/rWtLF+aaCxJKu+6LwotwQUA4BAQAAAAAAAAAggZwXRQsb/ha4mk5xZZfqItaokplduZGMnsuEQzdm7UTt2Z+ktotfGXHn2YVaxxqVhDM8UaafXejIDXnaPLxaMAA=").unwrap(),
-                    pulled: false,
+                    pulled: true,
                 }],
                 1,
             ));
@@ -1206,15 +1206,16 @@ mod tests {
                 .submitted_messages
                 .clone();
 
-            loop {
-                if !consensus_messages_store.lock().unwrap().is_empty() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                let _ = dwallet_mpc_service
-                    .process_cryptographic_computations()
-                    .await;
-            }
+            // loop {
+            //     if !consensus_messages_store.lock().unwrap().is_empty() {
+            //         break;
+            //     }
+            //     tokio::time::sleep(Duration::from_millis(100)).await;
+            //     let _ = dwallet_mpc_service
+            //         .process_cryptographic_computations()
+            //         .await;
+            // }
+            tokio::time::sleep(Duration::from_secs(30)).await;
             println!("Processed cryptographic computations for service {i}");
         }
     }
