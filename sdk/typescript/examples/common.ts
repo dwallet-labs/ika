@@ -99,7 +99,7 @@ export async function requestDKGFirstRound(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.requestDWalletDKGFirstRoundAndKeepAsync({
+	await ikaTransaction.requestDWalletDKGFirstRoundAndTransferCapAsync({
 		curve: 0,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
@@ -297,7 +297,7 @@ export async function presign(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	ikaTransaction.presignAndKeep({
+	ikaTransaction.presignAndTransferCap({
 		dWallet,
 		signatureAlgorithm,
 		ikaCoin: emptyIKACoin,
@@ -436,7 +436,7 @@ export async function requestFutureSign(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.requestFutureSignAndKeep({
+	await ikaTransaction.requestFutureSignAndTransferCap({
 		dWallet,
 		presign,
 		verifiedPresignCap,
@@ -520,7 +520,7 @@ export async function requestImportedDWalletVerification(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.requestImportedDWalletVerificationAndKeep({
+	await ikaTransaction.requestImportedDWalletVerificationAndTransferCap({
 		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,

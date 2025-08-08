@@ -154,7 +154,7 @@ export class IkaTransaction {
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If the decryption key ID cannot be fetched
 	 */
-	async requestDWalletDKGFirstRoundAndKeepAsync({
+	async requestDWalletDKGFirstRoundAndTransferCapAsync({
 		curve,
 		ikaCoin,
 		suiCoin,
@@ -193,7 +193,7 @@ export class IkaTransaction {
 	 * @param params.receiver - The address that will receive the DWalletCap
 	 * @returns The updated IkaTransaction instance
 	 */
-	requestDWalletDKGFirstRoundAndKeep({
+	requestDWalletDKGFirstRoundAndTransferCap({
 		curve,
 		networkEncryptionKeyID,
 		ikaCoin,
@@ -420,7 +420,7 @@ export class IkaTransaction {
 	 * @param params.receiver - The address that will receive the unverified presign capability
 	 * @returns The updated IkaTransaction instance
 	 */
-	presignAndKeep({
+	presignAndTransferCap({
 		dWallet,
 		signatureAlgorithm,
 		ikaCoin,
@@ -998,7 +998,7 @@ export class IkaTransaction {
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set or presign is not completed
 	 */
-	async requestFutureSignAndKeep({
+	async requestFutureSignAndTransferCap({
 		dWallet,
 		verifiedPresignCap,
 		presign,
@@ -1094,7 +1094,7 @@ export class IkaTransaction {
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set or presign is not completed
 	 */
-	async requestFutureSignAndKeepWithSecretShare({
+	async requestFutureSignAndTransferCapWithSecretShare({
 		dWallet,
 		verifiedPresignCap,
 		presign,
@@ -1275,7 +1275,7 @@ export class IkaTransaction {
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
-	async requestImportedDWalletVerificationAndKeep({
+	async requestImportedDWalletVerificationAndTransferCap({
 		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
