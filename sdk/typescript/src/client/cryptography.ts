@@ -41,7 +41,7 @@ export interface PreparedImportDWalletVerification {
 	/** The public output that can be verified against the imported key */
 	userPublicOutput: Uint8Array;
 	/** The outgoing message for the verification protocol */
-	userOutgoingMessage: Uint8Array;
+	userMessage: Uint8Array;
 	/** The encrypted user share with proof for the imported key */
 	encryptedUserShareAndProof: Uint8Array;
 }
@@ -265,15 +265,11 @@ export async function prepareImportDWalletVerification(
 ): Promise<PreparedImportDWalletVerification> {
 	const networkDecryptionKeyPublicOutput = await ikaClient.getNetworkPublicParameters();
 
-	const [userSecretShare, userPublicOutput, userOutgoingMessage] =
-		create_imported_dwallet_user_output(
-			networkDecryptionKeyPublicOutput,
-			sessionIdentifierDigest(sessionIdentifier),
-			bcs
-				.vector(bcs.u8())
-				.serialize(decodeSuiPrivateKey(keypair.getSecretKey()).secretKey)
-				.toBytes(),
-		);
+	const [userSecretShare, userPublicOutput, userMessage] = create_imported_dwallet_user_output(
+		networkDecryptionKeyPublicOutput,
+		sessionIdentifierDigest(sessionIdentifier),
+		bcs.vector(bcs.u8()).serialize(decodeSuiPrivateKey(keypair.getSecretKey()).secretKey).toBytes(),
+	);
 
 	const encryptedUserShareAndProof = encryptSecretShare(
 		userSecretShare,
@@ -283,7 +279,7 @@ export async function prepareImportDWalletVerification(
 
 	return {
 		userPublicOutput: Uint8Array.from(userPublicOutput),
-		userOutgoingMessage: Uint8Array.from(userOutgoingMessage),
+		userMessage: Uint8Array.from(userMessage),
 		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
 	};
 }
