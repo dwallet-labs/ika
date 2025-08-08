@@ -23,7 +23,7 @@ import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
  * Prepared data for the second round of Distributed Key Generation (DKG).
  * Contains all cryptographic outputs needed to complete the DKG process.
  */
-export interface PreparedSecondRound {
+export interface DKGSecondRoundRequestInput {
 	/** The user's public key share along with its zero-knowledge proof */
 	userDKGMessage: Uint8Array;
 	/** The user's public output from the DKG process */
@@ -36,7 +36,7 @@ export interface PreparedSecondRound {
  * Prepared data for importing an existing cryptographic key as a DWallet.
  * Contains verification data needed to prove ownership of the imported key.
  */
-export interface PreparedImportDWalletVerification {
+export interface ImportDWalletVerificationRequestInput {
 	/** The public output that can be verified against the imported key */
 	userPublicOutput: Uint8Array;
 	/** The outgoing message for the verification protocol */
@@ -173,7 +173,7 @@ export function prepareDKGSecondRound(
 	dWallet: DWallet,
 	sessionIdentifier: Uint8Array,
 	encryptionKey: Uint8Array,
-): PreparedSecondRound {
+): DKGSecondRoundRequestInput {
 	const networkFirstRoundOutput =
 		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
 
@@ -219,7 +219,7 @@ export async function prepareDKGSecondRoundAsync(
 		encryptionKey: Uint8Array;
 		decryptionKey: Uint8Array;
 	},
-): Promise<PreparedSecondRound> {
+): Promise<DKGSecondRoundRequestInput> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
 	return prepareDKGSecondRound(
@@ -246,7 +246,7 @@ export async function prepareImportDWalletVerification(
 	sessionIdentifier: Uint8Array,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	keypair: Keypair,
-): Promise<PreparedImportDWalletVerification> {
+): Promise<ImportDWalletVerificationRequestInput> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
 	const [userSecretShare, userPublicOutput, userMessage] = create_imported_dwallet_user_output(

@@ -8,8 +8,8 @@ import type { TransactionObjectArgument } from '@mysten/sui/transactions';
 import { Transaction } from '@mysten/sui/transactions';
 
 import type {
-	PreparedImportDWalletVerification,
-	PreparedSecondRound,
+	DKGSecondRoundRequestInput,
+	ImportDWalletVerificationRequestInput,
 } from '../src/client/cryptography.js';
 import { IkaClient, IkaTransaction } from '../src/client/index.js';
 import { getNetworkConfig } from '../src/client/network-configs.js';
@@ -159,7 +159,7 @@ export async function requestDkgSecondRound(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	preparedSecondRound: PreparedSecondRound,
+	dkgSecondRoundRequestInput: DKGSecondRoundRequestInput,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	signerPublicKey: Uint8Array,
 ) {
@@ -175,7 +175,7 @@ export async function requestDkgSecondRound(
 
 	ikaTransaction.requestDWalletDKGSecondRound({
 		dWallet,
-		preparedSecondRound,
+		dkgSecondRoundRequestInput,
 		signerPublicKey,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
@@ -502,7 +502,7 @@ export async function futureSign(
 export async function requestImportedDWalletVerification(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	preparedImportDWalletVerification: PreparedImportDWalletVerification,
+	importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput,
 	curve: Curve,
 	signerPublicKey: Uint8Array,
 	sessionIdentifier: string,
@@ -518,7 +518,7 @@ export async function requestImportedDWalletVerification(
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
 	await ikaTransaction.requestImportedDWalletVerificationAndKeep({
-		preparedImportDWalletVerification,
+		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
 		sessionIdentifier,

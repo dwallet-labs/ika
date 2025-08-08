@@ -1,7 +1,10 @@
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator.js';
-import type { PreparedImportDWalletVerification, PreparedSecondRound } from './cryptography.js';
+import type {
+	DKGSecondRoundRequestInput,
+	ImportDWalletVerificationRequestInput,
+} from './cryptography.js';
 import { createUserSignMessage, encryptSecretShare, verifyUserShare } from './cryptography.js';
 import type { IkaClient } from './ika-client.js';
 import type {
@@ -222,7 +225,7 @@ export class IkaTransaction {
 	 *
 	 * @param params - The parameters for the DKG second round
 	 * @param params.dWallet - The DWallet object from the first round
-	 * @param params.preparedSecondRound - Cryptographic data prepared for the second round
+	 * @param params.dkgSecondRoundRequestInput - Cryptographic data prepared for the second round
 	 * @param params.signerPublicKey - The public key of the transaction signer
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
@@ -231,13 +234,13 @@ export class IkaTransaction {
 	 */
 	requestDWalletDKGSecondRound({
 		dWallet,
-		preparedSecondRound,
+		dkgSecondRoundRequestInput,
 		signerPublicKey,
 		ikaCoin,
 		suiCoin,
 	}: {
 		dWallet: DWallet;
-		preparedSecondRound: PreparedSecondRound;
+		dkgSecondRoundRequestInput: DKGSecondRoundRequestInput;
 		signerPublicKey: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -250,10 +253,10 @@ export class IkaTransaction {
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
 			this.transaction.object(dWallet.dwallet_cap_id),
-			preparedSecondRound.userDKGMessage,
-			preparedSecondRound.encryptedUserShareAndProof,
+			dkgSecondRoundRequestInput.userDKGMessage,
+			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getPublicKey().toSuiAddress(),
-			preparedSecondRound.userPublicOutput,
+			dkgSecondRoundRequestInput.userPublicOutput,
 			signerPublicKey,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -1201,7 +1204,7 @@ export class IkaTransaction {
 	 * This method creates a DWallet from an existing cryptographic key that was generated outside the network.
 	 *
 	 * @param params - The parameters for imported DWallet verification
-	 * @param params.preparedImportDWalletVerification - The prepared verification data from prepareImportDWalletVerification
+	 * @param params.importDWalletVerificationRequestInput - The prepared verification data from prepareImportDWalletVerification
 	 * @param params.curve - The elliptic curve identifier used for the imported key
 	 * @param params.signerPublicKey - The public key of the transaction signer
 	 * @param params.sessionIdentifier - Unique session identifier for this operation
@@ -1211,14 +1214,14 @@ export class IkaTransaction {
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async requestImportedDWalletVerification({
-		preparedImportDWalletVerification,
+		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
 		sessionIdentifier,
 		ikaCoin,
 		suiCoin,
 	}: {
-		preparedImportDWalletVerification: PreparedImportDWalletVerification;
+		importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput;
 		curve: Curve;
 		signerPublicKey: Uint8Array;
 		sessionIdentifier: string;
@@ -1237,10 +1240,10 @@ export class IkaTransaction {
 			this.getCoordinatorObjectRef(),
 			await this.ikaClient.getDecryptionKeyID(),
 			curve,
-			preparedImportDWalletVerification.userMessage,
-			preparedImportDWalletVerification.encryptedUserShareAndProof,
+			importDWalletVerificationRequestInput.userMessage,
+			importDWalletVerificationRequestInput.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getSuiAddress(),
-			preparedImportDWalletVerification.userPublicOutput,
+			importDWalletVerificationRequestInput.userPublicOutput,
 			signerPublicKey,
 			sessionIdentifier,
 			ikaCoin,
@@ -1259,7 +1262,7 @@ export class IkaTransaction {
 	 * This creates an imported DWallet and delegates the capability to another address.
 	 *
 	 * @param params - The parameters for imported DWallet verification and keep
-	 * @param params.preparedImportDWalletVerification - The prepared verification data from prepareImportDWalletVerification
+	 * @param params.importDWalletVerificationRequestInput - The prepared verification data from prepareImportDWalletVerification
 	 * @param params.curve - The elliptic curve identifier used for the imported key
 	 * @param params.signerPublicKey - The public key of the transaction signer
 	 * @param params.sessionIdentifier - Unique session identifier for this operation
@@ -1270,7 +1273,7 @@ export class IkaTransaction {
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async requestImportedDWalletVerificationAndKeep({
-		preparedImportDWalletVerification,
+		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
 		sessionIdentifier,
@@ -1278,7 +1281,7 @@ export class IkaTransaction {
 		suiCoin,
 		receiver,
 	}: {
-		preparedImportDWalletVerification: PreparedImportDWalletVerification;
+		importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput;
 		curve: Curve;
 		signerPublicKey: Uint8Array;
 		sessionIdentifier: string;
@@ -1295,10 +1298,10 @@ export class IkaTransaction {
 			this.getCoordinatorObjectRef(),
 			await this.ikaClient.getDecryptionKeyID(),
 			curve,
-			preparedImportDWalletVerification.userMessage,
-			preparedImportDWalletVerification.encryptedUserShareAndProof,
+			importDWalletVerificationRequestInput.userMessage,
+			importDWalletVerificationRequestInput.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getSuiAddress(),
-			preparedImportDWalletVerification.userPublicOutput,
+			importDWalletVerificationRequestInput.userPublicOutput,
 			signerPublicKey,
 			sessionIdentifier,
 			ikaCoin,
