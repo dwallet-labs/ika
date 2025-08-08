@@ -68,12 +68,6 @@ export const Curve = {
 
 export type Curve = (typeof Curve)[keyof typeof Curve];
 
-export const EncryptionKeyCurve = {
-	ED25519: 0,
-} as const;
-
-export type EncryptionKeyCurve = (typeof EncryptionKeyCurve)[keyof typeof EncryptionKeyCurve];
-
 export const SignatureAlgorithm = {
 	ECDSA: 0,
 } as const;

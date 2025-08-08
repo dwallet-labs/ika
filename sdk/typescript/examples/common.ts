@@ -13,7 +13,7 @@ import type {
 } from '../src/client/cryptography.js';
 import { IkaClient, IkaTransaction } from '../src/client/index.js';
 import { getNetworkConfig } from '../src/client/network-configs.js';
-import type {
+import {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
@@ -23,7 +23,6 @@ import type {
 	Presign,
 	SignatureAlgorithm,
 } from '../src/client/types.js';
-import { EncryptionKeyCurve } from '../src/client/types.js';
 import { UserShareEncrytionKeys } from '../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../src/generated/ika_dwallet_2pc_mpc/sessions_manager.js';
@@ -142,7 +141,7 @@ export async function registerEncryptionKey(
 	});
 
 	await ikaTransaction.registerEncryptionKey({
-		curve: EncryptionKeyCurve.ED25519,
+		curve: Curve.SECP256K1,
 	});
 
 	const result = await executeTransaction(suiClient, transaction);

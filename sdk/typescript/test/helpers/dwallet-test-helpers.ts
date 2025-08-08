@@ -7,7 +7,7 @@ import type {
 } from '../../src/client/cryptography.js';
 import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
 import type { IkaClient } from '../../src/client/ika-client.js';
-import type {
+import {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
@@ -16,7 +16,6 @@ import type {
 	Presign,
 	SignatureAlgorithm,
 } from '../../src/client/types.js';
-import { EncryptionKeyCurve } from '../../src/client/types.js';
 import type { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../../src/generated/ika_dwallet_2pc_mpc/sessions_manager.js';
@@ -205,7 +204,7 @@ export async function registerTestEncryptionKey(
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
 	await ikaTransaction.registerEncryptionKey({
-		curve: EncryptionKeyCurve.ED25519,
+		curve: Curve.SECP256K1,
 	});
 
 	const result = await executeTestTransaction(suiClient, transaction, testName);

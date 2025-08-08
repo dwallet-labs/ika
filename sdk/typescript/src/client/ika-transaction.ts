@@ -8,7 +8,6 @@ import type {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
-	EncryptionKeyCurve,
 	Hash,
 	PartialUserSignature,
 	Presign,
@@ -307,7 +306,7 @@ export class IkaTransaction {
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
-	async registerEncryptionKey({ curve }: { curve: EncryptionKeyCurve }) {
+	async registerEncryptionKey({ curve }: { curve: Curve }) {
 		if (!this.userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
