@@ -115,7 +115,7 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 				await userShareEncryptionKeys.decryptUserShare(
 					activeDWallet,
 					encryptedUserSecretKeyShare,
-					await ikaClient.getNetworkPublicParameters(),
+					await ikaClient.getProtocolPublicParameters(),
 				),
 				testName,
 			);

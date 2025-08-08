@@ -69,7 +69,7 @@ async function main() {
 		await userShareEncryptionKeys.decryptUserShare(
 			activeDWallet,
 			secretShare,
-			await ikaClient.getNetworkPublicParameters(),
+			await ikaClient.getProtocolPublicParameters(),
 		),
 	);
 }

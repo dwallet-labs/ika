@@ -390,14 +390,14 @@ export class IkaClient {
 	}
 
 	/**
-	 * Retrieve the network's public parameters used for cryptographic operations.
+	 * Retrieve the protocol public parameters used for cryptographic operations.
 	 * These parameters are cached and only refetched when the epoch or decryption key changes.
 	 *
-	 * @returns Promise resolving to the network public parameters as bytes
+	 * @returns Promise resolving to the protocol public parameters as bytes
 	 * @throws {ObjectNotFoundError} If the public parameters cannot be found
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getNetworkPublicParameters(): Promise<Uint8Array> {
+	async getProtocolPublicParameters(): Promise<Uint8Array> {
 		await this.ensureInitialized();
 
 		const decryptionKeyPublicOutputID = await this.getDecryptionKeyPublicOutputID();

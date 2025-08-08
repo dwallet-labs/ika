@@ -220,7 +220,7 @@ export async function prepareDKGSecondRoundAsync(
 		decryptionKey: Uint8Array;
 	},
 ): Promise<PreparedSecondRound> {
-	const networkDecryptionKeyPublicOutput = await ikaClient.getNetworkPublicParameters();
+	const networkDecryptionKeyPublicOutput = await ikaClient.getProtocolPublicParameters();
 	const firstRoundOutput = dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
 
 	if (!firstRoundOutput) {
@@ -263,7 +263,7 @@ export async function prepareImportDWalletVerification(
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	keypair: Secp256k1Keypair,
 ): Promise<PreparedImportDWalletVerification> {
-	const networkDecryptionKeyPublicOutput = await ikaClient.getNetworkPublicParameters();
+	const networkDecryptionKeyPublicOutput = await ikaClient.getProtocolPublicParameters();
 
 	const [userSecretShare, userPublicOutput, userMessage] = create_imported_dwallet_user_output(
 		networkDecryptionKeyPublicOutput,
