@@ -1,0 +1,31 @@
+{
+	"name": "@ika.xyz/build-scripts",
+	"private": true,
+	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
+	"description": "Build scripts for @ika.xyz packages",
+	"version": "0.0.0",
+	"license": "Apache-2.0",
+	"engines": {
+		"node": ">=18"
+	},
+	"bin": {
+		"build-package": "./src/build-package.ts"
+	},
+	"scripts": {
+		"prettier:check": "prettier -c --ignore-unknown .",
+		"prettier:fix": "prettier -w --ignore-unknown .",
+		"eslint:check": "eslint --max-warnings=0 .",
+		"eslint:fix": "pnpm run eslint:check --fix",
+		"lint": "pnpm run eslint:check && pnpm run prettier:check",
+		"lint:fix": "pnpm run eslint:fix && pnpm run prettier:fix",
+		"build": "tsc --build"
+	},
+	"devDependencies": {
+		"esbuild": "^0.25.8",
+		"find-up": "^7.0.0",
+		"typescript": "^5.8.3"
+	},
+	"dependencies": {
+		"@types/node": "^22.15.29"
+	}
+}

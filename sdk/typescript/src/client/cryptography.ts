@@ -1,3 +1,8 @@
+import { bcs } from '@mysten/sui/bcs';
+import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
+import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
+import sha3 from 'js-sha3';
+
 import {
 	create_dkg_centralized_output as create_dkg_user_output,
 	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
@@ -9,12 +14,7 @@ import {
 	public_key_from_dwallet_output,
 	verify_secp_signature,
 	verify_user_share,
-} from '@dwallet-network/dwallet-mpc-wasm';
-import { bcs } from '@mysten/sui/bcs';
-import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
-import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
-import sha3 from 'js-sha3';
-
+} from '../../../mpc-wasm/dist/node/dwallet_mpc_wasm';
 import { IkaClient } from './ika-client';
 import { DWallet } from './types';
 import { UserShareEncrytionKeys } from './user-share-encryption-keys';
