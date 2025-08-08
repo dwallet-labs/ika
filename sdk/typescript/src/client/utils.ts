@@ -1,6 +1,9 @@
-import { SuiObjectResponse } from '@mysten/sui/client';
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { InvalidObjectError } from './errors';
+import type { SuiObjectResponse } from '@mysten/sui/client';
+
+import { InvalidObjectError } from './errors.js';
 
 /**
  * Extract BCS (Binary Canonical Serialization) bytes from a Sui object response.

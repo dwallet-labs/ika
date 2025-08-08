@@ -1,14 +1,18 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 // @ts-ignore
 import { randomBytes } from 'crypto';
 import { toHex } from '@mysten/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
-import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+import type { TransactionObjectArgument } from '@mysten/sui/transactions';
+import { Transaction } from '@mysten/sui/transactions';
 
-import {
-	PreparedImportDWalletVerification,
-	PreparedSecondRound,
+import type {
+	DKGSecondRoundRequestInput,
+	ImportDWalletVerificationRequestInput,
 } from '../src/client/cryptography.js';
 import { IkaClient, IkaTransaction } from '../src/client/index.js';
 import { getNetworkConfig } from '../src/client/network-configs.js';
@@ -16,7 +20,6 @@ import {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
-	EncryptionKeyCurve,
 	Hash,
 	IkaConfig,
 	PartialUserSignature,
@@ -141,7 +144,7 @@ export async function registerEncryptionKey(
 	});
 
 	await ikaTransaction.registerEncryptionKey({
-		curve: EncryptionKeyCurve.ED25519,
+		curve: Curve.SECP256K1,
 	});
 
 	const result = await executeTransaction(suiClient, transaction);
@@ -159,7 +162,7 @@ export async function requestDkgSecondRound(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	preparedSecondRound: PreparedSecondRound,
+	dkgSecondRoundRequestInput: DKGSecondRoundRequestInput,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	signerPublicKey: Uint8Array,
 ) {
@@ -175,7 +178,7 @@ export async function requestDkgSecondRound(
 
 	ikaTransaction.requestDWalletDKGSecondRound({
 		dWallet,
-		preparedSecondRound,
+		dkgSecondRoundRequestInput,
 		signerPublicKey,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
@@ -502,7 +505,7 @@ export async function futureSign(
 export async function requestImportedDWalletVerification(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	preparedImportDWalletVerification: PreparedImportDWalletVerification,
+	importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput,
 	curve: Curve,
 	signerPublicKey: Uint8Array,
 	sessionIdentifier: string,
@@ -518,7 +521,7 @@ export async function requestImportedDWalletVerification(
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
 	await ikaTransaction.requestImportedDWalletVerificationAndKeep({
-		preparedImportDWalletVerification,
+		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
 		sessionIdentifier,

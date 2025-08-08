@@ -1,37 +1,37 @@
-import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import * as coordinatorTx from '../tx/coordinator';
-import {
-	createUserSignMessage,
-	encryptSecretShare,
-	PreparedImportDWalletVerification,
-	PreparedSecondRound,
-	verifyUserShare,
-} from './cryptography';
-import { IkaClient } from './ika-client';
-import {
+import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+
+import * as coordinatorTx from '../tx/coordinator.js';
+import type {
+	DKGSecondRoundRequestInput,
+	ImportDWalletVerificationRequestInput,
+} from './cryptography.js';
+import { createUserSignMessage, encryptSecretShare, verifyUserShare } from './cryptography.js';
+import type { IkaClient } from './ika-client.js';
+import type {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
-	EncryptionKeyCurve,
 	Hash,
 	PartialUserSignature,
 	Presign,
 	SignatureAlgorithm,
-} from './types';
-import { UserShareEncrytionKeys } from './user-share-encryption-keys';
+} from './types.js';
+import type { UserShareEncrytionKeys } from './user-share-encryption-keys.js';
 
 /**
  * Parameters for creating an IkaTransaction instance
  */
-export type IkaTransactionParams = {
+export interface IkaTransactionParams {
 	/** The IkaClient instance to use for blockchain interactions */
 	ikaClient: IkaClient;
 	/** The Sui transaction to wrap */
 	transaction: Transaction;
 	/** Optional user share encryption keys for cryptographic operations */
 	userShareEncryptionKeys?: UserShareEncrytionKeys;
-};
+}
 
 /**
  * IkaTransaction class provides a high-level interface for interacting with the Ika network.
@@ -228,7 +228,7 @@ export class IkaTransaction {
 	 *
 	 * @param params - The parameters for the DKG second round
 	 * @param params.dWallet - The DWallet object from the first round
-	 * @param params.preparedSecondRound - Cryptographic data prepared for the second round
+	 * @param params.dkgSecondRoundRequestInput - Cryptographic data prepared for the second round
 	 * @param params.signerPublicKey - The public key of the transaction signer
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
@@ -237,13 +237,13 @@ export class IkaTransaction {
 	 */
 	requestDWalletDKGSecondRound({
 		dWallet,
-		preparedSecondRound,
+		dkgSecondRoundRequestInput,
 		signerPublicKey,
 		ikaCoin,
 		suiCoin,
 	}: {
 		dWallet: DWallet;
-		preparedSecondRound: PreparedSecondRound;
+		dkgSecondRoundRequestInput: DKGSecondRoundRequestInput;
 		signerPublicKey: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -256,10 +256,10 @@ export class IkaTransaction {
 			this.ikaClient.ikaConfig,
 			this.getCoordinatorObjectRef(),
 			this.transaction.object(dWallet.dwallet_cap_id),
-			preparedSecondRound.userDKGMessage,
-			preparedSecondRound.encryptedUserShareAndProof,
+			dkgSecondRoundRequestInput.userDKGMessage,
+			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getPublicKey().toSuiAddress(),
-			preparedSecondRound.userPublicOutput,
+			dkgSecondRoundRequestInput.userPublicOutput,
 			signerPublicKey,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -312,7 +312,7 @@ export class IkaTransaction {
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
-	async registerEncryptionKey({ curve }: { curve: EncryptionKeyCurve }) {
+	async registerEncryptionKey({ curve }: { curve: Curve }) {
 		if (!this.userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
@@ -606,7 +606,7 @@ export class IkaTransaction {
 			throw new Error('DWallet is not active');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		const userShare = await this.userShareEncryptionKeys.decryptUserShare(
 			dWallet,
@@ -694,7 +694,7 @@ export class IkaTransaction {
 			throw new Error('Presign is not completed');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		const userShareVerified = verifyUserShare(
 			secretShare,
@@ -775,17 +775,7 @@ export class IkaTransaction {
 			throw new Error('User share must be public to use this method');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
-
-		const userShareVerified = verifyUserShare(
-			Uint8Array.from(dWallet.public_user_secret_key_share),
-			Uint8Array.from(dWallet.state.Active?.public_output),
-			publicParameters,
-		);
-
-		if (!userShareVerified) {
-			throw new Error('User share verification failed');
-		}
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		coordinatorTx.requestSign(
 			this.ikaClient.ikaConfig,
@@ -859,7 +849,7 @@ export class IkaTransaction {
 			throw new Error('DWallet is not active');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		const userShare = await this.userShareEncryptionKeys.decryptUserShare(
 			dWallet,
@@ -952,7 +942,7 @@ export class IkaTransaction {
 			throw new Error('DWallet is not active');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		const userShareVerified = verifyUserShare(
 			secretShare,
@@ -1041,7 +1031,7 @@ export class IkaTransaction {
 			throw new Error('DWallet is not active');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		const userShare = await this.userShareEncryptionKeys.decryptUserShare(
 			dWallet,
@@ -1133,7 +1123,7 @@ export class IkaTransaction {
 			throw new Error('DWallet is not active');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		const userShareVerified = verifyUserShare(
 			secretShare,
@@ -1217,7 +1207,7 @@ export class IkaTransaction {
 	 * This method creates a DWallet from an existing cryptographic key that was generated outside the network.
 	 *
 	 * @param params - The parameters for imported DWallet verification
-	 * @param params.preparedImportDWalletVerification - The prepared verification data from prepareImportDWalletVerification
+	 * @param params.importDWalletVerificationRequestInput - The prepared verification data from prepareImportDWalletVerification
 	 * @param params.curve - The elliptic curve identifier used for the imported key
 	 * @param params.signerPublicKey - The public key of the transaction signer
 	 * @param params.sessionIdentifier - Unique session identifier for this operation
@@ -1227,14 +1217,14 @@ export class IkaTransaction {
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async requestImportedDWalletVerification({
-		preparedImportDWalletVerification,
+		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
 		sessionIdentifier,
 		ikaCoin,
 		suiCoin,
 	}: {
-		preparedImportDWalletVerification: PreparedImportDWalletVerification;
+		importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput;
 		curve: Curve;
 		signerPublicKey: Uint8Array;
 		sessionIdentifier: string;
@@ -1253,10 +1243,10 @@ export class IkaTransaction {
 			this.getCoordinatorObjectRef(),
 			await this.ikaClient.getDecryptionKeyID(),
 			curve,
-			preparedImportDWalletVerification.userOutgoingMessage,
-			preparedImportDWalletVerification.encryptedUserShareAndProof,
+			importDWalletVerificationRequestInput.userMessage,
+			importDWalletVerificationRequestInput.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getSuiAddress(),
-			preparedImportDWalletVerification.userPublicOutput,
+			importDWalletVerificationRequestInput.userPublicOutput,
 			signerPublicKey,
 			sessionIdentifier,
 			ikaCoin,
@@ -1275,7 +1265,7 @@ export class IkaTransaction {
 	 * This creates an imported DWallet and delegates the capability to another address.
 	 *
 	 * @param params - The parameters for imported DWallet verification and keep
-	 * @param params.preparedImportDWalletVerification - The prepared verification data from prepareImportDWalletVerification
+	 * @param params.importDWalletVerificationRequestInput - The prepared verification data from prepareImportDWalletVerification
 	 * @param params.curve - The elliptic curve identifier used for the imported key
 	 * @param params.signerPublicKey - The public key of the transaction signer
 	 * @param params.sessionIdentifier - Unique session identifier for this operation
@@ -1286,7 +1276,7 @@ export class IkaTransaction {
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async requestImportedDWalletVerificationAndKeep({
-		preparedImportDWalletVerification,
+		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
 		sessionIdentifier,
@@ -1294,7 +1284,7 @@ export class IkaTransaction {
 		suiCoin,
 		receiver,
 	}: {
-		preparedImportDWalletVerification: PreparedImportDWalletVerification;
+		importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput;
 		curve: Curve;
 		signerPublicKey: Uint8Array;
 		sessionIdentifier: string;
@@ -1311,10 +1301,10 @@ export class IkaTransaction {
 			this.getCoordinatorObjectRef(),
 			await this.ikaClient.getDecryptionKeyID(),
 			curve,
-			preparedImportDWalletVerification.userOutgoingMessage,
-			preparedImportDWalletVerification.encryptedUserShareAndProof,
+			importDWalletVerificationRequestInput.userMessage,
+			importDWalletVerificationRequestInput.encryptedUserShareAndProof,
 			this.userShareEncryptionKeys.getSuiAddress(),
-			preparedImportDWalletVerification.userPublicOutput,
+			importDWalletVerificationRequestInput.userPublicOutput,
 			signerPublicKey,
 			sessionIdentifier,
 			ikaCoin,
@@ -1377,7 +1367,7 @@ export class IkaTransaction {
 			throw new Error('DWallet public output is not set');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		const userShare = await this.userShareEncryptionKeys.decryptUserShare(
 			dWallet,
@@ -1463,7 +1453,7 @@ export class IkaTransaction {
 			throw new Error('Presign is not completed');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		const userShareVerified = verifyUserShare(
 			secretShare,
@@ -1481,7 +1471,7 @@ export class IkaTransaction {
 			verifiedPresignCap,
 			importedKeyMessageApproval,
 			createUserSignMessage(
-				await this.ikaClient.getNetworkPublicParameters(),
+				await this.ikaClient.getProtocolPublicParameters(),
 				dWallet,
 				secretShare,
 				Uint8Array.from(presign.state.Completed?.presign),
@@ -1542,17 +1532,7 @@ export class IkaTransaction {
 			throw new Error('DWallet public user secret key share is not set');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
-
-		const userShareVerified = verifyUserShare(
-			Uint8Array.from(dWallet.public_user_secret_key_share),
-			Uint8Array.from(dWallet.state.Active?.public_output),
-			publicParameters,
-		);
-
-		if (!userShareVerified) {
-			throw new Error('User share verification failed');
-		}
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		coordinatorTx.requestImportedKeySign(
 			this.ikaClient.ikaConfig,
@@ -1604,7 +1584,7 @@ export class IkaTransaction {
 			throw new Error('User share encryption keys are not set');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		const destinationEncryptionKeyObj =
 			await this.ikaClient.getActiveEncryptionKey(destinationSuiAddress);
@@ -1668,7 +1648,7 @@ export class IkaTransaction {
 			throw new Error('User share encryption keys are not set');
 		}
 
-		const publicParameters = await this.ikaClient.getNetworkPublicParameters();
+		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
 
 		const destinationEncryptionKeyObj =
 			await this.ikaClient.getActiveEncryptionKey(destinationSuiAddress);

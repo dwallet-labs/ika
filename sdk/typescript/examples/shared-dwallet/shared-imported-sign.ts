@@ -1,5 +1,8 @@
-import { Curve, Hash, SignatureAlgorithm } from '../../src/client';
-import { prepareImportDWalletVerification } from '../../src/client/cryptography';
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
+import { prepareImportDWalletVerification } from '../../src/client/cryptography.js';
+import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -10,7 +13,7 @@ import {
 	presign,
 	requestImportedDWalletVerification,
 	signWithImportedDWalletPublic,
-} from '../common';
+} from '../common.js';
 
 const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);
@@ -73,7 +76,7 @@ async function main() {
 		await userShareEncryptionKeys.decryptUserShare(
 			activeDWallet,
 			secretShare,
-			await ikaClient.getNetworkPublicParameters(),
+			await ikaClient.getProtocolPublicParameters(),
 		),
 	);
 
@@ -94,7 +97,7 @@ async function main() {
 		suiClient,
 		activeDWallet,
 		presignObject,
-		Buffer.from('hello world'),
+		new TextEncoder().encode('hello world'),
 		Hash.KECCAK256,
 		SignatureAlgorithm.ECDSA,
 	);

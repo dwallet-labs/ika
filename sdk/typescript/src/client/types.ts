@@ -1,7 +1,10 @@
-import { SuiClient } from '@mysten/sui/client';
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner';
-import * as SystemInnerModule from '../generated/ika_system/system_inner';
+import type { SuiClient } from '@mysten/sui/client';
+
+import type * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
+import type * as SystemInnerModule from '../generated/ika_system/system_inner.js';
 
 export interface IkaPackageConfig {
 	ikaPackage: string;
@@ -32,10 +35,10 @@ export interface IkaClientOptions {
 	config: IkaConfig;
 	suiClient: SuiClient;
 	timeout?: number;
-	publicParameters?: {
+	protocolPublicParameters?: {
 		decryptionKeyPublicOutputID: string;
 		epoch: number;
-		publicParameters: Uint8Array;
+		protocolPublicParameters: Uint8Array;
 	};
 	cache?: boolean;
 	network: Network;
@@ -68,20 +71,14 @@ export const Curve = {
 
 export type Curve = (typeof Curve)[keyof typeof Curve];
 
-export const EncryptionKeyCurve = {
-	ED25519: 0,
-} as const;
-
-export type EncryptionKeyCurve = (typeof EncryptionKeyCurve)[keyof typeof EncryptionKeyCurve];
-
 export const SignatureAlgorithm = {
 	ECDSA: 0,
 } as const;
 
 export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];
 
-export type SharedObjectOwner = {
+export interface SharedObjectOwner {
 	Shared: {
 		initial_shared_version: number;
 	};
-};
+}

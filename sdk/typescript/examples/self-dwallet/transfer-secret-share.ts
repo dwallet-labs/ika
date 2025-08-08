@@ -1,6 +1,9 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
-import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
+import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -10,7 +13,7 @@ import {
 	requestDKGFirstRound,
 	requestDkgSecondRound,
 	transferEncryptedUserShare,
-} from '../common';
+} from '../common.js';
 
 const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);

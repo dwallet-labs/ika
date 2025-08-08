@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 import { describe, expect, it } from 'vitest';
 
 import { prepareImportDWalletVerification } from '../../src/client/cryptography';
@@ -115,7 +118,7 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 				await userShareEncryptionKeys.decryptUserShare(
 					activeDWallet,
 					encryptedUserSecretKeyShare,
-					await ikaClient.getNetworkPublicParameters(),
+					await ikaClient.getProtocolPublicParameters(),
 				),
 				testName,
 			);

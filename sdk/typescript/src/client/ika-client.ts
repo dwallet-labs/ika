@@ -1,16 +1,18 @@
-import { SuiClient } from '@mysten/sui/client';
-//
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
+import type { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { toHex } from '@mysten/sui/utils';
 
-import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator';
-import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner';
-import * as SystemModule from '../generated/ika_system/system';
-import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator';
-import { networkDkgPublicOutputToProtocolPp } from './cryptography';
-import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './df';
-import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors';
-import {
+import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
+import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator.js';
+import * as SystemModule from '../generated/ika_system/system.js';
+import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
+import { networkDkgPublicOutputToProtocolPp } from './cryptography.js';
+import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './df.js';
+import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
+import type {
 	CoordinatorInner,
 	DWallet,
 	DWalletCap,
@@ -25,8 +27,8 @@ import {
 	PresignState,
 	SharedObjectOwner,
 	SystemInner,
-} from './types';
-import { objResToBcs } from './utils';
+} from './types.js';
+import { objResToBcs } from './utils.js';
 
 /**
  * IkaClient provides a high-level interface for interacting with the Ika network.
@@ -42,10 +44,10 @@ export class IkaClient {
 	/** Whether to enable caching of network objects and parameters */
 	private cache: boolean;
 	/** Cached network public parameters to avoid repeated fetching */
-	private cachedPublicParameters?: {
+	private cachedProtocolPublicParameters?: {
 		decryptionKeyPublicOutputID: string;
 		epoch: number;
-		publicParameters: Uint8Array;
+		protocolPublicParameters: Uint8Array;
 	};
 	/** Cached network objects (coordinator and system inner objects) */
 	private cachedObjects?: {
@@ -66,13 +68,13 @@ export class IkaClient {
 	 * @param options - Configuration options for the client
 	 * @param options.suiClient - The Sui client instance to use for blockchain interactions
 	 * @param options.config - The Ika network configuration
-	 * @param options.publicParameters - Optional cached public parameters
+	 * @param options.protocolPublicParameters - Optional cached protocol public parameters
 	 * @param options.cache - Whether to enable caching (default: true)
 	 */
-	constructor({ suiClient, config, publicParameters, cache = true }: IkaClientOptions) {
+	constructor({ suiClient, config, protocolPublicParameters, cache = true }: IkaClientOptions) {
 		this.client = suiClient;
 		this.ikaConfig = config;
-		this.cachedPublicParameters = publicParameters;
+		this.cachedProtocolPublicParameters = protocolPublicParameters;
 		this.cache = cache;
 	}
 
@@ -82,7 +84,7 @@ export class IkaClient {
 	 */
 	invalidateCache(): void {
 		this.cachedObjects = undefined;
-		this.cachedPublicParameters = undefined;
+		this.cachedProtocolPublicParameters = undefined;
 		this.objectsPromise = undefined;
 	}
 
@@ -391,39 +393,40 @@ export class IkaClient {
 	}
 
 	/**
-	 * Retrieve the network's public parameters used for cryptographic operations.
+	 * Retrieve the protocol public parameters used for cryptographic operations.
 	 * These parameters are cached and only refetched when the epoch or decryption key changes.
 	 *
-	 * @returns Promise resolving to the network public parameters as bytes
+	 * @returns Promise resolving to the protocol public parameters as bytes
 	 * @throws {ObjectNotFoundError} If the public parameters cannot be found
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getNetworkPublicParameters(): Promise<Uint8Array> {
+	async getProtocolPublicParameters(): Promise<Uint8Array> {
 		await this.ensureInitialized();
 
 		const decryptionKeyPublicOutputID = await this.getDecryptionKeyPublicOutputID();
 		const epoch = await this.getEpoch();
 
-		if (this.cachedPublicParameters) {
+		if (this.cachedProtocolPublicParameters) {
 			if (
-				this.cachedPublicParameters.decryptionKeyPublicOutputID === decryptionKeyPublicOutputID &&
-				this.cachedPublicParameters.epoch === epoch
+				this.cachedProtocolPublicParameters.decryptionKeyPublicOutputID ===
+					decryptionKeyPublicOutputID &&
+				this.cachedProtocolPublicParameters.epoch === epoch
 			) {
-				return this.cachedPublicParameters.publicParameters;
+				return this.cachedProtocolPublicParameters.protocolPublicParameters;
 			}
 		}
 
-		const publicParameters = networkDkgPublicOutputToProtocolPp(
+		const protocolPublicParameters = networkDkgPublicOutputToProtocolPp(
 			await this.readTableVecAsRawBytes(decryptionKeyPublicOutputID),
 		);
 
-		this.cachedPublicParameters = {
+		this.cachedProtocolPublicParameters = {
 			decryptionKeyPublicOutputID,
 			epoch,
-			publicParameters,
+			protocolPublicParameters,
 		};
 
-		return publicParameters;
+		return protocolPublicParameters;
 	}
 
 	/**
@@ -520,7 +523,7 @@ export class IkaClient {
 	 */
 	async getEpoch(): Promise<number> {
 		const objects = await this.ensureInitialized();
-		return +objects.coordinatorInner.current_epoch;
+		return Number(objects.coordinatorInner.current_epoch);
 	}
 
 	/**
@@ -682,7 +685,7 @@ export class IkaClient {
 				}
 			} while (cursor);
 
-			const dataMap: Map<number, Uint8Array> = new Map();
+			const dataMap = new Map<number, Uint8Array>();
 
 			const objectIds = new Set(allTableRows.map((tableRowResult) => tableRowResult.objectId));
 

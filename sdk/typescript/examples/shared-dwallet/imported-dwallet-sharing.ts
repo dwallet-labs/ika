@@ -1,5 +1,8 @@
-import { Curve } from '../../src/client';
-import { prepareImportDWalletVerification } from '../../src/client/cryptography';
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
+import { prepareImportDWalletVerification } from '../../src/client/cryptography.js';
+import { Curve } from '../../src/client/types.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -8,7 +11,7 @@ import {
 	generateKeypairForImportedDWallet,
 	makeImportedDWalletUserSecretKeySharesPublic,
 	requestImportedDWalletVerification,
-} from '../common';
+} from '../common.js';
 
 const suiClient = createSuiClient();
 const ikaClient = createIkaClient(suiClient);
@@ -71,7 +74,7 @@ async function main() {
 		await userShareEncryptionKeys.decryptUserShare(
 			activeDWallet,
 			secretShare,
-			await ikaClient.getNetworkPublicParameters(),
+			await ikaClient.getProtocolPublicParameters(),
 		),
 	);
 }

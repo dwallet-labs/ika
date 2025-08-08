@@ -1,23 +1,25 @@
-import { SuiClient } from '@mysten/sui/client';
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
+import type { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 
-import { IkaClient } from '../../src/client';
-import {
-	PreparedImportDWalletVerification,
-	prepareDKGSecondRoundAsync,
-	PreparedSecondRound,
-} from '../../src/client/cryptography';
+import type {
+	DKGSecondRoundRequestInput,
+	ImportDWalletVerificationRequestInput,
+} from '../../src/client/cryptography.js';
+import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
+import type { IkaClient } from '../../src/client/ika-client.js';
 import {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
-	EncryptionKeyCurve,
 	Hash,
 	PartialUserSignature,
 	Presign,
 	SignatureAlgorithm,
-} from '../../src/client/types';
-import { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-keys';
+} from '../../src/client/types.js';
+import type { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../../src/generated/ika_dwallet_2pc_mpc/sessions_manager.js';
 import {
@@ -29,7 +31,7 @@ import {
 	generateTestKeypair,
 	requestTestFaucetFunds,
 	retryUntil,
-} from './test-utils';
+} from './test-utils.js';
 
 /**
  * Complete DWallet creation process for testing.
@@ -205,7 +207,7 @@ export async function registerTestEncryptionKey(
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
 	await ikaTransaction.registerEncryptionKey({
-		curve: EncryptionKeyCurve.ED25519,
+		curve: Curve.SECP256K1,
 	});
 
 	const result = await executeTestTransaction(suiClient, transaction, testName);
@@ -230,7 +232,7 @@ export async function requestTestDkgSecondRound(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	preparedSecondRound: PreparedSecondRound,
+	dkgSecondRoundRequestInput: DKGSecondRoundRequestInput,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	signerPublicKey: Uint8Array,
 	testName: string,
@@ -242,7 +244,7 @@ export async function requestTestDkgSecondRound(
 
 	ikaTransaction.requestDWalletDKGSecondRound({
 		dWallet,
-		preparedSecondRound,
+		dkgSecondRoundRequestInput,
 		signerPublicKey,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
@@ -582,7 +584,7 @@ export async function testFutureSign(
 export async function requestTestImportedDWalletVerification(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	preparedImportDWalletVerification: PreparedImportDWalletVerification,
+	importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput,
 	curve: Curve,
 	signerPublicKey: Uint8Array,
 	sessionIdentifier: string,
@@ -596,7 +598,7 @@ export async function requestTestImportedDWalletVerification(
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
 	await ikaTransaction.requestImportedDWalletVerificationAndKeep({
-		preparedImportDWalletVerification,
+		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
 		sessionIdentifier,
