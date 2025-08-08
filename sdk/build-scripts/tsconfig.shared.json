@@ -1,7 +1,8 @@
 {
-	"include": ["src"],
+	// see https://www.typescriptlang.org/tsconfig to better understand tsconfigs
 	"compilerOptions": {
 		"target": "ES2020",
+		"module": "esnext",
 		"lib": ["dom", "esnext"],
 		// output .d.ts declaration files for consumers
 		"declaration": true,
@@ -27,10 +28,6 @@
 		// error out if import and file system have a casing mismatch. Recommended by TS
 		"forceConsistentCasingInFileNames": true,
 		"resolveJsonModule": true,
-		"composite": true,
-		"rootDir": "src",
-		"module": "CommonJS",
-		"outDir": "./dist",
-		"isolatedModules": true
+		"composite": true
 	}
 }

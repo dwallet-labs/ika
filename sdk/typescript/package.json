@@ -1,6 +1,6 @@
 {
 	"name": "@ika.xyz/sdk",
-	"author": "dWallet Labs <build@dwalletlabs.com>",
+	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
 	"description": "Ika TypeScript SDK",
 	"homepage": "https://sdk.ika.xyz",
 	"version": "1.0.0",
@@ -22,28 +22,23 @@
 		}
 	},
 	"scripts": {
-		"clean": "rm -rf tsconfig.tsbuildinfo ./dist",
-		"codegen:version": "node genversion.mjs",
-		"build": "tsc",
-		"build:package": "build-package",
-		"vitest": "vitest",
-		"test": "pnpm test:typecheck && pnpm test:unit",
-		"test:typecheck": "tsc -p ./test",
-		"test:unit": "vitest run unit __tests__",
-		"test:e2e": "wait-on http://127.0.0.1:9123 -l --timeout 180000 && vitest run e2e",
-		"test:e2e:nowait": "vitest run e2e",
-		"prepare:e2e": "docker-compose down && docker-compose up -d && cargo build --bin ika --profile dev && cross-env RUST_LOG=warn,ika=error,anemo_tower=warn,consensus=off ../../target/debug/ika start --with-faucet --force-regenesis --with-indexer --pg-port 5435 --pg-db-name ika_indexer_v2 --with-graphql",
-		"prepublishOnly": "pnpm build",
-		"size": "size-limit",
-		"analyze": "size-limit --why",
+		"build": "build-package",
+		"test": "echo 'No unit tests for kiosk SDK'",
+		"pre-commit": "pnpm prettier:fix && pnpm lint && pnpm build",
+		"prepublishOnly": "pnpm turbo build",
 		"prettier:check": "prettier -c --ignore-unknown .",
 		"prettier:fix": "prettier -w --ignore-unknown .",
 		"eslint:check": "eslint --max-warnings=0 .",
 		"eslint:fix": "pnpm run eslint:check --fix",
 		"lint": "pnpm run eslint:check && pnpm run prettier:check",
 		"lint:fix": "pnpm run eslint:fix && pnpm run prettier:fix",
-		"update-schemas": "pnpm tsx scripts/update-graphql-schemas.ts",
-		"generate-schema": "gql.tada generate-output"
+		"test:e2e": "vitest run e2e",
+		"postinstall": "pnpm create-summaries && pnpm sui-ts-codegen generate",
+		"create-summaries:ika": "cd ../../contracts/ika && sui move summary",
+		"create-summaries:dwallet_2pc_mpc": "cd ../../contracts/ika_dwallet_2pc_mpc && sui move summary",
+		"create-summaries:common": "cd ../../contracts/ika_common && sui move summary",
+		"create-summaries:system": "cd ../../contracts/ika_system && sui move summary",
+		"create-summaries": "pnpm create-summaries:ika && pnpm create-summaries:dwallet_2pc_mpc && pnpm create-summaries:common && pnpm create-summaries:system"
 	},
 	"bugs": {
 		"url": "https://github.com/dwallet-labs/ika/issues/new"
@@ -52,6 +47,7 @@
 		"access": "public"
 	},
 	"devDependencies": {
+		"@ika.xyz/build-scripts": "workspace:*",
 		"@iarna/toml": "^2.2.5",
 		"@types/node": "^22.15.21",
 		"@types/tmp": "^0.2.6",
@@ -68,7 +64,7 @@
 		"ws": "^8.18.2"
 	},
 	"dependencies": {
-		"@dwallet-network/dwallet-mpc-wasm": "workspace:*",
+		"@ika.xyz/mpc-wasm": "workspace:*",
 		"@graphql-typed-document-node/core": "^3.2.0",
 		"@mysten/bcs": "^1.7.0",
 		"@mysten/codegen": "^0.3.0",
