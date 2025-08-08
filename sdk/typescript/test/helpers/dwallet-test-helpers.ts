@@ -732,7 +732,7 @@ export async function testTransferEncryptedUserShare(
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.transferEncryptedUserShare({
+	await ikaTransaction.transferUserShare({
 		dWallet,
 		destinationSuiAddress,
 		sourceEncryptedUserSecretKeyShare,
