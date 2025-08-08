@@ -385,7 +385,7 @@ pub fn encrypt_secret_key_share_and_prove(
 /// Verifies the given secret share matches the given dWallets`
 /// DKG output centralized_party_public_key_share.
 pub fn verify_secret_share(
-    secret_share: Vec<u8>,
+    secret_share: SerializedWrappedMPCPublicOutput,
     dkg_output: SerializedWrappedMPCPublicOutput,
     protocol_pp: Vec<u8>,
 ) -> anyhow::Result<bool> {
@@ -394,11 +394,13 @@ pub fn verify_secret_share(
     match dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
             let dkg_output = bcs::from_bytes(&dkg_output)?;
-            let secret_share = bcs::from_bytes(&secret_share)?;
+            let secret_share: VersionedDwalletUserSecretShare = bcs::from_bytes(&secret_share)?;
             Ok(<twopc_mpc::secp256k1::class_groups::AsyncProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
                 &protocol_public_params,
                 dkg_output,
-                secret_share,
+                match secret_share {
+                    VersionedDwalletUserSecretShare::V1(secret_share) =>  bcs::from_bytes(&secret_share)?
+                },
             )
                 .is_ok())
         }
