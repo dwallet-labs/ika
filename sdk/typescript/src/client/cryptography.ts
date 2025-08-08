@@ -6,7 +6,7 @@ import sha3 from 'js-sha3';
 import {
 	create_dkg_centralized_output as create_dkg_user_output,
 	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
-	create_sign_centralized_output as create_sign_user_output,
+	create_sign_centralized_output as create_sign_user_message,
 	decrypt_user_share,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
@@ -314,7 +314,7 @@ export function createUserSignMessage(
 	}
 
 	return Uint8Array.from(
-		create_sign_user_output(
+		create_sign_user_message(
 			networkDecryptionKeyPublicOutput,
 			Uint8Array.from(activeDWallet.state.Active?.public_output),
 			secretKey,

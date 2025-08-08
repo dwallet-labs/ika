@@ -159,7 +159,7 @@ pub fn create_imported_dwallet_centralized_step(
 }
 
 #[wasm_bindgen]
-pub fn create_sign_centralized_output(
+pub fn create_sign_centralized_party_message(
     protocol_pp: Vec<u8>,
     decentralized_party_dkg_public_output: Vec<u8>,
     centralized_party_dkg_secret_output: Vec<u8>,
