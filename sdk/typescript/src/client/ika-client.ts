@@ -9,7 +9,7 @@ import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordi
 import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator.js';
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
-import { networkDkgPublicOutputToProtocolPp } from './cryptography.js';
+import { networkDkgPublicOutputToProtocolPublicParameters } from './cryptography.js';
 import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './df.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
 import type {
@@ -45,7 +45,7 @@ export class IkaClient {
 	private cache: boolean;
 	/** Cached network public parameters to avoid repeated fetching */
 	private cachedProtocolPublicParameters?: {
-		decryptionKeyPublicOutputID: string;
+		networkEncryptionKeyPublicOutputID: string;
 		epoch: number;
 		protocolPublicParameters: Uint8Array;
 	};
@@ -403,25 +403,25 @@ export class IkaClient {
 	async getProtocolPublicParameters(): Promise<Uint8Array> {
 		await this.ensureInitialized();
 
-		const decryptionKeyPublicOutputID = await this.getDecryptionKeyPublicOutputID();
+		const networkEncryptionKeyPublicOutputID = await this.getNetworkEncryptionKeyPublicOutputID();
 		const epoch = await this.getEpoch();
 
 		if (this.cachedProtocolPublicParameters) {
 			if (
-				this.cachedProtocolPublicParameters.decryptionKeyPublicOutputID ===
-					decryptionKeyPublicOutputID &&
+				this.cachedProtocolPublicParameters.networkEncryptionKeyPublicOutputID ===
+					networkEncryptionKeyPublicOutputID &&
 				this.cachedProtocolPublicParameters.epoch === epoch
 			) {
 				return this.cachedProtocolPublicParameters.protocolPublicParameters;
 			}
 		}
 
-		const protocolPublicParameters = networkDkgPublicOutputToProtocolPp(
-			await this.readTableVecAsRawBytes(decryptionKeyPublicOutputID),
+		const protocolPublicParameters = networkDkgPublicOutputToProtocolPublicParameters(
+			await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 		);
 
 		this.cachedProtocolPublicParameters = {
-			decryptionKeyPublicOutputID,
+			networkEncryptionKeyPublicOutputID,
 			epoch,
 			protocolPublicParameters,
 		};
@@ -430,9 +430,9 @@ export class IkaClient {
 	}
 
 	/**
-	 * Get the current network decryption key ID.
+	 * Get the current network encryption key ID.
 	 *
-	 * @returns Promise resolving to the decryption key ID
+	 * @returns Promise resolving to the network encryption key ID
 	 * @throws {NetworkError} If the network objects cannot be fetched
 	 */
 	async getNetworkEncryptionKeyID(): Promise<string> {
@@ -441,14 +441,14 @@ export class IkaClient {
 	}
 
 	/**
-	 * Get the public output ID for the current network decryption key.
+	 * Get the public output ID for the current network encryption key.
 	 * This ID is used to fetch the network's public parameters.
 	 *
-	 * @returns Promise resolving to the decryption key public output ID
-	 * @throws {InvalidObjectError} If the decryption key object cannot be parsed
+	 * @returns Promise resolving to the network encryption key public output ID
+	 * @throws {InvalidObjectError} If the network encryption key object cannot be parsed
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getDecryptionKeyPublicOutputID(): Promise<string> {
+	async getNetworkEncryptionKeyPublicOutputID(): Promise<string> {
 		const objects = await this.ensureInitialized();
 
 		try {

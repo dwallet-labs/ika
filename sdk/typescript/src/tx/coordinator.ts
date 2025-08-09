@@ -323,7 +323,7 @@ export function requestMakeDwalletUserSecretKeySharesPublic(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
 	dwalletId: string,
-	publicUserSecretKeyShares: Uint8Array,
+	publicUserSecretKeyShare: Uint8Array,
 	sessionIdentifier: TransactionObjectArgument,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
@@ -334,7 +334,7 @@ export function requestMakeDwalletUserSecretKeySharesPublic(
 		arguments: [
 			coordinatorObjectRef,
 			tx.pure.id(dwalletId),
-			tx.pure(bcs.vector(bcs.u8()).serialize(publicUserSecretKeyShares)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(publicUserSecretKeyShare)),
 			sessionIdentifier,
 			ikaCoin,
 			suiCoin,

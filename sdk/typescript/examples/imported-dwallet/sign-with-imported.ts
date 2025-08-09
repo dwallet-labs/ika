@@ -29,7 +29,7 @@ async function main() {
 		signerAddress,
 	);
 
-	const preparedImportDWalletVerification = await prepareImportDWalletVerification(
+	const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
 		ikaClient,
 		sessionIdentifierPreimage,
 		userShareEncryptionKeys,
@@ -39,7 +39,7 @@ async function main() {
 	const importedKeyDWalletVerificationRequestEvent = await requestImportedDWalletVerification(
 		ikaClient,
 		suiClient,
-		preparedImportDWalletVerification,
+		importDWalletVerificationRequestInput,
 		Curve.SECP256K1,
 		signerPublicKey,
 		sessionIdentifier,

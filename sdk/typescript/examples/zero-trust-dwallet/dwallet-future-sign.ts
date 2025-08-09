@@ -32,7 +32,7 @@ async function main() {
 		'AwaitingUserDKGVerificationInitiation',
 	);
 
-	const preparedSecondRound = await prepareDKGSecondRoundAsync(
+	const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 		ikaClient,
 		dWallet,
 		sessionIdentifierPreimage,
@@ -43,7 +43,7 @@ async function main() {
 		ikaClient,
 		suiClient,
 		dWallet,
-		preparedSecondRound,
+		dkgSecondRoundRequestInput,
 		userShareEncryptionKeys,
 		signerPublicKey,
 	);

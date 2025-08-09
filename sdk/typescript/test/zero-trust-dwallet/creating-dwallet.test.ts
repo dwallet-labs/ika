@@ -30,8 +30,7 @@ describe('DWallet Creation', () => {
 			await ikaClient.initialize();
 
 			// Generate deterministic keypair for this test
-			const { userShareEncryptionKeys, signerPublicKey, signerAddress } =
-				generateTestKeypair(testName);
+			const { userShareEncryptionKeys, signerAddress } = generateTestKeypair(testName);
 
 			// Request faucet funds for the test address
 			await requestTestFaucetFunds(signerAddress);
@@ -75,26 +74,25 @@ describe('DWallet Creation', () => {
 			expect(dWallet.state.$kind).toBe('AwaitingUserDKGVerificationInitiation');
 
 			// Step 4: Prepare DKG second round
-			const preparedSecondRound = await prepareDKGSecondRoundAsync(
+			const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 				ikaClient,
 				dWallet,
 				sessionIdentifierPreimage,
 				userShareEncryptionKeys,
 			);
 
-			expect(preparedSecondRound).toBeDefined();
-			expect(preparedSecondRound.encryptedUserShareAndProof).toBeInstanceOf(Uint8Array);
-			expect(preparedSecondRound.userDKGMessage).toBeInstanceOf(Uint8Array);
-			expect(preparedSecondRound.userPublicOutput).toBeDefined();
+			expect(dkgSecondRoundRequestInput).toBeDefined();
+			expect(dkgSecondRoundRequestInput.encryptedUserShareAndProof).toBeInstanceOf(Uint8Array);
+			expect(dkgSecondRoundRequestInput.userDKGMessage).toBeInstanceOf(Uint8Array);
+			expect(dkgSecondRoundRequestInput.userPublicOutput).toBeDefined();
 
 			// Step 5: Request DKG second round
 			const secondRoundMoveResponse = await requestTestDkgSecondRound(
 				ikaClient,
 				suiClient,
 				dWallet,
-				preparedSecondRound,
+				dkgSecondRoundRequestInput,
 				userShareEncryptionKeys,
-				signerPublicKey,
 				testName,
 			);
 

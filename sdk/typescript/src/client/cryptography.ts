@@ -138,7 +138,7 @@ export function encryptSecretShare(
  *
  * @param decryptionKey - The private decryption key
  * @param encryptionKey - The corresponding public encryption key
- * @param dWalletDKGOutput - The DWallet's DKG output for verification
+ * @param dWalletDKGOutput - The DWallet's (network) DKG output for verification
  * @param encryptedUserShareAndProof - The encrypted share with proof to decrypt
  * @param protocolPublicParameters - The protocol public parameters
  * @returns The decrypted secret share
@@ -249,6 +249,10 @@ export async function prepareImportDWalletVerification(
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	keypair: Keypair,
 ): Promise<ImportDWalletVerificationRequestInput> {
+	if (keypair.getKeyScheme() !== 'Secp256k1') {
+		throw new Error('Only Secp256k1 keypairs are supported for now');
+	}
+
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
 	const [userSecretShare, userPublicOutput, userMessage] = create_imported_dwallet_user_output(
@@ -313,7 +317,7 @@ export function createUserSignMessage(
  * @param network_dkg_public_output - The network DKG public output
  * @returns The protocol public parameters
  */
-export function networkDkgPublicOutputToProtocolPp(
+export function networkDkgPublicOutputToProtocolPublicParameters(
 	network_dkg_public_output: Uint8Array,
 ): Uint8Array {
 	return Uint8Array.from(network_dkg_public_output_to_protocol_pp(network_dkg_public_output));

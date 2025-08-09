@@ -45,7 +45,6 @@ export async function createCompleteDWallet(
 	dWallet: DWallet;
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 	userShareEncryptionKeys: UserShareEncrytionKeys;
-	signerPublicKey: Uint8Array;
 	signerAddress: string;
 }> {
 	// Generate deterministic keypair for this test
@@ -76,7 +75,7 @@ export async function createCompleteDWallet(
 	);
 
 	// Step 4: Prepare DKG second round
-	const preparedSecondRound = await prepareDKGSecondRoundAsync(
+	const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 		ikaClient,
 		dWallet,
 		sessionIdentifierPreimage,
@@ -88,9 +87,8 @@ export async function createCompleteDWallet(
 		ikaClient,
 		suiClient,
 		dWallet,
-		preparedSecondRound,
+		dkgSecondRoundRequestInput,
 		userShareEncryptionKeys,
-		signerPublicKey,
 		testName,
 	);
 
@@ -135,7 +133,6 @@ export async function createCompleteDWallet(
 		dWallet: activeDWallet,
 		encryptedUserSecretKeyShare,
 		userShareEncryptionKeys,
-		signerPublicKey,
 		signerAddress,
 	};
 }
@@ -234,7 +231,6 @@ export async function requestTestDkgSecondRound(
 	dWallet: DWallet,
 	dkgSecondRoundRequestInput: DKGSecondRoundRequestInput,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
-	signerPublicKey: Uint8Array,
 	testName: string,
 ) {
 	const transaction = new Transaction();
@@ -245,7 +241,6 @@ export async function requestTestDkgSecondRound(
 	ikaTransaction.requestDWalletDKGSecondRound({
 		dWallet,
 		dkgSecondRoundRequestInput,
-		signerPublicKey,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
 	});
@@ -367,7 +362,7 @@ export async function testPresign(
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	ikaTransaction.presignAndTransferCap({
+	ikaTransaction.requestPresignAndTransferCap({
 		dWallet,
 		signatureAlgorithm,
 		ikaCoin: emptyIKACoin,
@@ -724,7 +719,7 @@ export async function testTransferEncryptedUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	destinationSuiAddress: string,
+	destinationEncryptionKeyAddress: string,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 	testName: string,
@@ -736,7 +731,7 @@ export async function testTransferEncryptedUserShare(
 
 	await ikaTransaction.transferUserShare({
 		dWallet,
-		destinationSuiAddress,
+		destinationEncryptionKeyAddress,
 		sourceEncryptedUserSecretKeyShare,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,

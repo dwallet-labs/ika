@@ -49,7 +49,7 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 
 			await delay(3);
 
-			const preparedImportDWalletVerification = await prepareImportDWalletVerification(
+			const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
 				ikaClient,
 				sessionIdentifierPreimage,
 				userShareEncryptionKeys,
@@ -60,7 +60,7 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 				await requestTestImportedDWalletVerification(
 					ikaClient,
 					suiClient,
-					preparedImportDWalletVerification,
+					importDWalletVerificationRequestInput,
 					Curve.SECP256K1,
 					signerPublicKey,
 					sessionIdentifier,

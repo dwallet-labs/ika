@@ -164,7 +164,6 @@ export async function requestDkgSecondRound(
 	dWallet: DWallet,
 	dkgSecondRoundRequestInput: DKGSecondRoundRequestInput,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
-	signerPublicKey: Uint8Array,
 ) {
 	const transaction = new Transaction();
 
@@ -179,7 +178,6 @@ export async function requestDkgSecondRound(
 	ikaTransaction.requestDWalletDKGSecondRound({
 		dWallet,
 		dkgSecondRoundRequestInput,
-		signerPublicKey,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
 	});
@@ -297,7 +295,7 @@ export async function presign(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	ikaTransaction.presignAndTransferCap({
+	ikaTransaction.requestPresignAndTransferCap({
 		dWallet,
 		signatureAlgorithm,
 		ikaCoin: emptyIKACoin,
@@ -641,7 +639,7 @@ export async function transferEncryptedUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	destinationSuiAddress: string,
+	destinationEncryptionKeyAddress: string,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	userShareEncryptionKeys: UserShareEncrytionKeys,
 ) {
@@ -657,7 +655,7 @@ export async function transferEncryptedUserShare(
 
 	await ikaTransaction.transferUserShare({
 		dWallet,
-		destinationSuiAddress,
+		destinationEncryptionKeyAddress,
 		sourceEncryptedUserSecretKeyShare,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,

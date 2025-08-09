@@ -21,7 +21,7 @@ const ikaClient = createIkaClient(suiClient);
 async function main() {
 	await ikaClient.initialize();
 
-	const { userShareEncryptionKeys, signerPublicKey } = generateKeypair();
+	const { userShareEncryptionKeys } = generateKeypair();
 
 	const { dwalletID, sessionIdentifierPreimage } = await requestDKGFirstRound(ikaClient, suiClient);
 
@@ -32,7 +32,7 @@ async function main() {
 		'AwaitingUserDKGVerificationInitiation',
 	);
 
-	const preparedSecondRound = await prepareDKGSecondRoundAsync(
+	const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 		ikaClient,
 		dWallet,
 		sessionIdentifierPreimage,
@@ -43,9 +43,8 @@ async function main() {
 		ikaClient,
 		suiClient,
 		dWallet,
-		preparedSecondRound,
+		dkgSecondRoundRequestInput,
 		userShareEncryptionKeys,
-		signerPublicKey,
 	);
 
 	const awaitingKeyHolderSignatureDWallet = await ikaClient.getDWalletInParticularState(
@@ -68,13 +67,13 @@ async function main() {
 	);
 
 	// WARNING: THIS ADDRESS NEEDS TO HAVE AN ACTIVE ENCRYPTION KEY.
-	const destinationSuiAddress = Ed25519Keypair.generate().toSuiAddress();
+	const destinationEncryptionKeyAddress = Ed25519Keypair.generate().toSuiAddress();
 
 	await transferEncryptedUserShare(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		destinationSuiAddress,
+		destinationEncryptionKeyAddress,
 		sourceEncryptedUserSecretKeyShare,
 		userShareEncryptionKeys,
 	);

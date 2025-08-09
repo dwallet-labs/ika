@@ -51,7 +51,7 @@ describe('Imported DWallet Signing', () => {
 
 			await delay(3);
 
-			const preparedImportDWalletVerification = await prepareImportDWalletVerification(
+			const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
 				ikaClient,
 				sessionIdentifierPreimage,
 				userShareEncryptionKeys,
@@ -62,7 +62,7 @@ describe('Imported DWallet Signing', () => {
 				await requestTestImportedDWalletVerification(
 					ikaClient,
 					suiClient,
-					preparedImportDWalletVerification,
+					importDWalletVerificationRequestInput,
 					Curve.SECP256K1,
 					signerPublicKey,
 					sessionIdentifier,

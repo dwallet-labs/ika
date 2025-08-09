@@ -36,7 +36,7 @@ export interface IkaClientOptions {
 	suiClient: SuiClient;
 	timeout?: number;
 	protocolPublicParameters?: {
-		decryptionKeyPublicOutputID: string;
+		networkEncryptionKeyPublicOutputID: string;
 		epoch: number;
 		protocolPublicParameters: Uint8Array;
 	};

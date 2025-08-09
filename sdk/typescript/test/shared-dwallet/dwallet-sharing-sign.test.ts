@@ -34,8 +34,7 @@ describe('Shared DWallet Signing (public user shares)', () => {
 			const ikaClient = createTestIkaClient(suiClient);
 			await ikaClient.initialize();
 
-			const { userShareEncryptionKeys, signerPublicKey, signerAddress } =
-				generateTestKeypair(testName);
+			const { userShareEncryptionKeys, signerAddress } = generateTestKeypair(testName);
 
 			await requestTestFaucetFunds(signerAddress);
 
@@ -58,7 +57,7 @@ describe('Shared DWallet Signing (public user shares)', () => {
 				2000,
 			);
 
-			const preparedSecondRound = await prepareDKGSecondRoundAsync(
+			const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 				ikaClient,
 				dWallet,
 				sessionIdentifierPreimage,
@@ -69,9 +68,8 @@ describe('Shared DWallet Signing (public user shares)', () => {
 				ikaClient,
 				suiClient,
 				dWallet,
-				preparedSecondRound,
+				dkgSecondRoundRequestInput,
 				userShareEncryptionKeys,
-				signerPublicKey,
 				testName,
 			);
 
