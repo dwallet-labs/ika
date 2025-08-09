@@ -33,7 +33,7 @@ export class UserShareEncrytionKeys {
 	/** The private decryption key used to decrypt secret shares */
 	decryptionKey: Uint8Array;
 	/** The Ed25519 keypair used for signing encrypted secret share operations */
-	encryptedSecretShareSigningKeypair: Ed25519Keypair;
+	#encryptedSecretShareSigningKeypair: Ed25519Keypair;
 
 	private domainSeperators = {
 		classGroups: 'CLASS_GROUPS_DECRYPTION_KEY_V1',
@@ -58,7 +58,7 @@ export class UserShareEncrytionKeys {
 			const classGroupsKeypair = createClassGroupsKeypair(classGroupsSeed);
 			this.encryptionKey = new Uint8Array(classGroupsKeypair.encryptionKey);
 			this.decryptionKey = new Uint8Array(classGroupsKeypair.decryptionKey);
-			this.encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+			this.#encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
 				toHex(encryptionSignerKeySeed),
 			);
 		} else {
@@ -84,7 +84,7 @@ export class UserShareEncrytionKeys {
 
 			this.encryptionKey = encryptionKey;
 			this.decryptionKey = decryptionKey;
-			this.encryptedSecretShareSigningKeypair = Ed25519Keypair.fromSecretKey(
+			this.#encryptedSecretShareSigningKeypair = Ed25519Keypair.fromSecretKey(
 				secretShareSigningSecretKey,
 			);
 		}
@@ -119,7 +119,7 @@ export class UserShareEncrytionKeys {
 	 * @returns The Ed25519 public key used for signature verification
 	 */
 	getPublicKey() {
-		return this.encryptedSecretShareSigningKeypair.getPublicKey();
+		return this.#encryptedSecretShareSigningKeypair.getPublicKey();
 	}
 
 	/**
@@ -128,7 +128,7 @@ export class UserShareEncrytionKeys {
 	 * @returns The Sui address as a string
 	 */
 	getSuiAddress(): string {
-		return this.encryptedSecretShareSigningKeypair.getPublicKey().toSuiAddress();
+		return this.#encryptedSecretShareSigningKeypair.getPublicKey().toSuiAddress();
 	}
 
 	/**
@@ -137,7 +137,18 @@ export class UserShareEncrytionKeys {
 	 * @returns The raw bytes of the Ed25519 public key
 	 */
 	getSigningPublicKeyBytes(): Uint8Array {
-		return this.encryptedSecretShareSigningKeypair.getPublicKey().toRawBytes();
+		return this.#encryptedSecretShareSigningKeypair.getPublicKey().toRawBytes();
+	}
+
+	/**
+	 * Verifies a signature over a message.
+	 *
+	 * @param message - The message to verify
+	 * @param signature - The signature to verify
+	 * @returns Promise resolving to the verification result
+	 */
+	async verifySignature(message: Uint8Array, signature: Uint8Array): Promise<boolean> {
+		return await this.#encryptedSecretShareSigningKeypair.getPublicKey().verify(message, signature);
 	}
 
 	/**
@@ -147,7 +158,7 @@ export class UserShareEncrytionKeys {
 	 * @returns Promise resolving to the signature bytes
 	 */
 	async getEncryptionKeySignature(): Promise<Uint8Array> {
-		return await this.encryptedSecretShareSigningKeypair.sign(this.encryptionKey);
+		return await this.#encryptedSecretShareSigningKeypair.sign(this.encryptionKey);
 	}
 
 	/**
@@ -163,7 +174,7 @@ export class UserShareEncrytionKeys {
 			throw new Error('DWallet is not in awaiting key holder signature state');
 		}
 
-		return await this.encryptedSecretShareSigningKeypair.sign(
+		return await this.#encryptedSecretShareSigningKeypair.sign(
 			Uint8Array.from(dWallet.state.AwaitingKeyHolderSignature?.public_output),
 		);
 	}
@@ -185,6 +196,30 @@ export class UserShareEncrytionKeys {
 	): Promise<Uint8Array> {
 		if (!dWallet.state.Active?.public_output) {
 			throw new Error('DWallet is not active');
+		}
+
+		if (!encryptedUserSecretKeyShare.state.KeyHolderSigned?.user_output_signature) {
+			throw new Error('Encrypted user secret key share is not signed by the key holder');
+		}
+
+		if (
+			!(await this.verifySignature(
+				Uint8Array.from(dWallet.state.Active.public_output),
+				Uint8Array.from(encryptedUserSecretKeyShare.state.KeyHolderSigned.user_output_signature),
+			))
+		) {
+			throw new Error(
+				'Invalid signature. The user output signature does not match the public output.',
+			);
+		}
+
+		if (
+			this.#encryptedSecretShareSigningKeypair.toSuiAddress() !==
+			encryptedUserSecretKeyShare.encryption_key_address
+		) {
+			throw new Error(
+				'Invalid Sui address. The encryption key address does not match the signing keypair address.',
+			);
 		}
 
 		return decryptUserShare(
@@ -215,7 +250,7 @@ export class UserShareEncrytionKeys {
 				encryptionKey: this.encryptionKey,
 				decryptionKey: this.decryptionKey,
 				secretShareSigningSecretKey: Uint8Array.from(
-					this.encryptedSecretShareSigningKeypair.getSecretKey(),
+					this.#encryptedSecretShareSigningKeypair.getSecretKey(),
 				),
 			},
 		}).toBytes();
