@@ -41,13 +41,6 @@ type AsyncProtocol = twopc_mpc::secp256k1::class_groups::AsyncProtocol;
 type DKGCentralizedParty = <AsyncProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
 pub type SignCentralizedParty = <AsyncProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
-/// Contains the public keys of the DWallet.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
-pub struct DWalletPublicKeys {
-    pub centralized_public_share: Vec<u8>,
-    pub decentralized_public_share: Vec<u8>,
-    pub public_key: Vec<u8>,
-}
 pub type DKGDecentralizedOutput =
     <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 
