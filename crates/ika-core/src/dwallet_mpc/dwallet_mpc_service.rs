@@ -1007,6 +1007,7 @@ mod tests {
     use prometheus::Registry;
     use std::sync::Mutex;
     use tokio::sync::watch;
+    use ika_types::crypto::AuthorityKeyPair;
 
     struct TestingAuthorityPerEpochStore {
         pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
@@ -1226,6 +1227,8 @@ mod tests {
         Vec<Arc<TestingSubmitToConsensus>>,
     ) {
         let (committee, keypairs) = Committee::new_simple_test_committee();
+        let a: AuthorityKeyPair = keypairs.get(0).unwrap().clone();
+        let b = a.private();
         let committee_clone = committee.clone();
         let names: Vec<_> = committee_clone.names().collect();
         let ika_network_config = IkaNetworkConfig::new(
@@ -1278,7 +1281,7 @@ mod tests {
                     Arc::new(committee.clone()),
                     1,
                     ika_network_config,
-                    RootSeed::new([1; 32]),
+                    RootSeed::random_seed(),
                     0,
                     0,
                     DWalletMPCMetrics::new(&Registry::new()),
