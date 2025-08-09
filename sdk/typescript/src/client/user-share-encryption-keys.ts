@@ -40,20 +40,13 @@ export class UserShareEncrytionKeys {
 		encryptionSignerKey: 'ED25519_SIGNING_KEY_V1',
 	};
 
-	/**
-	 * Create a new UserShareEncrytionKeys instance.
-	 *
-	 * Overloads:
-	 * - constructor(rootSeedKey)
-	 * - constructor(encryptionKey, decryptionKey)
-	 */
-	constructor(rootSeedKey: Uint8Array);
-	constructor(
+	private constructor(rootSeedKey: Uint8Array);
+	private constructor(
 		encryptionKey: Uint8Array,
 		decryptionKey: Uint8Array,
 		secretShareSigningSecretKey: Uint8Array,
 	);
-	constructor(arg1: Uint8Array, arg2?: Uint8Array, arg3?: Uint8Array) {
+	private constructor(arg1: Uint8Array, arg2?: Uint8Array, arg3?: Uint8Array) {
 		if (arg2 === undefined && arg3 === undefined) {
 			const rootSeedKey = arg1;
 			const classGroupsSeed = this.hash(this.domainSeperators.classGroups, rootSeedKey);

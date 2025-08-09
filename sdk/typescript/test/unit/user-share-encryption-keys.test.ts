@@ -10,7 +10,7 @@ import { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-k
 describe('UserShareEncrytionKeys', () => {
 	const testSeed = new Uint8Array(32);
 	testSeed.fill(42);
-	const keys = new UserShareEncrytionKeys(testSeed);
+	const keys = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
 
 	describe('constructor', () => {
 		it('should create instance with valid seed', () => {
@@ -25,8 +25,8 @@ describe('UserShareEncrytionKeys', () => {
 			const seed2 = new Uint8Array(32);
 			seed2.fill(2);
 
-			const keys1 = new UserShareEncrytionKeys(seed1);
-			const keys2 = new UserShareEncrytionKeys(seed2);
+			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(seed1);
+			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(seed2);
 
 			expect(keys1.encryptionKey).not.toEqual(keys2.encryptionKey);
 			expect(keys1.decryptionKey).not.toEqual(keys2.decryptionKey);
@@ -34,8 +34,8 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should generate consistent keys for same seed', () => {
-			const keys1 = new UserShareEncrytionKeys(testSeed);
-			const keys2 = new UserShareEncrytionKeys(testSeed);
+			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
 
 			expect(keys1.encryptionKey).toEqual(keys2.encryptionKey);
 			expect(keys1.decryptionKey).toEqual(keys2.decryptionKey);
@@ -51,7 +51,7 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should generate same keys as constructor', () => {
-			const constructorKeys = new UserShareEncrytionKeys(testSeed);
+			const constructorKeys = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
 			const staticKeys = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
 
 			expect(constructorKeys.encryptionKey).toEqual(staticKeys.encryptionKey);
@@ -71,8 +71,8 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should return consistent public key for same seed', () => {
-			const keys1 = new UserShareEncrytionKeys(testSeed);
-			const keys2 = new UserShareEncrytionKeys(testSeed);
+			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
 
 			expect(keys1.getPublicKey().toRawBytes()).toEqual(keys2.getPublicKey().toRawBytes());
 		});
@@ -87,8 +87,8 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should return consistent address for same seed', () => {
-			const keys1 = new UserShareEncrytionKeys(testSeed);
-			const keys2 = new UserShareEncrytionKeys(testSeed);
+			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
 
 			expect(keys1.getSuiAddress()).toBe(keys2.getSuiAddress());
 		});
@@ -103,8 +103,8 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should return consistent bytes for same seed', () => {
-			const keys1 = new UserShareEncrytionKeys(testSeed);
-			const keys2 = new UserShareEncrytionKeys(testSeed);
+			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
 
 			expect(keys1.getSigningPublicKeyBytes()).toEqual(keys2.getSigningPublicKeyBytes());
 		});
@@ -119,7 +119,7 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should create consistent signature for same seed', async () => {
-			const keys2 = new UserShareEncrytionKeys(testSeed);
+			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
 
 			const signature1 = await keys.getEncryptionKeySignature();
 			const signature2 = await keys2.getEncryptionKeySignature();
@@ -237,8 +237,8 @@ describe('UserShareEncrytionKeys', () => {
 			const seed2 = new Uint8Array(32);
 			seed2.fill(2);
 
-			const keys1 = new UserShareEncrytionKeys(seed1);
-			const keys2 = new UserShareEncrytionKeys(seed2);
+			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(seed1);
+			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(seed2);
 
 			expect(keys1.encryptionKey).not.toEqual(keys2.encryptionKey);
 			expect(keys1.decryptionKey).not.toEqual(keys2.decryptionKey);
