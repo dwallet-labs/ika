@@ -1,0 +1,34 @@
+{
+	"name": "@ika.xyz/mpc-wasm",
+	"description": "IKA MPC in WASM",
+	"type": "commonjs",
+	"scripts": {
+		"build": "npm run build:node && npm run build:web && npm run build:bundler",
+		"note": "wasm-pack uses release profile by default",
+		"build:bundler": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target bundler --out-dir dist/bundler --${PROFILE} && rm dist/bundler/.gitignore",
+		"build:node": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target nodejs --out-dir dist/node --${PROFILE} && rm dist/node/.gitignore",
+		"build:web": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target web --out-dir dist/web --${PROFILE} && rm dist/web/.gitignore",
+		"prepare": "npm run build"
+	},
+	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
+	"version": "0.1.9",
+	"license": "BSD-3-Clause-Clear",
+	"main": "dist/node/dwallet_mpc_wasm.js",
+	"browser": "dist/web/dwallet_mpc_wasm.js",
+	"types": "dist/node/dwallet_mpc_wasm.d.ts",
+	"devDependencies": {
+		"cross-env": "^7.0.3"
+	},
+	"bugs": {
+		"url": "https://github.com/dwallet-labs/ika/issues/new"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"LICENSE",
+		"README.md",
+		"dist",
+		"src"
+	]
+}

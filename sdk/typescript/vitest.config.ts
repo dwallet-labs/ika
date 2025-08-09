@@ -6,9 +6,10 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
 	test: {
 		minWorkers: 1,
-		maxWorkers: 4,
+		maxWorkers: 30,
 		hookTimeout: 1000000,
-		testTimeout: 1000000,
+		testTimeout: 1000000, // 10 minutes
+		retry: 0,
 		env: {
 			NODE_ENV: 'test',
 		},

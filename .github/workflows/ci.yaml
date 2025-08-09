@@ -61,7 +61,7 @@ jobs:
         run: cargo fmt -- --check
       - name: Fmt Check - Wasm
         run: cargo fmt -- --check
-        working-directory: sdk/dwallet-mpc-wasm
+        working-directory: sdk/mpc-wasm
   clippy:
     if: github.event_name == 'push'
     name: Clippy

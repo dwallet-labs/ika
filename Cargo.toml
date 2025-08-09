@@ -2,7 +2,7 @@
 resolver = "2"
 
 exclude = [
-    "sdk/dwallet-mpc-wasm",
+    "sdk/mpc-wasm",
 ]
 
 members = [
