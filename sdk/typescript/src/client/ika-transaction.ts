@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { Ed25519PublicKey } from '@mysten/sui/dist/cjs/keypairs/ed25519/publickey.js';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator.js';
@@ -1700,11 +1701,32 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
+		if (!sourceEncryptedUserSecretKeyShare.state.KeyHolderSigned?.user_output_signature) {
+			throw new Error('User output signature is not set');
+		}
+
 		const publicParameters = await this.#ikaClient.getProtocolPublicParameters();
 
 		const destinationEncryptionKeyObj = await this.#ikaClient.getActiveEncryptionKey(
 			destinationEncryptionKeyAddress,
 		);
+
+		const publicKey = new Ed25519PublicKey(
+			new Uint8Array(destinationEncryptionKeyObj.signer_public_key),
+		);
+
+		if (
+			!(await publicKey.verify(
+				Uint8Array.from(destinationEncryptionKeyObj.encryption_key),
+				Uint8Array.from(destinationEncryptionKeyObj.encryption_key_signature),
+			))
+		) {
+			throw new Error('Destination encryption key signature is not valid');
+		}
+
+		if (publicKey.toSuiAddress() !== destinationEncryptionKeyObj.signer_address) {
+			throw new Error('Destination encryption key address does not match the public key');
+		}
 
 		return coordinatorTx.requestReEncryptUserShareFor(
 			this.#ikaClient.ikaConfig,
