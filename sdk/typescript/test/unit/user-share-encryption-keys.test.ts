@@ -245,4 +245,92 @@ describe('UserShareEncrytionKeys', () => {
 			expect(keys1.getSigningPublicKeyBytes()).not.toEqual(keys2.getSigningPublicKeyBytes());
 		});
 	});
+
+	describe('constructor with explicit keys', () => {
+		it('should create instance with 32-byte encryption/decryption keys', () => {
+			const enc = new Uint8Array(32);
+			enc.fill(7);
+			const dec = new Uint8Array(32);
+			dec.fill(9);
+
+			const byKeys = new UserShareEncrytionKeys(enc, dec);
+
+			expect(byKeys.encryptionKey).toEqual(enc);
+			expect(byKeys.decryptionKey).toEqual(dec);
+			expect(byKeys.getSigningPublicKeyBytes()).toBeInstanceOf(Uint8Array);
+			expect(byKeys.getSigningPublicKeyBytes().length).toBeGreaterThan(0);
+		});
+
+		it('should be deterministic for same key inputs', async () => {
+			const enc = new Uint8Array(32);
+			enc.fill(3);
+			const dec = new Uint8Array(32);
+			dec.fill(5);
+
+			const a = new UserShareEncrytionKeys(enc, dec);
+			const b = new UserShareEncrytionKeys(enc, dec);
+
+			expect(a.encryptionKey).toEqual(b.encryptionKey);
+			expect(a.decryptionKey).toEqual(b.decryptionKey);
+			expect(a.getSigningPublicKeyBytes()).toEqual(b.getSigningPublicKeyBytes());
+			expect(a.getSuiAddress()).toBe(b.getSuiAddress());
+			expect(await a.getEncryptionKeySignature()).toEqual(await b.getEncryptionKeySignature());
+		});
+
+		it('should throw when keys are not 32 bytes', () => {
+			const enc31 = new Uint8Array(31);
+			const dec32 = new Uint8Array(32);
+			dec32.fill(1);
+			expect(() => new UserShareEncrytionKeys(enc31, dec32)).toThrow(
+				'encryptionKey and decryptionKey must be 32 bytes',
+			);
+
+			const enc32 = new Uint8Array(32);
+			enc32.fill(2);
+			const dec33 = new Uint8Array(33);
+			expect(() => new UserShareEncrytionKeys(enc32, dec33 as unknown as Uint8Array)).toThrow(
+				'encryptionKey and decryptionKey must be 32 bytes',
+			);
+		});
+	});
+
+	describe('fromClassGroupKeysBytes / toClassGroupKeysBytes', () => {
+		it('should construct from 64-byte buffer (32 enc + 32 dec)', () => {
+			const enc = new Uint8Array(32);
+			enc.fill(11);
+			const dec = new Uint8Array(32);
+			dec.fill(13);
+			const bytes = new Uint8Array([...enc, ...dec]);
+
+			const keys = UserShareEncrytionKeys.fromClassGroupKeysBytes(bytes);
+			expect(keys.encryptionKey).toEqual(enc);
+			expect(keys.decryptionKey).toEqual(dec);
+		});
+
+		it('should throw when buffer length is not 64 bytes', () => {
+			const bad = new Uint8Array(63);
+			expect(() => UserShareEncrytionKeys.fromClassGroupKeysBytes(bad)).toThrow(
+				'classGroupKeysBytes must be 64 bytes (32 enc + 32 dec)',
+			);
+		});
+
+		it('should round-trip via toClassGroupKeysBytes()', () => {
+			const enc = new Uint8Array(32);
+			enc.fill(21);
+			const dec = new Uint8Array(32);
+			dec.fill(22);
+
+			const original = new UserShareEncrytionKeys(enc, dec);
+			const bytes = original.toClassGroupKeysBytes();
+			expect(bytes).toBeInstanceOf(Uint8Array);
+			expect(bytes.length).toBe(64);
+			expect(Array.from(bytes.slice(0, 32))).toEqual(Array.from(enc));
+			expect(Array.from(bytes.slice(32))).toEqual(Array.from(dec));
+
+			const reconstructed = UserShareEncrytionKeys.fromClassGroupKeysBytes(bytes);
+			expect(reconstructed.encryptionKey).toEqual(original.encryptionKey);
+			expect(reconstructed.decryptionKey).toEqual(original.decryptionKey);
+			expect(reconstructed.getSigningPublicKeyBytes()).toEqual(original.getSigningPublicKeyBytes());
+		});
+	});
 });

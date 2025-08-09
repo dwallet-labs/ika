@@ -28,23 +28,53 @@ export class UserShareEncrytionKeys {
 	};
 
 	/**
-	 * Create a new UserShareEncrytionKeys instance from a root seed key.
+	 * Create a new UserShareEncrytionKeys instance.
 	 *
-	 * @param rootSeedKey - Can be a Uint8Array seed, please keep it secret.
+	 * Overloads:
+	 * - constructor(rootSeedKey)
+	 * - constructor(encryptionKey, decryptionKey)
 	 */
-	constructor(rootSeedKey: Uint8Array) {
-		const classGroupsSeed = this.hash(this.domainSeperators.classGroups, rootSeedKey);
-		const encryptionSignerKeySeed = this.hash(
-			this.domainSeperators.encryptionSignerKey,
-			rootSeedKey,
-		);
+	constructor(rootSeedKey: Uint8Array);
+	constructor(encryptionKey: Uint8Array, decryptionKey: Uint8Array);
+	constructor(arg1: Uint8Array, arg2?: Uint8Array) {
+		if (arg2 === undefined) {
+			const rootSeedKey = arg1;
+			const classGroupsSeed = this.hash(this.domainSeperators.classGroups, rootSeedKey);
+			const encryptionSignerKeySeed = this.hash(
+				this.domainSeperators.encryptionSignerKey,
+				rootSeedKey,
+			);
 
-		const classGroupsKeypair = createClassGroupsKeypair(classGroupsSeed);
-		this.encryptionKey = new Uint8Array(classGroupsKeypair.encryptionKey);
-		this.decryptionKey = new Uint8Array(classGroupsKeypair.decryptionKey);
-		this.encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
-			toHex(encryptionSignerKeySeed),
-		);
+			const classGroupsKeypair = createClassGroupsKeypair(classGroupsSeed);
+			this.encryptionKey = new Uint8Array(classGroupsKeypair.encryptionKey);
+			this.decryptionKey = new Uint8Array(classGroupsKeypair.decryptionKey);
+			this.encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+				toHex(encryptionSignerKeySeed),
+			);
+		} else {
+			const encryptionKey = arg1;
+			const decryptionKey = arg2;
+
+			if (encryptionKey.length !== 32 || decryptionKey.length !== 32) {
+				throw new Error('encryptionKey and decryptionKey must be 32 bytes');
+			}
+
+			this.encryptionKey = encryptionKey;
+			this.decryptionKey = decryptionKey;
+
+			const encryptionSignerKeySeed = new Uint8Array(
+				keccak_256(
+					Uint8Array.from([
+						...encodeToASCII(this.domainSeperators.encryptionSignerKey),
+						...encryptionKey,
+						...decryptionKey,
+					]),
+				),
+			);
+			this.encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+				toHex(encryptionSignerKeySeed),
+			);
+		}
 	}
 
 	/**
@@ -55,6 +85,15 @@ export class UserShareEncrytionKeys {
 	 */
 	static fromRootSeedKey(rootSeedKey: Uint8Array): UserShareEncrytionKeys {
 		return new UserShareEncrytionKeys(rootSeedKey);
+	}
+
+	static fromClassGroupKeysBytes(classGroupKeysBytes: Uint8Array): UserShareEncrytionKeys {
+		if (classGroupKeysBytes.length !== 64) {
+			throw new Error('classGroupKeysBytes must be 64 bytes (32 enc + 32 dec)');
+		}
+		const encryptionKey = classGroupKeysBytes.slice(0, 32);
+		const decryptionKey = classGroupKeysBytes.slice(32, 64);
+		return new UserShareEncrytionKeys(encryptionKey, decryptionKey);
 	}
 
 	/**
@@ -138,6 +177,10 @@ export class UserShareEncrytionKeys {
 			Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
 			protocolPublicParameters,
 		);
+	}
+
+	toClassGroupKeysBytes(): Uint8Array {
+		return new Uint8Array([...this.encryptionKey, ...this.decryptionKey]);
 	}
 
 	/**
