@@ -121,7 +121,7 @@ export class IkaClient {
 		networkEncryptionKeyID: string;
 	}> {
 		if (!this.cache) {
-			return this.getObjects();
+			return this.#getObjects();
 		}
 
 		if (this.cachedObjects) {
@@ -133,7 +133,7 @@ export class IkaClient {
 			return this.cachedObjects!;
 		}
 
-		await this.getObjects();
+		await this.#getObjects();
 		return this.cachedObjects!;
 	}
 
@@ -417,7 +417,7 @@ export class IkaClient {
 		}
 
 		const protocolPublicParameters = networkDkgPublicOutputToProtocolPublicParameters(
-			await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+			await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 		);
 
 		this.cachedProtocolPublicParameters = {
@@ -534,7 +534,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 * @private
 	 */
-	private async getObjects() {
+	async #getObjects() {
 		if (this.cachedObjects) {
 			return {
 				coordinatorInner: this.cachedObjects.coordinatorInner,
@@ -547,7 +547,7 @@ export class IkaClient {
 			return this.objectsPromise;
 		}
 
-		this.objectsPromise = this.fetchObjectsFromNetwork();
+		this.objectsPromise = this.#fetchObjectsFromNetwork();
 
 		try {
 			const result = await this.objectsPromise;
@@ -573,7 +573,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If network requests fail
 	 * @private
 	 */
-	private async fetchObjectsFromNetwork() {
+	async #fetchObjectsFromNetwork() {
 		try {
 			const [coordinator, system] = await this.client.multiGetObjects({
 				ids: [
@@ -659,7 +659,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If network requests fail
 	 * @private
 	 */
-	private async readTableVecAsRawBytes(tableID: string): Promise<Uint8Array> {
+	async #readTableVecAsRawBytes(tableID: string): Promise<Uint8Array> {
 		try {
 			let cursor: string | null = null;
 			const allTableRows: { objectId: string }[] = [];
@@ -689,7 +689,7 @@ export class IkaClient {
 
 			const objectIds = new Set(allTableRows.map((tableRowResult) => tableRowResult.objectId));
 
-			await this.processBatchedObjects([...objectIds], ({ objectId, fields }) => {
+			await this.#processBatchedObjects([...objectIds], ({ objectId, fields }) => {
 				const tableIndex = parseInt(fields.name);
 
 				if (isNaN(tableIndex)) {
@@ -745,7 +745,7 @@ export class IkaClient {
 	 * @throws {InvalidObjectError} If any object processing fails
 	 * @private
 	 */
-	private async processBatchedObjects<TReturn = void>(
+	async #processBatchedObjects<TReturn = void>(
 		objectIds: string[],
 		processor: (input: {
 			objectId: string;

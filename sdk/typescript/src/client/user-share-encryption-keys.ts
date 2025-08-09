@@ -49,8 +49,8 @@ export class UserShareEncrytionKeys {
 	private constructor(arg1: Uint8Array, arg2?: Uint8Array, arg3?: Uint8Array) {
 		if (arg2 === undefined && arg3 === undefined) {
 			const rootSeedKey = arg1;
-			const classGroupsSeed = this.hash(this.domainSeperators.classGroups, rootSeedKey);
-			const encryptionSignerKeySeed = this.hash(
+			const classGroupsSeed = this.#hash(this.domainSeperators.classGroups, rootSeedKey);
+			const encryptionSignerKeySeed = this.#hash(
 				this.domainSeperators.encryptionSignerKey,
 				rootSeedKey,
 			);
@@ -104,13 +104,13 @@ export class UserShareEncrytionKeys {
 		shareEncryptionKeysBytes: Uint8Array,
 	): UserShareEncrytionKeys {
 		const { encryptionKey, decryptionKey, secretShareSigningSecretKey } =
-			this.parseShareEncryptionKeys(shareEncryptionKeysBytes);
+			this.#parseShareEncryptionKeys(shareEncryptionKeysBytes);
 
 		return new UserShareEncrytionKeys(encryptionKey, decryptionKey, secretShareSigningSecretKey);
 	}
 
 	toShareEncryptionKeysBytes(): Uint8Array {
-		return this.serializeShareEncryptionKeys();
+		return this.#serializeShareEncryptionKeys();
 	}
 
 	/**
@@ -203,13 +203,13 @@ export class UserShareEncrytionKeys {
 	 * @param rootSeed - The root seed to use
 	 * @returns The hashed seed as a Uint8Array
 	 */
-	private hash(domainSeparator: string, rootSeed: Uint8Array): Uint8Array {
+	#hash(domainSeparator: string, rootSeed: Uint8Array): Uint8Array {
 		return new Uint8Array(
 			keccak_256(Uint8Array.from([...encodeToASCII(domainSeparator), ...rootSeed])),
 		);
 	}
 
-	private serializeShareEncryptionKeys() {
+	#serializeShareEncryptionKeys() {
 		return VersionedUserShareEncrytionKeysBcs.serialize({
 			V1: {
 				encryptionKey: this.encryptionKey,
@@ -221,7 +221,7 @@ export class UserShareEncrytionKeys {
 		}).toBytes();
 	}
 
-	private static parseShareEncryptionKeys(shareEncryptionKeysBytes: Uint8Array) {
+	static #parseShareEncryptionKeys(shareEncryptionKeysBytes: Uint8Array) {
 		const {
 			V1: { encryptionKey, decryptionKey, secretShareSigningSecretKey },
 		} = VersionedUserShareEncrytionKeysBcs.parse(shareEncryptionKeysBytes);

@@ -45,24 +45,24 @@ export interface IkaTransactionParams {
  */
 export class IkaTransaction {
 	/** The IkaClient instance for blockchain interactions */
-	private ikaClient: IkaClient;
+	#ikaClient: IkaClient;
 	/** The underlying Sui transaction */
-	private transaction: Transaction;
+	#transaction: Transaction;
 	/** Optional user share encryption keys for cryptographic operations */
-	private userShareEncryptionKeys?: UserShareEncrytionKeys;
+	#userShareEncryptionKeys?: UserShareEncrytionKeys;
 	/** The shared object ref for the coordinator */
-	private coordinatorObjectRef?: TransactionObjectArgument;
+	#coordinatorObjectRef?: TransactionObjectArgument;
 	/** The shared object ref for the system */
-	private systemObjectRef?: TransactionObjectArgument;
+	#systemObjectRef?: TransactionObjectArgument;
 
 	/**
 	 * Creates a new IkaTransaction instance
 	 * @param params - Configuration parameters for the transaction
 	 */
 	constructor({ ikaClient, transaction, userShareEncryptionKeys }: IkaTransactionParams) {
-		this.ikaClient = ikaClient;
-		this.transaction = transaction;
-		this.userShareEncryptionKeys = userShareEncryptionKeys;
+		this.#ikaClient = ikaClient;
+		this.#transaction = transaction;
+		this.#userShareEncryptionKeys = userShareEncryptionKeys;
 	}
 
 	/**
@@ -88,9 +88,9 @@ export class IkaTransaction {
 		dwalletCap: TransactionObjectArgument;
 		transaction: IkaTransaction;
 	}> {
-		const dwalletCap = this._requestDWalletDKGFirstRound({
+		const dwalletCap = this.#requestDWalletDKGFirstRound({
 			curve,
-			networkEncryptionKeyID: await this.ikaClient.getNetworkEncryptionKeyID(),
+			networkEncryptionKeyID: await this.#ikaClient.getNetworkEncryptionKeyID(),
 			ikaCoin,
 			suiCoin,
 		});
@@ -126,7 +126,7 @@ export class IkaTransaction {
 		dwalletCap: TransactionObjectArgument;
 		transaction: IkaTransaction;
 	} {
-		const dwalletCap = this._requestDWalletDKGFirstRound({
+		const dwalletCap = this.#requestDWalletDKGFirstRound({
 			curve,
 			networkEncryptionKeyID,
 			ikaCoin,
@@ -162,14 +162,14 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 		receiver: string;
 	}) {
-		const cap = this._requestDWalletDKGFirstRound({
+		const cap = this.#requestDWalletDKGFirstRound({
 			curve,
-			networkEncryptionKeyID: await this.ikaClient.getNetworkEncryptionKeyID(),
+			networkEncryptionKeyID: await this.#ikaClient.getNetworkEncryptionKeyID(),
 			ikaCoin,
 			suiCoin,
 		});
 
-		this.transaction.transferObjects([cap], receiver);
+		this.#transaction.transferObjects([cap], receiver);
 
 		return this;
 	}
@@ -199,14 +199,14 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 		receiver: string;
 	}) {
-		const cap = this._requestDWalletDKGFirstRound({
+		const cap = this.#requestDWalletDKGFirstRound({
 			curve,
 			networkEncryptionKeyID,
 			ikaCoin,
 			suiCoin,
 		});
 
-		this.transaction.transferObjects([cap], receiver);
+		this.#transaction.transferObjects([cap], receiver);
 
 		return this;
 	}
@@ -234,23 +234,23 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		if (!this.userShareEncryptionKeys) {
+		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
 
 		coordinatorTx.requestDWalletDKGSecondRound(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
-			this.transaction.object(dWallet.dwallet_cap_id),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			this.#transaction.object(dWallet.dwallet_cap_id),
 			dkgSecondRoundRequestInput.userDKGMessage,
 			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
-			this.userShareEncryptionKeys.getSuiAddress(),
+			this.#userShareEncryptionKeys.getSuiAddress(),
 			dkgSecondRoundRequestInput.userPublicOutput,
-			this.userShareEncryptionKeys.getSigningPublicKeyBytes(),
+			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
-			this.transaction,
+			this.#transaction,
 		);
 
 		return this;
@@ -273,17 +273,17 @@ export class IkaTransaction {
 		dWallet: DWallet;
 		encryptedUserSecretKeyShareId: string;
 	}) {
-		if (!this.userShareEncryptionKeys) {
+		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
 
 		coordinatorTx.acceptEncryptedUserShare(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			dWallet.id.id,
 			encryptedUserSecretKeyShareId,
-			await this.userShareEncryptionKeys.getUserOutputSignature(dWallet),
-			this.transaction,
+			await this.#userShareEncryptionKeys.getUserOutputSignature(dWallet),
+			this.#transaction,
 		);
 
 		return this;
@@ -299,18 +299,18 @@ export class IkaTransaction {
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async registerEncryptionKey({ curve }: { curve: Curve }) {
-		if (!this.userShareEncryptionKeys) {
+		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
 
 		coordinatorTx.registerEncryptionKeyTx(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			curve,
-			this.userShareEncryptionKeys.encryptionKey,
-			await this.userShareEncryptionKeys.getEncryptionKeySignature(),
-			this.userShareEncryptionKeys.getSigningPublicKeyBytes(),
-			this.transaction,
+			this.#userShareEncryptionKeys.encryptionKey,
+			await this.#userShareEncryptionKeys.getEncryptionKeySignature(),
+			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
+			this.#transaction,
 		);
 
 		return this;
@@ -339,14 +339,14 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 	}) {
 		coordinatorTx.requestMakeDwalletUserSecretKeySharesPublic(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			dWallet.id.id,
 			secretShare,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
-			this.transaction,
+			this.#transaction,
 		);
 
 		return this;
@@ -377,7 +377,7 @@ export class IkaTransaction {
 		unverifiedPresignCap: TransactionObjectArgument;
 		transaction: IkaTransaction;
 	} {
-		const unverifiedPresignCap = this._requestPresign({
+		const unverifiedPresignCap = this.#requestPresign({
 			dWallet,
 			signatureAlgorithm,
 			ikaCoin,
@@ -415,14 +415,14 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 		receiver: string;
 	}) {
-		const unverifiedPresignCap = this._requestPresign({
+		const unverifiedPresignCap = this.#requestPresign({
 			dWallet,
 			signatureAlgorithm,
 			ikaCoin,
 			suiCoin,
 		});
 
-		this.transaction.transferObjects([unverifiedPresignCap], receiver);
+		this.#transaction.transferObjects([unverifiedPresignCap], receiver);
 
 		return this;
 	}
@@ -453,13 +453,13 @@ export class IkaTransaction {
 		transaction: IkaTransaction;
 	} {
 		const messageApproval = coordinatorTx.approveMessage(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			dWallet.dwallet_cap_id,
 			signatureAlgorithm,
 			hashScheme,
 			message,
-			this.transaction,
+			this.#transaction,
 		);
 
 		return {
@@ -481,10 +481,10 @@ export class IkaTransaction {
 		transaction: IkaTransaction;
 	} {
 		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			presign.cap_id,
-			this.transaction,
+			this.#transaction,
 		);
 
 		return {
@@ -519,13 +519,13 @@ export class IkaTransaction {
 		transaction: IkaTransaction;
 	} {
 		const importedKeyMessageApproval = coordinatorTx.approveImportedKeyMessage(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			dWallet.dwallet_cap_id,
 			signatureAlgorithm,
 			hashScheme,
 			message,
-			this.transaction,
+			this.#transaction,
 		);
 
 		return {
@@ -572,7 +572,7 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		await this._requestSign({
+		await this.#requestSign({
 			verifiedPresignCap,
 			messageApproval,
 			userSignatureInputs: {
@@ -629,7 +629,7 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		await this._requestSign({
+		await this.#requestSign({
 			verifiedPresignCap,
 			messageApproval,
 			userSignatureInputs: {
@@ -681,9 +681,9 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		this.assertDWalletPublicUserSecretKeyShareSet(dWallet);
+		this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
 
-		await this._requestSign({
+		await this.#requestSign({
 			verifiedPresignCap,
 			messageApproval,
 			userSignatureInputs: {
@@ -738,7 +738,7 @@ export class IkaTransaction {
 		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
 		transaction: IkaTransaction;
 	}> {
-		const unverifiedPartialUserSignatureCap = await this._requestFutureSign({
+		const unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
 			verifiedPresignCap,
 			userSignatureInputs: {
 				activeDWallet: dWallet,
@@ -797,7 +797,7 @@ export class IkaTransaction {
 		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
 		transaction: IkaTransaction;
 	}> {
-		const unverifiedPartialUserSignatureCap = await this._requestFutureSign({
+		const unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
 			verifiedPresignCap,
 			userSignatureInputs: {
 				activeDWallet: dWallet,
@@ -854,7 +854,7 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		const unverifiedPartialUserSignatureCap = await this._requestFutureSign({
+		const unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
 			verifiedPresignCap,
 			userSignatureInputs: {
 				activeDWallet: dWallet,
@@ -867,7 +867,7 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		this.transaction.transferObjects([unverifiedPartialUserSignatureCap], receiver);
+		this.#transaction.transferObjects([unverifiedPartialUserSignatureCap], receiver);
 
 		return this;
 	}
@@ -912,7 +912,7 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		const unverifiedPartialUserSignatureCap = await this._requestFutureSign({
+		const unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
 			verifiedPresignCap,
 			userSignatureInputs: {
 				activeDWallet: dWallet,
@@ -925,7 +925,7 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		this.transaction.transferObjects([unverifiedPartialUserSignatureCap], receiver);
+		this.#transaction.transferObjects([unverifiedPartialUserSignatureCap], receiver);
 
 		return this;
 	}
@@ -953,19 +953,19 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 	}) {
 		coordinatorTx.requestSignWithPartialUserSignature(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			coordinatorTx.verifyPartialUserSignatureCap(
-				this.ikaClient.ikaConfig,
-				this.getCoordinatorObjectRef(),
-				this.transaction.object(partialUserSignature.cap_id),
-				this.transaction,
+				this.#ikaClient.ikaConfig,
+				this.#getCoordinatorObjectRef(),
+				this.#transaction.object(partialUserSignature.cap_id),
+				this.#transaction,
 			),
 			messageApproval,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
-			this.transaction,
+			this.#transaction,
 		);
 
 		return this;
@@ -1003,7 +1003,7 @@ export class IkaTransaction {
 		ImportedKeyDWalletCap: TransactionObjectArgument;
 		transaction: IkaTransaction;
 	}> {
-		const importedKeyDWalletVerificationCap = await this._requestImportedKeyDwalletVerification({
+		const importedKeyDWalletVerificationCap = await this.#requestImportedKeyDwalletVerification({
 			importDWalletVerificationRequestInput,
 			curve,
 			signerPublicKey,
@@ -1050,7 +1050,7 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 		receiver: string;
 	}) {
-		const importedKeyDWalletVerificationCap = await this._requestImportedKeyDwalletVerification({
+		const importedKeyDWalletVerificationCap = await this.#requestImportedKeyDwalletVerification({
 			importDWalletVerificationRequestInput,
 			curve,
 			signerPublicKey,
@@ -1059,7 +1059,7 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		this.transaction.transferObjects([importedKeyDWalletVerificationCap], receiver);
+		this.#transaction.transferObjects([importedKeyDWalletVerificationCap], receiver);
 
 		return this;
 	}
@@ -1102,7 +1102,7 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		await this._requestImportedKeySign({
+		await this.#requestImportedKeySign({
 			verifiedPresignCap,
 			importedKeyMessageApproval,
 			userSignatureInputs: {
@@ -1159,7 +1159,7 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		await this._requestImportedKeySign({
+		await this.#requestImportedKeySign({
 			verifiedPresignCap,
 			importedKeyMessageApproval,
 			userSignatureInputs: {
@@ -1211,9 +1211,9 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		this.assertDWalletPublicUserSecretKeyShareSet(dWallet);
+		this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
 
-		await this._requestImportedKeySign({
+		await this.#requestImportedKeySign({
 			verifiedPresignCap,
 			importedKeyMessageApproval,
 			userSignatureInputs: {
@@ -1256,18 +1256,18 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		if (!this.userShareEncryptionKeys) {
+		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
 
-		await this._requestReEncryptUserShareFor({
+		await this.#requestReEncryptUserShareFor({
 			dWallet,
 			destinationEncryptionKeyAddress,
 			sourceEncryptedUserSecretKeyShare,
-			sourceSecretShare: await this.userShareEncryptionKeys.decryptUserShare(
+			sourceSecretShare: await this.#userShareEncryptionKeys.decryptUserShare(
 				dWallet,
 				sourceEncryptedUserSecretKeyShare,
-				await this.ikaClient.getProtocolPublicParameters(),
+				await this.#ikaClient.getProtocolPublicParameters(),
 			),
 			ikaCoin,
 			suiCoin,
@@ -1307,7 +1307,7 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		await this._requestReEncryptUserShareFor({
+		await this.#requestReEncryptUserShareFor({
 			dWallet,
 			destinationEncryptionKeyAddress,
 			sourceEncryptedUserSecretKeyShare,
@@ -1327,40 +1327,41 @@ export class IkaTransaction {
 	 */
 	createSessionIdentifier() {
 		return coordinatorTx.registerSessionIdentifier(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			createRandomSessionIdentifier(),
-			this.transaction,
+			this.#transaction,
 		);
 	}
 
-	private getCoordinatorObjectRef() {
-		if (!this.coordinatorObjectRef) {
-			this.coordinatorObjectRef = this.transaction.sharedObjectRef({
-				objectId: this.ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID,
+	#getCoordinatorObjectRef() {
+		if (!this.#coordinatorObjectRef) {
+			this.#coordinatorObjectRef = this.#transaction.sharedObjectRef({
+				objectId: this.#ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID,
 				initialSharedVersion:
-					this.ikaClient.ikaConfig.objects.ikaDWalletCoordinator.initialSharedVersion,
+					this.#ikaClient.ikaConfig.objects.ikaDWalletCoordinator.initialSharedVersion,
 				mutable: true,
 			});
 		}
 
-		return this.coordinatorObjectRef;
+		return this.#coordinatorObjectRef;
 	}
 
 	// @ts-expect-error - TODO: Add system functions
-	private getSystemObjectRef() {
-		if (!this.systemObjectRef) {
-			this.systemObjectRef = this.transaction.sharedObjectRef({
-				objectId: this.ikaClient.ikaConfig.objects.ikaSystemObject.objectID,
-				initialSharedVersion: this.ikaClient.ikaConfig.objects.ikaSystemObject.initialSharedVersion,
+	#getSystemObjectRef() {
+		if (!this.#systemObjectRef) {
+			this.#systemObjectRef = this.#transaction.sharedObjectRef({
+				objectId: this.#ikaClient.ikaConfig.objects.ikaSystemObject.objectID,
+				initialSharedVersion:
+					this.#ikaClient.ikaConfig.objects.ikaSystemObject.initialSharedVersion,
 				mutable: true,
 			});
 		}
 
-		return this.systemObjectRef;
+		return this.#systemObjectRef;
 	}
 
-	private assertDWalletPublicOutputSet(
+	#assertDWalletPublicOutputSet(
 		dWallet: DWallet,
 	): asserts dWallet is DWallet & { state: { Active: { public_output: Uint8Array } } } {
 		if (!dWallet.state.Active?.public_output) {
@@ -1368,7 +1369,7 @@ export class IkaTransaction {
 		}
 	}
 
-	private assertDWalletPublicUserSecretKeyShareSet(
+	#assertDWalletPublicUserSecretKeyShareSet(
 		dWallet: DWallet,
 	): asserts dWallet is DWallet & { public_user_secret_key_share: Uint8Array } {
 		if (!dWallet.public_user_secret_key_share) {
@@ -1376,7 +1377,7 @@ export class IkaTransaction {
 		}
 	}
 
-	private assertPresignCompleted(
+	#assertPresignCompleted(
 		presign: Presign,
 	): asserts presign is Presign & { state: { Completed: { presign: Uint8Array } } } {
 		if (!presign.state.Completed?.presign) {
@@ -1384,7 +1385,7 @@ export class IkaTransaction {
 		}
 	}
 
-	private assertUserShareVerification(
+	#assertUserShareVerification(
 		dWallet: DWallet,
 		secretShare: Uint8Array,
 		publicParameters: Uint8Array,
@@ -1401,7 +1402,7 @@ export class IkaTransaction {
 		}
 	}
 
-	private async _verifySecretShareReturnPublicParameters({
+	async #verifySecretShareReturnPublicParameters({
 		dWallet,
 		secretShare,
 		publicParameters: publicParametersFromParam,
@@ -1410,17 +1411,17 @@ export class IkaTransaction {
 		secretShare: Uint8Array;
 		publicParameters?: Uint8Array;
 	}) {
-		this.assertDWalletPublicOutputSet(dWallet);
+		this.#assertDWalletPublicOutputSet(dWallet);
 
 		const publicParameters =
-			publicParametersFromParam ?? (await this.ikaClient.getProtocolPublicParameters());
+			publicParametersFromParam ?? (await this.#ikaClient.getProtocolPublicParameters());
 
-		this.assertUserShareVerification(dWallet, secretShare, publicParameters);
+		this.#assertUserShareVerification(dWallet, secretShare, publicParameters);
 
 		return publicParameters;
 	}
 
-	private async _decryptSecretShareAndVerifySecretShare({
+	async #decryptSecretShareAndVerifySecretShare({
 		dWallet,
 		encryptedUserSecretKeyShare,
 		publicParameters: publicParametersFromParam,
@@ -1433,20 +1434,20 @@ export class IkaTransaction {
 		secretShare: Uint8Array;
 	}> {
 		// This needs to be like this because of the way the type system is set up in typescript.
-		if (!this.userShareEncryptionKeys) {
+		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
 
 		const publicParameters =
-			publicParametersFromParam ?? (await this.ikaClient.getProtocolPublicParameters());
+			publicParametersFromParam ?? (await this.#ikaClient.getProtocolPublicParameters());
 
-		const secretShare = await this.userShareEncryptionKeys.decryptUserShare(
+		const secretShare = await this.#userShareEncryptionKeys.decryptUserShare(
 			dWallet,
 			encryptedUserSecretKeyShare,
 			publicParameters,
 		);
 
-		await this._verifySecretShareReturnPublicParameters({
+		await this.#verifySecretShareReturnPublicParameters({
 			dWallet,
 			secretShare,
 			publicParameters,
@@ -1455,7 +1456,7 @@ export class IkaTransaction {
 		return { publicParameters, secretShare };
 	}
 
-	private _requestDWalletDKGFirstRound({
+	#requestDWalletDKGFirstRound({
 		curve,
 		networkEncryptionKeyID,
 		ikaCoin,
@@ -1467,18 +1468,18 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 	}) {
 		return coordinatorTx.requestDWalletDKGFirstRound(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			networkEncryptionKeyID,
 			curve,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
-			this.transaction,
+			this.#transaction,
 		);
 	}
 
-	private _requestPresign({
+	#requestPresign({
 		dWallet,
 		signatureAlgorithm,
 		ikaCoin,
@@ -1490,18 +1491,18 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 	}) {
 		return coordinatorTx.requestPresign(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			dWallet.id.id,
 			signatureAlgorithm,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
-			this.transaction,
+			this.#transaction,
 		);
 	}
 
-	private async _requestSign({
+	async #requestSign({
 		verifiedPresignCap,
 		messageApproval,
 		userSignatureInputs,
@@ -1521,11 +1522,11 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		this.assertPresignCompleted(userSignatureInputs.presign);
+		this.#assertPresignCompleted(userSignatureInputs.presign);
 
-		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
+		const publicParameters = await this.#ikaClient.getProtocolPublicParameters();
 
-		const userSecretKeyShare = await this._getUserSecretKeyShare({
+		const userSecretKeyShare = await this.#getUserSecretKeyShare({
 			secretShare: userSignatureInputs.secretShare,
 			encryptedUserSecretKeyShare: userSignatureInputs.encryptedUserSecretKeyShare,
 			activeDWallet: userSignatureInputs.activeDWallet,
@@ -1533,8 +1534,8 @@ export class IkaTransaction {
 		});
 
 		return coordinatorTx.requestSign(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			verifiedPresignCap,
 			messageApproval,
 			createUserSignMessage(
@@ -1548,11 +1549,11 @@ export class IkaTransaction {
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
-			this.transaction,
+			this.#transaction,
 		);
 	}
 
-	private async _requestFutureSign({
+	async #requestFutureSign({
 		verifiedPresignCap,
 		userSignatureInputs,
 		ikaCoin,
@@ -1570,11 +1571,11 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		this.assertPresignCompleted(userSignatureInputs.presign);
+		this.#assertPresignCompleted(userSignatureInputs.presign);
 
-		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
+		const publicParameters = await this.#ikaClient.getProtocolPublicParameters();
 
-		const userSecretKeyShare = await this._getUserSecretKeyShare({
+		const userSecretKeyShare = await this.#getUserSecretKeyShare({
 			secretShare: userSignatureInputs.secretShare,
 			encryptedUserSecretKeyShare: userSignatureInputs.encryptedUserSecretKeyShare,
 			activeDWallet: userSignatureInputs.activeDWallet,
@@ -1582,8 +1583,8 @@ export class IkaTransaction {
 		});
 
 		return coordinatorTx.requestFutureSign(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			userSignatureInputs.activeDWallet.id.id,
 			verifiedPresignCap,
 			userSignatureInputs.message,
@@ -1599,11 +1600,11 @@ export class IkaTransaction {
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
-			this.transaction,
+			this.#transaction,
 		);
 	}
 
-	private async _requestImportedKeySign({
+	async #requestImportedKeySign({
 		verifiedPresignCap,
 		importedKeyMessageApproval,
 		userSignatureInputs,
@@ -1623,11 +1624,11 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		this.assertPresignCompleted(userSignatureInputs.presign);
+		this.#assertPresignCompleted(userSignatureInputs.presign);
 
-		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
+		const publicParameters = await this.#ikaClient.getProtocolPublicParameters();
 
-		const userSecretKeyShare = await this._getUserSecretKeyShare({
+		const userSecretKeyShare = await this.#getUserSecretKeyShare({
 			secretShare: userSignatureInputs.secretShare,
 			encryptedUserSecretKeyShare: userSignatureInputs.encryptedUserSecretKeyShare,
 			activeDWallet: userSignatureInputs.activeDWallet,
@@ -1635,8 +1636,8 @@ export class IkaTransaction {
 		});
 
 		return coordinatorTx.requestImportedKeySign(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			verifiedPresignCap,
 			importedKeyMessageApproval,
 			createUserSignMessage(
@@ -1650,11 +1651,11 @@ export class IkaTransaction {
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
-			this.transaction,
+			this.#transaction,
 		);
 	}
 
-	private async _getUserSecretKeyShare({
+	async #getUserSecretKeyShare({
 		secretShare,
 		encryptedUserSecretKeyShare,
 		activeDWallet,
@@ -1673,18 +1674,18 @@ export class IkaTransaction {
 			throw new Error('Encrypted user secret key share is not set');
 		}
 
-		if (!this.userShareEncryptionKeys) {
+		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
 
-		return this._decryptSecretShareAndVerifySecretShare({
+		return this.#decryptSecretShareAndVerifySecretShare({
 			dWallet: activeDWallet,
 			encryptedUserSecretKeyShare,
 			publicParameters,
 		}).then(({ secretShare }) => secretShare);
 	}
 
-	private async _requestReEncryptUserShareFor({
+	async #requestReEncryptUserShareFor({
 		dWallet,
 		destinationEncryptionKeyAddress,
 		sourceEncryptedUserSecretKeyShare,
@@ -1699,15 +1700,15 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		const publicParameters = await this.ikaClient.getProtocolPublicParameters();
+		const publicParameters = await this.#ikaClient.getProtocolPublicParameters();
 
-		const destinationEncryptionKeyObj = await this.ikaClient.getActiveEncryptionKey(
+		const destinationEncryptionKeyObj = await this.#ikaClient.getActiveEncryptionKey(
 			destinationEncryptionKeyAddress,
 		);
 
 		return coordinatorTx.requestReEncryptUserShareFor(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			dWallet.id.id,
 			destinationEncryptionKeyAddress,
 			encryptSecretShare(
@@ -1719,11 +1720,11 @@ export class IkaTransaction {
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
-			this.transaction,
+			this.#transaction,
 		);
 	}
 
-	private async _requestImportedKeyDwalletVerification({
+	async #requestImportedKeyDwalletVerification({
 		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
@@ -1739,24 +1740,24 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 	}) {
 		// This needs to be like this because of the way the type system is set up in typescript.
-		if (!this.userShareEncryptionKeys) {
+		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
 
 		return coordinatorTx.requestImportedKeyDwalletVerification(
-			this.ikaClient.ikaConfig,
-			this.getCoordinatorObjectRef(),
-			await this.ikaClient.getNetworkEncryptionKeyID(),
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			await this.#ikaClient.getNetworkEncryptionKeyID(),
 			curve,
 			importDWalletVerificationRequestInput.userMessage,
 			importDWalletVerificationRequestInput.encryptedUserShareAndProof,
-			this.userShareEncryptionKeys.getSuiAddress(),
+			this.#userShareEncryptionKeys.getSuiAddress(),
 			importDWalletVerificationRequestInput.userPublicOutput,
 			signerPublicKey,
 			sessionIdentifier,
 			ikaCoin,
 			suiCoin,
-			this.transaction,
+			this.#transaction,
 		);
 	}
 }
