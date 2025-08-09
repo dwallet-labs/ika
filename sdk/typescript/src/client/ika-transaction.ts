@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { Ed25519PublicKey } from '@mysten/sui/dist/cjs/keypairs/ed25519/publickey.js';
+import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator.js';
