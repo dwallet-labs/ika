@@ -220,10 +220,7 @@ export async function prepareDKGSecondRoundAsync(
 	ikaClient: IkaClient,
 	dWallet: DWallet,
 	sessionIdentifier: Uint8Array,
-	classGroupsKeypair: {
-		encryptionKey: Uint8Array;
-		decryptionKey: Uint8Array;
-	},
+	userShareEncryptionKeys: UserShareEncrytionKeys,
 ): Promise<DKGSecondRoundRequestInput> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
@@ -231,7 +228,7 @@ export async function prepareDKGSecondRoundAsync(
 		protocolPublicParameters,
 		dWallet,
 		sessionIdentifier,
-		classGroupsKeypair.encryptionKey,
+		userShareEncryptionKeys.encryptionKey,
 	);
 }
 
