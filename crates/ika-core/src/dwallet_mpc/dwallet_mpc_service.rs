@@ -1005,6 +1005,7 @@ mod tests {
     use dwallet_rng::RootSeed;
     use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
     use ika_types::crypto::AuthorityKeyPair;
+    use ika_types::messages_consensus::ConsensusTransactionKind;
     use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
     use ika_types::messages_dwallet_mpc::{
         DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
@@ -1187,8 +1188,12 @@ mod tests {
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
         );
-        let (mut dwallet_mpc_services, sui_data_senders, mut sent_consensus_messages_collectors, mut epoch_stores) =
-            create_dwallet_mpc_services();
+        let (
+            mut dwallet_mpc_services,
+            sui_data_senders,
+            mut sent_consensus_messages_collectors,
+            mut epoch_stores,
+        ) = create_dwallet_mpc_services();
         sui_data_senders.iter().for_each(|mut sui_data_sender| {
             let _ = sui_data_sender.uncompleted_events_sender.send((
                 vec![DBSuiEvent {
@@ -1231,12 +1236,24 @@ mod tests {
                 .submitted_messages
                 .clone();
             let messages = consensus_messages_store.lock().unwrap().clone();
+            let messages: Vec<_> = messages
+                .into_iter()
+                .filter_map(|message| {
+                    if let ConsensusTransactionKind::DWalletMPCMessage(message) = message.kind {
+                        Some(message)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
             drop(dwallet_mpc_service);
-            for message in messages {
-                for j in 0..committee.voting_rights.len() {
-                    let other_service = dwallet_mpc_services.get_mut(j).unwrap();
-                    // other_service.ep
-                }
+            for j in 0..committee.voting_rights.len() {
+                let other_epoch_store = epoch_stores.get(j).unwrap();
+                other_epoch_store
+                    .round_to_messages
+                    .lock()
+                    .unwrap()
+                    .insert(1, messages.clone());
             }
         }
     }
@@ -1245,7 +1262,7 @@ mod tests {
         Vec<DWalletMPCService>,
         Vec<SuiDataSenders>,
         Vec<Arc<TestingSubmitToConsensus>>,
-        Vec<Arc<TestingAuthorityPerEpochStore>>
+        Vec<Arc<TestingAuthorityPerEpochStore>>,
     ) {
         let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
         let (mut committee, keypairs) = Committee::new_simple_test_committee();
@@ -1303,7 +1320,7 @@ mod tests {
         DWalletMPCService,
         SuiDataSenders,
         Arc<TestingSubmitToConsensus>,
-        Arc<TestingAuthorityPerEpochStore>
+        Arc<TestingAuthorityPerEpochStore>,
     ) {
         let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
         let committee_clone = committee.clone();
@@ -1338,7 +1355,7 @@ mod tests {
             },
             sui_data_senders,
             dwallet_submit_to_consensus,
-            epoch_store
+            epoch_store,
         )
     }
 }
