@@ -203,6 +203,7 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
     }
 }
 
+#[cfg(test)]
 pub fn create_dwallet_mpc_services() -> (
     Vec<DWalletMPCService>,
     Vec<SuiDataSenders>,

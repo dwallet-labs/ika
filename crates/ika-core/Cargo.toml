@@ -76,6 +76,7 @@ backoff.workspace = true
 ika-types = {workspace = true, features = ["test_helpers"]}
 class_groups = { workspace = true, features = ["threshold", "parallel", "test_helpers"]}
 tracing-subscriber = "0.3.19"
+base64 = "0.22.1"
 
 [target.'cfg(not(target_env = "msvc"))'.dev-dependencies]
 pprof.workspace = true
