@@ -22,7 +22,6 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{DWalletMPCEvent, MPCRequestInput};
 use mpc::WeightedThresholdAccessStructure;
 use std::collections::HashMap;
-use tracing::error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
