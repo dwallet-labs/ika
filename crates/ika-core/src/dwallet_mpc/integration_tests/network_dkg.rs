@@ -25,6 +25,7 @@ use itertools::Itertools;
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::messages_consensus::Round;
+use tracing::info;
 
 #[tokio::test]
 async fn test_network_dkg_advance_with_messages() {
@@ -139,9 +140,5 @@ async fn advance_all_parties_and_wait_for_completions(
             tokio::time::sleep(Duration::from_millis(100)).await;
             let _ = dwallet_mpc_service.run_service_loop_iteration().await;
         }
-        println!(
-            "Processed cryptographic computations for service {:?}",
-            i + 1
-        );
     }
 }
