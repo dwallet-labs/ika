@@ -11,26 +11,25 @@ import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
 import { networkDkgPublicOutputToProtocolPublicParameters } from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
-import {
-	CoordinatorInnerDynamicField,
-	SystemInnerDynamicField,
-	type CoordinatorInner,
-	type DWallet,
-	type DWalletCap,
-	type DWalletState,
-	type EncryptedUserSecretKeyShare,
-	type EncryptedUserSecretKeyShareState,
-	type EncryptionKey,
-	type EncryptionKeyOptions,
-	type IkaClientOptions,
-	type IkaConfig,
-	type NetworkEncryptionKey,
-	type PartialUserSignature,
-	type PartialUserSignatureState,
-	type Presign,
-	type PresignState,
-	type SharedObjectOwner,
-	type SystemInner,
+import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './types.js';
+import type {
+	CoordinatorInner,
+	DWallet,
+	DWalletCap,
+	DWalletState,
+	EncryptedUserSecretKeyShare,
+	EncryptedUserSecretKeyShareState,
+	EncryptionKey,
+	EncryptionKeyOptions,
+	IkaClientOptions,
+	IkaConfig,
+	NetworkEncryptionKey,
+	PartialUserSignature,
+	PartialUserSignatureState,
+	Presign,
+	PresignState,
+	SharedObjectOwner,
+	SystemInner,
 } from './types.js';
 import { objResToBcs } from './utils.js';
 
