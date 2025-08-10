@@ -95,7 +95,7 @@ async fn test_network_dkg_full_flow() {
                 .unwrap()
                 .insert(1, vec![]);
             other_epoch_store
-                .round_to_outputs
+                .round_to_verified_checkpoint
                 .lock()
                 .unwrap()
                 .insert(1, vec![]);
