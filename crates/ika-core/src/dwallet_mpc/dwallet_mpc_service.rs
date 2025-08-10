@@ -1236,6 +1236,7 @@ mod tests {
                 .submitted_messages
                 .clone();
             let messages = consensus_messages_store.lock().unwrap().clone();
+            consensus_messages_store.lock().unwrap().clear();
             let messages: Vec<_> = messages
                 .into_iter()
                 .filter_map(|message| {
