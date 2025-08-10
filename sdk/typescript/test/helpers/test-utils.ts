@@ -13,7 +13,7 @@ import { IkaClient } from '../../src/client/ika-client.js';
 import { IkaTransaction } from '../../src/client/ika-transaction.js';
 import { getNetworkConfig } from '../../src/client/network-configs.js';
 import type { IkaConfig } from '../../src/client/types.js';
-import { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-keys.js';
+import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
 
 // Store random seeds per test to ensure deterministic behavior within each test
 const testSeeds = new Map<string, Uint8Array>();
@@ -134,7 +134,7 @@ export function generateTestKeypair(testName: string) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = UserShareEncrytionKeys.fromRootSeedKey(seed);
+	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed);
 
 	return {
 		userShareEncryptionKeys,
@@ -151,7 +151,7 @@ export function generateTestKeypairForImportedDWallet(testName: string) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = UserShareEncrytionKeys.fromRootSeedKey(seed);
+	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed);
 	const dWalletKeypair = Secp256k1Keypair.fromSeed(seed);
 
 	return {
@@ -195,7 +195,7 @@ export function destroyEmptyTestIkaToken(
 export function createTestIkaTransaction(
 	ikaClient: IkaClient,
 	transaction: Transaction,
-	userShareEncryptionKeys?: UserShareEncrytionKeys,
+	userShareEncryptionKeys?: UserShareEncryptionKeys,
 ) {
 	return new IkaTransaction({
 		ikaClient,

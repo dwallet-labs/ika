@@ -11,12 +11,12 @@ import type { DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './type
 import { encodeToASCII } from './utils.js';
 
 /**
- * BCS enum for UserShareEncrytionKeys.
+ * BCS enum for UserShareEncryptionKeys.
  *
- * @see UserShareEncrytionKeys
+ * @see UserShareEncryptionKeys
  */
-export const VersionedUserShareEncrytionKeysBcs = bcs.enum('VersionedUserShareEncrytionKeys', {
-	V1: bcs.struct('UserShareEncrytionKeysV1', {
+export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareEncryptionKeys', {
+	V1: bcs.struct('UserShareEncryptionKeysV1', {
 		encryptionKey: bcs.vector(bcs.u8()),
 		decryptionKey: bcs.vector(bcs.u8()),
 		secretShareSigningSecretKey: bcs.vector(bcs.u8()),
@@ -24,11 +24,11 @@ export const VersionedUserShareEncrytionKeysBcs = bcs.enum('VersionedUserShareEn
 });
 
 /**
- * UserShareEncrytionKeys manages encryption/decryption keys and signing keypairs for user shares.
+ * UserShareEncryptionKeys manages encryption/decryption keys and signing keypairs for user shares.
  * This class handles the creation and management of cryptographic keys needed for secure
  * user share operations in the DWallet network.
  */
-export class UserShareEncrytionKeys {
+export class UserShareEncryptionKeys {
 	/** The public encryption key used to encrypt secret shares */
 	encryptionKey: Uint8Array;
 	/** The private decryption key used to decrypt secret shares */
@@ -92,22 +92,22 @@ export class UserShareEncrytionKeys {
 	}
 
 	/**
-	 * Creates UserShareEncrytionKeys from a root seed key (Uint8Array).
+	 * Creates UserShareEncryptionKeys from a root seed key (Uint8Array).
 	 *
 	 * @param rootSeedKey - The root seed key to generate keys from
-	 * @returns A new UserShareEncrytionKeys instance
+	 * @returns A new UserShareEncryptionKeys instance
 	 */
-	static fromRootSeedKey(rootSeedKey: Uint8Array): UserShareEncrytionKeys {
-		return new UserShareEncrytionKeys(rootSeedKey);
+	static fromRootSeedKey(rootSeedKey: Uint8Array): UserShareEncryptionKeys {
+		return new UserShareEncryptionKeys(rootSeedKey);
 	}
 
 	static fromShareEncryptionKeysBytes(
 		shareEncryptionKeysBytes: Uint8Array,
-	): UserShareEncrytionKeys {
+	): UserShareEncryptionKeys {
 		const { encryptionKey, decryptionKey, secretShareSigningSecretKey } =
 			this.#parseShareEncryptionKeys(shareEncryptionKeysBytes);
 
-		return new UserShareEncrytionKeys(encryptionKey, decryptionKey, secretShareSigningSecretKey);
+		return new UserShareEncryptionKeys(encryptionKey, decryptionKey, secretShareSigningSecretKey);
 	}
 
 	toShareEncryptionKeysBytes(): Uint8Array {
@@ -307,7 +307,7 @@ export class UserShareEncrytionKeys {
 	}
 
 	#serializeShareEncryptionKeys() {
-		return VersionedUserShareEncrytionKeysBcs.serialize({
+		return VersionedUserShareEncryptionKeysBcs.serialize({
 			V1: {
 				encryptionKey: this.encryptionKey,
 				decryptionKey: this.decryptionKey,
@@ -321,7 +321,7 @@ export class UserShareEncrytionKeys {
 	static #parseShareEncryptionKeys(shareEncryptionKeysBytes: Uint8Array) {
 		const {
 			V1: { encryptionKey, decryptionKey, secretShareSigningSecretKey },
-		} = VersionedUserShareEncrytionKeysBcs.parse(shareEncryptionKeysBytes);
+		} = VersionedUserShareEncryptionKeysBcs.parse(shareEncryptionKeysBytes);
 
 		return {
 			encryptionKey: new Uint8Array(encryptionKey),

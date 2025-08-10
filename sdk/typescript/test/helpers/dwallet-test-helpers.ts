@@ -20,7 +20,7 @@ import {
 	Presign,
 	SignatureAlgorithm,
 } from '../../src/client/types.js';
-import type { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-keys.js';
+import type { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../../src/generated/ika_dwallet_2pc_mpc/sessions_manager.js';
 import {
@@ -45,7 +45,7 @@ export async function createCompleteDWallet(
 ): Promise<{
 	dWallet: DWallet;
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
-	userShareEncryptionKeys: UserShareEncrytionKeys;
+	userShareEncryptionKeys: UserShareEncryptionKeys;
 	signerAddress: string;
 }> {
 	// Generate deterministic keypair for this test
@@ -199,7 +199,7 @@ export async function requestTestDKGFirstRound(
 export async function registerTestEncryptionKey(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 ) {
 	const transaction = new Transaction();
@@ -232,7 +232,7 @@ export async function requestTestDkgSecondRound(
 	suiClient: SuiClient,
 	dWallet: DWallet,
 	dkgSecondRoundRequestInput: DKGSecondRoundRequestInput,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 ) {
 	const transaction = new Transaction();
@@ -280,7 +280,7 @@ export async function acceptTestEncryptedUserShare(
 			encrypted_user_secret_key_share_id: string;
 		};
 	},
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 ) {
 	const transaction = new Transaction();
@@ -303,7 +303,7 @@ export async function acceptTestEncryptedUserShareForTransferredDWallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	destinationUserShareEncryptionKeys: UserShareEncrytionKeys,
+	destinationUserShareEncryptionKeys: UserShareEncryptionKeys,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	sourceEncryptionKey: EncryptionKey,
 	destinationEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
@@ -428,7 +428,7 @@ export async function testSign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	presign: Presign,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	message: Uint8Array,
@@ -522,7 +522,7 @@ export async function requestTestFutureSign(
 	suiClient: SuiClient,
 	dWallet: DWallet,
 	presign: Presign,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -577,7 +577,7 @@ export async function testFutureSign(
 	suiClient: SuiClient,
 	dWallet: DWallet,
 	partialUserSignature: PartialUserSignature,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	message: Uint8Array,
 	hashScheme: Hash,
 	signatureAlgorithm: SignatureAlgorithm,
@@ -617,7 +617,7 @@ export async function requestTestImportedDWalletVerification(
 	curve: Curve,
 	signerPublicKey: Uint8Array,
 	sessionIdentifier: string,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	receiver: string,
 	testName: string,
 ) {
@@ -665,7 +665,7 @@ export async function testSignWithImportedDWallet(
 	hashScheme: Hash,
 	signatureAlgorithm: SignatureAlgorithm,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 ) {
 	const transaction = new Transaction();
@@ -755,7 +755,7 @@ export async function testTransferEncryptedUserShare(
 	dWallet: DWallet,
 	destinationEncryptionKeyAddress: string,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 ) {
 	const transaction = new Transaction();

@@ -21,7 +21,7 @@ import {
 } from '../../../mpc-wasm/dist/node/dwallet_mpc_wasm.js';
 import type { IkaClient } from './ika-client.js';
 import type { DWallet } from './types.js';
-import type { UserShareEncrytionKeys } from './user-share-encryption-keys.js';
+import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 
 /**
@@ -38,7 +38,7 @@ export interface DKGSecondRoundRequestInput {
 }
 
 /**
- * Prepared data for imporfting an existing cryptographic key as a DWallet.
+ * Prepared data for importing an existing cryptographic key as a DWallet.
  * Contains verification data needed to prove ownership of the imported key.
  */
 export interface ImportDWalletVerificationRequestInput {
@@ -180,7 +180,7 @@ export function prepareDKGSecondRound(
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param dWallet - The DWallet object containing first round output
  * @param sessionIdentifier - Unique identifier for this DKG session
- * @param classGroupsKeypair - The user's class groups keypair for encryption
+ * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
  * @returns Promise resolving to complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available or network parameters cannot be fetched
  */
@@ -188,7 +188,7 @@ export async function prepareDKGSecondRoundAsync(
 	ikaClient: IkaClient,
 	dWallet: DWallet,
 	sessionIdentifier: Uint8Array,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 ): Promise<DKGSecondRoundRequestInput> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
@@ -214,7 +214,7 @@ export async function prepareDKGSecondRoundAsync(
 export async function prepareImportDWalletVerification(
 	ikaClient: IkaClient,
 	sessionIdentifier: Uint8Array,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	keypair: Keypair,
 ): Promise<ImportDWalletVerificationRequestInput> {
 	if (keypair.getKeyScheme() !== 'Secp256k1') {
@@ -248,7 +248,7 @@ export async function prepareImportDWalletVerification(
  *
  * @param protocolPublicParameters - The protocol public parameters
  * @param activeDWallet - The active DWallet containing the public output
- * @param secretKey - The user's secret key share
+ * @param userSecretKeyShare - The user's secret key share
  * @param presign - The presignature data from a completed presign operation
  * @param message - The message bytes to sign
  * @param hash - The hash scheme identifier to use for signing

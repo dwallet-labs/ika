@@ -26,7 +26,7 @@ import {
 	Presign,
 	SignatureAlgorithm,
 } from '../src/client/types.js';
-import { UserShareEncrytionKeys } from '../src/client/user-share-encryption-keys.js';
+import { UserShareEncryptionKeys } from '../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../src/generated/ika_dwallet_2pc_mpc/sessions_manager.js';
 
@@ -58,7 +58,7 @@ export function generateKeypair() {
 	const seed = new Uint8Array(randomBytes(32));
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(new Uint8Array(randomBytes(32))));
 
-	const userShareEncryptionKeys = UserShareEncrytionKeys.fromRootSeedKey(seed);
+	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed);
 
 	return {
 		userShareEncryptionKeys,
@@ -71,7 +71,7 @@ export function generateKeypairForImportedDWallet() {
 	const seed = new Uint8Array(32).fill(8);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed('0x1');
 
-	const userShareEncryptionKeys = UserShareEncrytionKeys.fromRootSeedKey(seed);
+	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed);
 
 	const dWalletKeypair = Secp256k1Keypair.deriveKeypair(userKeypair.getSecretKey());
 
@@ -133,7 +133,7 @@ export async function requestDKGFirstRound(
 export async function registerEncryptionKey(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 ) {
 	const transaction = new Transaction();
 
@@ -163,7 +163,7 @@ export async function requestDkgSecondRound(
 	suiClient: SuiClient,
 	dWallet: DWallet,
 	dkgSecondRoundRequestInput: DKGSecondRoundRequestInput,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 ) {
 	const transaction = new Transaction();
 
@@ -208,7 +208,7 @@ export async function acceptEncryptedUserShare(
 			encrypted_user_secret_key_share_id: string;
 		};
 	},
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 ) {
 	const transaction = new Transaction();
 
@@ -232,7 +232,7 @@ export async function acceptEncryptedUserShareForTransferredDWallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	destinationUserShareEncryptionKeys: UserShareEncrytionKeys,
+	destinationUserShareEncryptionKeys: UserShareEncryptionKeys,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	sourceEncryptionKey: EncryptionKey,
 	destinationEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
@@ -349,7 +349,7 @@ export async function sign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	presign: Presign,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	message: Uint8Array,
@@ -444,7 +444,7 @@ export async function requestFutureSign(
 	suiClient: SuiClient,
 	dWallet: DWallet,
 	presign: Presign,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -495,7 +495,7 @@ export async function futureSign(
 	suiClient: SuiClient,
 	dWallet: DWallet,
 	partialUserSignature: PartialUserSignature,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	message: Uint8Array,
 	hashScheme: Hash,
 	signatureAlgorithm: SignatureAlgorithm,
@@ -579,7 +579,7 @@ export async function signWithImportedDWallet(
 	hashScheme: Hash,
 	signatureAlgorithm: SignatureAlgorithm,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 ) {
 	const transaction = new Transaction();
 
@@ -670,7 +670,7 @@ export async function transferEncryptedUserShare(
 	dWallet: DWallet,
 	destinationEncryptionKeyAddress: string,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
-	userShareEncryptionKeys: UserShareEncrytionKeys,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 ) {
 	const transaction = new Transaction();
 

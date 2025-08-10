@@ -26,7 +26,7 @@ import type {
 	Presign,
 	SignatureAlgorithm,
 } from './types.js';
-import type { UserShareEncrytionKeys } from './user-share-encryption-keys.js';
+import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 
 /**
  * Parameters for creating an IkaTransaction instance
@@ -37,7 +37,7 @@ export interface IkaTransactionParams {
 	/** The Sui transaction to wrap */
 	transaction: Transaction;
 	/** Optional user share encryption keys for cryptographic operations */
-	userShareEncryptionKeys?: UserShareEncrytionKeys;
+	userShareEncryptionKeys?: UserShareEncryptionKeys;
 }
 
 /**
@@ -51,7 +51,7 @@ export class IkaTransaction {
 	/** The underlying Sui transaction */
 	#transaction: Transaction;
 	/** Optional user share encryption keys for cryptographic operations */
-	#userShareEncryptionKeys?: UserShareEncrytionKeys;
+	#userShareEncryptionKeys?: UserShareEncryptionKeys;
 	/** The shared object ref for the coordinator */
 	#coordinatorObjectRef?: TransactionObjectArgument;
 	/** The shared object ref for the system */

@@ -5,12 +5,12 @@ import { toHex } from '@mysten/bcs';
 import { describe, expect, it } from 'vitest';
 
 import type { DWallet, EncryptedUserSecretKeyShare } from '../../src/client/types.js';
-import { UserShareEncrytionKeys } from '../../src/client/user-share-encryption-keys.js';
+import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
 
-describe('UserShareEncrytionKeys', () => {
+describe('UserShareEncryptionKeys', () => {
 	const testSeed = new Uint8Array(32);
 	testSeed.fill(42);
-	const keys = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+	const keys = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
 
 	describe('constructor', () => {
 		it('should create instance with valid seed', () => {
@@ -24,8 +24,8 @@ describe('UserShareEncrytionKeys', () => {
 			const seed2 = new Uint8Array(32);
 			seed2.fill(2);
 
-			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(seed1);
-			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(seed2);
+			const keys1 = UserShareEncryptionKeys.fromRootSeedKey(seed1);
+			const keys2 = UserShareEncryptionKeys.fromRootSeedKey(seed2);
 
 			expect(keys1.encryptionKey).not.toEqual(keys2.encryptionKey);
 			expect(keys1.decryptionKey).not.toEqual(keys2.decryptionKey);
@@ -33,8 +33,8 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should generate consistent keys for same seed', () => {
-			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
-			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+			const keys1 = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
+			const keys2 = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
 
 			expect(keys1.encryptionKey).toEqual(keys2.encryptionKey);
 			expect(keys1.decryptionKey).toEqual(keys2.decryptionKey);
@@ -44,14 +44,14 @@ describe('UserShareEncrytionKeys', () => {
 
 	describe('fromRootSeedKey', () => {
 		it('should create instance from root seed key', () => {
-			expect(keys).toBeInstanceOf(UserShareEncrytionKeys);
+			expect(keys).toBeInstanceOf(UserShareEncryptionKeys);
 			expect(keys.encryptionKey).toBeInstanceOf(Uint8Array);
 			expect(keys.decryptionKey).toBeInstanceOf(Uint8Array);
 		});
 
 		it('should generate same keys as constructor', () => {
-			const constructorKeys = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
-			const staticKeys = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+			const constructorKeys = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
+			const staticKeys = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
 
 			expect(constructorKeys.encryptionKey).toEqual(staticKeys.encryptionKey);
 			expect(constructorKeys.decryptionKey).toEqual(staticKeys.decryptionKey);
@@ -70,8 +70,8 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should return consistent public key for same seed', () => {
-			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
-			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+			const keys1 = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
+			const keys2 = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
 
 			expect(keys1.getPublicKey().toRawBytes()).toEqual(keys2.getPublicKey().toRawBytes());
 		});
@@ -86,8 +86,8 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should return consistent address for same seed', () => {
-			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
-			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+			const keys1 = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
+			const keys2 = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
 
 			expect(keys1.getSuiAddress()).toBe(keys2.getSuiAddress());
 		});
@@ -102,8 +102,8 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should return consistent bytes for same seed', () => {
-			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
-			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+			const keys1 = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
+			const keys2 = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
 
 			expect(keys1.getSigningPublicKeyBytes()).toEqual(keys2.getSigningPublicKeyBytes());
 		});
@@ -118,7 +118,7 @@ describe('UserShareEncrytionKeys', () => {
 		});
 
 		it('should create consistent signature for same seed', async () => {
-			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(testSeed);
+			const keys2 = UserShareEncryptionKeys.fromRootSeedKey(testSeed);
 
 			const signature1 = await keys.getEncryptionKeySignature();
 			const signature2 = await keys2.getEncryptionKeySignature();
@@ -190,8 +190,8 @@ describe('UserShareEncrytionKeys', () => {
 			const seed2 = new Uint8Array(32);
 			seed2.fill(2);
 
-			const keys1 = UserShareEncrytionKeys.fromRootSeedKey(seed1);
-			const keys2 = UserShareEncrytionKeys.fromRootSeedKey(seed2);
+			const keys1 = UserShareEncryptionKeys.fromRootSeedKey(seed1);
+			const keys2 = UserShareEncryptionKeys.fromRootSeedKey(seed2);
 
 			expect(keys1.encryptionKey).not.toEqual(keys2.encryptionKey);
 			expect(keys1.decryptionKey).not.toEqual(keys2.decryptionKey);
