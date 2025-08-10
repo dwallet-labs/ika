@@ -210,7 +210,7 @@ pub fn create_dwallet_mpc_services() -> (
     Vec<Arc<TestingAuthorityPerEpochStore>>,
 ) {
     let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
-    let (mut committee, keypairs) = Committee::new_simple_test_committee();
+    let (mut committee, _) = Committee::new_simple_test_committee();
     for (authority_name, _) in committee.voting_rights.iter() {
         let seed = RootSeed::random_seed();
         seeds.insert(authority_name.clone(), seed.clone());
@@ -220,16 +220,7 @@ pub fn create_dwallet_mpc_services() -> (
             class_groups_key_pair.encryption_key_and_proof(),
         );
     }
-    let committee_clone = committee.clone();
-    let names: Vec<_> = committee_clone.names().collect();
-    let ika_network_config = IkaNetworkConfig::new(
-        ObjectID::from_single_byte(1),
-        ObjectID::from_single_byte(1),
-        ObjectID::from_single_byte(1),
-        ObjectID::from_single_byte(1),
-        ObjectID::from_single_byte(1),
-        ObjectID::from_single_byte(1),
-    );
+    let ika_network_config = IkaNetworkConfig::new_for_testing();
     let dwallet_mpc_services = committee
         .names()
         .map(|authority_name| {
