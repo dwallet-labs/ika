@@ -116,25 +116,12 @@ export class IkaClient {
 	 * @param options - Configuration options for the client
 	 * @param options.suiClient - The Sui client instance to use for blockchain interactions
 	 * @param options.config - The Ika network configuration
-	 * @param options.protocolPublicParameters - Optional cached protocol public parameters
 	 * @param options.cache - Whether to enable caching (default: true)
 	 */
-	constructor({
-		suiClient,
-		config,
-		protocolPublicParameters,
-		cache = true,
-		encryptionKeyOptions,
-	}: IkaClientOptions) {
+	constructor({ suiClient, config, cache = true, encryptionKeyOptions }: IkaClientOptions) {
 		this.client = suiClient;
 		this.ikaConfig = config;
-		if (protocolPublicParameters) {
-			// If protocol public parameters are provided, cache them with a default key
-			// This maintains backward compatibility for the constructor parameter
-			this.cachedProtocolPublicParameters.set('default', protocolPublicParameters);
-		}
 		this.cache = cache;
-		// Set default encryption key options
 		this.encryptionKeyOptions = encryptionKeyOptions || { useLatest: true };
 	}
 
