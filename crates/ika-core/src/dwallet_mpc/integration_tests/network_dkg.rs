@@ -9,7 +9,9 @@
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
+use crate::dwallet_mpc::integration_tests::utils::{
+    TestingAuthorityPerEpochStore, TestingSubmitToConsensus,
+};
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use ika_types::committee::Committee;
@@ -22,6 +24,7 @@ use ika_types::sui::EpochStartSystemTrait;
 use itertools::Itertools;
 use std::sync::Arc;
 use std::time::Duration;
+use sui_types::messages_consensus::Round;
 
 #[tokio::test]
 async fn test_network_dkg_advance_with_messages() {
@@ -48,14 +51,34 @@ async fn test_network_dkg_advance_with_messages() {
             epoch_id,
         ));
     });
-    advance_and_wait_for_completion(
+    advance_all_parties_and_wait_for_completions(
         &committee,
         &mut dwallet_mpc_services,
         &mut sent_consensus_messages_collectors,
     )
     .await;
 
-    // send each parties messages to the other parties
+    send_advance_messages_between_parties(
+        &committee,
+        &mut sent_consensus_messages_collectors,
+        &mut epoch_stores,
+        1
+    );
+    
+    advance_all_parties_and_wait_for_completions(
+        &committee,
+        &mut dwallet_mpc_services,
+        &mut sent_consensus_messages_collectors,
+    )
+    .await;
+}
+
+fn send_advance_messages_between_parties(
+    committee: &Committee,
+    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
+    epoch_stores: &mut Vec<Arc<TestingAuthorityPerEpochStore>>,
+    new_data_round: Round
+) {
     for i in 0..committee.voting_rights.len() {
         let consensus_messages_store = sent_consensus_messages_collectors[i]
             .submitted_messages
@@ -78,7 +101,7 @@ async fn test_network_dkg_advance_with_messages() {
                 .round_to_messages
                 .lock()
                 .unwrap()
-                .entry(1)
+                .entry(new_data_round)
                 .or_default()
                 .extend(messages.clone());
 
@@ -87,23 +110,17 @@ async fn test_network_dkg_advance_with_messages() {
                 .round_to_outputs
                 .lock()
                 .unwrap()
-                .insert(1, vec![]);
+                .insert(new_data_round, vec![]);
             other_epoch_store
                 .round_to_verified_checkpoint
                 .lock()
                 .unwrap()
-                .insert(1, vec![]);
+                .insert(new_data_round, vec![]);
         }
     }
-    advance_and_wait_for_completion(
-        &committee,
-        &mut dwallet_mpc_services,
-        &mut sent_consensus_messages_collectors,
-    )
-    .await;
 }
 
-async fn advance_and_wait_for_completion(
+async fn advance_all_parties_and_wait_for_completions(
     committee: &Committee,
     dwallet_mpc_services: &mut Vec<DWalletMPCService>,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
