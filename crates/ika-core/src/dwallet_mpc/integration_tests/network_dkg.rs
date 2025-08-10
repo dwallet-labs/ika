@@ -160,7 +160,8 @@ async fn advance_all_parties_and_wait_for_completions(
                 let pending_dwallet_checkpoint =
                     pending_checkpoints_store.lock().unwrap().pop().unwrap();
                 info!(?pending_dwallet_checkpoint, party_id=?i+1, "Pending checkpoint found");
-                pending_checkpoints.push(pending_dwallet_checkpoint)
+                pending_checkpoints.push(pending_dwallet_checkpoint);
+                break;
             }
 
             tokio::time::sleep(Duration::from_millis(100)).await;
