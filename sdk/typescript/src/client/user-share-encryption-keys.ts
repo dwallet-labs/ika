@@ -3,11 +3,11 @@
 
 import { decrypt_user_share } from '@ika.xyz/mpc-wasm';
 import { bcs, toHex } from '@mysten/bcs';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { Ed25519Keypair, Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { keccak_256 } from '@noble/hashes/sha3';
 
 import { createClassGroupsKeypair, userAndNetworkDKGOutputMatch } from './cryptography.js';
-import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
+import type { DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './types.js';
 import { encodeToASCII } from './utils.js';
 
 /**
@@ -185,6 +185,55 @@ export class UserShareEncrytionKeys {
 
 		if (!userAndNetworkDKGOutputMatch(userPublicOutput, dWalletPublicOutput)) {
 			throw new Error('User public output does not match the DWallet public output');
+		}
+
+		return await this.#encryptedSecretShareSigningKeypair.sign(dWalletPublicOutput);
+	}
+
+	/**
+	 * Creates a signature over the DWallet's public output for a transferred DWallet.
+	 * This signature proves authorization to use the DWallet's encrypted share.
+	 *
+	 * @param dWallet - The DWallet to create a signature for
+	 * @param userPublicOutput - The user's public output from the DKG process, this is used to verify the user's public output signature.
+	 * @param sourceEncryptedUserSecretKeyShare - The encrypted user secret key share used to encrypt the user's secret share.
+	 * @returns Promise resolving to the signature bytes
+	 * @throws {Error} If the DWallet is not in awaiting key holder signature state or public output is missing or the user public output does not match the DWallet public output
+	 */
+	async getUserOutputSignatureForTransferredDWallet(
+		dWallet: DWallet,
+		sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+		sourceEncryptionKey: EncryptionKey,
+	): Promise<Uint8Array> {
+		if (!dWallet.state.Active?.public_output) {
+			throw new Error('DWallet is not in active state');
+		}
+
+		if (!sourceEncryptedUserSecretKeyShare.state.KeyHolderSigned?.user_output_signature) {
+			throw new Error('Source encrypted user secret key share is not signed by the key holder');
+		}
+
+		const dWalletPublicOutput = Uint8Array.from(dWallet.state.Active?.public_output);
+
+		const sourcePublicKey = new Ed25519PublicKey(sourceEncryptionKey.signer_public_key);
+
+		if (
+			sourcePublicKey.toSuiAddress() !== sourceEncryptedUserSecretKeyShare.encryption_key_address
+		) {
+			throw new Error('Source encryption key address does not match the public key');
+		}
+
+		if (
+			!(await sourcePublicKey.verify(
+				dWalletPublicOutput,
+				Uint8Array.from(
+					sourceEncryptedUserSecretKeyShare.state.KeyHolderSigned?.user_output_signature,
+				),
+			))
+		) {
+			throw new Error(
+				'Invalid signature. The user output signature does not match the public output.',
+			);
 		}
 
 		return await this.#encryptedSecretShareSigningKeypair.sign(dWalletPublicOutput);

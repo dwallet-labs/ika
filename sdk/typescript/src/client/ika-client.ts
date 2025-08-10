@@ -18,6 +18,7 @@ import type {
 	DWalletCap,
 	DWalletState,
 	EncryptedUserSecretKeyShare,
+	EncryptedUserSecretKeyShareState,
 	EncryptionKey,
 	IkaClientOptions,
 	IkaConfig,
@@ -275,6 +276,45 @@ export class IkaClient {
 			.then((obj) => {
 				return CoordinatorInnerModule.EncryptedUserSecretKeyShare.fromBase64(objResToBcs(obj));
 			});
+	}
+
+	/**
+	 * Retrieve an encrypted user secret key share object by its ID.
+	 *
+	 * @param encryptedUserSecretKeyShareID - The unique identifier of the encrypted share to retrieve
+	 * @param state - The target state to wait for
+	 * @param options - Optional configuration for polling behavior
+	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
+	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @returns Promise resolving to the EncryptedUserSecretKeyShare object
+	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 */
+	async getEncryptedUserSecretKeyShareInParticularState(
+		encryptedUserSecretKeyShareID: string,
+		state: EncryptedUserSecretKeyShareState,
+		options: { timeout?: number; interval?: number } = {},
+	): Promise<EncryptedUserSecretKeyShare> {
+		await this.ensureInitialized();
+
+		const { timeout = 30000, interval = 1000 } = options;
+		const startTime = Date.now();
+
+		while (Date.now() - startTime < timeout) {
+			const encryptedUserSecretKeyShare = await this.getEncryptedUserSecretKeyShare(
+				encryptedUserSecretKeyShareID,
+			);
+
+			if (encryptedUserSecretKeyShare.state.$kind === state) {
+				return encryptedUserSecretKeyShare;
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, interval));
+		}
+
+		throw new Error(
+			`Timeout waiting for encrypted user secret key share ${encryptedUserSecretKeyShareID} to reach state ${state}`,
+		);
 	}
 
 	/**

@@ -20,6 +20,7 @@ import {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
+	EncryptionKey,
 	Hash,
 	IkaConfig,
 	PartialUserSignature,
@@ -223,6 +224,33 @@ export async function acceptEncryptedUserShare(
 		userPublicOutput,
 		encryptedUserSecretKeyShareId:
 			secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
+	});
+
+	await executeTransaction(suiClient, transaction);
+}
+
+export async function acceptEncryptedUserShareForTransferredDWallet(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	destinationUserShareEncryptionKeys: UserShareEncrytionKeys,
+	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+	sourceEncryptionKey: EncryptionKey,
+	destinationEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+) {
+	const transaction = new Transaction();
+
+	const ikaTransaction = new IkaTransaction({
+		ikaClient,
+		transaction,
+		userShareEncryptionKeys: destinationUserShareEncryptionKeys,
+	});
+
+	await ikaTransaction.acceptEncryptedUserShareForTransferredDWallet({
+		dWallet,
+		sourceEncryptedUserSecretKeyShare,
+		sourceEncryptionKey,
+		destinationEncryptedUserSecretKeyShare,
 	});
 
 	await executeTransaction(suiClient, transaction);
@@ -665,7 +693,15 @@ export async function transferEncryptedUserShare(
 
 	destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
-	await executeTransaction(suiClient, transaction);
+	const result = await executeTransaction(suiClient, transaction);
+
+	const transferUserShareEvent = result.events?.find((event) => {
+		return event.type.includes('EncryptedShareVerificationRequestEvent');
+	});
+
+	return SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.EncryptedShareVerificationRequestEvent,
+	).fromBase64(transferUserShareEvent?.bcs as string);
 }
 
 export async function createSessionIdentifier(

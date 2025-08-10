@@ -20,6 +20,7 @@ import type {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
+	EncryptionKey,
 	Hash,
 	PartialUserSignature,
 	Presign,
@@ -287,6 +288,49 @@ export class IkaTransaction {
 			dWallet.id.id,
 			encryptedUserSecretKeyShareId,
 			await this.#userShareEncryptionKeys.getUserOutputSignature(dWallet, userPublicOutput),
+			this.#transaction,
+		);
+
+		return this;
+	}
+
+	/**
+	 * Accept an encrypted user share for a transferred DWallet.
+	 * This completes the user's participation in the DKG process by accepting their encrypted share.
+	 *
+	 * @param params - The parameters for accepting the encrypted user share
+	 * @param params.dWallet - The DWallet object to accept the share for
+	 * @param params.sourceEncryptionKeyAddress - The address of the encryption key used to encrypt the user's secret share.
+	 * @param params.sourceEncryptedUserSecretKeyShare - The encrypted user secret key share used to encrypt the user's secret share.
+	 * @param params.destinationEncryptedUserSecretKeyShare - The encrypted user secret key share used to encrypt the user's secret share.
+	 * @returns Promise resolving to the updated IkaTransaction instance
+	 * @throws {Error} If user share encryption keys are not set
+	 */
+	async acceptEncryptedUserShareForTransferredDWallet({
+		dWallet,
+		sourceEncryptionKey,
+		sourceEncryptedUserSecretKeyShare,
+		destinationEncryptedUserSecretKeyShare,
+	}: {
+		dWallet: DWallet;
+		sourceEncryptionKey: EncryptionKey;
+		sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+		destinationEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+	}) {
+		if (!this.#userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
+		coordinatorTx.acceptEncryptedUserShare(
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			dWallet.id.id,
+			destinationEncryptedUserSecretKeyShare.id.id,
+			await this.#userShareEncryptionKeys.getUserOutputSignatureForTransferredDWallet(
+				dWallet,
+				sourceEncryptedUserSecretKeyShare,
+				sourceEncryptionKey,
+			),
 			this.#transaction,
 		);
 

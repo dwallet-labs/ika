@@ -6,6 +6,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
 import {
 	acceptEncryptedUserShare,
+	acceptEncryptedUserShareForTransferredDWallet,
 	createIkaClient,
 	createSuiClient,
 	generateKeypair,
@@ -73,19 +74,34 @@ async function main() {
 		secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
 	);
 
-	// WARNING: THIS ADDRESS NEEDS TO HAVE AN ACTIVE ENCRYPTION KEY.
-	const destinationEncryptionKeyAddress = Ed25519Keypair.generate().toSuiAddress();
-
-	await transferEncryptedUserShare(
+	const transferUserShareEvent = await transferEncryptedUserShare(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		destinationEncryptionKeyAddress,
+		destinationUserShareEncryptionKeys.getSuiAddress(),
 		sourceEncryptedUserSecretKeyShare,
 		sourceUserShareEncryptionKeys,
 	);
 
-	// AFTER TRANSFER, DESTINATION NEEDS TO ACCEPT ENCRYPTED USER SECRET KEY SHARE.
+	const sourceEncryptionKey = await ikaClient.getActiveEncryptionKey(
+		sourceUserShareEncryptionKeys.getSuiAddress(),
+	);
+
+	const destinationEncryptedUserSecretKeyShare =
+		await ikaClient.getEncryptedUserSecretKeyShareInParticularState(
+			transferUserShareEvent.event_data.encrypted_user_secret_key_share_id,
+			'NetworkVerificationCompleted',
+		);
+
+	await acceptEncryptedUserShareForTransferredDWallet(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		destinationUserShareEncryptionKeys,
+		sourceEncryptedUserSecretKeyShare,
+		sourceEncryptionKey,
+		destinationEncryptedUserSecretKeyShare,
+	);
 }
 
 export { main };
