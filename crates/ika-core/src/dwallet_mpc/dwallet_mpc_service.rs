@@ -1187,7 +1187,7 @@ mod tests {
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
         );
-        let (mut dwallet_mpc_services, sui_data_senders, mut sent_consensus_messages_collectors) =
+        let (mut dwallet_mpc_services, sui_data_senders, mut sent_consensus_messages_collectors, mut epoch_stores) =
             create_dwallet_mpc_services();
         sui_data_senders.iter().for_each(|mut sui_data_sender| {
             let _ = sui_data_sender.uncompleted_events_sender.send((
