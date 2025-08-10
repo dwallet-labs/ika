@@ -182,7 +182,7 @@ impl DWalletMPCService {
             end_of_publish: false,
             dwallet_mpc_metrics: DWalletMPCMetrics::new(&Registry::new()),
             sui_data_receivers,
-            name: Default::default(),
+            name: authority_name,
             epoch: 1,
             protocol_config: ProtocolConfig::get_for_min_version(),
             committee: Arc::new(committee),
