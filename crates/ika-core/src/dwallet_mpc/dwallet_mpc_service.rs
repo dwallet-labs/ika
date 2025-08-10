@@ -213,7 +213,7 @@ impl DWalletMPCService {
         }
     }
 
-    async fn run_service_loop_iteration(&mut self) {
+    pub(crate) async fn run_service_loop_iteration(&mut self) {
         debug!("Running DWalletMPCService loop");
         self.sync_last_session_to_complete_in_current_epoch().await;
 
