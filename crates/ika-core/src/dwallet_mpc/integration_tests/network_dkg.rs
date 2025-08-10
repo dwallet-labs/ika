@@ -30,7 +30,7 @@ use tracing::{error, info};
 
 #[tokio::test]
 #[cfg(test)]
-async fn test_network_dkg_advance_with_messages() {
+async fn test_network_dkg_full_flow() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let ika_network_config = IkaNetworkConfig::new_for_testing();

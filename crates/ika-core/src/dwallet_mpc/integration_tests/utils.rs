@@ -215,7 +215,13 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
 }
 
 #[cfg(test)]
-pub fn create_dwallet_mpc_services() -> (Vec<DWalletMPCService>, Vec<SuiDataSenders>, Vec<Arc<TestingSubmitToConsensus>>, Vec<Arc<TestingAuthorityPerEpochStore>>, Vec<Arc<TestingDWalletCheckpointNotify>>) {
+pub fn create_dwallet_mpc_services() -> (
+    Vec<DWalletMPCService>,
+    Vec<SuiDataSenders>,
+    Vec<Arc<TestingSubmitToConsensus>>,
+    Vec<Arc<TestingAuthorityPerEpochStore>>,
+    Vec<Arc<TestingDWalletCheckpointNotify>>,
+) {
     let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
     let (mut committee, _) = Committee::new_simple_test_committee();
     for (authority_name, _) in committee.voting_rights.iter() {
@@ -244,8 +250,13 @@ pub fn create_dwallet_mpc_services() -> (Vec<DWalletMPCService>, Vec<SuiDataSend
     let mut consensus_stores = Vec::new();
     let mut epoch_stores = Vec::new();
     let mut notify_services = Vec::new();
-    for (dwallet_mpc_service, sui_data_sender, dwallet_submit_to_consensus, epoch_store, notify_service) in
-        dwallet_mpc_services
+    for (
+        dwallet_mpc_service,
+        sui_data_sender,
+        dwallet_submit_to_consensus,
+        epoch_store,
+        notify_service,
+    ) in dwallet_mpc_services
     {
         services.push(dwallet_mpc_service);
         sui_data_senders.push(sui_data_sender);
@@ -253,7 +264,13 @@ pub fn create_dwallet_mpc_services() -> (Vec<DWalletMPCService>, Vec<SuiDataSend
         epoch_stores.push(epoch_store);
         notify_services.push(notify_service);
     }
-    (services, sui_data_senders, consensus_stores, epoch_stores, notify_services)
+    (
+        services,
+        sui_data_senders,
+        consensus_stores,
+        epoch_stores,
+        notify_services,
+    )
 }
 
 fn create_dwallet_mpc_service(
@@ -261,7 +278,13 @@ fn create_dwallet_mpc_service(
     committee: Committee,
     ika_network_config: IkaNetworkConfig,
     seed: RootSeed,
-) -> (DWalletMPCService, SuiDataSenders, Arc<TestingSubmitToConsensus>, Arc<TestingAuthorityPerEpochStore>, Arc<TestingDWalletCheckpointNotify>) {
+) -> (
+    DWalletMPCService,
+    SuiDataSenders,
+    Arc<TestingSubmitToConsensus>,
+    Arc<TestingAuthorityPerEpochStore>,
+    Arc<TestingDWalletCheckpointNotify>,
+) {
     let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
     let dwallet_submit_to_consensus = Arc::new(TestingSubmitToConsensus::new());
     let epoch_store = Arc::new(TestingAuthorityPerEpochStore::new());
@@ -281,6 +304,6 @@ fn create_dwallet_mpc_service(
         sui_data_senders,
         dwallet_submit_to_consensus,
         epoch_store,
-        checkpoint_notify
+        checkpoint_notify,
     )
 }
