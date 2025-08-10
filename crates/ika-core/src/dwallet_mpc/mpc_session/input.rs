@@ -22,6 +22,7 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{DWalletMPCEvent, MPCRequestInput};
 use mpc::WeightedThresholdAccessStructure;
 use std::collections::HashMap;
+use tracing::error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -100,6 +101,12 @@ pub(crate) fn session_input_from_event(
                 .validator_private_dec_key_data
                 .class_groups_decryption_key;
 
+            error!(
+                ?validators_class_groups_public_keys_and_proofs,
+                ?class_groups_decryption_key,
+                "Network DKG request input: validators class groups public keys and proofs",
+            );
+            
             Ok((
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_public_input(
                     access_structure,

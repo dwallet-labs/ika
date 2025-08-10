@@ -1227,8 +1227,8 @@ mod tests {
         Vec<Arc<TestingSubmitToConsensus>>,
     ) {
         let (committee, keypairs) = Committee::new_simple_test_committee();
-        let a: AuthorityKeyPair = keypairs.get(0).unwrap().clone();
-        let b = a.private();
+        // let a: AuthorityKeyPair = keypairs.get(0).unwrap().clone();
+        // let b = a.private();
         let committee_clone = committee.clone();
         let names: Vec<_> = committee_clone.names().collect();
         let ika_network_config = IkaNetworkConfig::new(
