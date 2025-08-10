@@ -105,7 +105,7 @@ fn send_advance_messages_between_parties(
                 .or_default()
                 .extend(messages.clone());
 
-            // The service expects that every "messages" entry will have a corresponding "outputs" entry
+            // The DWalletMPCService every round will have entries in all the round-specific DB tables.
             other_epoch_store
                 .round_to_outputs
                 .lock()
