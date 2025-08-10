@@ -999,6 +999,8 @@ mod tests {
     use super::*;
     use crate::SuiDataSenders;
     use dwallet_rng::RootSeed;
+    use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
+    use ika_types::crypto::AuthorityKeyPair;
     use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
     use ika_types::messages_dwallet_mpc::{
         DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
@@ -1007,7 +1009,6 @@ mod tests {
     use prometheus::Registry;
     use std::sync::Mutex;
     use tokio::sync::watch;
-    use ika_types::crypto::AuthorityKeyPair;
 
     struct TestingAuthorityPerEpochStore {
         pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
@@ -1226,9 +1227,17 @@ mod tests {
         Vec<SuiDataSenders>,
         Vec<Arc<TestingSubmitToConsensus>>,
     ) {
-        let (committee, keypairs) = Committee::new_simple_test_committee();
-        // let a: AuthorityKeyPair = keypairs.get(0).unwrap().clone();
-        // let b = a.private();
+        let mut seeds: HashMap<AuthorityName, RootSeed> = vec![];
+        let (mut committee, keypairs) = Committee::new_simple_test_committee();
+        for (authority_name, _) in committee.voting_rights.iter() {
+            let seed = RootSeed::random_seed();
+            seeds.insert(authority_name.clone(), seed.clone());
+            let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&seed);
+            committee.class_groups_public_keys_and_proofs.insert(
+                authority_name.clone(),
+                class_groups_key_pair.encryption_key_and_proof(),
+            );
+        }
         let committee_clone = committee.clone();
         let names: Vec<_> = committee_clone.names().collect();
         let ika_network_config = IkaNetworkConfig::new(
@@ -1239,9 +1248,16 @@ mod tests {
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
         );
-        let dwallet_mpc_services = vec![0, 1, 2, 3]
-            .iter()
-            .map(|i| create_dwallet_mpc_service(*i, committee.clone(), ika_network_config.clone()))
+        let dwallet_mpc_services = committee
+            .names()
+            .map(|authority_name| {
+                create_dwallet_mpc_service(
+                    authority_name,
+                    committee.clone(),
+                    ika_network_config.clone(),
+                    seeds.get(authority_name).unwrap().clone(),
+                )
+            })
             .collect::<Vec<_>>();
         let mut services = Vec::new();
         let mut sui_data_senders = Vec::new();
@@ -1257,9 +1273,10 @@ mod tests {
     }
 
     fn create_dwallet_mpc_service(
-        val_index: usize,
+        authority_name: &AuthorityName,
         committee: Committee,
         ika_network_config: IkaNetworkConfig,
+        seed: RootSeed,
     ) -> (
         DWalletMPCService,
         SuiDataSenders,
@@ -1267,7 +1284,6 @@ mod tests {
     ) {
         let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
         let committee_clone = committee.clone();
-        let names: Vec<_> = committee_clone.names().collect();
         let dwallet_submit_to_consensus = Arc::new(TestingSubmitToConsensus::new());
         (
             DWalletMPCService {
@@ -1277,11 +1293,11 @@ mod tests {
                 state: Arc::new(TestingAuthorityState::new()),
                 dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
                 dwallet_mpc_manager: DWalletMPCManager::new(
-                    names[0].clone(),
+                    authority_name.clone(),
                     Arc::new(committee.clone()),
                     1,
                     ika_network_config,
-                    RootSeed::random_seed(),
+                    seed,
                     0,
                     0,
                     DWalletMPCMetrics::new(&Registry::new()),
