@@ -7,6 +7,7 @@
 //! and forward them to the [`DWalletMPCManager`].
 
 use crate::consensus_adapter::SubmitToConsensus;
+use crate::dwallet_checkpoints::PendingDWalletCheckpoint;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
@@ -25,6 +26,7 @@ use itertools::Itertools;
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::messages_consensus::Round;
+use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]
@@ -52,29 +54,31 @@ async fn test_network_dkg_advance_with_messages() {
             epoch_id,
         ));
     });
-    advance_all_parties_and_wait_for_completions(
-        &committee,
-        &mut dwallet_mpc_services,
-        &mut sent_consensus_messages_collectors,
-    )
-    .await;
+    let mut mpc_round = 1;
+    loop {
+        if let Some(pending_checkpoint) = advance_all_parties_and_wait_for_completions(
+            &committee,
+            &mut dwallet_mpc_services,
+            &mut sent_consensus_messages_collectors,
+            &epoch_stores,
+        )
+        .await
+        {
+            info!(?pending_checkpoint, "MPC flow completed successfully");
+            break;
+        }
 
-    send_advance_messages_between_parties(
-        &committee,
-        &mut sent_consensus_messages_collectors,
-        &mut epoch_stores,
-        1,
-    );
-
-    advance_all_parties_and_wait_for_completions(
-        &committee,
-        &mut dwallet_mpc_services,
-        &mut sent_consensus_messages_collectors,
-    )
-    .await;
+        send_advance_results_between_parties(
+            &committee,
+            &mut sent_consensus_messages_collectors,
+            &mut epoch_stores,
+            mpc_round,
+        );
+        mpc_round += 1;
+    }
 }
 
-fn send_advance_messages_between_parties(
+fn send_advance_results_between_parties(
     committee: &Committee,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
     epoch_stores: &mut Vec<Arc<TestingAuthorityPerEpochStore>>,
@@ -84,12 +88,23 @@ fn send_advance_messages_between_parties(
         let consensus_messages_store = sent_consensus_messages_collectors[i]
             .submitted_messages
             .clone();
-        let messages = consensus_messages_store.lock().unwrap().clone();
+        let consensus_messages = consensus_messages_store.lock().unwrap().clone();
         consensus_messages_store.lock().unwrap().clear();
-        let messages: Vec<_> = messages
+        let dwallet_messages: Vec<_> = consensus_messages
+            .clone()
             .into_iter()
             .filter_map(|message| {
                 if let ConsensusTransactionKind::DWalletMPCMessage(message) = message.kind {
+                    Some(message)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let dwallet_outputs: Vec<_> = consensus_messages
+            .into_iter()
+            .filter_map(|message| {
+                if let ConsensusTransactionKind::DWalletMPCOutput(message) = message.kind {
                     Some(message)
                 } else {
                     None
@@ -104,14 +119,16 @@ fn send_advance_messages_between_parties(
                 .unwrap()
                 .entry(new_data_round)
                 .or_default()
-                .extend(messages.clone());
-
-            // The DWalletMPCService every round will have entries in all the round-specific DB tables.
+                .extend(dwallet_messages.clone());
             other_epoch_store
                 .round_to_outputs
                 .lock()
                 .unwrap()
-                .insert(new_data_round, vec![]);
+                .entry(new_data_round)
+                .or_default()
+                .extend(dwallet_outputs.clone());
+
+            // The DWalletMPCService every round will have entries in all the round-specific DB tables.
             other_epoch_store
                 .round_to_verified_checkpoint
                 .lock()
@@ -125,20 +142,38 @@ async fn advance_all_parties_and_wait_for_completions(
     committee: &Committee,
     dwallet_mpc_services: &mut Vec<DWalletMPCService>,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
-) {
+    testing_epoch_stores: &Vec<Arc<TestingAuthorityPerEpochStore>>,
+) -> Option<PendingDWalletCheckpoint> {
+    let mut pending_checkpoints = vec![];
     for i in 0..committee.voting_rights.len() {
         let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
         let _ = dwallet_mpc_service.run_service_loop_iteration().await;
         let consensus_messages_store = sent_consensus_messages_collectors[i]
             .submitted_messages
             .clone();
-
+        let pending_checkpoints_store = testing_epoch_stores[i].pending_checkpoints.clone();
         loop {
             if !consensus_messages_store.lock().unwrap().is_empty() {
                 break;
             }
+            if !pending_checkpoints_store.lock().unwrap().is_empty() {
+                let pending_dwallet_checkpoint =
+                    pending_checkpoints_store.lock().unwrap().pop().unwrap();
+                info!(?pending_dwallet_checkpoint, party_id=?i+1, "Pending checkpoint found");
+                pending_checkpoints.push(pending_dwallet_checkpoint);
+                break;
+            }
+
             tokio::time::sleep(Duration::from_millis(100)).await;
             let _ = dwallet_mpc_service.run_service_loop_iteration().await;
         }
     }
+    if pending_checkpoints.len() == committee.voting_rights.len()
+        && pending_checkpoints
+            .iter()
+            .all(|x| x.clone() == pending_checkpoints[0].clone())
+    {
+        return Some(pending_checkpoints[0].clone());
+    }
+    None
 }

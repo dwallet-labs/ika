@@ -46,7 +46,17 @@ pub(crate) struct TestingAuthorityState {
         Arc<Mutex<HashMap<SessionIdentifier, bool>>>,
 }
 
-pub(crate) struct TestingDWalletCheckpointNotify {}
+pub(crate) struct TestingDWalletCheckpointNotify {
+    pub(crate) checkpoints_notification_count: Arc<Mutex<usize>>,
+}
+
+impl TestingDWalletCheckpointNotify {
+    pub(crate) fn new() -> Self {
+        Self {
+            checkpoints_notification_count: Arc::new(Mutex::new(0)),
+        }
+    }
+}
 
 impl TestingAuthorityPerEpochStore {
     fn new() -> Self {
@@ -199,7 +209,8 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
     }
 
     fn notify_checkpoint(&self) -> IkaResult {
-        todo!()
+        *self.checkpoints_notification_count.lock().unwrap() += 1;
+        Ok(())
     }
 }
 
@@ -268,7 +279,7 @@ fn create_dwallet_mpc_service(
             seed,
             dwallet_submit_to_consensus.clone(),
             Arc::new(TestingAuthorityState::new()),
-            Arc::new(TestingDWalletCheckpointNotify {}),
+            Arc::new(TestingDWalletCheckpointNotify::new()),
             authority_name.clone(),
             committee.clone(),
             ika_network_config.clone(),
