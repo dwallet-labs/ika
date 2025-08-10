@@ -1,36 +1,11 @@
-// Copyright (c) dWallet Labs, Ltd.
-// SPDX-License-Identifier: BSD-3-Clause-Clear
-
-//! This module contains the DWalletMPCService struct.
-//! It is responsible to read DWallet MPC messages from the
-//! local DB every [`READ_INTERVAL_MS`] seconds
-//! and forward them to the [`DWalletMPCManager`].
-
-use crate::consensus_adapter::SubmitToConsensus;
-use crate::dwallet_checkpoints::PendingDWalletCheckpoint;
-use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
-use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::{
-    TestingAuthorityPerEpochStore, TestingDWalletCheckpointNotify, TestingSubmitToConsensus,
-};
-use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
+use tracing::info;
 use ika_types::committee::Committee;
-use ika_types::messages_consensus::ConsensusTransactionKind;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, IkaNetworkConfig};
-use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
-};
-use ika_types::sui::EpochStartSystemTrait;
-use itertools::Itertools;
-use std::sync::Arc;
-use std::time::Duration;
-use sui_types::messages_consensus::Round;
-use tracing::{error, info};
+use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig};
+use crate::dwallet_mpc::integration_tests::utils;
 
 #[tokio::test]
 #[cfg(test)]
-async fn test_network_dkg_full_flow() {
+async fn test_malicious_behavior() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let ika_network_config = IkaNetworkConfig::new_for_testing();
@@ -64,7 +39,7 @@ async fn test_network_dkg_full_flow() {
             &epoch_stores,
             &notify_services,
         )
-        .await
+            .await
         {
             assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
             info!(?pending_checkpoint, "MPC flow completed successfully");
@@ -80,4 +55,3 @@ async fn test_network_dkg_full_flow() {
         mpc_round += 1;
     }
 }
-
