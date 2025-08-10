@@ -157,6 +157,14 @@ async fn advance_all_parties_and_wait_for_completions(
                 break;
             }
             if !pending_checkpoints_store.lock().unwrap().is_empty() {
+                // TODO (this pr): Assert the checkpoint is only get created after at least five network DKG rounds.
+                
+                // TODO (this pr): Assert for any thing that does not makes sense.
+                
+                // TODO (this pr): first check I received a checkpoint notify, and then make sure there is a pending
+                // checkpoint. 
+
+                // TODO (this pr): Make sure that functions that should not get called are not getting called.
                 let pending_dwallet_checkpoint =
                     pending_checkpoints_store.lock().unwrap().pop().unwrap();
                 info!(?pending_dwallet_checkpoint, party_id=?i+1, "Pending checkpoint found");
