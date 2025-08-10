@@ -46,7 +46,9 @@ pub(crate) struct TestingAuthorityState {
         Arc<Mutex<HashMap<SessionIdentifier, bool>>>,
 }
 
-pub(crate) struct TestingDWalletCheckpointNotify {}
+pub(crate) struct TestingDWalletCheckpointNotify {
+    pub(crate) checkpoints_notification_count: Arc<Mutex<usize>>,
+}
 
 impl TestingAuthorityPerEpochStore {
     fn new() -> Self {
@@ -199,7 +201,10 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
     }
 
     fn notify_checkpoint(&self) -> IkaResult {
-        todo!()
+        *self.checkpoints_notification_count
+            .lock()
+            .unwrap() += 1;
+        Ok(())
     }
 }
 
