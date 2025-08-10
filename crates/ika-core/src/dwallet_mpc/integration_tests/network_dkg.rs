@@ -59,7 +59,7 @@ async fn test_network_dkg_advance_with_messages() {
     )
     .await;
 
-    send_advance_messages_between_parties(
+    send_advance_results_between_parties(
         &committee,
         &mut sent_consensus_messages_collectors,
         &mut epoch_stores,
@@ -74,7 +74,7 @@ async fn test_network_dkg_advance_with_messages() {
     .await;
 }
 
-fn send_advance_messages_between_parties(
+fn send_advance_results_between_parties(
     committee: &Committee,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
     epoch_stores: &mut Vec<Arc<TestingAuthorityPerEpochStore>>,
@@ -84,12 +84,22 @@ fn send_advance_messages_between_parties(
         let consensus_messages_store = sent_consensus_messages_collectors[i]
             .submitted_messages
             .clone();
-        let messages = consensus_messages_store.lock().unwrap().clone();
+        let consensus_messages = consensus_messages_store.lock().unwrap().clone();
         consensus_messages_store.lock().unwrap().clear();
-        let messages: Vec<_> = messages
+        let dwallet_messages: Vec<_> = consensus_messages.clone()
             .into_iter()
             .filter_map(|message| {
                 if let ConsensusTransactionKind::DWalletMPCMessage(message) = message.kind {
+                    Some(message)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let dwallet_outputs: Vec<_> = consensus_messages
+            .into_iter()
+            .filter_map(|message| {
+                if let ConsensusTransactionKind::DWalletMPCOutput(message) = message.kind {
                     Some(message)
                 } else {
                     None
@@ -104,14 +114,16 @@ fn send_advance_messages_between_parties(
                 .unwrap()
                 .entry(new_data_round)
                 .or_default()
-                .extend(messages.clone());
-
-            // The DWalletMPCService every round will have entries in all the round-specific DB tables.
+                .extend(dwallet_messages.clone());
             other_epoch_store
                 .round_to_outputs
                 .lock()
                 .unwrap()
-                .insert(new_data_round, vec![]);
+                .entry(new_data_round)
+                .or_default()
+                .extend(dwallet_outputs.clone());
+            
+            // The DWalletMPCService every round will have entries in all the round-specific DB tables.
             other_epoch_store
                 .round_to_verified_checkpoint
                 .lock()
