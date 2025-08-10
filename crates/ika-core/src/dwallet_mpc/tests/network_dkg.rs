@@ -6,6 +6,7 @@
 //! local DB every [`READ_INTERVAL_MS`] seconds
 //! and forward them to the [`DWalletMPCManager`].
 
+use std::sync::Arc;
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::tests::utils;
@@ -20,6 +21,8 @@ use ika_types::sui::EpochStartSystemTrait;
 use itertools::Itertools;
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
+use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
+use crate::dwallet_mpc::tests::utils::TestingSubmitToConsensus;
 
 #[tokio::test]
 async fn test_network_dkg_full_flow() {
@@ -54,26 +57,10 @@ async fn test_network_dkg_full_flow() {
         ));
     });
     println!("Created dwallet_mpc_services");
-    for i in 0..committee.voting_rights.len() {
-        let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
-        let _ = dwallet_mpc_service.run_service_loop_iteration().await;
-        let consensus_messages_store = sent_consensus_messages_collectors[i]
-            .submitted_messages
-            .clone();
-
-        loop {
-            if !consensus_messages_store.lock().unwrap().is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
-        }
-        println!("Processed cryptographic computations for service {i}");
-    }
+    advance_and_wait_for_completion(&committee, &mut dwallet_mpc_services, &mut sent_consensus_messages_collectors).await;
 
     // send each parties messages to the other parties
     for i in 0..committee.voting_rights.len() {
-        let dwallet_mpc_service = dwallet_mpc_services.get(i).unwrap();
         let consensus_messages_store = sent_consensus_messages_collectors[i]
             .submitted_messages
             .clone();
@@ -89,7 +76,6 @@ async fn test_network_dkg_full_flow() {
                 }
             })
             .collect();
-        drop(dwallet_mpc_service);
         for j in 0..committee.voting_rights.len() {
             let other_epoch_store = epoch_stores.get(j).unwrap();
             other_epoch_store
@@ -98,5 +84,25 @@ async fn test_network_dkg_full_flow() {
                 .unwrap()
                 .insert(1, messages.clone());
         }
+    }
+    advance_and_wait_for_completion(&committee, &mut dwallet_mpc_services, &mut sent_consensus_messages_collectors).await;
+}
+
+async fn advance_and_wait_for_completion(committee: &Committee, dwallet_mpc_services: &mut Vec<DWalletMPCService>, sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>) {
+    for i in 0..committee.voting_rights.len() {
+        let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
+        let _ = dwallet_mpc_service.run_service_loop_iteration().await;
+        let consensus_messages_store = sent_consensus_messages_collectors[i]
+            .submitted_messages
+            .clone();
+
+        loop {
+            if !consensus_messages_store.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
+        }
+        println!("Processed cryptographic computations for service {:?}", i + 1);
     }
 }
