@@ -1227,7 +1227,7 @@ mod tests {
         Vec<SuiDataSenders>,
         Vec<Arc<TestingSubmitToConsensus>>,
     ) {
-        let mut seeds: HashMap<AuthorityName, RootSeed> = vec![];
+        let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
         let (mut committee, keypairs) = Committee::new_simple_test_committee();
         for (authority_name, _) in committee.voting_rights.iter() {
             let seed = RootSeed::random_seed();
