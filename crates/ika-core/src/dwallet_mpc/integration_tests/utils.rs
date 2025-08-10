@@ -201,9 +201,7 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
     }
 
     fn notify_checkpoint(&self) -> IkaResult {
-        *self.checkpoints_notification_count
-            .lock()
-            .unwrap() += 1;
+        *self.checkpoints_notification_count.lock().unwrap() += 1;
         Ok(())
     }
 }
