@@ -30,6 +30,18 @@ pub(crate) struct TestingAuthorityPerEpochStore {
         Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
 }
 
+#[derive(Clone)]
+pub(crate) struct TestingSubmitToConsensus {
+    pub(crate) submitted_messages: Arc<Mutex<Vec<ConsensusTransaction>>>,
+}
+
+pub(crate) struct TestingAuthorityState {
+    pub(crate) dwallet_mpc_computation_completed_sessions:
+        Arc<Mutex<HashMap<SessionIdentifier, bool>>>,
+}
+
+pub(crate) struct TestingDWalletCheckpointNotify {}
+
 impl TestingAuthorityPerEpochStore {
     fn new() -> Self {
         Self {
@@ -109,11 +121,6 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct TestingSubmitToConsensus {
-    pub(crate) submitted_messages: Arc<Mutex<Vec<ConsensusTransaction>>>,
-}
-
 impl TestingSubmitToConsensus {
     fn new() -> Self {
         Self {
@@ -131,11 +138,6 @@ impl DWalletMPCSubmitToConsensus for TestingSubmitToConsensus {
             .extend_from_slice(messages);
         Ok(())
     }
-}
-
-pub(crate) struct TestingAuthorityState {
-    pub(crate) dwallet_mpc_computation_completed_sessions:
-        Arc<Mutex<HashMap<SessionIdentifier, bool>>>,
 }
 
 impl TestingAuthorityState {
@@ -180,8 +182,6 @@ impl AuthorityStateTrait for TestingAuthorityState {
             .collect())
     }
 }
-
-pub(crate) struct TestingDWalletCheckpointNotify {}
 
 impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
     fn notify_checkpoint_signature(
