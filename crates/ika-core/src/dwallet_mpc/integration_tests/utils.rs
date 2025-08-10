@@ -22,6 +22,8 @@ use std::sync::{Arc, Mutex};
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
 
+/// A testing implementation of the `AuthorityPerEpochStoreTrait`.
+/// Records all received data for testing purposes.
 pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
     pub(crate) round_to_messages: Arc<Mutex<HashMap<Round, Vec<DWalletMPCMessage>>>>,
@@ -30,11 +32,15 @@ pub(crate) struct TestingAuthorityPerEpochStore {
         Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
 }
 
+/// A testing implementation of the `DWalletMPCSubmitToConsensus` trait.
+/// Records all submitted messages for testing purposes.
 #[derive(Clone)]
 pub(crate) struct TestingSubmitToConsensus {
     pub(crate) submitted_messages: Arc<Mutex<Vec<ConsensusTransaction>>>,
 }
 
+/// A testing implementation of the `AuthorityStateTrait`.
+/// Records all completed sessions for testing purposes.
 pub(crate) struct TestingAuthorityState {
     pub(crate) dwallet_mpc_computation_completed_sessions:
         Arc<Mutex<HashMap<SessionIdentifier, bool>>>,
