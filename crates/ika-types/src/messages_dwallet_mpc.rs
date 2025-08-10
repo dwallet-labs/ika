@@ -686,6 +686,7 @@ impl IkaNetworkConfig {
         }
     }
 
+    #[cfg(test)]
     pub fn new_for_testing() -> Self {
         Self::new(
             ObjectID::from_single_byte(1),
