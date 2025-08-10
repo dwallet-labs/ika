@@ -150,6 +150,7 @@ impl DWalletMPCService {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         seed: RootSeed,
