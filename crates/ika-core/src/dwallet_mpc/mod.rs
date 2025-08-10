@@ -21,7 +21,7 @@ mod mpc_event;
 pub mod submit_to_consensus;
 
 #[cfg(test)]
-mod tests;
+mod integration_tests;
 
 pub(crate) use crytographic_computation::mpc_computations::{
     dwallet_dkg, network_dkg, presign, reconfiguration, sign,
