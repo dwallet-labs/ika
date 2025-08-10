@@ -20,6 +20,9 @@ pub mod dwallet_mpc_metrics;
 mod mpc_event;
 pub mod submit_to_consensus;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) use crytographic_computation::mpc_computations::{
     dwallet_dkg, network_dkg, presign, reconfiguration, sign,
 };
