@@ -1,1 +1,1 @@
-mod network_dkg
+mod network_dkg;
