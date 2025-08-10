@@ -45,7 +45,6 @@ async function main() {
 		dWallet,
 		dkgSecondRoundRequestInput,
 		userShareEncryptionKeys,
-		signerPublicKey,
 	);
 
 	const awaitingKeyHolderSignatureDWallet = await ikaClient.getDWalletInParticularState(
@@ -57,6 +56,7 @@ async function main() {
 		ikaClient,
 		suiClient,
 		awaitingKeyHolderSignatureDWallet,
+		dkgSecondRoundRequestInput.userPublicOutput,
 		secondRoundMoveResponse,
 		userShareEncryptionKeys,
 	);

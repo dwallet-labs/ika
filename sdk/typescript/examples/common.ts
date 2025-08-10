@@ -202,6 +202,7 @@ export async function acceptEncryptedUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
+	userPublicOutput: Uint8Array,
 	secondRoundMoveResponse: {
 		event_data: {
 			encrypted_user_secret_key_share_id: string;
@@ -219,6 +220,7 @@ export async function acceptEncryptedUserShare(
 
 	await ikaTransaction.acceptEncryptedUserShare({
 		dWallet,
+		userPublicOutput,
 		encryptedUserSecretKeyShareId:
 			secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
 	});

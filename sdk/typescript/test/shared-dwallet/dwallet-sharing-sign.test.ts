@@ -84,6 +84,7 @@ describe('Shared DWallet Signing (public user shares)', () => {
 				ikaClient,
 				suiClient,
 				awaitingKeyHolderSignatureDWallet,
+				dkgSecondRoundRequestInput.userPublicOutput,
 				secondRoundMoveResponse,
 				userShareEncryptionKeys,
 				testName,

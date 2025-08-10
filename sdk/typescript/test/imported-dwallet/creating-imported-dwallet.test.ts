@@ -89,6 +89,7 @@ describe('Imported DWallet Creation', () => {
 				ikaClient,
 				suiClient,
 				awaitingKeyHolderSignatureDWallet,
+				importDWalletVerificationRequestInput.userPublicOutput,
 				importedKeyDWalletVerificationRequestEvent,
 				userShareEncryptionKeys,
 				testName,

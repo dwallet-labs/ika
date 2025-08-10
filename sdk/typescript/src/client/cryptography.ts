@@ -8,6 +8,7 @@ import { keccak_256 } from '@noble/hashes/sha3';
 import { randomBytes } from '@noble/hashes/utils.js';
 
 import {
+	centralized_and_decentralized_parties_dkg_output_match,
 	create_dkg_centralized_output as create_dkg_user_output,
 	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
 	create_sign_centralized_party_message as create_sign_user_message,
@@ -367,6 +368,20 @@ export function verifySecpSignature(
  */
 export function publicKeyFromDWalletOutput(dWalletOutput: Uint8Array): Uint8Array {
 	return Uint8Array.from(public_key_from_dwallet_output(dWalletOutput));
+}
+
+/**
+ * Verify that the user's public output matches the network's public output.
+ *
+ * @param userPublicOutput - The user's public output
+ * @param networkDKGOutput - The network's public output
+ * @returns True if the user's public output matches the network's public output, false otherwise
+ */
+export function userAndNetworkDKGOutputMatch(
+	userPublicOutput: Uint8Array,
+	networkDKGOutput: Uint8Array,
+): boolean {
+	return centralized_and_decentralized_parties_dkg_output_match(userPublicOutput, networkDKGOutput);
 }
 
 /**

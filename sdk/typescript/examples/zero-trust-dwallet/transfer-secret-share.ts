@@ -21,11 +21,17 @@ const ikaClient = createIkaClient(suiClient);
 async function main() {
 	await ikaClient.initialize();
 
-	const { userShareEncryptionKeys } = generateKeypair();
+	const { userShareEncryptionKeys: sourceUserShareEncryptionKeys } = generateKeypair();
+
+	// THIS IS NOT SOMETHING THAT YOU SHOULD DO, DESTINATION HAS IT'S OWN KEYS.
+	const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } = generateKeypair();
 
 	const { dwalletID, sessionIdentifierPreimage } = await requestDKGFirstRound(ikaClient, suiClient);
 
-	await registerEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys);
+	await registerEncryptionKey(ikaClient, suiClient, sourceUserShareEncryptionKeys);
+
+	// THIS IS NOT SOMETHING THAT YOU SHOULD DO, DESTINATION HAS IT'S OWN KEYS AND SHOULD REGISTER IT'S OWN ENCRYPTION KEY.
+	await registerEncryptionKey(ikaClient, suiClient, destinationUserShareEncryptionKeys);
 
 	const dWallet = await ikaClient.getDWalletInParticularState(
 		dwalletID,
@@ -36,7 +42,7 @@ async function main() {
 		ikaClient,
 		dWallet,
 		sessionIdentifierPreimage,
-		userShareEncryptionKeys,
+		sourceUserShareEncryptionKeys,
 	);
 
 	const secondRoundMoveResponse = await requestDkgSecondRound(
@@ -44,7 +50,7 @@ async function main() {
 		suiClient,
 		dWallet,
 		dkgSecondRoundRequestInput,
-		userShareEncryptionKeys,
+		sourceUserShareEncryptionKeys,
 	);
 
 	const awaitingKeyHolderSignatureDWallet = await ikaClient.getDWalletInParticularState(
@@ -56,8 +62,9 @@ async function main() {
 		ikaClient,
 		suiClient,
 		awaitingKeyHolderSignatureDWallet,
+		dkgSecondRoundRequestInput.userPublicOutput,
 		secondRoundMoveResponse,
-		userShareEncryptionKeys,
+		sourceUserShareEncryptionKeys,
 	);
 
 	const activeDWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
@@ -75,7 +82,7 @@ async function main() {
 		activeDWallet,
 		destinationEncryptionKeyAddress,
 		sourceEncryptedUserSecretKeyShare,
-		userShareEncryptionKeys,
+		sourceUserShareEncryptionKeys,
 	);
 
 	// AFTER TRANSFER, DESTINATION NEEDS TO ACCEPT ENCRYPTED USER SECRET KEY SHARE.

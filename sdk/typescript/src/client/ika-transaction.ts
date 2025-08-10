@@ -263,15 +263,18 @@ export class IkaTransaction {
 	 *
 	 * @param params - The parameters for accepting the encrypted user share
 	 * @param params.dWallet - The DWallet object to accept the share for
+	 * @param params.userPublicOutput - The user's public output from the DKG process, this is used to verify the user's public output signature.
 	 * @param params.encryptedUserSecretKeyShareId - The ID of the encrypted user secret key share
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async acceptEncryptedUserShare({
 		dWallet,
+		userPublicOutput,
 		encryptedUserSecretKeyShareId,
 	}: {
 		dWallet: DWallet;
+		userPublicOutput: Uint8Array;
 		encryptedUserSecretKeyShareId: string;
 	}) {
 		if (!this.#userShareEncryptionKeys) {
@@ -283,7 +286,7 @@ export class IkaTransaction {
 			this.#getCoordinatorObjectRef(),
 			dWallet.id.id,
 			encryptedUserSecretKeyShareId,
-			await this.#userShareEncryptionKeys.getUserOutputSignature(dWallet),
+			await this.#userShareEncryptionKeys.getUserOutputSignature(dWallet, userPublicOutput),
 			this.#transaction,
 		);
 

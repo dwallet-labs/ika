@@ -84,6 +84,7 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 				ikaClient,
 				suiClient,
 				awaitingKeyHolderSignatureDWallet,
+				importDWalletVerificationRequestInput.userPublicOutput,
 				importedKeyDWalletVerificationRequestEvent,
 				userShareEncryptionKeys,
 				testName,

@@ -105,6 +105,7 @@ export async function createCompleteDWallet(
 		ikaClient,
 		suiClient,
 		awaitingKeyHolderSignatureDWallet,
+		dkgSecondRoundRequestInput.userPublicOutput,
 		secondRoundMoveResponse,
 		userShareEncryptionKeys,
 		testName,
@@ -272,6 +273,7 @@ export async function acceptTestEncryptedUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
+	userPublicOutput: Uint8Array,
 	secondRoundMoveResponse: {
 		event_data: {
 			encrypted_user_secret_key_share_id: string;
@@ -285,6 +287,7 @@ export async function acceptTestEncryptedUserShare(
 
 	await ikaTransaction.acceptEncryptedUserShare({
 		dWallet,
+		userPublicOutput,
 		encryptedUserSecretKeyShareId:
 			secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
 	});

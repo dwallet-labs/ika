@@ -163,10 +163,16 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
 pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
     centralized_dkg_output: &Vec<u8>,
     decentralized_dkg_output: &Vec<u8>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
+    let versioned_centralized_dkg_output = bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(centralized_dkg_output)?;
+    let VersionedCentralizedDKGPublicOutput::V1(centralized_dkg_output) = versioned_centralized_dkg_output;
+
     let centralized_dkg_output = bcs::from_bytes::<
         DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
-    >(centralized_dkg_output)?;
+    >(centralized_dkg_output.as_slice())?;
+
+    let versioned_decentralized_dkg_output = bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(decentralized_dkg_output)?;
+    let VersionedCentralizedDKGPublicOutput::V1(decentralized_dkg_output) = versioned_decentralized_dkg_output;
 
     let decentralized_dkg_output = bcs::from_bytes::<
         DKGDecentralizedPartyOutput<
@@ -175,20 +181,14 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
             SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
             group::secp256k1::GroupElement,
         >,
-    >(decentralized_dkg_output)?;
+    >(decentralized_dkg_output.as_slice())?;
 
-    if centralized_dkg_output.public_key_share
+    Ok(centralized_dkg_output.public_key_share
         == decentralized_dkg_output.centralized_party_public_key_share
         && centralized_dkg_output.decentralized_party_public_key_share
             == decentralized_dkg_output.public_key_share
         && centralized_dkg_output.public_key == decentralized_dkg_output.public_key
-    {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "Centralized Party's DKG output does not match the Decentralized Party's DKG output"
-        ))
-    }
+    )
 }
 
 /// Executes the centralized phase of the Sign protocol,

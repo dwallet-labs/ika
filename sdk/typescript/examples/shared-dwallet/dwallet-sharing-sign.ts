@@ -57,6 +57,7 @@ async function main() {
 		ikaClient,
 		suiClient,
 		awaitingKeyHolderSignatureDWallet,
+		dkgSecondRoundRequestInput.userPublicOutput,
 		secondRoundMoveResponse,
 		userShareEncryptionKeys,
 	);

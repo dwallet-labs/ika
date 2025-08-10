@@ -5,7 +5,11 @@ import { bcs, toHex } from '@mysten/bcs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { keccak_256 } from '@noble/hashes/sha3';
 
-import { createClassGroupsKeypair, decryptUserShare } from './cryptography.js';
+import {
+	createClassGroupsKeypair,
+	decryptUserShare,
+	userAndNetworkDKGOutputMatch,
+} from './cryptography.js';
 import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
 import { encodeToASCII } from './utils.js';
 
@@ -166,17 +170,27 @@ export class UserShareEncrytionKeys {
 	 * This signature proves authorization to use the DWallet's encrypted share.
 	 *
 	 * @param dWallet - The DWallet to create a signature for
+	 * @param userPublicOutput - The user's public output from the DKG process, this is used to verify the user's public output signature.
 	 * @returns Promise resolving to the signature bytes
-	 * @throws {Error} If the DWallet is not in active state or public output is missing
+	 * @throws {Error} If the DWallet is not in awaiting key holder signature state or public output is missing or the user public output does not match the DWallet public output
 	 */
-	async getUserOutputSignature(dWallet: DWallet): Promise<Uint8Array> {
+	async getUserOutputSignature(
+		dWallet: DWallet,
+		userPublicOutput: Uint8Array,
+	): Promise<Uint8Array> {
 		if (!dWallet.state.AwaitingKeyHolderSignature?.public_output) {
 			throw new Error('DWallet is not in awaiting key holder signature state');
 		}
 
-		return await this.#encryptedSecretShareSigningKeypair.sign(
-			Uint8Array.from(dWallet.state.AwaitingKeyHolderSignature?.public_output),
+		const dWalletPublicOutput = Uint8Array.from(
+			dWallet.state.AwaitingKeyHolderSignature?.public_output,
 		);
+
+		if (!userAndNetworkDKGOutputMatch(userPublicOutput, dWalletPublicOutput)) {
+			throw new Error('User public output does not match the DWallet public output');
+		}
+
+		return await this.#encryptedSecretShareSigningKeypair.sign(dWalletPublicOutput);
 	}
 
 	/**

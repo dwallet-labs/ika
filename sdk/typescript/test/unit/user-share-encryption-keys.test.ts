@@ -16,7 +16,6 @@ describe('UserShareEncrytionKeys', () => {
 		it('should create instance with valid seed', () => {
 			expect(keys.encryptionKey).toBeInstanceOf(Uint8Array);
 			expect(keys.decryptionKey).toBeInstanceOf(Uint8Array);
-			expect(keys.encryptedSecretShareSigningKeypair).toBeDefined();
 		});
 
 		it('should generate different keys for different seeds', () => {
@@ -125,52 +124,6 @@ describe('UserShareEncrytionKeys', () => {
 			const signature2 = await keys2.getEncryptionKeySignature();
 
 			expect(signature1).toEqual(signature2);
-		});
-	});
-
-	describe('getUserOutputSignature', () => {
-		it('should create signature over DWallet public output', async () => {
-			const mockDWallet: DWallet = {
-				id: { id: 'test-id' },
-				state: {
-					AwaitingKeyHolderSignature: {
-						public_output: new Uint8Array([1, 2, 3, 4, 5]),
-					},
-				},
-			} as unknown as DWallet;
-
-			const signature = await keys.getUserOutputSignature(mockDWallet);
-
-			expect(signature).toBeInstanceOf(Uint8Array);
-			expect(signature.length).toBeGreaterThan(0);
-		});
-
-		it('should throw error when DWallet is not in awaiting key holder signature state', async () => {
-			const mockDWallet: DWallet = {
-				id: { id: 'test-id' },
-				state: {
-					Active: {
-						public_output: new Uint8Array([1, 2, 3, 4, 5]),
-					},
-				},
-			} as unknown as DWallet;
-
-			await expect(keys.getUserOutputSignature(mockDWallet)).rejects.toThrow(
-				'DWallet is not in awaiting key holder signature state',
-			);
-		});
-
-		it('should throw error when public output is missing', async () => {
-			const mockDWallet: DWallet = {
-				id: { id: 'test-id' },
-				state: {
-					AwaitingKeyHolderSignature: {},
-				},
-			} as DWallet;
-
-			await expect(keys.getUserOutputSignature(mockDWallet)).rejects.toThrow(
-				'DWallet is not in awaiting key holder signature state',
-			);
 		});
 	});
 

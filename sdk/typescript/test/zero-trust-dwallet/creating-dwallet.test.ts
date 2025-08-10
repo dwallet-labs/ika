@@ -115,6 +115,7 @@ describe('DWallet Creation', () => {
 				ikaClient,
 				suiClient,
 				awaitingKeyHolderSignatureDWallet,
+				dkgSecondRoundRequestInput.userPublicOutput,
 				secondRoundMoveResponse,
 				userShareEncryptionKeys,
 				testName,

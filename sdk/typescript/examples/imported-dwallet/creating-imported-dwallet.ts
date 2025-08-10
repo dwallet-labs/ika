@@ -53,6 +53,7 @@ async function main() {
 		ikaClient,
 		suiClient,
 		importedKeyDWallet,
+		importDWalletVerificationRequestInput.userPublicOutput,
 		importedKeyDWalletVerificationRequestEvent,
 		userShareEncryptionKeys,
 	);
