@@ -207,21 +207,25 @@ impl DWalletMPCService {
                 break;
             }
 
-            debug!("Running DWalletMPCService loop");
-            self.sync_last_session_to_complete_in_current_epoch().await;
-
-            // Receive **new** dWallet MPC events and save them in the local DB.
-
-            if let Err(err) = self.handle_new_events().await {
-                error!(?err, "failed to handle new events from DWallet MPC service")
-            }
-
-            self.process_consensus_rounds_from_storage().await;
-
-            self.process_cryptographic_computations().await;
+            self.run_service_loop_iteration().await;
 
             tokio::time::sleep(Duration::from_millis(READ_INTERVAL_MS)).await;
         }
+    }
+
+    async fn run_service_loop_iteration(&mut self) {
+        debug!("Running DWalletMPCService loop");
+        self.sync_last_session_to_complete_in_current_epoch().await;
+
+        // Receive **new** dWallet MPC events and save them in the local DB.
+
+        if let Err(err) = self.handle_new_events().await {
+            error!(?err, "failed to handle new events from DWallet MPC service")
+        }
+
+        self.process_consensus_rounds_from_storage().await;
+
+        self.process_cryptographic_computations().await;
     }
 
     async fn process_cryptographic_computations(&mut self) {
