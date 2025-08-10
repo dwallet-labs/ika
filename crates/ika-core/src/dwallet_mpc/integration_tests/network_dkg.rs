@@ -25,7 +25,6 @@ use itertools::Itertools;
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::messages_consensus::Round;
-use tracing::info;
 
 #[tokio::test]
 async fn test_network_dkg_advance_with_messages() {
