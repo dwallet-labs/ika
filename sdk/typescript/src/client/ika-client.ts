@@ -50,8 +50,6 @@ export interface NetworkEncryptionKey {
 export interface EncryptionKeyOptions {
 	/** Specific encryption key ID to use */
 	encryptionKeyID?: string;
-	/** Whether to use the latest encryption key (default: true) */
-	useLatest?: boolean;
 	/** Whether to automatically detect the encryption key from the dWallet */
 	autoDetect?: boolean;
 }
@@ -122,7 +120,7 @@ export class IkaClient {
 		this.client = suiClient;
 		this.ikaConfig = config;
 		this.cache = cache;
-		this.encryptionKeyOptions = encryptionKeyOptions || { useLatest: true };
+		this.encryptionKeyOptions = encryptionKeyOptions || { autoDetect: true };
 	}
 
 	/**
@@ -293,13 +291,10 @@ export class IkaClient {
 		if (this.encryptionKeyOptions.encryptionKeyID) {
 			// Use specific encryption key if configured
 			return this.getNetworkEncryptionKey(this.encryptionKeyOptions.encryptionKeyID);
-		} else if (this.encryptionKeyOptions.useLatest === false) {
-			// If useLatest is explicitly false but no specific key provided, throw error
-			throw new Error('Must specify encryptionKeyID when useLatest is false');
-		} else {
-			// Default to latest encryption key
-			return this.getLatestNetworkEncryptionKey();
 		}
+
+		// Default to latest encryption key
+		return this.getLatestNetworkEncryptionKey();
 	}
 
 	/**
@@ -666,14 +661,6 @@ export class IkaClient {
 	 */
 	setEncryptionKeyID(encryptionKeyID: string): void {
 		this.encryptionKeyOptions = { ...this.encryptionKeyOptions, encryptionKeyID };
-	}
-
-	/**
-	 * Set the client to use the latest encryption key for all operations.
-	 * This clears any specific encryption key ID that was set.
-	 */
-	useLatestEncryptionKey(): void {
-		this.encryptionKeyOptions = { useLatest: true };
 	}
 
 	/**
