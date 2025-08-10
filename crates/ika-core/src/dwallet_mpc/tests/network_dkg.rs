@@ -6,78 +6,49 @@
 //! local DB every [`READ_INTERVAL_MS`] seconds
 //! and forward them to the [`DWalletMPCManager`].
 
-use crate::SuiDataReceivers;
 use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
 };
-use crate::authority::{AuthorityState, AuthorityStateTrait};
+use crate::authority::AuthorityStateTrait;
 use crate::consensus_adapter::SubmitToConsensus;
-use crate::consensus_manager::ReplayWaiter;
 use crate::dwallet_checkpoints::{
-    DWalletCheckpointServiceNotify, PendingDWalletCheckpoint, PendingDWalletCheckpointInfo,
-    PendingDWalletCheckpointV1,
+    DWalletCheckpointServiceNotify, PendingDWalletCheckpoint
+    ,
 };
-use crate::dwallet_mpc::crytographic_computation::ComputationId;
-use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::mpc_session::MPCEventData;
-use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
+use crate::SuiDataReceivers;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
-use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPCSessionStatus};
-use fastcrypto::traits::KeyPair;
-use ika_config::NodeConfig;
-use ika_config::node::RootSeedWithPath;
-use ika_protocol_config::ProtocolConfig;
-use ika_sui_client::SuiConnectorClient;
-use ika_types::committee::{Committee, EpochId};
+use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
-use ika_types::message::{
-    DKGFirstRoundOutput, DKGSecondRoundOutput, DWalletCheckpointMessageKind,
-    DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput, MPCNetworkDKGOutput,
-    MPCNetworkReconfigurationOutput, MakeDWalletUserSecretKeySharesPublicOutput,
-    PartialSignatureVerificationOutput, PresignOutput, SignOutput,
-};
+use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkEncryptionKeyData, IkaNetworkConfig, MPCRequestInput,
+    DBSuiEvent, IkaNetworkConfig,
     SessionIdentifier,
 };
-use ika_types::sui::{DWalletCoordinatorInner, EpochStartSystem};
-use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
+use ika_types::sui::EpochStartSystemTrait;
 use itertools::Itertools;
-use mpc::GuaranteedOutputDeliveryRoundResult;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use sui_json_rpc_types::SuiEvent;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
-use tokio::sync::watch::error::RecvError;
-use tokio::sync::watch::{Receiver, Ref};
-use tracing::{debug, error, info, warn};
 
-use crate::SuiDataSenders;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
+use crate::SuiDataSenders;
 use dwallet_rng::RootSeed;
-use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
-use ika_types::crypto::AuthorityKeyPair;
 use ika_types::messages_consensus::ConsensusTransactionKind;
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
-    DWalletSessionEvent, DWalletSessionEventTrait, SessionType,
+    DWalletSessionEvent, DWalletSessionEventTrait,
 };
-use prometheus::Registry;
 use std::sync::Mutex;
-use tokio::sync::watch;
 
 struct TestingAuthorityPerEpochStore {
     pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
-    current_round: Arc<Mutex<Round>>,
     round_to_messages: Arc<Mutex<HashMap<Round, Vec<DWalletMPCMessage>>>>,
     round_to_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletMPCOutput>>>>,
 }
@@ -86,8 +57,8 @@ impl TestingAuthorityPerEpochStore {
     fn new() -> Self {
         Self {
             pending_checkpoints: Arc::new(Mutex::new(vec![])),
-            current_round: Arc::new(Mutex::new(0)),
-            round_to_messages: Arc::new(Mutex::new(Default::default())),
+            // The service expects at least on round of messages to be present before start functioning.
+            round_to_messages: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_outputs: Arc::new(Mutex::new(Default::default())),
         }
     }
@@ -103,7 +74,9 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
     }
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
-        Ok(Some(*self.current_round.lock().unwrap()))
+        Ok(Some(
+            (self.round_to_messages.lock().unwrap().len() - 1) as u64,
+        ))
     }
 
     fn next_dwallet_mpc_message(
