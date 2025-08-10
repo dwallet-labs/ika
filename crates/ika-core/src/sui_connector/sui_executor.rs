@@ -134,24 +134,18 @@ where
             info!("Calling `process_mid_epoch()`");
             // After mid-epoch reconfiguration, the next epoch committee is set, and
             // we can't call request dkg for the network encryption keys for the epoch.
-            let response = retry_with_max_elapsed_time!(
-                Self::process_mid_epoch(
-                    self.ika_system_package_id,
-                    self.ika_dwallet_2pc_mpc_package_id,
-                    sui_notifier,
-                    &self.sui_client,
-                    self.notifier_tx_lock.clone(),
-                ),
-                Duration::from_secs(ONE_HOUR_IN_SECONDS)
-            );
-            if response.is_err() {
-                panic!(
-                    "failed to submit mid-epoch for over an hour: {:?}",
-                    response.err()
-                );
+            let response = Self::process_mid_epoch(
+                self.ika_system_package_id,
+                self.ika_dwallet_2pc_mpc_package_id,
+                sui_notifier,
+                &self.sui_client,
+                self.notifier_tx_lock.clone(),
+            )
+            .await;
+            if response.is_ok() {
+                info!("Successfully processed mid-epoch");
+                epoch_switch_state.ran_mid_epoch = true;
             }
-            info!("Successfully processed mid-epoch");
-            epoch_switch_state.ran_mid_epoch = true;
         }
         let Ok(DWalletCoordinatorInner::V1(coordinator)) =
             self.sui_client.get_dwallet_coordinator_inner().await
@@ -173,24 +167,18 @@ where
             info!(
                 "Running network encryption key mid-epoch reconfiguration and Calculating protocol pricing"
             );
-            let result = retry_with_max_elapsed_time!(
-                Self::request_mid_epoch_reconfiguration_and_calculate_protocols_pricing(
-                    &self.sui_client,
-                    self.ika_dwallet_2pc_mpc_package_id,
-                    network_encryption_key_ids.clone(),
-                    sui_notifier,
-                    self.notifier_tx_lock.clone(),
-                ),
-                Duration::from_secs(ONE_HOUR_IN_SECONDS)
-            );
-            if result.is_err() {
-                panic!(
-                    "failed to calculate protocols' pricing for over an hour: {:?}",
-                    result.err()
-                );
+            let result = Self::request_mid_epoch_reconfiguration_and_calculate_protocols_pricing(
+                &self.sui_client,
+                self.ika_dwallet_2pc_mpc_package_id,
+                network_encryption_key_ids.clone(),
+                sui_notifier,
+                self.notifier_tx_lock.clone(),
+            )
+            .await;
+            if result.is_ok() {
+                info!("Successfully calculated protocols pricing");
+                epoch_switch_state.calculated_protocol_pricing = true;
             }
-            info!("Successfully calculated protocols pricing");
-            epoch_switch_state.calculated_protocol_pricing = true;
         }
 
         // The Epoch was finished.
@@ -201,51 +189,40 @@ where
             .locked_last_user_initiated_session_to_complete_in_current_epoch;
         if clock.timestamp_ms > epoch_finish_time
             && epoch_not_locked
+            && !next_epoch_committee_is_empty
             && !epoch_switch_state.ran_lock_last_session
         {
             info!("Calling `lock_last_active_session_sequence_number()`");
-            let response = retry_with_max_elapsed_time!(
-                Self::lock_last_session_to_complete_in_current_epoch(
-                    self.ika_system_package_id,
-                    self.ika_dwallet_2pc_mpc_package_id,
-                    sui_notifier,
-                    &self.sui_client,
-                    self.notifier_tx_lock.clone(),
-                ),
-                Duration::from_secs(ONE_HOUR_IN_SECONDS)
-            );
-            if response.is_err() {
-                panic!(
-                    "failed to submit lock-last session for over an hour: {:?}",
-                    response.err()
-                );
+            let response = Self::lock_last_session_to_complete_in_current_epoch(
+                self.ika_system_package_id,
+                self.ika_dwallet_2pc_mpc_package_id,
+                sui_notifier,
+                &self.sui_client,
+                self.notifier_tx_lock.clone(),
+            )
+            .await;
+            if response.is_ok() {
+                epoch_switch_state.ran_lock_last_session = true;
+                info!("Successfully locked last session in current epoch");
             }
-            epoch_switch_state.ran_lock_last_session = true;
-            info!("Successfully locked last session in current epoch");
         }
         if coordinator.received_end_of_publish
             && system_inner_v1.received_end_of_publish
             && !epoch_switch_state.ran_request_advance_epoch
         {
             info!("Calling `process_request_advance_epoch()`");
-            let response = retry_with_max_elapsed_time!(
-                Self::process_request_advance_epoch(
-                    self.ika_system_package_id,
-                    self.ika_dwallet_2pc_mpc_package_id,
-                    sui_notifier,
-                    &self.sui_client.clone(),
-                    self.notifier_tx_lock.clone(),
-                ),
-                Duration::from_secs(ONE_HOUR_IN_SECONDS)
-            );
-            if response.is_err() {
-                panic!(
-                    "failed to submit request advance epoch for over an hour: {:?}",
-                    response.err()
-                );
+            let response = Self::process_request_advance_epoch(
+                self.ika_system_package_id,
+                self.ika_dwallet_2pc_mpc_package_id,
+                sui_notifier,
+                &self.sui_client.clone(),
+                self.notifier_tx_lock.clone(),
+            )
+            .await;
+            if response.is_ok() {
+                info!("Successfully requested advance epoch");
+                epoch_switch_state.ran_request_advance_epoch = true;
             }
-            info!("Successfully requested advance epoch");
-            epoch_switch_state.ran_request_advance_epoch = true;
         }
     }
 
@@ -369,35 +346,29 @@ where
                                 "Processing checkpoint with signers"
                             );
 
-                            let response = retry_with_max_elapsed_time!(
-                                Self::handle_dwallet_checkpoint_execution_task(
-                                    self.ika_dwallet_2pc_mpc_package_id,
-                                    signature.clone(),
-                                    signers_bitmap.clone(),
-                                    message.clone(),
-                                    sui_notifier,
-                                    &self.sui_client.clone(),
-                                    &self.metrics.clone(),
-                                    self.notifier_tx_lock.clone().clone(),
-                                ),
-                                Duration::from_secs(ONE_HOUR_IN_SECONDS)
-                            );
-                            if response.is_err() {
-                                panic!(
-                                    "failed to submit dwallet checkpoint for over an hour, err: {:?}",
-                                    response.err()
+                            let response = Self::handle_dwallet_checkpoint_execution_task(
+                                self.ika_dwallet_2pc_mpc_package_id,
+                                signature.clone(),
+                                signers_bitmap.clone(),
+                                message.clone(),
+                                sui_notifier,
+                                &self.sui_client.clone(),
+                                &self.metrics.clone(),
+                                self.notifier_tx_lock.clone().clone(),
+                            )
+                            .await;
+                            if response.is_ok() {
+                                info!(
+                                    ?next_dwallet_checkpoint_sequence_number,
+                                    "Successfully submitted dwallet checkpoint"
                                 );
+                                self.metrics.dwallet_checkpoint_writes_success_total.inc();
+                                self.metrics
+                                    .last_written_dwallet_checkpoint_sequence
+                                    .set(next_dwallet_checkpoint_sequence_number as i64);
+                                last_submitted_dwallet_checkpoint =
+                                    Some(next_dwallet_checkpoint_sequence_number);
                             }
-                            info!(
-                                ?next_dwallet_checkpoint_sequence_number,
-                                "Successfully submitted dwallet checkpoint"
-                            );
-                            self.metrics.dwallet_checkpoint_writes_success_total.inc();
-                            self.metrics
-                                .last_written_dwallet_checkpoint_sequence
-                                .set(next_dwallet_checkpoint_sequence_number as i64);
-                            last_submitted_dwallet_checkpoint =
-                                Some(next_dwallet_checkpoint_sequence_number);
                         }
                         Err(e) => {
                             error!(
@@ -436,35 +407,29 @@ where
 
                         info!("Signers_bitmap: {:?}", signers_bitmap);
                         self.metrics.system_checkpoint_write_requests_total.inc();
-                        let response = retry_with_max_elapsed_time!(
-                            Self::handle_system_checkpoint_execution_task(
-                                self.ika_system_package_id,
-                                signature.clone(),
-                                signers_bitmap.clone(),
-                                message.clone(),
-                                sui_notifier,
-                                &self.sui_client.clone(),
-                                &self.metrics.clone(),
-                                self.notifier_tx_lock.clone(),
-                            ),
-                            Duration::from_secs(ONE_HOUR_IN_SECONDS)
-                        );
-                        if response.is_err() {
-                            panic!(
-                                "failed to submit system checkpoint for over an hour, err: {:?}",
-                                response.err()
+                        let response = Self::handle_system_checkpoint_execution_task(
+                            self.ika_system_package_id,
+                            signature.clone(),
+                            signers_bitmap.clone(),
+                            message.clone(),
+                            sui_notifier,
+                            &self.sui_client.clone(),
+                            &self.metrics.clone(),
+                            self.notifier_tx_lock.clone(),
+                        )
+                        .await;
+                        if response.is_ok() {
+                            self.metrics.system_checkpoint_writes_success_total.inc();
+                            self.metrics
+                                .last_written_system_checkpoint_sequence
+                                .set(next_dwallet_checkpoint_sequence_number as i64);
+                            last_submitted_system_checkpoint =
+                                Some(next_system_checkpoint_sequence_number);
+                            info!(
+                                "Sui transaction successfully executed for system_checkpoint sequence number: {}",
+                                next_system_checkpoint_sequence_number
                             );
                         }
-                        self.metrics.system_checkpoint_writes_success_total.inc();
-                        self.metrics
-                            .last_written_system_checkpoint_sequence
-                            .set(next_dwallet_checkpoint_sequence_number as i64);
-                        last_submitted_system_checkpoint =
-                            Some(next_system_checkpoint_sequence_number);
-                        info!(
-                            "Sui transaction successfully executed for system_checkpoint sequence number: {}",
-                            next_system_checkpoint_sequence_number
-                        );
                     }
                 }
             }
