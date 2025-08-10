@@ -12,6 +12,7 @@ import type {
 import {
 	createRandomSessionIdentifier,
 	createUserSignMessage,
+	createUserSignMessageWithPublicOutput,
 	encryptSecretShare,
 	verifyUserShare,
 } from './cryptography.js';
@@ -25,6 +26,7 @@ import type {
 	PartialUserSignature,
 	Presign,
 	SignatureAlgorithm,
+	UserSignatureInputs,
 } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 
@@ -641,7 +643,9 @@ export class IkaTransaction {
 	 * Sign a message using a DWallet with a secret share.
 	 * This performs the actual signing operation using the presign and user's secret share.
 	 *
-	 * This method is used when developer has access to the user's unencrypted secret share.
+	 * WARNING: This method is unsafe and should only be used if you know what you are doing.
+	 *
+	 * This method is used when developer has access to the user's unencrypted secret share and public output which should be verified before using this method.
 	 *
 	 * @param params - The parameters for signing
 	 * @param params.dWallet - The DWallet to sign with
@@ -650,6 +654,7 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme used for the message
 	 * @param params.presign - The completed presign object
 	 * @param params.secretShare - The secret share to use for signing
+	 * @param params.publicOutput - The public output to use for signing which should be verified before using this method.
 	 * @param params.message - The message bytes to sign
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
@@ -663,6 +668,7 @@ export class IkaTransaction {
 		verifiedPresignCap,
 		presign,
 		secretShare,
+		publicOutput,
 		message,
 		ikaCoin,
 		suiCoin,
@@ -673,6 +679,7 @@ export class IkaTransaction {
 		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		secretShare: Uint8Array;
+		publicOutput: Uint8Array;
 		message: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -682,6 +689,7 @@ export class IkaTransaction {
 			messageApproval,
 			userSignatureInputs: {
 				activeDWallet: dWallet,
+				publicOutput,
 				presign,
 				secretShare,
 				message,
@@ -809,13 +817,16 @@ export class IkaTransaction {
 	 * Request a future sign operation, which creates a partial user signature that can be used later.
 	 * This allows for pre-signing messages that can be completed later without revealing the full signature.
 	 *
-	 * This method is used when developer has access to the user's unencrypted secret share.
+	 * WARNING: This method is unsafe and should only be used if you know what you are doing.
+	 *
+	 * This method is used when developer has access to the user's unencrypted secret share and public output which should be verified before using this method.
 	 *
 	 * @param params - The parameters for requesting future sign
 	 * @param params.dWallet - The DWallet to create the future sign for
 	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
 	 * @param params.secretShare - The user's unencrypted secret share
+	 * @param params.publicOutput - The user's public output
 	 * @param params.message - The message bytes to pre-sign
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
@@ -828,6 +839,7 @@ export class IkaTransaction {
 		verifiedPresignCap,
 		presign,
 		secretShare,
+		publicOutput,
 		message,
 		hashScheme,
 		ikaCoin,
@@ -838,6 +850,7 @@ export class IkaTransaction {
 		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		secretShare: Uint8Array;
+		publicOutput: Uint8Array;
 		message: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -851,6 +864,7 @@ export class IkaTransaction {
 				activeDWallet: dWallet,
 				presign,
 				secretShare,
+				publicOutput,
 				message,
 				hash: hashScheme,
 			},
@@ -924,6 +938,8 @@ export class IkaTransaction {
 	 * Request a future sign operation and transfer the capability to a specified receiver.
 	 * This creates a partial user signature capability that can be delegated to another address.
 	 *
+	 * WARNING: This method is unsafe and should only be used if you know what you are doing.
+	 *
 	 * This method is used when developer has access to the user's unencrypted secret share.
 	 *
 	 * @param params - The parameters for requesting future sign and keep
@@ -931,6 +947,7 @@ export class IkaTransaction {
 	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
 	 * @param params.secretShare - The user's unencrypted secret share
+	 * @param params.publicOutput - The user's public output
 	 * @param params.message - The message bytes to pre-sign
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.receiver - The address that will receive the partial signature capability
@@ -944,6 +961,7 @@ export class IkaTransaction {
 		verifiedPresignCap,
 		presign,
 		secretShare,
+		publicOutput,
 		message,
 		hashScheme,
 		receiver,
@@ -954,6 +972,7 @@ export class IkaTransaction {
 		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		secretShare: Uint8Array;
+		publicOutput: Uint8Array;
 		message: Uint8Array;
 		hashScheme: Hash;
 		receiver: string;
@@ -966,6 +985,7 @@ export class IkaTransaction {
 				activeDWallet: dWallet,
 				presign,
 				secretShare,
+				publicOutput,
 				message,
 				hash: hashScheme,
 			},
@@ -1171,6 +1191,8 @@ export class IkaTransaction {
 	 * Sign a message using a DWallet created from an imported key with encrypted user shares.
 	 * This method is specifically for DWallets that were created from imported keys rather than generated through DKG.
 	 *
+	 * WARNING: This method is unsafe and should only be used if you know what you are doing.
+	 *
 	 * This method is used when developer has access to the user's unencrypted secret share.
 	 *
 	 * @param params - The parameters for signing with imported DWallet
@@ -1327,6 +1349,8 @@ export class IkaTransaction {
 	/**
 	 * Transfer an encrypted user share from the current user to another address.
 	 * This re-encrypts the user's share with the destination address's encryption key.
+	 *
+	 * WARNING: This method is unsafe and should only be used if you know what you are doing.
 	 *
 	 * This method is used when developer has access to the user's unencrypted secret share.
 	 *
@@ -1551,26 +1575,11 @@ export class IkaTransaction {
 		);
 	}
 
-	async #requestSign({
-		verifiedPresignCap,
-		messageApproval,
+	async #getUserSignMessage({
 		userSignatureInputs,
-		ikaCoin,
-		suiCoin,
 	}: {
-		verifiedPresignCap: TransactionObjectArgument;
-		messageApproval: TransactionObjectArgument;
-		userSignatureInputs: {
-			activeDWallet: DWallet;
-			secretShare?: Uint8Array;
-			encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
-			presign: Presign;
-			message: Uint8Array;
-			hash: number;
-		};
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-	}) {
+		userSignatureInputs: UserSignatureInputs;
+	}): Promise<Uint8Array> {
 		this.#assertPresignCompleted(userSignatureInputs.presign);
 
 		const publicParameters = await this.#ikaClient.getProtocolPublicParameters(
@@ -1584,19 +1593,50 @@ export class IkaTransaction {
 			publicParameters,
 		});
 
-		return coordinatorTx.requestSign(
-			this.#ikaClient.ikaConfig,
-			this.#getCoordinatorObjectRef(),
-			verifiedPresignCap,
-			messageApproval,
-			createUserSignMessage(
+		if (userSignatureInputs.publicOutput) {
+			return createUserSignMessageWithPublicOutput(
+				publicParameters,
+				userSignatureInputs.publicOutput,
+				userSecretKeyShare,
+				userSignatureInputs.presign.state.Completed?.presign,
+				userSignatureInputs.message,
+				userSignatureInputs.hash,
+			);
+		} else {
+			return createUserSignMessage(
 				publicParameters,
 				userSignatureInputs.activeDWallet,
 				userSecretKeyShare,
 				userSignatureInputs.presign.state.Completed?.presign,
 				userSignatureInputs.message,
 				userSignatureInputs.hash,
-			),
+			);
+		}
+	}
+
+	async #requestSign({
+		verifiedPresignCap,
+		messageApproval,
+		userSignatureInputs,
+		ikaCoin,
+		suiCoin,
+	}: {
+		verifiedPresignCap: TransactionObjectArgument;
+		messageApproval: TransactionObjectArgument;
+		userSignatureInputs: UserSignatureInputs;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		const userSignMessage = await this.#getUserSignMessage({
+			userSignatureInputs,
+		});
+
+		return coordinatorTx.requestSign(
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			verifiedPresignCap,
+			messageApproval,
+			userSignMessage,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
@@ -1611,28 +1651,12 @@ export class IkaTransaction {
 		suiCoin,
 	}: {
 		verifiedPresignCap: TransactionObjectArgument;
-		userSignatureInputs: {
-			activeDWallet: DWallet;
-			secretShare?: Uint8Array;
-			encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
-			presign: Presign;
-			message: Uint8Array;
-			hash: Hash;
-		};
+		userSignatureInputs: UserSignatureInputs;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		this.#assertPresignCompleted(userSignatureInputs.presign);
-
-		const publicParameters = await this.#ikaClient.getProtocolPublicParameters(
-			userSignatureInputs.activeDWallet,
-		);
-
-		const userSecretKeyShare = await this.#getUserSecretKeyShare({
-			secretShare: userSignatureInputs.secretShare,
-			encryptedUserSecretKeyShare: userSignatureInputs.encryptedUserSecretKeyShare,
-			activeDWallet: userSignatureInputs.activeDWallet,
-			publicParameters,
+		const userSignMessage = await this.#getUserSignMessage({
+			userSignatureInputs,
 		});
 
 		return coordinatorTx.requestFutureSign(
@@ -1642,14 +1666,7 @@ export class IkaTransaction {
 			verifiedPresignCap,
 			userSignatureInputs.message,
 			userSignatureInputs.hash,
-			createUserSignMessage(
-				publicParameters,
-				userSignatureInputs.activeDWallet,
-				userSecretKeyShare,
-				userSignatureInputs.presign.state.Completed?.presign,
-				userSignatureInputs.message,
-				userSignatureInputs.hash,
-			),
+			userSignMessage,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
@@ -1666,28 +1683,12 @@ export class IkaTransaction {
 	}: {
 		verifiedPresignCap: TransactionObjectArgument;
 		importedKeyMessageApproval: TransactionObjectArgument;
-		userSignatureInputs: {
-			activeDWallet: DWallet;
-			secretShare?: Uint8Array;
-			encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
-			presign: Presign;
-			message: Uint8Array;
-			hash: Hash;
-		};
+		userSignatureInputs: UserSignatureInputs;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		this.#assertPresignCompleted(userSignatureInputs.presign);
-
-		const publicParameters = await this.#ikaClient.getProtocolPublicParameters(
-			userSignatureInputs.activeDWallet,
-		);
-
-		const userSecretKeyShare = await this.#getUserSecretKeyShare({
-			secretShare: userSignatureInputs.secretShare,
-			encryptedUserSecretKeyShare: userSignatureInputs.encryptedUserSecretKeyShare,
-			activeDWallet: userSignatureInputs.activeDWallet,
-			publicParameters,
+		const userSignMessage = await this.#getUserSignMessage({
+			userSignatureInputs,
 		});
 
 		return coordinatorTx.requestImportedKeySign(
@@ -1695,14 +1696,7 @@ export class IkaTransaction {
 			this.#getCoordinatorObjectRef(),
 			verifiedPresignCap,
 			importedKeyMessageApproval,
-			createUserSignMessage(
-				publicParameters,
-				userSignatureInputs.activeDWallet,
-				userSecretKeyShare,
-				userSignatureInputs.presign.state.Completed?.presign,
-				userSignatureInputs.message,
-				userSignatureInputs.hash,
-			),
+			userSignMessage,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,

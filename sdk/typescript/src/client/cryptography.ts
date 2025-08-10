@@ -280,6 +280,41 @@ export function createUserSignMessage(
 }
 
 /**
+ * Create the user's sign message for the signature generation process.
+ * This function combines the user's secret key, presign, and message to create a sign message to be sent to the network.
+ *
+ * This function is used when developer has access to the user's public output which should be verified before using this method.
+ *
+ * @param protocolPublicParameters - The protocol public parameters
+ * @param publicOutput - The user's public output
+ * @param userSecretKeyShare - The user's secret key share
+ * @param presign - The presignature data from a completed presign operation
+ * @param message - The message bytes to sign
+ * @param hash - The hash scheme identifier to use for signing
+ * @returns The user's sign message that will be sent to the network for signature generation
+ * @throws {Error} If the DWallet is not in active state or public output is missing
+ */
+export function createUserSignMessageWithPublicOutput(
+	protocolPublicParameters: Uint8Array,
+	publicOutput: Uint8Array,
+	userSecretKeyShare: Uint8Array,
+	presign: Uint8Array,
+	message: Uint8Array,
+	hash: number,
+): Uint8Array {
+	return Uint8Array.from(
+		create_sign_user_message(
+			protocolPublicParameters,
+			publicOutput,
+			userSecretKeyShare,
+			presign,
+			message,
+			hash,
+		),
+	);
+}
+
+/**
  * Convert a network DKG public output to the protocol public parameters.
  *
  * @param network_dkg_public_output - The network DKG public output
