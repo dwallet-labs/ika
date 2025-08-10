@@ -100,13 +100,7 @@ pub(crate) fn session_input_from_event(
             let class_groups_decryption_key = network_keys
                 .validator_private_dec_key_data
                 .class_groups_decryption_key;
-
-            error!(
-                ?validators_class_groups_public_keys_and_proofs,
-                ?class_groups_decryption_key,
-                "Network DKG request input: validators class groups public keys and proofs",
-            );
-
+            
             Ok((
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_public_input(
                     access_structure,

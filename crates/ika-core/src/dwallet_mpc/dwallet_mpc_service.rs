@@ -1223,6 +1223,22 @@ mod tests {
             }
             println!("Processed cryptographic computations for service {i}");
         }
+
+        // send each parties messages to the other parties
+        for i in 0..committee.voting_rights.len() {
+            let dwallet_mpc_service = dwallet_mpc_services.get(i).unwrap();
+            let consensus_messages_store = sent_consensus_messages_collectors[i]
+                .submitted_messages
+                .clone();
+            let messages = consensus_messages_store.lock().unwrap().clone();
+            drop(dwallet_mpc_service);
+            for message in messages {
+                for j in 0..committee.voting_rights.len() {
+                    let other_service = dwallet_mpc_services.get_mut(j).unwrap();
+                    // other_service.ep
+                }
+            }
+        }
     }
 
     fn create_dwallet_mpc_services() -> (
