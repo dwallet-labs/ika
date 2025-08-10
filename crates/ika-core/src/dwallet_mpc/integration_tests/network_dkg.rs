@@ -9,8 +9,8 @@
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::tests::utils;
-use crate::dwallet_mpc::tests::utils::TestingSubmitToConsensus;
+use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
+use crate::dwallet_mpc::integration_tests::utils;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::ConsensusTransactionKind;

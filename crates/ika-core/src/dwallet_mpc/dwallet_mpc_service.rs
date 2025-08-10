@@ -32,7 +32,6 @@ use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
 use ika_config::node::RootSeedWithPath;
 use ika_config::p2p::SeedPeer;
-use ika_protocol_config::ProtocolConfig;
 use ika_sui_client::SuiConnectorClient;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
