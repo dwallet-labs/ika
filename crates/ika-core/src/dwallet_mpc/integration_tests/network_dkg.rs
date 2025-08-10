@@ -78,7 +78,10 @@ async fn test_network_dkg_advance_with_messages() {
                 .round_to_messages
                 .lock()
                 .unwrap()
-                .insert(1, messages.clone());
+                .entry(1)
+                .or_default()
+                .extend(messages.clone());
+
             // The service expects that every "messages" entry will have a corresponding "outputs" entry
             other_epoch_store
                 .round_to_outputs
