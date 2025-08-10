@@ -26,9 +26,11 @@ use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPCSessionStatus};
+use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
 use ika_config::node::RootSeedWithPath;
+use ika_config::p2p::SeedPeer;
 use ika_protocol_config::ProtocolConfig;
 use ika_sui_client::SuiConnectorClient;
 use ika_types::committee::{Committee, EpochId};
@@ -50,12 +52,14 @@ use ika_types::sui::{DWalletCoordinatorInner, EpochStartSystem};
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
 use mpc::GuaranteedOutputDeliveryRoundResult;
+use prometheus::Registry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use sui_json_rpc_types::SuiEvent;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
+use tokio::sync::watch;
 use tokio::sync::watch::error::RecvError;
 use tokio::sync::watch::{Receiver, Ref};
 use tracing::{debug, error, info, warn};
@@ -141,6 +145,45 @@ impl DWalletMPCService {
             epoch: epoch_id,
             protocol_config,
             committee,
+        }
+    }
+
+    pub(crate) fn new_for_testing(
+        epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+        seed: RootSeed,
+        dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
+        authority_state: Arc<dyn AuthorityStateTrait>,
+        checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
+        authority_name: AuthorityName,
+        committee: Committee,
+        ika_network_config: IkaNetworkConfig,
+        sui_data_receivers: SuiDataReceivers,
+    ) -> Self {
+        DWalletMPCService {
+            last_read_consensus_round: Some(0),
+            epoch_store,
+            dwallet_submit_to_consensus,
+            state: authority_state,
+            dwallet_checkpoint_service: checkpoint_service,
+            dwallet_mpc_manager: DWalletMPCManager::new(
+                authority_name.clone(),
+                Arc::new(committee.clone()),
+                1,
+                ika_network_config,
+                seed,
+                0,
+                0,
+                DWalletMPCMetrics::new(&Registry::new()),
+                sui_data_receivers.clone(),
+            ),
+            exit: watch::channel(()).1,
+            end_of_publish: false,
+            dwallet_mpc_metrics: DWalletMPCMetrics::new(&Registry::new()),
+            sui_data_receivers,
+            name: Default::default(),
+            epoch: 1,
+            protocol_config: ProtocolConfig::get_for_min_version(),
+            committee: Arc::new(committee),
         }
     }
 
@@ -996,4 +1039,3 @@ impl DWalletMPCService {
         Ok(())
     }
 }
-
