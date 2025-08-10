@@ -1202,7 +1202,7 @@ mod tests {
             ));
         });
         println!("Created dwallet_mpc_services");
-        for i in 0..1 {
+        for i in 0..committee.voting_rights.len() {
             let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
             let _ = dwallet_mpc_service.handle_new_events().await;
             let _ = dwallet_mpc_service
@@ -1221,7 +1221,6 @@ mod tests {
                     .process_cryptographic_computations()
                     .await;
             }
-            tokio::time::sleep(Duration::from_secs(30)).await;
             println!("Processed cryptographic computations for service {i}");
         }
     }
