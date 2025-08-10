@@ -94,6 +94,11 @@ async fn test_network_dkg_full_flow() {
                 .lock()
                 .unwrap()
                 .insert(1, vec![]);
+            other_epoch_store
+                .round_to_outputs
+                .lock()
+                .unwrap()
+                .insert(1, vec![]);
         }
     }
     advance_and_wait_for_completion(

@@ -26,6 +26,8 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
     pub(crate) round_to_messages: Arc<Mutex<HashMap<Round, Vec<DWalletMPCMessage>>>>,
     pub(crate) round_to_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletMPCOutput>>>>,
+    pub(crate) round_to_verified_checkpoint:
+        Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
 }
 
 impl TestingAuthorityPerEpochStore {
@@ -35,6 +37,7 @@ impl TestingAuthorityPerEpochStore {
             // The service expects at least on round of messages to be present before start functioning.
             round_to_messages: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_outputs: Arc::new(Mutex::new(Default::default())),
+            round_to_verified_checkpoint: Arc::new(Mutex::new(Default::default())),
         }
     }
 }
@@ -92,7 +95,17 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         &self,
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
-        Ok(None)
+        let round_to_verified_checkpoint = self.round_to_verified_checkpoint.lock().unwrap();
+        if last_consensus_round.is_none() {
+            return Ok(round_to_verified_checkpoint
+                .get(&0)
+                .and_then(|messages| return Some((0, messages.clone()))));
+        }
+        Ok(round_to_verified_checkpoint
+            .get(&(last_consensus_round.unwrap() + 1))
+            .and_then(|messages| {
+                return Some((last_consensus_round.unwrap() + 1, messages.clone()));
+            }))
     }
 }
 
