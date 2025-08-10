@@ -12,7 +12,6 @@ import {
 	create_dkg_centralized_output as create_dkg_user_output,
 	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
 	create_sign_centralized_party_message as create_sign_user_message,
-	decrypt_user_share,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
 	network_dkg_public_output_to_protocol_pp,
@@ -39,7 +38,7 @@ export interface DKGSecondRoundRequestInput {
 }
 
 /**
- * Prepared data for importing an existing cryptographic key as a DWallet.
+ * Prepared data for imporfting an existing cryptographic key as a DWallet.
  * Contains verification data needed to prove ownership of the imported key.
  */
 export interface ImportDWalletVerificationRequestInput {
@@ -129,38 +128,6 @@ export function encryptSecretShare(
 	);
 
 	return Uint8Array.from(encryptedUserShareAndProof);
-}
-
-/**
- * Decrypt a user's encrypted secret share.
- * This function verifies the encryption proof and decrypts the share using the private decryption key.
- *
- * SECURITY WARNING: *the user's secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
- *
- * @param decryptionKey - The private decryption key
- * @param encryptionKey - The corresponding public encryption key
- * @param dWalletDKGOutput - The DWallet's (network) DKG output for verification
- * @param encryptedUserShareAndProof - The encrypted share with proof to decrypt
- * @param protocolPublicParameters - The protocol public parameters
- * @returns The decrypted secret share
- * @throws {Error} If decryption fails or proof verification fails
- */
-export function decryptUserShare(
-	decryptionKey: Uint8Array,
-	encryptionKey: Uint8Array,
-	dWalletDKGOutput: Uint8Array,
-	encryptedUserShareAndProof: Uint8Array,
-	protocolPublicParameters: Uint8Array,
-): Uint8Array {
-	const decryptedUserShare = decrypt_user_share(
-		decryptionKey,
-		encryptionKey,
-		dWalletDKGOutput,
-		encryptedUserShareAndProof,
-		protocolPublicParameters,
-	);
-
-	return Uint8Array.from(decryptedUserShare);
 }
 
 /**

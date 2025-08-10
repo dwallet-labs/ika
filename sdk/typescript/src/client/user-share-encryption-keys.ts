@@ -1,15 +1,12 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { decrypt_user_share } from '@ika.xyz/mpc-wasm';
 import { bcs, toHex } from '@mysten/bcs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { keccak_256 } from '@noble/hashes/sha3';
 
-import {
-	createClassGroupsKeypair,
-	decryptUserShare,
-	userAndNetworkDKGOutputMatch,
-} from './cryptography.js';
+import { createClassGroupsKeypair, userAndNetworkDKGOutputMatch } from './cryptography.js';
 import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
 import { encodeToASCII } from './utils.js';
 
@@ -236,12 +233,14 @@ export class UserShareEncrytionKeys {
 			);
 		}
 
-		return decryptUserShare(
-			this.decryptionKey,
-			this.encryptionKey,
-			Uint8Array.from(dWallet.state.Active?.public_output),
-			Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
-			protocolPublicParameters,
+		return Uint8Array.from(
+			decrypt_user_share(
+				this.decryptionKey,
+				this.encryptionKey,
+				Uint8Array.from(dWallet.state.Active?.public_output),
+				Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
+				protocolPublicParameters,
+			),
 		);
 	}
 
