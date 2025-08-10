@@ -26,6 +26,7 @@ use itertools::Itertools;
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::messages_consensus::Round;
+use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]
@@ -53,27 +54,28 @@ async fn test_network_dkg_advance_with_messages() {
             epoch_id,
         ));
     });
-    advance_all_parties_and_wait_for_completions(
-        &committee,
-        &mut dwallet_mpc_services,
-        &mut sent_consensus_messages_collectors,
-        &epoch_stores,
-    )
-    .await;
+    let mut mpc_round = 1;
+    loop {
+        if let Some(pending_checkpoint) = advance_all_parties_and_wait_for_completions(
+            &committee,
+            &mut dwallet_mpc_services,
+            &mut sent_consensus_messages_collectors,
+            &epoch_stores,
+        )
+        .await
+        {
+            info!(?pending_checkpoint, "MPC flow completed successfully");
+            break;
+        }
 
-    send_advance_results_between_parties(
-        &committee,
-        &mut sent_consensus_messages_collectors,
-        &mut epoch_stores,
-        1,
-    );
-
-    advance_all_parties_and_wait_for_completions(
-        &committee,
-        &mut dwallet_mpc_services,
-        &mut sent_consensus_messages_collectors,
-    )
-    .await;
+        send_advance_results_between_parties(
+            &committee,
+            &mut sent_consensus_messages_collectors,
+            &mut epoch_stores,
+            mpc_round,
+        );
+        mpc_round += 1;
+    }
 }
 
 fn send_advance_results_between_parties(
@@ -140,7 +142,7 @@ async fn advance_all_parties_and_wait_for_completions(
     committee: &Committee,
     dwallet_mpc_services: &mut Vec<DWalletMPCService>,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
-    testing_epoch_stores: &mut Vec<TestingAuthorityPerEpochStore>,
+    testing_epoch_stores: &Vec<Arc<TestingAuthorityPerEpochStore>>,
 ) -> Option<PendingDWalletCheckpoint> {
     let mut pending_checkpoints = vec![];
     for i in 0..committee.voting_rights.len() {
