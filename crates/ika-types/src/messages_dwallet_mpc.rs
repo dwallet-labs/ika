@@ -685,6 +685,17 @@ impl IkaNetworkConfig {
             },
         }
     }
+    
+    pub fn new_for_testing() -> Self {
+        Self::new(
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+            ObjectID::from_single_byte(1),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

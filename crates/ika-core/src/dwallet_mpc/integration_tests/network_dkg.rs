@@ -22,22 +22,13 @@ use ika_types::sui::EpochStartSystemTrait;
 use itertools::Itertools;
 use std::sync::Arc;
 use std::time::Duration;
-use sui_types::base_types::ObjectID;
 
 #[tokio::test]
-async fn test_network_dkg_full_flow() {
+async fn test_network_dkg_advance_with_messages() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, keypairs) = Committee::new_simple_test_committee();
-    let committee_clone = committee.clone();
-    let names: Vec<_> = committee_clone.names().collect();
-    let ika_network_config = IkaNetworkConfig::new(
-        ObjectID::from_single_byte(1),
-        ObjectID::from_single_byte(1),
-        ObjectID::from_single_byte(1),
-        ObjectID::from_single_byte(1),
-        ObjectID::from_single_byte(1),
-        ObjectID::from_single_byte(1),
-    );
+    let (committee, _) = Committee::new_simple_test_committee();
+    let ika_network_config = IkaNetworkConfig::new_for_testing();
+    let epoch_id = 1;
     let (
         mut dwallet_mpc_services,
         sui_data_senders,
@@ -53,10 +44,9 @@ async fn test_network_dkg_full_flow() {
                 contents: base64::decode("Z7MmXd0I4lvGWLDA969YOVo7wrZlXr21RMvixIFabCqAU3voWC2pRFG3QwPYD+ta0sX5poLEkq77ovCi3BBQDgEAAAAAAAAAgFN76FgtqURRt0MD2A/rWtLF+aaCxJKu+6LwotwQUA4BAQAAAAAAAAAggZwXRQsb/ha4mk5xZZfqItaokplduZGMnsuEQzdm7UTt2Z+ktotfGXHn2YVaxxqVhDM8UaafXejIDXnaPLxaMAA=").unwrap(),
                 pulled: true,
             }],
-            1,
+            epoch_id,
         ));
     });
-    println!("Created dwallet_mpc_services");
     advance_and_wait_for_completion(
         &committee,
         &mut dwallet_mpc_services,
