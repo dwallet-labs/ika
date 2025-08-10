@@ -187,11 +187,14 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
         >,
     >(decentralized_dkg_output.as_slice())?;
 
-    Ok(centralized_dkg_output.public_key_share
+    let does_centralized_and_decentralized_parties_dkg_output_match = centralized_dkg_output
+        .public_key_share
         == decentralized_dkg_output.centralized_party_public_key_share
         && centralized_dkg_output.decentralized_party_public_key_share
             == decentralized_dkg_output.public_key_share
-        && centralized_dkg_output.public_key == decentralized_dkg_output.public_key)
+        && centralized_dkg_output.public_key == decentralized_dkg_output.public_key;
+
+    Ok(does_centralized_and_decentralized_parties_dkg_output_match)
 }
 
 /// Executes the centralized phase of the Sign protocol,
