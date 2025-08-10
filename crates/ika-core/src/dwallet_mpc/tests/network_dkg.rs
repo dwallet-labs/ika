@@ -6,10 +6,11 @@
 //! local DB every [`READ_INTERVAL_MS`] seconds
 //! and forward them to the [`DWalletMPCManager`].
 
-use std::sync::Arc;
 use crate::consensus_adapter::SubmitToConsensus;
+use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::tests::utils;
+use crate::dwallet_mpc::tests::utils::TestingSubmitToConsensus;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::ConsensusTransactionKind;
@@ -19,10 +20,9 @@ use ika_types::messages_dwallet_mpc::{
 };
 use ika_types::sui::EpochStartSystemTrait;
 use itertools::Itertools;
+use std::sync::Arc;
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
-use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
-use crate::dwallet_mpc::tests::utils::TestingSubmitToConsensus;
 
 #[tokio::test]
 async fn test_network_dkg_full_flow() {
@@ -57,7 +57,12 @@ async fn test_network_dkg_full_flow() {
         ));
     });
     println!("Created dwallet_mpc_services");
-    advance_and_wait_for_completion(&committee, &mut dwallet_mpc_services, &mut sent_consensus_messages_collectors).await;
+    advance_and_wait_for_completion(
+        &committee,
+        &mut dwallet_mpc_services,
+        &mut sent_consensus_messages_collectors,
+    )
+    .await;
 
     // send each parties messages to the other parties
     for i in 0..committee.voting_rights.len() {
@@ -83,12 +88,27 @@ async fn test_network_dkg_full_flow() {
                 .lock()
                 .unwrap()
                 .insert(1, messages.clone());
+            // The service expects that every "messages" entry will have a corresponding "outputs" entry
+            other_epoch_store
+                .round_to_outputs
+                .lock()
+                .unwrap()
+                .insert(1, vec![]);
         }
     }
-    advance_and_wait_for_completion(&committee, &mut dwallet_mpc_services, &mut sent_consensus_messages_collectors).await;
+    advance_and_wait_for_completion(
+        &committee,
+        &mut dwallet_mpc_services,
+        &mut sent_consensus_messages_collectors,
+    )
+    .await;
 }
 
-async fn advance_and_wait_for_completion(committee: &Committee, dwallet_mpc_services: &mut Vec<DWalletMPCService>, sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>) {
+async fn advance_and_wait_for_completion(
+    committee: &Committee,
+    dwallet_mpc_services: &mut Vec<DWalletMPCService>,
+    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
+) {
     for i in 0..committee.voting_rights.len() {
         let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
         let _ = dwallet_mpc_service.run_service_loop_iteration().await;
@@ -103,6 +123,9 @@ async fn advance_and_wait_for_completion(committee: &Committee, dwallet_mpc_serv
             tokio::time::sleep(Duration::from_millis(100)).await;
             let _ = dwallet_mpc_service.run_service_loop_iteration().await;
         }
-        println!("Processed cryptographic computations for service {:?}", i + 1);
+        println!(
+            "Processed cryptographic computations for service {:?}",
+            i + 1
+        );
     }
 }
