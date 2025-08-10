@@ -62,9 +62,9 @@ async fn test_network_dkg_advance_with_messages() {
         &committee,
         &mut sent_consensus_messages_collectors,
         &mut epoch_stores,
-        1
+        1,
     );
-    
+
     advance_all_parties_and_wait_for_completions(
         &committee,
         &mut dwallet_mpc_services,
@@ -77,7 +77,7 @@ fn send_advance_messages_between_parties(
     committee: &Committee,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
     epoch_stores: &mut Vec<Arc<TestingAuthorityPerEpochStore>>,
-    new_data_round: Round
+    new_data_round: Round,
 ) {
     for i in 0..committee.voting_rights.len() {
         let consensus_messages_store = sent_consensus_messages_collectors[i]
