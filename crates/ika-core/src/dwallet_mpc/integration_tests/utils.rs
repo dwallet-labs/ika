@@ -50,6 +50,14 @@ pub(crate) struct TestingDWalletCheckpointNotify {
     pub(crate) checkpoints_notification_count: Arc<Mutex<usize>>,
 }
 
+impl TestingDWalletCheckpointNotify {
+    pub(crate) fn new() -> Self {
+        Self {
+            checkpoints_notification_count: Arc::new(Mutex::new(0)),
+        }
+    }
+}
+
 impl TestingAuthorityPerEpochStore {
     fn new() -> Self {
         Self {
@@ -271,7 +279,7 @@ fn create_dwallet_mpc_service(
             seed,
             dwallet_submit_to_consensus.clone(),
             Arc::new(TestingAuthorityState::new()),
-            Arc::new(TestingDWalletCheckpointNotify {}),
+            Arc::new(TestingDWalletCheckpointNotify::new()),
             authority_name.clone(),
             committee.clone(),
             ika_network_config.clone(),
