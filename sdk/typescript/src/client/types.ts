@@ -1,8 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { SuiClient } from '@mysten/sui/client';
-
 import type * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import type * as SystemInnerModule from '../generated/ika_system/system_inner.js';
 
@@ -30,19 +28,6 @@ export interface IkaConfig {
 }
 
 export type Network = 'localnet' | 'testnet' | 'mainnet';
-
-export interface IkaClientOptions {
-	config: IkaConfig;
-	suiClient: SuiClient;
-	timeout?: number;
-	protocolPublicParameters?: {
-		networkEncryptionKeyPublicOutputID: string;
-		epoch: number;
-		protocolPublicParameters: Uint8Array;
-	};
-	cache?: boolean;
-	network: Network;
-}
 
 export type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorInner.$inferType;
 export type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;

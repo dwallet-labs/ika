@@ -20,7 +20,6 @@ import type {
 	EncryptedUserSecretKeyShare,
 	EncryptedUserSecretKeyShareState,
 	EncryptionKey,
-	IkaClientOptions,
 	IkaConfig,
 	PartialUserSignature,
 	PartialUserSignatureState,
@@ -30,6 +29,47 @@ import type {
 	SystemInner,
 } from './types.js';
 import { objResToBcs } from './utils.js';
+
+export type Network = 'localnet' | 'testnet' | 'mainnet';
+
+/**
+ * Represents a network encryption key with its metadata
+ */
+export interface NetworkEncryptionKey {
+	/** The unique identifier of the encryption key */
+	id: string;
+	/** The epoch when this encryption key was created */
+	epoch: number;
+	/** The public output ID for this encryption key */
+	publicOutputID: string;
+}
+
+/**
+ * Options for encryption key selection in protocol public parameters
+ */
+export interface EncryptionKeyOptions {
+	/** Specific encryption key ID to use */
+	encryptionKeyID?: string;
+	/** Whether to use the latest encryption key (default: true) */
+	useLatest?: boolean;
+	/** Whether to automatically detect the encryption key from the dWallet */
+	autoDetect?: boolean;
+}
+
+export interface IkaClientOptions {
+	config: IkaConfig;
+	suiClient: SuiClient;
+	timeout?: number;
+	protocolPublicParameters?: {
+		networkEncryptionKeyPublicOutputID: string;
+		epoch: number;
+		protocolPublicParameters: Uint8Array;
+	};
+	cache?: boolean;
+	network: Network;
+	/** Default encryption key options for the client */
+	encryptionKeyOptions?: EncryptionKeyOptions;
+}
 
 /**
  * IkaClient provides a high-level interface for interacting with the Ika network.
@@ -44,24 +84,31 @@ export class IkaClient {
 	private client: SuiClient;
 	/** Whether to enable caching of network objects and parameters */
 	private cache: boolean;
-	/** Cached network public parameters to avoid repeated fetching */
-	private cachedProtocolPublicParameters?: {
-		networkEncryptionKeyPublicOutputID: string;
-		epoch: number;
-		protocolPublicParameters: Uint8Array;
-	};
-	/** Cached network objects (coordinator and system inner objects) */
+	/** Cached network public parameters by encryption key ID to avoid repeated fetching */
+	private cachedProtocolPublicParameters: Map<
+		string,
+		{
+			networkEncryptionKeyPublicOutputID: string;
+			epoch: number;
+			protocolPublicParameters: Uint8Array;
+		}
+	> = new Map();
+	/** Cached network objects (coordinator and system inner objects) - separate from encryption keys */
 	private cachedObjects?: {
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
-		networkEncryptionKeyID: string;
 	};
+	/** Cached encryption keys by ID for efficient access */
+	private cachedEncryptionKeys: Map<string, NetworkEncryptionKey> = new Map();
 	/** Promise for ongoing object fetching to prevent duplicate requests */
 	private objectsPromise?: Promise<{
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
-		networkEncryptionKeyID: string;
 	}>;
+	/** Promise for ongoing encryption key fetching to prevent duplicate requests */
+	private encryptionKeysPromise?: Promise<NetworkEncryptionKey[]>;
+	/** Default encryption key options for the client */
+	private encryptionKeyOptions: EncryptionKeyOptions;
 
 	/**
 	 * Creates a new IkaClient instance
@@ -72,11 +119,23 @@ export class IkaClient {
 	 * @param options.protocolPublicParameters - Optional cached protocol public parameters
 	 * @param options.cache - Whether to enable caching (default: true)
 	 */
-	constructor({ suiClient, config, protocolPublicParameters, cache = true }: IkaClientOptions) {
+	constructor({
+		suiClient,
+		config,
+		protocolPublicParameters,
+		cache = true,
+		encryptionKeyOptions,
+	}: IkaClientOptions) {
 		this.client = suiClient;
 		this.ikaConfig = config;
-		this.cachedProtocolPublicParameters = protocolPublicParameters;
+		if (protocolPublicParameters) {
+			// If protocol public parameters are provided, cache them with a default key
+			// This maintains backward compatibility for the constructor parameter
+			this.cachedProtocolPublicParameters.set('default', protocolPublicParameters);
+		}
 		this.cache = cache;
+		// Set default encryption key options
+		this.encryptionKeyOptions = encryptionKeyOptions || { useLatest: true };
 	}
 
 	/**
@@ -85,17 +144,42 @@ export class IkaClient {
 	 */
 	invalidateCache(): void {
 		this.cachedObjects = undefined;
-		this.cachedProtocolPublicParameters = undefined;
+		this.cachedProtocolPublicParameters.clear();
 		this.objectsPromise = undefined;
+		this.cachedEncryptionKeys.clear();
+		this.encryptionKeysPromise = undefined;
 	}
 
 	/**
 	 * Invalidate only the cached objects (coordinator and system inner objects).
-	 * Public parameters cache is preserved.
+	 * Public parameters and encryption key caches are preserved.
 	 */
 	invalidateObjectCache(): void {
 		this.cachedObjects = undefined;
 		this.objectsPromise = undefined;
+	}
+
+	/**
+	 * Invalidate only the cached encryption keys.
+	 * Network objects and public parameters caches are preserved.
+	 */
+	invalidateEncryptionKeyCache(): void {
+		this.cachedEncryptionKeys.clear();
+		this.encryptionKeysPromise = undefined;
+	}
+
+	/**
+	 * Invalidate cached protocol public parameters for a specific encryption key.
+	 * If no encryptionKeyID is provided, clears all cached protocol parameters.
+	 *
+	 * @param encryptionKeyID - Optional specific encryption key ID to invalidate
+	 */
+	invalidateProtocolPublicParametersCache(encryptionKeyID?: string): void {
+		if (encryptionKeyID) {
+			this.cachedProtocolPublicParameters.delete(encryptionKeyID);
+		} else {
+			this.cachedProtocolPublicParameters.clear();
+		}
 	}
 
 	/**
@@ -119,7 +203,6 @@ export class IkaClient {
 	private async ensureInitialized(): Promise<{
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
-		networkEncryptionKeyID: string;
 	}> {
 		if (!this.cache) {
 			return this.#getObjects();
@@ -136,6 +219,100 @@ export class IkaClient {
 
 		await this.#getObjects();
 		return this.cachedObjects!;
+	}
+
+	/**
+	 * Get all available network encryption keys.
+	 * This method fetches and caches all encryption keys for efficient access.
+	 *
+	 * @returns Promise resolving to an array of all network encryption keys
+	 * @throws {NetworkError} If the encryption keys cannot be fetched
+	 */
+	async getAllNetworkEncryptionKeys(): Promise<NetworkEncryptionKey[]> {
+		if (!this.cache) {
+			return this.#fetchEncryptionKeys();
+		}
+
+		if (this.cachedEncryptionKeys.size > 0) {
+			return Array.from(this.cachedEncryptionKeys.values());
+		}
+
+		if (this.encryptionKeysPromise) {
+			await this.encryptionKeysPromise;
+			return Array.from(this.cachedEncryptionKeys.values());
+		}
+
+		await this.#fetchEncryptionKeys();
+		return Array.from(this.cachedEncryptionKeys.values());
+	}
+
+	/**
+	 * Get the latest network encryption key.
+	 * This is the most recent encryption key created for the network.
+	 *
+	 * @returns Promise resolving to the latest network encryption key
+	 * @throws {NetworkError} If the encryption keys cannot be fetched
+	 */
+	async getLatestNetworkEncryptionKey(): Promise<NetworkEncryptionKey> {
+		const keys = await this.getAllNetworkEncryptionKeys();
+		if (keys.length === 0) {
+			throw new NetworkError('No network encryption keys found');
+		}
+		return keys[keys.length - 1];
+	}
+
+	/**
+	 * Get a specific network encryption key by ID.
+	 *
+	 * @param encryptionKeyID - The ID of the encryption key to retrieve
+	 * @returns Promise resolving to the specified network encryption key
+	 * @throws {ObjectNotFoundError} If the encryption key is not found
+	 * @throws {NetworkError} If the encryption keys cannot be fetched
+	 */
+	async getNetworkEncryptionKey(encryptionKeyID: string): Promise<NetworkEncryptionKey> {
+		const keys = await this.getAllNetworkEncryptionKeys();
+		const key = keys.find((k) => k.id === encryptionKeyID);
+		if (!key) {
+			throw new ObjectNotFoundError(`Network encryption key ${encryptionKeyID} not found`);
+		}
+		return key;
+	}
+
+	/**
+	 * Get the network encryption key used by a specific dWallet.
+	 * This method automatically detects which encryption key the dWallet uses.
+	 *
+	 * @param dwalletID - The ID of the dWallet to check
+	 * @returns Promise resolving to the network encryption key used by the dWallet
+	 * @throws {InvalidObjectError} If the dWallet cannot be parsed
+	 * @throws {NetworkError} If the network request fails
+	 */
+	async getDWalletNetworkEncryptionKey(dwalletID: string): Promise<NetworkEncryptionKey> {
+		const dWallet = await this.getDWallet(dwalletID);
+
+		const encryptionKeyID = dWallet.dwallet_network_encryption_key_id;
+
+		return this.getNetworkEncryptionKey(encryptionKeyID);
+	}
+
+	/**
+	 * Get the network encryption key based on client configuration.
+	 * This method respects the client's encryption key options.
+	 *
+	 * @returns Promise resolving to the appropriate network encryption key
+	 * @throws {NetworkError} If the encryption keys cannot be fetched
+	 */
+	async getConfiguredNetworkEncryptionKey(): Promise<NetworkEncryptionKey> {
+		if (this.encryptionKeyOptions.encryptionKeyID) {
+			// Use specific encryption key if configured
+			return this.getNetworkEncryptionKey(this.encryptionKeyOptions.encryptionKeyID);
+		} else if (this.encryptionKeyOptions.useLatest === false) {
+			// If useLatest is explicitly false but no specific key provided, throw error
+			throw new Error('Must specify encryptionKeyID when useLatest is false');
+		} else {
+			// Default to latest encryption key
+			return this.getLatestNetworkEncryptionKey();
+		}
 	}
 
 	/**
@@ -433,26 +610,118 @@ export class IkaClient {
 	}
 
 	/**
-	 * Retrieve the protocol public parameters used for cryptographic operations.
-	 * These parameters are cached and only refetched when the epoch or decryption key changes.
+	 * Get cached protocol public parameters for a specific encryption key.
+	 * Returns undefined if not cached or if the cache is invalid.
 	 *
+	 * @param encryptionKeyID - The ID of the encryption key to get cached parameters for
+	 * @returns Cached protocol public parameters or undefined if not cached
+	 */
+	getCachedProtocolPublicParameters(encryptionKeyID: string): Uint8Array | undefined {
+		const cachedParams = this.cachedProtocolPublicParameters.get(encryptionKeyID);
+		if (!cachedParams) {
+			return undefined;
+		}
+
+		// Get the current encryption key to check if cache is still valid
+		const currentKey = this.cachedEncryptionKeys.get(encryptionKeyID);
+		if (!currentKey) {
+			// Key not in cache, cache is invalid
+			return undefined;
+		}
+
+		// Check if the cached parameters match the current key state
+		if (
+			cachedParams.networkEncryptionKeyPublicOutputID === currentKey.publicOutputID &&
+			cachedParams.epoch === currentKey.epoch
+		) {
+			return cachedParams.protocolPublicParameters;
+		}
+
+		// Cache is invalid, remove it
+		this.cachedProtocolPublicParameters.delete(encryptionKeyID);
+		return undefined;
+	}
+
+	/**
+	 * Check if protocol public parameters are cached for a specific encryption key.
+	 *
+	 * @param encryptionKeyID - The ID of the encryption key to check
+	 * @returns True if valid cached parameters exist, false otherwise
+	 */
+	isProtocolPublicParametersCached(encryptionKeyID: string): boolean {
+		return this.getCachedProtocolPublicParameters(encryptionKeyID) !== undefined;
+	}
+
+	/**
+	 * Get the current encryption key options for the client.
+	 *
+	 * @returns The current encryption key options
+	 */
+	getEncryptionKeyOptions(): EncryptionKeyOptions {
+		return { ...this.encryptionKeyOptions };
+	}
+
+	/**
+	 * Set the encryption key options for the client.
+	 * This affects all subsequent calls to methods that use encryption keys.
+	 *
+	 * @param options - The new encryption key options
+	 */
+	setEncryptionKeyOptions(options: EncryptionKeyOptions): void {
+		this.encryptionKeyOptions = { ...options };
+	}
+
+	/**
+	 * Set a specific encryption key ID to use for all operations.
+	 * This is a convenience method for setting just the encryption key ID.
+	 *
+	 * @param encryptionKeyID - The encryption key ID to use
+	 */
+	setEncryptionKeyID(encryptionKeyID: string): void {
+		this.encryptionKeyOptions = { ...this.encryptionKeyOptions, encryptionKeyID };
+	}
+
+	/**
+	 * Set the client to use the latest encryption key for all operations.
+	 * This clears any specific encryption key ID that was set.
+	 */
+	useLatestEncryptionKey(): void {
+		this.encryptionKeyOptions = { useLatest: true };
+	}
+
+	/**
+	 * Retrieve the protocol public parameters used for cryptographic operations.
+	 * These parameters are cached by encryption key ID and only refetched when the epoch or decryption key changes.
+	 *
+	 * @param options - Options for encryption key selection
 	 * @returns Promise resolving to the protocol public parameters as bytes
 	 * @throws {ObjectNotFoundError} If the public parameters cannot be found
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getProtocolPublicParameters(): Promise<Uint8Array> {
+	async getProtocolPublicParameters(dWallet?: DWallet): Promise<Uint8Array> {
 		await this.ensureInitialized();
 
-		const networkEncryptionKeyPublicOutputID = await this.getNetworkEncryptionKeyPublicOutputID();
-		const epoch = await this.getEpoch();
+		let networkEncryptionKey: NetworkEncryptionKey;
 
-		if (this.cachedProtocolPublicParameters) {
+		if (dWallet) {
+			networkEncryptionKey = await this.getDWalletNetworkEncryptionKey(dWallet.id.id);
+		} else {
+			// Use client's configured encryption key options
+			networkEncryptionKey = await this.getConfiguredNetworkEncryptionKey();
+		}
+
+		const encryptionKeyID = networkEncryptionKey.id;
+		const networkEncryptionKeyPublicOutputID = networkEncryptionKey.publicOutputID;
+		const epoch = networkEncryptionKey.epoch;
+
+		// Check if we have cached parameters for this specific encryption key
+		const cachedParams = this.cachedProtocolPublicParameters.get(encryptionKeyID);
+		if (cachedParams) {
 			if (
-				this.cachedProtocolPublicParameters.networkEncryptionKeyPublicOutputID ===
-					networkEncryptionKeyPublicOutputID &&
-				this.cachedProtocolPublicParameters.epoch === epoch
+				cachedParams.networkEncryptionKeyPublicOutputID === networkEncryptionKeyPublicOutputID &&
+				cachedParams.epoch === epoch
 			) {
-				return this.cachedProtocolPublicParameters.protocolPublicParameters;
+				return cachedParams.protocolPublicParameters;
 			}
 		}
 
@@ -460,57 +729,14 @@ export class IkaClient {
 			await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 		);
 
-		this.cachedProtocolPublicParameters = {
+		// Cache the parameters by encryption key ID
+		this.cachedProtocolPublicParameters.set(encryptionKeyID, {
 			networkEncryptionKeyPublicOutputID,
 			epoch,
 			protocolPublicParameters,
-		};
+		});
 
 		return protocolPublicParameters;
-	}
-
-	/**
-	 * Get the current network encryption key ID.
-	 *
-	 * @returns Promise resolving to the network encryption key ID
-	 * @throws {NetworkError} If the network objects cannot be fetched
-	 */
-	async getNetworkEncryptionKeyID(): Promise<string> {
-		const objects = await this.ensureInitialized();
-		return objects.networkEncryptionKeyID;
-	}
-
-	/**
-	 * Get the public output ID for the current network encryption key.
-	 * This ID is used to fetch the network's public parameters.
-	 *
-	 * @returns Promise resolving to the network encryption key public output ID
-	 * @throws {InvalidObjectError} If the network encryption key object cannot be parsed
-	 * @throws {NetworkError} If the network request fails
-	 */
-	async getNetworkEncryptionKeyPublicOutputID(): Promise<string> {
-		const objects = await this.ensureInitialized();
-
-		try {
-			const networkEncryptionKeyID = objects.networkEncryptionKeyID;
-
-			const decryptionKey = await this.client.getObject({
-				id: networkEncryptionKeyID,
-				options: { showBcs: true },
-			});
-
-			const decryptionKeyParsed = CoordinatorInnerModule.DWalletNetworkEncryptionKey.fromBase64(
-				objResToBcs(decryptionKey),
-			);
-
-			return decryptionKeyParsed.network_dkg_public_output.contents.id.id;
-		} catch (error) {
-			if (error instanceof InvalidObjectError) {
-				throw error;
-			}
-
-			throw new NetworkError('Failed to get decryption key public output ID', error as Error);
-		}
 	}
 
 	/**
@@ -567,7 +793,7 @@ export class IkaClient {
 	}
 
 	/**
-	 * Get the core network objects (coordinator inner, system inner, and decryption key ID).
+	 * Get the core network objects (coordinator inner and system inner objects).
 	 * Uses caching to avoid redundant network requests.
 	 *
 	 * @returns Promise resolving to the core network objects
@@ -579,7 +805,6 @@ export class IkaClient {
 			return {
 				coordinatorInner: this.cachedObjects.coordinatorInner,
 				systemInner: this.cachedObjects.systemInner,
-				networkEncryptionKeyID: this.cachedObjects.networkEncryptionKeyID,
 			};
 		}
 
@@ -594,7 +819,6 @@ export class IkaClient {
 			this.cachedObjects = {
 				coordinatorInner: result.coordinatorInner,
 				systemInner: result.systemInner,
-				networkEncryptionKeyID: result.networkEncryptionKeyID,
 			};
 			return result;
 		} catch (error) {
@@ -655,16 +879,6 @@ export class IkaClient {
 
 			const systemInnerParsed = SystemInnerDynamicField.fromBase64(objResToBcs(systemInner)).value;
 
-			const keysDFs = await this.client.getDynamicFields({
-				parentId: coordinatorInnerParsed.dwallet_network_encryption_keys.id.id,
-			});
-
-			if (!keysDFs.data?.length) {
-				throw new ObjectNotFoundError('Network encryption keys');
-			}
-
-			const networkEncryptionKeyID = keysDFs.data[keysDFs.data.length - 1].name.value as string;
-
 			this.ikaConfig.packages.ikaSystemPackage = systemParsed.package_id;
 			this.ikaConfig.packages.ikaDwallet2pcMpcPackage = coordinatorParsed.package_id;
 
@@ -677,7 +891,6 @@ export class IkaClient {
 			return {
 				coordinatorInner: coordinatorInnerParsed,
 				systemInner: systemInnerParsed,
-				networkEncryptionKeyID,
 			};
 		} catch (error) {
 			if (error instanceof InvalidObjectError || error instanceof ObjectNotFoundError) {
@@ -685,6 +898,81 @@ export class IkaClient {
 			}
 
 			throw new NetworkError('Failed to fetch objects', error as Error);
+		}
+	}
+
+	/**
+	 * Fetch encryption keys from the network and parse them.
+	 *
+	 * @returns Promise resolving to the fetched encryption keys
+	 * @private
+	 */
+	async #fetchEncryptionKeys(): Promise<NetworkEncryptionKey[]> {
+		if (this.encryptionKeysPromise) {
+			return this.encryptionKeysPromise;
+		}
+
+		this.encryptionKeysPromise = this.#fetchEncryptionKeysFromNetwork();
+
+		try {
+			const result = await this.encryptionKeysPromise;
+			return result;
+		} catch (error) {
+			this.encryptionKeysPromise = undefined;
+			throw error;
+		}
+	}
+
+	/**
+	 * Fetch encryption keys from the network and parse them.
+	 *
+	 * @returns Promise resolving to the fetched encryption keys
+	 * @private
+	 */
+	async #fetchEncryptionKeysFromNetwork(): Promise<NetworkEncryptionKey[]> {
+		try {
+			const objects = await this.ensureInitialized();
+			const keysDFs = await this.client.getDynamicFields({
+				parentId: objects.coordinatorInner.dwallet_network_encryption_keys.id.id,
+			});
+
+			if (!keysDFs.data?.length) {
+				throw new ObjectNotFoundError('Network encryption keys');
+			}
+
+			const encryptionKeys: NetworkEncryptionKey[] = [];
+
+			for (const keyDF of keysDFs.data) {
+				const keyName = keyDF.name.value as string;
+				const keyObject = await this.client.getObject({
+					id: keyDF.objectId,
+					options: { showBcs: true },
+				});
+
+				const keyParsed = CoordinatorInnerModule.DWalletNetworkEncryptionKey.fromBase64(
+					objResToBcs(keyObject),
+				);
+
+				const encryptionKey: NetworkEncryptionKey = {
+					id: keyName,
+					epoch: Number(keyParsed.dkg_at_epoch),
+					publicOutputID: keyParsed.network_dkg_public_output.contents.id.id,
+				};
+
+				encryptionKeys.push(encryptionKey);
+				this.cachedEncryptionKeys.set(keyName, encryptionKey);
+			}
+
+			// Sort by epoch to ensure proper ordering
+			encryptionKeys.sort((a, b) => a.epoch - b.epoch);
+
+			return encryptionKeys;
+		} catch (error) {
+			if (error instanceof InvalidObjectError || error instanceof ObjectNotFoundError) {
+				throw error;
+			}
+
+			throw new NetworkError('Failed to fetch encryption keys', error as Error);
 		}
 	}
 

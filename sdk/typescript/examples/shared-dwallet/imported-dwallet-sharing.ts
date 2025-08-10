@@ -75,7 +75,7 @@ async function main() {
 		await userShareEncryptionKeys.decryptUserShare(
 			activeDWallet,
 			secretShare,
-			await ikaClient.getProtocolPublicParameters(),
+			await ikaClient.getProtocolPublicParameters(activeDWallet),
 		),
 	);
 }

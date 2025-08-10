@@ -122,7 +122,7 @@ describe('Shared Imported DWallet Signing (public user shares)', () => {
 				await userShareEncryptionKeys.decryptUserShare(
 					activeDWallet,
 					encryptedUserSecretKeyShare,
-					await ikaClient.getProtocolPublicParameters(),
+					await ikaClient.getProtocolPublicParameters(activeDWallet),
 				),
 				testName,
 			);

@@ -92,7 +92,7 @@ export class IkaTransaction {
 	}> {
 		const dwalletCap = this.#requestDWalletDKGFirstRound({
 			curve,
-			networkEncryptionKeyID: await this.#ikaClient.getNetworkEncryptionKeyID(),
+			networkEncryptionKeyID: (await this.#ikaClient.getConfiguredNetworkEncryptionKey()).id,
 			ikaCoin,
 			suiCoin,
 		});
@@ -166,7 +166,7 @@ export class IkaTransaction {
 	}) {
 		const cap = this.#requestDWalletDKGFirstRound({
 			curve,
-			networkEncryptionKeyID: await this.#ikaClient.getNetworkEncryptionKeyID(),
+			networkEncryptionKeyID: (await this.#ikaClient.getConfiguredNetworkEncryptionKey()).id,
 			ikaCoin,
 			suiCoin,
 		});
@@ -1315,7 +1315,7 @@ export class IkaTransaction {
 			sourceSecretShare: await this.#userShareEncryptionKeys.decryptUserShare(
 				dWallet,
 				sourceEncryptedUserSecretKeyShare,
-				await this.#ikaClient.getProtocolPublicParameters(),
+				await this.#ikaClient.getProtocolPublicParameters(dWallet),
 			),
 			ikaCoin,
 			suiCoin,
@@ -1462,7 +1462,7 @@ export class IkaTransaction {
 		this.#assertDWalletPublicOutputSet(dWallet);
 
 		const publicParameters =
-			publicParametersFromParam ?? (await this.#ikaClient.getProtocolPublicParameters());
+			publicParametersFromParam ?? (await this.#ikaClient.getProtocolPublicParameters(dWallet));
 
 		this.#assertUserShareVerification(dWallet, secretShare, publicParameters);
 
@@ -1487,7 +1487,7 @@ export class IkaTransaction {
 		}
 
 		const publicParameters =
-			publicParametersFromParam ?? (await this.#ikaClient.getProtocolPublicParameters());
+			publicParametersFromParam ?? (await this.#ikaClient.getProtocolPublicParameters(dWallet));
 
 		const secretShare = await this.#userShareEncryptionKeys.decryptUserShare(
 			dWallet,
@@ -1572,7 +1572,9 @@ export class IkaTransaction {
 	}) {
 		this.#assertPresignCompleted(userSignatureInputs.presign);
 
-		const publicParameters = await this.#ikaClient.getProtocolPublicParameters();
+		const publicParameters = await this.#ikaClient.getProtocolPublicParameters(
+			userSignatureInputs.activeDWallet,
+		);
 
 		const userSecretKeyShare = await this.#getUserSecretKeyShare({
 			secretShare: userSignatureInputs.secretShare,
@@ -1621,7 +1623,9 @@ export class IkaTransaction {
 	}) {
 		this.#assertPresignCompleted(userSignatureInputs.presign);
 
-		const publicParameters = await this.#ikaClient.getProtocolPublicParameters();
+		const publicParameters = await this.#ikaClient.getProtocolPublicParameters(
+			userSignatureInputs.activeDWallet,
+		);
 
 		const userSecretKeyShare = await this.#getUserSecretKeyShare({
 			secretShare: userSignatureInputs.secretShare,
@@ -1674,7 +1678,9 @@ export class IkaTransaction {
 	}) {
 		this.#assertPresignCompleted(userSignatureInputs.presign);
 
-		const publicParameters = await this.#ikaClient.getProtocolPublicParameters();
+		const publicParameters = await this.#ikaClient.getProtocolPublicParameters(
+			userSignatureInputs.activeDWallet,
+		);
 
 		const userSecretKeyShare = await this.#getUserSecretKeyShare({
 			secretShare: userSignatureInputs.secretShare,
@@ -1752,7 +1758,7 @@ export class IkaTransaction {
 			throw new Error('User output signature is not set');
 		}
 
-		const publicParameters = await this.#ikaClient.getProtocolPublicParameters();
+		const publicParameters = await this.#ikaClient.getProtocolPublicParameters(dWallet);
 
 		const destinationEncryptionKeyObj = await this.#ikaClient.getActiveEncryptionKey(
 			destinationEncryptionKeyAddress,
@@ -1816,7 +1822,7 @@ export class IkaTransaction {
 		return coordinatorTx.requestImportedKeyDwalletVerification(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			await this.#ikaClient.getNetworkEncryptionKeyID(),
+			(await this.#ikaClient.getConfiguredNetworkEncryptionKey()).id,
 			curve,
 			importDWalletVerificationRequestInput.userMessage,
 			importDWalletVerificationRequestInput.encryptedUserShareAndProof,
