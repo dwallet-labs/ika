@@ -1245,6 +1245,7 @@ mod tests {
         Vec<DWalletMPCService>,
         Vec<SuiDataSenders>,
         Vec<Arc<TestingSubmitToConsensus>>,
+        Vec<Arc<TestingAuthorityPerEpochStore>>
     ) {
         let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
         let (mut committee, keypairs) = Committee::new_simple_test_committee();
@@ -1281,14 +1282,16 @@ mod tests {
         let mut services = Vec::new();
         let mut sui_data_senders = Vec::new();
         let mut consensus_stores = Vec::new();
-        for (dwallet_mpc_service, sui_data_sender, dwallet_submit_to_consensus) in
+        let mut epoch_stores = Vec::new();
+        for (dwallet_mpc_service, sui_data_sender, dwallet_submit_to_consensus, epoch_store) in
             dwallet_mpc_services
         {
             services.push(dwallet_mpc_service);
             sui_data_senders.push(sui_data_sender);
             consensus_stores.push(dwallet_submit_to_consensus);
+            epoch_stores.push(epoch_store);
         }
-        (services, sui_data_senders, consensus_stores)
+        (services, sui_data_senders, consensus_stores, epoch_stores)
     }
 
     fn create_dwallet_mpc_service(
@@ -1300,14 +1303,16 @@ mod tests {
         DWalletMPCService,
         SuiDataSenders,
         Arc<TestingSubmitToConsensus>,
+        Arc<TestingAuthorityPerEpochStore>
     ) {
         let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
         let committee_clone = committee.clone();
         let dwallet_submit_to_consensus = Arc::new(TestingSubmitToConsensus::new());
+        let epoch_store = Arc::new(TestingAuthorityPerEpochStore::new());
         (
             DWalletMPCService {
                 last_read_consensus_round: Some(0),
-                epoch_store: Arc::new(TestingAuthorityPerEpochStore::new()),
+                epoch_store: epoch_store.clone(),
                 dwallet_submit_to_consensus: dwallet_submit_to_consensus.clone(),
                 state: Arc::new(TestingAuthorityState::new()),
                 dwallet_checkpoint_service: Arc::new(TestingDWalletCheckpointNotify {}),
@@ -1333,6 +1338,7 @@ mod tests {
             },
             sui_data_senders,
             dwallet_submit_to_consensus,
+            epoch_store
         )
     }
 }
