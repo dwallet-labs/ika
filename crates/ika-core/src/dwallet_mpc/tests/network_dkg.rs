@@ -8,22 +8,18 @@
 
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
+use crate::dwallet_mpc::tests::utils;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use ika_types::committee::Committee;
+use ika_types::messages_consensus::ConsensusTransactionKind;
+use ika_types::messages_dwallet_mpc::{DBSuiEvent, IkaNetworkConfig};
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, IkaNetworkConfig
-    ,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
 };
 use ika_types::sui::EpochStartSystemTrait;
 use itertools::Itertools;
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
-use ika_types::messages_consensus::ConsensusTransactionKind;
-use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkDKGEncryptionKeyRequestEvent,
-    DWalletSessionEvent, DWalletSessionEventTrait,
-};
-use crate::dwallet_mpc::tests::utils;
 
 #[tokio::test]
 async fn test_network_dkg_full_flow() {
@@ -104,4 +100,3 @@ async fn test_network_dkg_full_flow() {
         }
     }
 }
-

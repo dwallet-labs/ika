@@ -1,22 +1,26 @@
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
-use ika_types::error::IkaResult;
-use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
-use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, IkaNetworkConfig, SessionIdentifier};
-use sui_types::messages_consensus::Round;
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_rng::RootSeed;
-use ika_types::committee::Committee;
-use ika_types::crypto::AuthorityName;
-use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_consensus::ConsensusTransaction;
-use sui_types::base_types::ObjectID;
-use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStore, AuthorityPerEpochStoreTrait};
 use crate::authority::AuthorityStateTrait;
+use crate::authority::authority_per_epoch_store::{
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
+};
 use crate::dwallet_checkpoints::{DWalletCheckpointServiceNotify, PendingDWalletCheckpoint};
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
+use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_rng::RootSeed;
+use ika_types::committee::Committee;
+use ika_types::crypto::AuthorityName;
+use ika_types::error::IkaResult;
+use ika_types::message::DWalletCheckpointMessageKind;
+use ika_types::messages_consensus::ConsensusTransaction;
+use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
+use ika_types::messages_dwallet_mpc::{
+    DWalletMPCMessage, DWalletMPCOutput, IkaNetworkConfig, SessionIdentifier,
+};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use sui_types::base_types::ObjectID;
+use sui_types::messages_consensus::Round;
 
 pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
@@ -117,7 +121,8 @@ impl DWalletMPCSubmitToConsensus for TestingSubmitToConsensus {
 }
 
 pub(crate) struct TestingAuthorityState {
-    pub(crate) dwallet_mpc_computation_completed_sessions: Arc<Mutex<HashMap<SessionIdentifier, bool>>>,
+    pub(crate) dwallet_mpc_computation_completed_sessions:
+        Arc<Mutex<HashMap<SessionIdentifier, bool>>>,
 }
 
 impl TestingAuthorityState {
