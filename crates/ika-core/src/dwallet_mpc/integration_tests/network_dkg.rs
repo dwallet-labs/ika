@@ -11,7 +11,7 @@ use crate::dwallet_checkpoints::PendingDWalletCheckpoint;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    TestingAuthorityPerEpochStore, TestingSubmitToConsensus,
+    TestingAuthorityPerEpochStore, TestingDWalletCheckpointNotify, TestingSubmitToConsensus,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
@@ -26,7 +26,7 @@ use itertools::Itertools;
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::messages_consensus::Round;
-use tracing::info;
+use tracing::{error, info};
 
 #[tokio::test]
 #[cfg(test)]
@@ -40,6 +40,7 @@ async fn test_network_dkg_advance_with_messages() {
         sui_data_senders,
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
+        mut notify_services,
     ) = utils::create_dwallet_mpc_services();
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
@@ -61,6 +62,7 @@ async fn test_network_dkg_advance_with_messages() {
             &mut dwallet_mpc_services,
             &mut sent_consensus_messages_collectors,
             &epoch_stores,
+            &notify_services,
         )
         .await
         {
@@ -144,6 +146,7 @@ async fn advance_all_parties_and_wait_for_completions(
     dwallet_mpc_services: &mut Vec<DWalletMPCService>,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
     testing_epoch_stores: &Vec<Arc<TestingAuthorityPerEpochStore>>,
+    notify_services: &Vec<Arc<TestingDWalletCheckpointNotify>>,
 ) -> Option<PendingDWalletCheckpoint> {
     let mut pending_checkpoints = vec![];
     for i in 0..committee.voting_rights.len() {
@@ -153,20 +156,23 @@ async fn advance_all_parties_and_wait_for_completions(
             .submitted_messages
             .clone();
         let pending_checkpoints_store = testing_epoch_stores[i].pending_checkpoints.clone();
-        // let checkpoint_notification_collector = testing_epoch_stores[i].;
+        let notify_service = notify_services[i].clone();
         loop {
             if !consensus_messages_store.lock().unwrap().is_empty() {
                 break;
             }
-            if !pending_checkpoints_store.lock().unwrap().is_empty() {
-                // TODO (this pr): Assert for any thing that does not makes sense.
-
-                // TODO (this pr): first check I received a checkpoint notify, and then make sure there is a pending
-                // checkpoint.
-
-                // TODO (this pr): Make sure that functions that should not get called are not getting called.
-                let pending_dwallet_checkpoint =
-                    pending_checkpoints_store.lock().unwrap().pop().unwrap();
+            if *notify_service
+                .checkpoints_notification_count
+                .lock()
+                .unwrap()
+                > 0
+            {
+                let pending_checkpoint = pending_checkpoints_store.lock().unwrap().pop();
+                assert!(
+                    pending_checkpoint.is_some(),
+                    "received a checkpoint notification, but no pending checkpoint was found"
+                );
+                let pending_dwallet_checkpoint = pending_checkpoint.unwrap();
                 info!(?pending_dwallet_checkpoint, party_id=?i+1, "Pending checkpoint found");
                 pending_checkpoints.push(pending_dwallet_checkpoint);
                 break;
@@ -183,5 +189,10 @@ async fn advance_all_parties_and_wait_for_completions(
     {
         return Some(pending_checkpoints[0].clone());
     }
+    assert!(
+        pending_checkpoints.is_empty(),
+        "Pending checkpoints are not equal across all parties: {:?}",
+        pending_checkpoints
+    );
     None
 }
