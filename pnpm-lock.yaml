@@ -109,6 +109,8 @@ importers:
         specifier: ^7.0.3
         version: 7.0.3
 
+  sdk/signature-mpc-wasm/pkg: {}
+
   sdk/typescript:
     dependencies:
       '@ika.xyz/mpc-wasm':

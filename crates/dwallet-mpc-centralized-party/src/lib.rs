@@ -32,7 +32,7 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
 use message_digest::message_digest::message_digest;
-use serde::{Deserialize, Serialize};
+use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGDecentralizedPartyOutput};
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 use twopc_mpc::sign::verify_signature;
@@ -154,6 +154,40 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
             let public_key = dkg_output.public_key;
             Ok(bcs::to_bytes(&public_key)?)
         }
+    }
+}
+
+/// Check whether the centralized party (user)'s DKG output matches the decentralized party (network)'s DKG output.
+///
+/// Required usage: when accepting an encrypted user share after DKG before we sign on the network's public output.
+pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
+    centralized_dkg_output: &Vec<u8>,
+    decentralized_dkg_output: &Vec<u8>,
+) -> anyhow::Result<()> {
+    let centralized_dkg_output = bcs::from_bytes::<
+        DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
+    >(centralized_dkg_output)?;
+
+    let decentralized_dkg_output = bcs::from_bytes::<
+        DKGDecentralizedPartyOutput<
+            SCALAR_LIMBS,
+            SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+            SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+            group::secp256k1::GroupElement,
+        >,
+    >(decentralized_dkg_output)?;
+
+    if centralized_dkg_output.public_key_share
+        == decentralized_dkg_output.centralized_party_public_key_share
+        && centralized_dkg_output.decentralized_party_public_key_share
+            == decentralized_dkg_output.public_key_share
+        && centralized_dkg_output.public_key == decentralized_dkg_output.public_key
+    {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Centralized Party's DKG output does not match the Decentralized Party's DKG output"
+        ))
     }
 }
 
