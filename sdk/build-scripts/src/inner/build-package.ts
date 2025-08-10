@@ -123,15 +123,7 @@ async function buildESM(
 }
 
 async function buildTypes(config: string) {
-	try {
-		return await exec(`pnpm tsc --project ${config}`);
-	} catch (error) {
-		if (error instanceof Error) {
-			throw new Error(`TypeScript compilation failed for ${config}: ${error.message}`);
-		}
-
-		throw new Error(`TypeScript compilation failed for ${config}: ${error}`);
-	}
+	return exec(`pnpm tsc --project ${config}`);
 }
 
 async function buildImportDirectories({ exports, sideEffects }: PackageJSON) {

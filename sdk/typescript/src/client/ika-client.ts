@@ -10,64 +10,29 @@ import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
 import { networkDkgPublicOutputToProtocolPublicParameters } from './cryptography.js';
-import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './df.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
-import type {
-	CoordinatorInner,
-	DWallet,
-	DWalletCap,
-	DWalletState,
-	EncryptedUserSecretKeyShare,
-	EncryptedUserSecretKeyShareState,
-	EncryptionKey,
-	IkaConfig,
-	PartialUserSignature,
-	PartialUserSignatureState,
-	Presign,
-	PresignState,
-	SharedObjectOwner,
-	SystemInner,
+import {
+	CoordinatorInnerDynamicField,
+	SystemInnerDynamicField,
+	type CoordinatorInner,
+	type DWallet,
+	type DWalletCap,
+	type DWalletState,
+	type EncryptedUserSecretKeyShare,
+	type EncryptedUserSecretKeyShareState,
+	type EncryptionKey,
+	type EncryptionKeyOptions,
+	type IkaClientOptions,
+	type IkaConfig,
+	type NetworkEncryptionKey,
+	type PartialUserSignature,
+	type PartialUserSignatureState,
+	type Presign,
+	type PresignState,
+	type SharedObjectOwner,
+	type SystemInner,
 } from './types.js';
 import { objResToBcs } from './utils.js';
-
-export type Network = 'localnet' | 'testnet' | 'mainnet';
-
-/**
- * Represents a network encryption key with its metadata
- */
-export interface NetworkEncryptionKey {
-	/** The unique identifier of the encryption key */
-	id: string;
-	/** The epoch when this encryption key was created */
-	epoch: number;
-	/** The public output ID for this encryption key */
-	publicOutputID: string;
-}
-
-/**
- * Options for encryption key selection in protocol public parameters
- */
-export interface EncryptionKeyOptions {
-	/** Specific encryption key ID to use */
-	encryptionKeyID?: string;
-	/** Whether to automatically detect the encryption key from the dWallet */
-	autoDetect?: boolean;
-}
-
-export interface IkaClientOptions {
-	config: IkaConfig;
-	suiClient: SuiClient;
-	timeout?: number;
-	protocolPublicParameters?: {
-		networkEncryptionKeyPublicOutputID: string;
-		epoch: number;
-		protocolPublicParameters: Uint8Array;
-	};
-	cache?: boolean;
-	network: Network;
-	/** Default encryption key options for the client */
-	encryptionKeyOptions?: EncryptionKeyOptions;
-}
 
 /**
  * IkaClient provides a high-level interface for interacting with the Ika network.

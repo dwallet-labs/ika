@@ -1438,9 +1438,10 @@ export class IkaTransaction {
 		secretShare: Uint8Array,
 		publicParameters: Uint8Array,
 	) {
+		this.#assertDWalletPublicOutputSet(dWallet);
+
 		const userShareVerified = verifyUserShare(
 			secretShare,
-			// @ts-expect-error - TODO: Fix this
 			Uint8Array.from(dWallet.state.Active?.public_output),
 			publicParameters,
 		);
