@@ -1,7 +1,11 @@
-use tracing::info;
-use ika_types::committee::Committee;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig};
 use crate::dwallet_mpc::integration_tests::utils;
+use ika_types::committee::Committee;
+use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent,
+    DWalletSessionEventTrait, IkaNetworkConfig,
+};
+use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]
@@ -31,6 +35,35 @@ async fn test_malicious_behavior() {
         ));
     });
     let mut mpc_round = 1;
+    utils::advance_all_parties_and_wait_for_completions(
+        &committee,
+        &mut dwallet_mpc_services,
+        &mut sent_consensus_messages_collectors,
+        &epoch_stores,
+        &notify_services,
+    )
+    .await;
+    let mut original_message = sent_consensus_messages_collectors[0]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .remove(0);
+    let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
+        panic!("Network DKG first round should produce a DWalletMPCMessage");
+    };
+    msg.message = [0u8; 47].to_vec();
+    sent_consensus_messages_collectors[0]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .push(original_message);
+    utils::send_advance_results_between_parties(
+        &committee,
+        &mut sent_consensus_messages_collectors,
+        &mut epoch_stores,
+        mpc_round,
+    );
+    mpc_round += 1;
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
@@ -39,13 +72,12 @@ async fn test_malicious_behavior() {
             &epoch_stores,
             &notify_services,
         )
-            .await
+        .await
         {
             assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
-
         utils::send_advance_results_between_parties(
             &committee,
             &mut sent_consensus_messages_collectors,
