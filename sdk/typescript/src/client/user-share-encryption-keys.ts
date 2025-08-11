@@ -204,8 +204,8 @@ export class UserShareEncryptionKeys {
 	 * so that the verification here would be impactful.
 	 *
 	 * @param dWallet - The DWallet to create a signature for
-	 * @param userPublicOutput - The user's public output from the DKG process, this is used to verify the user's public output signature.
-	 * @param sourceEncryptedUserSecretKeyShare - The encrypted user secret key share used to encrypt the user's secret share.
+	 * @param sourceEncryptedUserSecretKeyShare - The encrypted user secret key share.
+	 * @param sourceEncryptionKey - The encryption key used to encrypt the user's secret share.
 	 * @returns Promise resolving to the signature bytes
 	 * @throws {Error} If the DWallet is not in awaiting key holder signature state or public output is missing or the user public output does not match the DWallet public output
 	 */

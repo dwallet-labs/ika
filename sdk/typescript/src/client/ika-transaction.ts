@@ -306,9 +306,9 @@ export class IkaTransaction {
 	 *
 	 * @param params - The parameters for accepting the encrypted user share
 	 * @param params.dWallet - The DWallet object to accept the share for
-	 * @param params.sourceEncryptionKeyAddress - The address of the encryption key used to encrypt the user's secret share.
-	 * @param params.sourceEncryptedUserSecretKeyShare - The encrypted user secret key share used to encrypt the user's secret share.
-	 * @param params.destinationEncryptedUserSecretKeyShare - The encrypted user secret key share used to encrypt the user's secret share.
+	 * @param params.sourceEncryptionKey - The encryption key used to encrypt the user's secret share.
+	 * @param params.sourceEncryptedUserSecretKeyShare - The encrypted user secret key share.
+	 * @param params.destinationEncryptedUserSecretKeyShare - The encrypted user secret key share.
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */

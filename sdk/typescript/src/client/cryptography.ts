@@ -373,7 +373,7 @@ export function publicKeyFromDWalletOutput(dWalletOutput: Uint8Array): Uint8Arra
 }
 
 /**
- * Verify the user's public output and get the DKG public output.
+ * Verify
  *
  * @param dWallet - The DWallet object containing the user's public output
  * @param encryptedUserSecretKeyShare - The encrypted user secret key share
