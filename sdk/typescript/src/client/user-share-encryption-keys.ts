@@ -195,6 +195,10 @@ export class UserShareEncryptionKeys {
 	 * This signature is later used as a fast verification method over the dWallet data (i.e. public output, against which the secret share is also verified.)
 	 * We do this at the time of accepting the dWallet, when we know the sender and their public key/address, against which their own signature on the public output is first verified.
 	 *
+	 * SECURITY WARNING: `sourceEncryptionKey` shouldn't be fetched from the network;
+	 * the public key of the sender (or its address) should be known to the receiver,
+	 * so that the verification here would be impactful.
+	 *
 	 * @param dWallet - The DWallet to create a signature for
 	 * @param userPublicOutput - The user's public output from the DKG process, this is used to verify the user's public output signature.
 	 * @param sourceEncryptedUserSecretKeyShare - The encrypted user secret key share used to encrypt the user's secret share.

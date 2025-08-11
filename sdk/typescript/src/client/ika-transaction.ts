@@ -300,6 +300,10 @@ export class IkaTransaction {
 	 * Accept an encrypted user share for a transferred DWallet.
 	 * This completes the user's participation in the DKG process by accepting their encrypted share.
 	 *
+	 * SECURITY WARNING: `sourceEncryptionKey` shouldn't be fetched from the network;
+	 * the public key of the sender (or its address) should be known to the receiver,
+	 * so that the verification here would be impactful.
+	 *
 	 * @param params - The parameters for accepting the encrypted user share
 	 * @param params.dWallet - The DWallet object to accept the share for
 	 * @param params.sourceEncryptionKeyAddress - The address of the encryption key used to encrypt the user's secret share.
