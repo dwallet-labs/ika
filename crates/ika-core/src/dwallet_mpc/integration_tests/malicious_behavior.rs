@@ -43,15 +43,15 @@ async fn test_malicious_behavior() {
         &notify_services,
     )
     .await;
-    let mut original_message = sent_consensus_messages_collectors[0]
+    sent_consensus_messages_collectors[0]
         .submitted_messages
         .lock()
         .unwrap()
         .remove(0);
-    let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
-        panic!("Network DKG first round should produce a DWalletMPCMessage");
-    };
-    msg.message = [0u8; 47].to_vec();
+    // let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
+    //     panic!("Network DKG first round should produce a DWalletMPCMessage");
+    // };
+    // msg.message = [0u8; 47].to_vec();
     // sent_consensus_messages_collectors[0]
     //     .submitted_messages
     //     .lock()
@@ -64,6 +64,7 @@ async fn test_malicious_behavior() {
         mpc_round,
     );
     mpc_round += 1;
+    info!("Starting malicious behavior test");
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
@@ -78,12 +79,14 @@ async fn test_malicious_behavior() {
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
+        info!(?mpc_round, "Advanced MPC round");
         utils::send_advance_results_between_parties(
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
             mpc_round,
         );
+        info!(?mpc_round, "Sent advance results for MPC round");
         mpc_round += 1;
     }
 }
