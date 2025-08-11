@@ -218,9 +218,101 @@ pub struct ExecutionIndicesWithStats {
     pub stats: ConsensusStats,
 }
 
+/// Trait for the AuthorityPerEpochStore, which gets recreated at the beginning of each epoch.
+pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
+    fn insert_pending_dwallet_checkpoint(
+        &self,
+        checkpoint: PendingDWalletCheckpoint,
+    ) -> IkaResult<()>;
+
+    fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>>;
+
+    fn next_dwallet_mpc_message(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>>;
+
+    fn next_dwallet_mpc_output(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>>;
+
+    fn next_verified_dwallet_checkpoint_message(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>>;
+}
+
+impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
+    fn insert_pending_dwallet_checkpoint(
+        &self,
+        checkpoint: PendingDWalletCheckpoint,
+    ) -> IkaResult<()> {
+        let tables = self.tables()?;
+        Ok(tables
+            .pending_dwallet_checkpoints
+            .insert(&checkpoint.height(), &checkpoint)?)
+    }
+
+    fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
+        let tables = self.tables()?;
+        Ok(tables
+            .dwallet_mpc_messages
+            .reversed_safe_iter_with_bounds(None, None)?
+            .next()
+            .transpose()?
+            .map(|(r, _)| r))
+    }
+
+    fn next_dwallet_mpc_message(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .dwallet_mpc_messages
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
+    }
+
+    fn next_dwallet_mpc_output(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .dwallet_mpc_outputs
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
+    }
+
+    fn next_verified_dwallet_checkpoint_message(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .verified_dwallet_checkpoint_messages
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
+    }
+}
+
 pub struct AuthorityPerEpochStore {
     /// The name of this authority.
-    pub(crate) name: AuthorityName,
+    pub name: AuthorityName,
 
     /// Committee of validators for the current epoch.
     committee: Arc<Committee>,
@@ -266,7 +358,7 @@ pub struct AuthorityPerEpochStore {
     /// Chain identifier
     chain_identifier: ChainIdentifier,
 
-    pub(crate) packages_config: IkaNetworkConfig,
+    pub packages_config: IkaNetworkConfig,
     reconfig_state: RwLock<ReconfigState>,
     end_of_publish: Mutex<StakeAggregator<(), true>>,
 }
@@ -434,57 +526,6 @@ impl AuthorityEpochTables {
 
     pub fn get_last_consensus_stats(&self) -> IkaResult<Option<ExecutionIndicesWithStats>> {
         Ok(self.last_consensus_stats.get(&LAST_CONSENSUS_STATS_ADDR)?)
-    }
-
-    pub fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
-        Ok(self
-            .dwallet_mpc_messages
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            .map(|(r, _)| r))
-    }
-
-    pub fn next_dwallet_mpc_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
-        let mut iter = self
-            .dwallet_mpc_messages
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
-    }
-
-    pub fn next_dwallet_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
-        let mut iter = self
-            .dwallet_mpc_outputs
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
-    }
-
-    pub fn next_verified_dwallet_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
-        let mut iter = self
-            .verified_dwallet_checkpoint_messages
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
     }
 }
 
@@ -1353,16 +1394,6 @@ impl AuthorityPerEpochStore {
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
         }
-    }
-
-    pub fn insert_pending_dwallet_checkpoint(
-        &self,
-        checkpoint: PendingDWalletCheckpoint,
-    ) -> IkaResult<()> {
-        let tables = self.tables()?;
-        Ok(tables
-            .pending_dwallet_checkpoints
-            .insert(&checkpoint.height(), &checkpoint)?)
     }
 
     pub fn get_pending_dwallet_checkpoints(

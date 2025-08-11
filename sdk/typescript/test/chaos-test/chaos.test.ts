@@ -40,7 +40,7 @@ describe('chaos tests', () => {
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
-		await killValidatorPod(kc, NAMESPACE_NAME, Number(5));
+		await killValidatorPod(kc, NAMESPACE_NAME, Number(2));
 	});
 
 	it('should start a validator pod', async () => {

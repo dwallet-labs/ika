@@ -620,9 +620,7 @@ public fun set_or_remove_witness_approving_advance_epoch_by_cap(
 /// to migrate changes in the `system_inner` object if needed.
 /// This function can be called immediately after the upgrade is committed.
 public fun try_migrate_by_cap(self: &mut System, cap: &ProtocolCap) {
-    let _ = self.inner().verify_protocol_cap(cap);
-    assert!(self.version < VERSION, EInvalidMigration);
-    assert!(self.new_package_id.is_some(), EInvalidMigration);
+    let _ = self.inner_without_version_check().verify_protocol_cap(cap);
     self.try_migrate_impl();
 }
 
@@ -632,8 +630,6 @@ public fun try_migrate_by_cap(self: &mut System, cap: &ProtocolCap) {
 /// to migrate changes in the `system_inner` object if needed.
 /// Call this function after the migration epoch is reached.
 public fun try_migrate(self: &mut System) {
-    assert!(self.version < VERSION, EInvalidMigration);
-    assert!(self.new_package_id.is_some(), EInvalidMigration);
     assert!(self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e), EInvalidMigration);
     self.try_migrate_impl();
 }
@@ -643,6 +639,9 @@ public fun try_migrate(self: &mut System) {
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `system_inner` object if needed.
 fun try_migrate_impl(self: &mut System) {
+    assert!(self.version < VERSION, EInvalidMigration);
+    assert!(self.new_package_id.is_some(), EInvalidMigration);
+    
     // Move the old system inner to the new version.
     let system_inner: SystemInner = dynamic_field::remove(&mut self.id, self.version);
     dynamic_field::add(&mut self.id, VERSION, system_inner);

@@ -10,7 +10,7 @@ use ika_sui_client::ika_protocol_transactions::{
     perform_approved_upgrade, set_approved_upgrade_by_cap,
     set_gas_fee_reimbursement_sui_system_call_value_by_cap,
     set_paused_curves_and_signature_algorithms, set_supported_and_pricing, try_migrate_coordinator,
-    try_migrate_system,
+    try_migrate_coordinator_by_cap, try_migrate_system, try_migrate_system_by_cap,
 };
 use ika_types::sui::{PricingInfoKey, PricingInfoValue};
 use serde::Deserialize;
@@ -78,6 +78,28 @@ pub enum IkaProtocolCommand {
         #[clap(name = "ika-sui-config", long)]
         ika_sui_config: Option<PathBuf>,
     },
+    #[clap(name = "try-migrate-system-by-cap")]
+    TryMigrateSystemByCap {
+        #[clap(name = "protocol-cap-id", long)]
+        protocol_cap_id: ObjectID,
+        #[clap(name = "gas-budget", long)]
+        gas_budget: Option<u64>,
+        #[clap(name = "new-package-id", long)]
+        new_package_id: ObjectID,
+        #[clap(name = "ika-sui-config", long)]
+        ika_sui_config: Option<PathBuf>,
+    },
+    #[clap(name = "try-migrate-coordinator-by-cap")]
+    TryMigrateCoordinatorByCap {
+        #[clap(name = "protocol-cap-id", long)]
+        protocol_cap_id: ObjectID,
+        #[clap(name = "gas-budget", long)]
+        gas_budget: Option<u64>,
+        #[clap(name = "new-package-id", long)]
+        new_package_id: ObjectID,
+        #[clap(name = "ika-sui-config", long)]
+        ika_sui_config: Option<PathBuf>,
+    },
     #[clap(name = "set-paused-curves-and-signature-algorithms")]
     SetPausedCurvesAndSignatureAlgorithms {
         #[clap(name = "gas-budget", long)]
@@ -127,6 +149,8 @@ pub enum IkaProtocolCommandResponse {
     PerformApprovedUpgrade(SuiTransactionBlockResponse),
     TryMigrateSystem(SuiTransactionBlockResponse),
     TryMigrateCoordinator(SuiTransactionBlockResponse),
+    TryMigrateSystemByCap(SuiTransactionBlockResponse),
+    TryMigrateCoordinatorByCap(SuiTransactionBlockResponse),
     SetPausedCurvesAndSignatureAlgorithms(SuiTransactionBlockResponse),
     SetSupportedAndPricing(SuiTransactionBlockResponse),
     SetGasFeeReimbursementSuiSystemCallValueByCap(SuiTransactionBlockResponse),
@@ -255,6 +279,48 @@ impl IkaProtocolCommand {
                 .await?;
                 IkaProtocolCommandResponse::TryMigrateCoordinator(response)
             }
+            IkaProtocolCommand::TryMigrateSystemByCap {
+                protocol_cap_id,
+                gas_budget,
+                new_package_id,
+                ika_sui_config,
+            } => {
+                let gas_budget = gas_budget.unwrap_or(DEFAULT_GAS_BUDGET);
+                let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
+                let config = read_ika_sui_config_yaml(context, &config_path)?;
+
+                let response = try_migrate_system_by_cap(
+                    context,
+                    protocol_cap_id,
+                    new_package_id,
+                    config.objects.ika_system_object_id,
+                    gas_budget,
+                )
+                .await?;
+                IkaProtocolCommandResponse::TryMigrateSystemByCap(response)
+            }
+            IkaProtocolCommand::TryMigrateCoordinatorByCap {
+                protocol_cap_id,
+                gas_budget,
+                new_package_id,
+                ika_sui_config,
+            } => {
+                let gas_budget = gas_budget.unwrap_or(DEFAULT_GAS_BUDGET);
+                let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
+                let config = read_ika_sui_config_yaml(context, &config_path)?;
+
+                let response = try_migrate_coordinator_by_cap(
+                    context,
+                    protocol_cap_id,
+                    config.packages.ika_system_package_id,
+                    config.objects.ika_system_object_id,
+                    new_package_id,
+                    config.objects.ika_dwallet_coordinator_object_id,
+                    gas_budget,
+                )
+                .await?;
+                IkaProtocolCommandResponse::TryMigrateCoordinatorByCap(response)
+            }
             IkaProtocolCommand::SetPausedCurvesAndSignatureAlgorithms {
                 gas_budget,
                 protocol_cap_id,
@@ -351,6 +417,8 @@ impl Display for IkaProtocolCommandResponse {
             | IkaProtocolCommandResponse::PerformApprovedUpgrade(response)
             | IkaProtocolCommandResponse::TryMigrateSystem(response)
             | IkaProtocolCommandResponse::TryMigrateCoordinator(response)
+            | IkaProtocolCommandResponse::TryMigrateSystemByCap(response)
+            | IkaProtocolCommandResponse::TryMigrateCoordinatorByCap(response)
             | IkaProtocolCommandResponse::SetPausedCurvesAndSignatureAlgorithms(response)
             | IkaProtocolCommandResponse::SetSupportedAndPricing(response)
             | IkaProtocolCommandResponse::SetGasFeeReimbursementSuiSystemCallValueByCap(response) =>

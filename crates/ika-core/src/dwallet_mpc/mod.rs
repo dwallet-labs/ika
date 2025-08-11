@@ -18,6 +18,7 @@ pub mod mpc_session;
 mod crytographic_computation;
 pub mod dwallet_mpc_metrics;
 mod mpc_event;
+pub mod submit_to_consensus;
 
 pub(crate) use crytographic_computation::mpc_computations::{
     dwallet_dkg, network_dkg, presign, reconfiguration, sign,
@@ -96,6 +97,10 @@ pub(crate) fn party_id_to_authority_name(
     party_id: PartyID,
     committee: &Committee,
 ) -> Option<AuthorityName> {
+    if party_id == 0 {
+        // Party IDs are 1-based, so 0 is not a valid party ID.
+        return None;
+    }
     // A tangible party ID is of type `PartyID` and in the range `1..=number_of_tangible_parties`.
     // Convert it to an index to the committee authority names, which is in the range `0..number_of_tangible_parties`,
     // Decrement the index to transform it from 1-based to 0-based.
@@ -106,6 +111,9 @@ pub(crate) fn party_id_to_authority_name(
 }
 
 /// Convert a given [`Vec<PartyID>`] to the corresponding [`Vec<AuthorityName>`].
+///
+/// Returns the authority names for the given party IDs that are part of the committee, and ignores any
+/// party IDs that do not have a corresponding authority name in the committee.
 pub(crate) fn party_ids_to_authority_names(
     party_ids: &[PartyID],
     committee: &Committee,
@@ -125,4 +133,81 @@ pub(crate) fn party_ids_to_authority_names(
             authority_name
         })
         .collect()
+}
+
+mod tests {
+    use super::*;
+    use fastcrypto::traits::KeyPair;
+    use ika_types::crypto::AuthorityPublicKeyBytes;
+
+    #[test]
+    fn test_party_id_to_authority_name() {
+        let (committee, keypairs) = Committee::new_simple_test_committee();
+
+        assert_eq!(
+            party_id_to_authority_name(1, &committee),
+            Some(AuthorityPublicKeyBytes::new(
+                keypairs[0].public().pubkey.to_bytes()
+            ))
+        );
+        assert_eq!(
+            party_id_to_authority_name(2, &committee),
+            Some(AuthorityPublicKeyBytes::new(
+                keypairs[1].public().pubkey.to_bytes()
+            ))
+        );
+        assert_eq!(
+            party_id_to_authority_name(3, &committee),
+            Some(AuthorityPublicKeyBytes::new(
+                keypairs[2].public().pubkey.to_bytes()
+            ))
+        );
+        assert_eq!(
+            party_id_to_authority_name(4, &committee),
+            Some(AuthorityPublicKeyBytes::new(
+                keypairs[3].public().pubkey.to_bytes()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_party_id_to_authority_name_zero_party() {
+        let (committee, _keypairs) = Committee::new_simple_test_committee();
+
+        assert_eq!(party_id_to_authority_name(0, &committee), None);
+    }
+
+    #[test]
+    fn test_party_id_to_authority_name_not_existing_party() {
+        let (committee, _keypairs) = Committee::new_simple_test_committee();
+
+        assert_eq!(party_id_to_authority_name(0, &committee), None);
+    }
+
+    #[test]
+    fn test_party_ids_to_authority_names() {
+        let (committee, keypairs) = Committee::new_simple_test_committee();
+        assert_eq!(
+            party_ids_to_authority_names(&[1, 2, 3, 4], &committee),
+            vec![
+                AuthorityPublicKeyBytes::new(keypairs[0].public().pubkey.to_bytes()),
+                AuthorityPublicKeyBytes::new(keypairs[1].public().pubkey.to_bytes()),
+                AuthorityPublicKeyBytes::new(keypairs[2].public().pubkey.to_bytes()),
+                AuthorityPublicKeyBytes::new(keypairs[3].public().pubkey.to_bytes()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_party_ids_to_authority_names_some_absent_authorities() {
+        let (committee, keypairs) = Committee::new_simple_test_committee();
+        assert_eq!(
+            party_ids_to_authority_names(&[1, 2, 3, 40], &committee),
+            vec![
+                AuthorityPublicKeyBytes::new(keypairs[0].public().pubkey.to_bytes()),
+                AuthorityPublicKeyBytes::new(keypairs[1].public().pubkey.to_bytes()),
+                AuthorityPublicKeyBytes::new(keypairs[2].public().pubkey.to_bytes()),
+            ]
+        );
+    }
 }
