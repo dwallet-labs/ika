@@ -749,6 +749,7 @@ export class IkaTransaction {
 			userSignatureInputs: {
 				activeDWallet: dWallet,
 				presign,
+				// No need to verify public output in public user-share flows, as there is no zero-trust security in this model.
 				publicOutput: Uint8Array.from(dWallet.state.Active?.public_output),
 				secretShare: Uint8Array.from(dWallet.public_user_secret_key_share),
 				message,
@@ -1597,7 +1598,7 @@ export class IkaTransaction {
 
 		let secretShare, publicOutput;
 
-		// If the dWallet is a shared dWallet, we use the public user secret key share. It is a different trust assumption.
+		// If the dWallet is a shared dWallet, we use the public user secret key share. It is a different trust assumption in which no zero-trust security is assured.
 		// Otherwise, we use the secret share from the user signature inputs.
 		if (userSignatureInputs.activeDWallet.public_user_secret_key_share) {
 			secretShare = Uint8Array.from(userSignatureInputs.activeDWallet.public_user_secret_key_share);
