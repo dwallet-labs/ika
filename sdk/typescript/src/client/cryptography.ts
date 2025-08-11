@@ -373,11 +373,15 @@ export function publicKeyFromDWalletOutput(dWalletOutput: Uint8Array): Uint8Arra
 }
 
 /**
- * Verify
+ * Verify and get the DWallet DKG public output.
+ * The `publicKey` is used to verify the user's public output signature.
+ *
+ * SECURITY WARNING: For withSecrets flows, the public key or public output must be saved by the developer during DKG,
+ * NOT fetched from the network, to ensure proper verification.
  *
  * @param dWallet - The DWallet object containing the user's public output
  * @param encryptedUserSecretKeyShare - The encrypted user secret key share
- * @param publicKey - The user's public key, right now only SECP256K1 is supported.
+ * @param publicKey - The user share encryption key's public key for verification
  * @returns The DKG public output
  */
 export async function verifyAndGetDWalletDKGPublicOutput(
@@ -387,9 +391,9 @@ export async function verifyAndGetDWalletDKGPublicOutput(
 ): Promise<Uint8Array> {
 	if (
 		SIGNATURE_FLAG_TO_SCHEME[publicKey.flag() as keyof typeof SIGNATURE_FLAG_TO_SCHEME] !==
-		'Secp256k1'
+		'ED25519'
 	) {
-		throw new Error('Only Secp256k1 keypairs are supported for now');
+		throw new Error('Only ED25519 public keys are supported.');
 	}
 
 	if (!dWallet.state.Active?.public_output) {
@@ -405,10 +409,6 @@ export async function verifyAndGetDWalletDKGPublicOutput(
 	const userOutputSignature = Uint8Array.from(
 		encryptedUserSecretKeyShare.state.KeyHolderSigned?.user_output_signature,
 	);
-
-	if (!userOutputSignature) {
-		throw new Error('User output signature is undefined');
-	}
 
 	if (!(await publicKey.verify(userPublicOutput, userOutputSignature))) {
 		throw new Error('Invalid signature');
