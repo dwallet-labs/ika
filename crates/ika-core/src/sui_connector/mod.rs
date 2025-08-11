@@ -15,7 +15,7 @@ use ika_types::committee::{Committee, EpochId};
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
+    DBSuiEvent, DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
 };
 use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::HashMap;
@@ -29,7 +29,7 @@ use sui_types::crypto::{Signature, SuiKeyPair};
 use sui_types::digests::{get_mainnet_chain_identifier, get_testnet_chain_identifier};
 use sui_types::transaction::{ProgrammableTransaction, Transaction, TransactionData};
 use tokio::sync::watch;
-use tokio::sync::watch::Sender;
+use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
 use tracing::info;
 
@@ -46,7 +46,7 @@ pub struct SuiNotifier {
 pub struct SuiConnectorService {
     sui_client: Arc<SuiClient<SuiSdkClient>>,
     sui_executor: SuiExecutor<SuiSdkClient>,
-    network_keys_receiver: watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
+    network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     // todo(zeev): this needs a refactor.
     #[allow(dead_code)]
     task_handles: Vec<JoinHandle<()>>,
@@ -67,6 +67,8 @@ impl SuiConnectorService {
         next_epoch_committee_sender: Sender<Committee>,
         new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
         end_of_publish_sender: Sender<Option<u64>>,
+        last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
+        uncompleted_events_sender: Sender<(Vec<DBSuiEvent>, EpochId)>,
     ) -> anyhow::Result<(
         Arc<Self>,
         watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -103,6 +105,8 @@ impl SuiConnectorService {
             network_keys_sender,
             new_events_sender,
             end_of_publish_sender,
+            last_session_to_complete_in_current_epoch_sender,
+            uncompleted_events_sender,
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;

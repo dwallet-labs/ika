@@ -1,8 +1,9 @@
 #!/bin/bash
 
 request_and_generate_yaml() {
-  local entry="$1"
-  IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+  local i="$1"
+  VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+  VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
   local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
 
   # Extract values from the validator.info file
@@ -57,8 +58,9 @@ request_and_generate_yaml() {
 
 # Function to process a validator
 process_validator() {
-    local entry="$1"
-    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+    local i="$1"
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
     local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
     local OUTPUT_FILE="$TMP_OUTPUT_DIR/${VALIDATOR_NAME}_output.json"
     local LOCAL_SUI_CONFIG_DIR="/tmp/sui_config_${VALIDATOR_NAME}"
@@ -89,7 +91,6 @@ process_validator() {
     SUI_CONFIG_DIR="$LOCAL_SUI_CONFIG_DIR" \
     IKA_CONFIG_DIR="$LOCAL_IKA_CONFIG_DIR" \
     $BINARY_NAME validator become-candidate "$VALIDATOR_DIR/validator.info" --json > "$OUTPUT_FILE"
-#    $BINARY_NAME validator become-candidate "$VALIDATOR_DIR/validator.info" --json 2>&1 | tee "$OUTPUT_FILE"
 
     # Validate and extract IDs
     if jq empty "$OUTPUT_FILE" 2>/dev/null; then

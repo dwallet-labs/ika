@@ -5754,6 +5754,7 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "backoff",
+ "base64 0.22.1",
  "bcs",
  "chrono",
  "class_groups",
@@ -5808,6 +5809,7 @@ dependencies = [
  "test-fuzz",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "twopc_mpc",
  "typed-store",
 ]

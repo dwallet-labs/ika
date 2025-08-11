@@ -52,56 +52,7 @@ export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
 export BINARY_NAME="ika"
 # The directory to store the key pairs.
 export KEY_PAIRS_DIR="key-pairs"
-# The root address for the genesis account (to hold all the tokens).
-# In a testnet use the faucet public key.
-ROOT_ADDR=""
-# The file containing the validators (separator: newline).
-export VALIDATORS_FILE=""
 export SUI_CHAIN_IDENTIFIER="custom"
-
-
-
-# Function to display help message
-show_help() {
-    echo "Usage: $0 [options]"
-    echo ""
-    echo "This script sets up a genesis and config with given options."
-    echo ""
-    echo "Options:"
-    echo "  --validator-prefix <prefix>         Set the prefix for validators. Default: $VALIDATOR_PREFIX"
-    echo "  --validator-num <number>            Set the number of validators. Default: $VALIDATOR_NUM"
-    echo "  --validator-staked-tokens-num <num>   Set the number of staked tokens. Default: $VALIDATOR_STAKED_TOKENS_NUM"
-    echo "  --subdomain <subdomain>             Set the subdomain for validators. Default: $SUBDOMAIN"
-    echo "  --binary-name <path>                Set the binary name path. Default: $PWD/ika"
-    echo "  --key-pairs-dir <directory>         Set the directory for key pairs. Default: key-pairs"
-    echo "  --root-addr <address>               Set the root address. Default: 0x3e..."
-    echo "  --validators-file <file>            Specify a file with validators."
-    echo "  --sui-faucet-url <url>              Set the SUI faucet URL. Default: $SUI_FAUCET_URL"
-    echo "  --epoch-duration-time <time>        Set the epoch duration time. Default: $EPOCH_DURATION_TIME_MS"
-    echo "  -h, --help                        Display this help message and exit."
-    echo ""
-    echo "Note: --validators-file overrides --validator-prefix and --validator-num."
-}
-
-# Parse named arguments
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        --validator-prefix) VALIDATOR_PREFIX="$2"; shift ;;
-        --validator-num) VALIDATOR_NUM="$2"; shift ;;
-        --validator-staked-tokens-num) VALIDATOR_STAKED_TOKENS_NUM="$2"; shift ;;
-        --subdomain) SUBDOMAIN="$2"; shift ;;
-        --binary-name) BINARY_NAME="$2"; shift ;;
-        --key-pairs-dir) KEY_PAIRS_DIR="$2"; shift ;;
-        --root-addr) ROOT_ADDR="$2"; shift ;;
-        --validators-file) VALIDATORS_FILE="$2"; shift ;;
-        --sui-faucet-url) SUI_FAUCET_URL="$2"; shift ;;
-        --epoch-duration-time) EPOCH_DURATION_TIME_MS="$2"; shift ;;
-        -h|--help) show_help; exit 0 ;;
-        *) echo "Unknown parameter passed: $1"; exit 1 ;;
-    esac
-    shift
-done
-
 
 RUST_MIN_STACK=16777216
 
@@ -109,49 +60,7 @@ RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
 cp ../../../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
-VALIDATORS_ARRAY=()
-
-# Check if --validators-file is provided and process it.
-if [[ -n "$VALIDATORS_FILE" ]]; then
-    echo "Creating validators from file: $VALIDATORS_FILE"
-
-    if [[ ! -f "$VALIDATORS_FILE" ]]; then
-        echo "Error: File '$VALIDATORS_FILE' not found." >&2
-        exit 1
-    fi
-
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        # Skip empty lines.
-        [[ -z "$line" ]] && continue
-
-        # Split the line into two parts: validator name and hostname.
-        read -r name hostname <<< "$line"
-
-        # Trim any extra whitespace.
-        name=$(echo "$name" | xargs)
-        hostname=$(echo "$hostname" | xargs)
-
-        # Append the tuple as "name:hostname" to the array.
-        VALIDATORS_ARRAY+=("$name:$hostname")
-    done < "$VALIDATORS_FILE"
-
-    for entry in "${VALIDATORS_ARRAY[@]}"; do
-        IFS=":" read -r v_name v_hostname <<< "$entry"
-        echo "Processed validator: Name = $v_name, Hostname = $v_hostname"
-    done
-
-    VALIDATOR_NUM=${#VALIDATORS_ARRAY[@]}
-else
-    echo "Creating validators from prefix '$VALIDATOR_PREFIX' and number '$VALIDATOR_NUM'"
-
-    for ((i=1; i<=VALIDATOR_NUM; i++)); do
-        VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
-        # For enumerated list, compute the hostname as: name.SUBDOMAIN
-        VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
-        echo "Generated validator: Name = $VALIDATOR_NAME, Hostname = $VALIDATOR_HOSTNAME"
-        VALIDATORS_ARRAY+=("$VALIDATOR_NAME:$VALIDATOR_HOSTNAME")
-    done
-fi
+echo "Creating validators from prefix '$VALIDATOR_PREFIX' and number '$VALIDATOR_NUM'"
 
 #############################
 ## Create a dir for this deployment.
@@ -166,9 +75,9 @@ pushd "$SUBDOMAIN"
 SUI_BACKUP_DIR="sui_backup"
 ROOT_SEED_CREATED=0  # Track if the root-seed.key has been created
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-    # Split the tuple "name:hostname" into VALIDATOR_NAME and VALIDATOR_HOSTNAME.
-    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
 
     # Use the VALIDATOR_HOSTNAME as the directory name.
     VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
@@ -290,8 +199,8 @@ echo "Ika dWallet 2PC MPC Package ID: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
 MAX_JOBS=10
 JOB_COUNT=0
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-  request_and_generate_yaml "$entry" &
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+  request_and_generate_yaml "$i" &
 
   (( JOB_COUNT++ ))
 
@@ -327,8 +236,8 @@ rm -f "$TUPLES_FILE"
 MAX_JOBS=10
 JOB_COUNT=0
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-    process_validator "$entry" &
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    process_validator "$i" &
 
     (( JOB_COUNT++ ))
 
@@ -392,8 +301,9 @@ for tuple in "${VALIDATOR_TUPLES[@]}"; do
     IFS=":" read -r VALIDATOR_NAME VALIDATOR_ID VALIDATOR_CAP_ID <<< "$tuple"
 
     # Find the validator's hostname based on its name
-    for entry in "${VALIDATORS_ARRAY[@]}"; do
-        IFS=":" read -r NAME HOSTNAME <<< "$entry"
+    for ((i=1; i<=VALIDATOR_NUM; i++)); do
+        NAME="${VALIDATOR_PREFIX}${i}"
+        HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
         if [[ "$NAME" == "$VALIDATOR_NAME" ]]; then
             VALIDATOR_HOSTNAME="$HOSTNAME"
             break
@@ -476,8 +386,9 @@ echo "Generating seed_peers.yaml..."
 SEED_PEERS_FILE="seed_peers.yaml"
 : > "$SEED_PEERS_FILE"  # Empty or create file
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-  IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+  VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+  VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
   VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
 
   INFO_FILE="$VALIDATOR_DIR/validator.info"
@@ -524,8 +435,9 @@ yq e ".\"p2p-config\".\"external-address\" = \"/dns/fullnode.$SUBDOMAIN/udp/8084
 yq e '."p2p-config"."seed-peers" = load("seed_peers.yaml")' -i "$FULLNODE_YAML_PATH"
 
 
-for entry in "${VALIDATORS_ARRAY[@]}"; do
-    IFS=":" read -r VALIDATOR_NAME VALIDATOR_HOSTNAME <<< "$entry"
+for ((i=1; i<=VALIDATOR_NUM; i++)); do
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
     VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
     yq e ".\"sui-connector-config\".\"ika-common-package-id\" = \"$IKA_COMMON_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
     yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
