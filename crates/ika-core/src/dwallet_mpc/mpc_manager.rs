@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::SuiDataReceivers;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::build_messages_to_advance;
 use crate::dwallet_mpc::crytographic_computation::{
     ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
@@ -15,6 +16,7 @@ use crate::dwallet_mpc::{
 };
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCSessionStatus};
+use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
 use ika_config::NodeConfig;
@@ -73,17 +75,16 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) last_session_to_complete_in_current_epoch: u64,
     pub(crate) recognized_self_as_malicious: bool,
     pub(crate) network_keys: Box<DwalletMPCNetworkKeys>,
-    network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     /// Events that wait for the network key to update.
     /// Once we get the network key, these events will be executed.
     pub(crate) events_pending_for_network_key: HashMap<ObjectID, Vec<DWalletMPCEvent>>,
     pub(crate) events_pending_for_next_active_committee: Vec<DWalletMPCEvent>,
-    pub(crate) next_epoch_committee_receiver: watch::Receiver<Committee>,
     pub(crate) next_active_committee: Option<Committee>,
     pub(crate) dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 
     network_dkg_third_round_delay: u64,
     decryption_key_reconfiguration_third_round_delay: u64,
+    sui_data_receivers: SuiDataReceivers,
 }
 
 impl DWalletMPCManager {
@@ -92,24 +93,22 @@ impl DWalletMPCManager {
         committee: Arc<Committee>,
         epoch_id: EpochId,
         packages_config: IkaNetworkConfig,
-        network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        next_epoch_committee_receiver: Receiver<Committee>,
-        node_config: NodeConfig,
+        root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        sui_data_receivers: SuiDataReceivers,
     ) -> Self {
         Self::try_new(
             validator_name,
             committee,
             epoch_id,
             packages_config,
-            network_keys_receiver,
-            next_epoch_committee_receiver,
-            node_config.clone(),
+            root_seed,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics,
+            sui_data_receivers,
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -123,20 +122,12 @@ impl DWalletMPCManager {
         committee: Arc<Committee>,
         epoch_id: EpochId,
         packages_config: IkaNetworkConfig,
-        network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        next_epoch_committee_receiver: watch::Receiver<Committee>,
-        node_config: NodeConfig,
+        root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        sui_data_receivers: SuiDataReceivers,
     ) -> DwalletMPCResult<Self> {
-        let root_seed = node_config
-            .root_seed_key_pair
-            .clone()
-            .ok_or(DwalletMPCError::MissingRootSeed)?
-            .root_seed()
-            .clone();
-
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
         let mpc_computations_orchestrator =
@@ -167,8 +158,7 @@ impl DWalletMPCManager {
             last_session_to_complete_in_current_epoch: 0,
             recognized_self_as_malicious: false,
             network_keys: Box::new(dwallet_network_keys),
-            network_keys_receiver,
-            next_epoch_committee_receiver,
+            sui_data_receivers,
             events_pending_for_next_active_committee: Vec::new(),
             events_pending_for_network_key: HashMap::new(),
             dwallet_mpc_metrics,
@@ -501,10 +491,15 @@ impl DWalletMPCManager {
     }
 
     pub(crate) fn try_receiving_next_active_committee(&mut self) -> bool {
-        match self.next_epoch_committee_receiver.has_changed() {
+        match self
+            .sui_data_receivers
+            .next_epoch_committee_receiver
+            .has_changed()
+        {
             Ok(has_changed) => {
                 if has_changed {
                     let committee = self
+                        .sui_data_receivers
                         .next_epoch_committee_receiver
                         .borrow_and_update()
                         .clone();
@@ -525,7 +520,7 @@ impl DWalletMPCManager {
     }
 
     pub(crate) async fn maybe_update_network_keys(&mut self) -> Vec<ObjectID> {
-        match self.network_keys_receiver.has_changed() {
+        match self.sui_data_receivers.network_keys_receiver.has_changed() {
             Ok(has_changed) => {
                 if has_changed {
                     let new_keys = self.borrow_and_update_network_keys();
@@ -593,7 +588,10 @@ impl DWalletMPCManager {
     fn borrow_and_update_network_keys(
         &mut self,
     ) -> HashMap<ObjectID, DWalletNetworkEncryptionKeyData> {
-        let new_keys = self.network_keys_receiver.borrow_and_update();
+        let new_keys = self
+            .sui_data_receivers
+            .network_keys_receiver
+            .borrow_and_update();
 
         new_keys
             .iter()
