@@ -2,7 +2,8 @@ use crate::dwallet_mpc::integration_tests::utils;
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::ConsensusTransactionKind;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, IkaNetworkConfig,
+    DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent,
+    DWalletSessionEventTrait, IkaNetworkConfig,
 };
 use tracing::info;
 
