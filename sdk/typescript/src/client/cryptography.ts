@@ -414,6 +414,12 @@ export async function verifyAndGetDWalletDKGPublicOutput(
 		throw new Error('Invalid signature');
 	}
 
+	if (publicKey.toSuiAddress() !== encryptedUserSecretKeyShare.encryption_key_address) {
+		throw new Error(
+			'Invalid Sui address. The encryption key address does not match the signing keypair address.',
+		);
+	}
+
 	return Uint8Array.from(dWallet.state.Active.public_output);
 }
 
