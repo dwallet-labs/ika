@@ -144,7 +144,12 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
     assert!(
-        committee_size - crypto_round_to_malicious_parties.values().flatten().len()
+        committee_size
+            - crypto_round_to_malicious_parties
+                .values()
+                .flatten()
+                .collect_vec()
+                .len()
             >= committee.quorum_threshold as usize,
         "There should be a quorum of honest parties for the flow to succeed"
     );
