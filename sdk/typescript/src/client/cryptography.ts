@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { bcs } from '@mysten/sui/bcs';
-import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
-import type { Keypair } from '@mysten/sui/cryptography';
+import { decodeSuiPrivateKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
+import type { Keypair, PublicKey } from '@mysten/sui/cryptography';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { randomBytes } from '@noble/hashes/utils.js';
 
@@ -20,7 +20,7 @@ import {
 	verify_user_share,
 } from '../../../mpc-wasm/dist/node/dwallet_mpc_wasm.js';
 import type { IkaClient } from './ika-client.js';
-import type { DWallet } from './types.js';
+import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 
@@ -370,6 +370,51 @@ export function verifySecpSignature(
  */
 export function publicKeyFromDWalletOutput(dWalletOutput: Uint8Array): Uint8Array {
 	return Uint8Array.from(public_key_from_dwallet_output(dWalletOutput));
+}
+
+/**
+ * Verify the user's public output and get the DKG public output.
+ *
+ * @param dWallet - The DWallet object containing the user's public output
+ * @param encryptedUserSecretKeyShare - The encrypted user secret key share
+ * @param publicKey - The user's public key, right now only SECP256K1 is supported.
+ * @returns The DKG public output
+ */
+export async function verifyAndGetDWalletDKGPublicOutput(
+	dWallet: DWallet,
+	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+	publicKey: PublicKey,
+): Promise<Uint8Array> {
+	if (
+		SIGNATURE_FLAG_TO_SCHEME[publicKey.flag() as keyof typeof SIGNATURE_FLAG_TO_SCHEME] !==
+		'Secp256k1'
+	) {
+		throw new Error('Only Secp256k1 keypairs are supported for now');
+	}
+
+	if (!dWallet.state.Active?.public_output) {
+		throw new Error('DWallet is not in active state');
+	}
+
+	if (!encryptedUserSecretKeyShare.state.KeyHolderSigned?.user_output_signature) {
+		throw new Error('User output signature is undefined');
+	}
+
+	const userPublicOutput = Uint8Array.from(dWallet.state.Active.public_output);
+
+	const userOutputSignature = Uint8Array.from(
+		encryptedUserSecretKeyShare.state.KeyHolderSigned?.user_output_signature,
+	);
+
+	if (!userOutputSignature) {
+		throw new Error('User output signature is undefined');
+	}
+
+	if (!(await publicKey.verify(userPublicOutput, userOutputSignature))) {
+		throw new Error('Invalid signature');
+	}
+
+	return Uint8Array.from(dWallet.state.Active.public_output);
 }
 
 /**
