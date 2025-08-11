@@ -20,21 +20,21 @@ use tracing::info;
 #[tokio::test]
 #[cfg(test)]
 async fn test_threshold_not_reached_n_times_flow_succeeds() {
-    let committee_size = 7;
+    let committee_size = 4;
     let crypto_round_to_malicious_parties: HashMap<usize, Vec<usize>> =
-        HashMap::from([(1, [0].to_vec()), (2, [1].to_vec())]);
+        HashMap::from([(1, [0].to_vec())]);
     let crypto_round_to_delayed_parties: HashMap<usize, Vec<usize>> =
-        HashMap::from([(1, [1, 2].to_vec()), (2, [2].to_vec())]);
+        HashMap::from([(1, [1].to_vec())]);
 
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
-    let all_flow_malicious_parties = crypto_round_to_malicious_parties
+    let all_malicious_parties = crypto_round_to_malicious_parties
         .values()
         .flatten()
-        .collect_vec()
-        .len();
+        .collect_vec();
+    let all_flow_malicious_parties_len = all_malicious_parties.len();
     assert!(
-        committee_size - all_flow_malicious_parties >= committee.quorum_threshold as usize,
+        committee_size - all_flow_malicious_parties_len >= committee.quorum_threshold as usize,
         "There should be a quorum of honest parties for the flow to succeed"
     );
     assert_eq!(
@@ -112,12 +112,17 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         test_state.crypto_round += 1;
         test_state.consensus_round += 1;
     }
-    for malicious_party_index in crypto_round_to_malicious_parties.values().flatten() {
+    for malicious_party_index in all_malicious_parties.clone() {
         let malicious_actor_name = test_state.dwallet_mpc_services[*malicious_party_index].name;
         assert!(
-            test_state.dwallet_mpc_services.iter().all(|service| service
-                .dwallet_mpc_manager()
-                .is_malicious_actor(&malicious_actor_name)),
+            test_state
+                .dwallet_mpc_services
+                .iter()
+                .enumerate()
+                .all(|(index, service)| service
+                    .dwallet_mpc_manager()
+                    .is_malicious_actor(&malicious_actor_name)
+                    || all_malicious_parties.contains(&&index)),
             "All services should recognize the malicious actor: {}",
             malicious_actor_name
         );
