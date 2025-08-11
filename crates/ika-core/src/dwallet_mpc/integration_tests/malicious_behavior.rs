@@ -52,11 +52,11 @@ async fn test_malicious_behavior() {
         panic!("Network DKG first round should produce a DWalletMPCMessage");
     };
     msg.message = [0u8; 47].to_vec();
-    sent_consensus_messages_collectors[0]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .push(original_message);
+    // sent_consensus_messages_collectors[0]
+    //     .submitted_messages
+    //     .lock()
+    //     .unwrap()
+    //     .push(original_message);
     utils::send_advance_results_between_parties(
         &committee,
         &mut sent_consensus_messages_collectors,

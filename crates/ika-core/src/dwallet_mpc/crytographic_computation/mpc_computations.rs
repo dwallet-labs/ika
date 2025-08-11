@@ -13,6 +13,7 @@ use mpc::{
 use rand_chacha::ChaCha20Rng;
 use std::collections::hash_map::Entry::Vacant;
 use std::collections::{HashMap, HashSet};
+use tracing::info;
 
 pub(crate) mod dwallet_dkg;
 pub(crate) mod network_dkg;
@@ -108,9 +109,16 @@ pub(crate) fn build_messages_to_advance(
             let previous_round_message_senders: HashSet<PartyID> =
                 previous_round_messages.keys().cloned().collect();
 
-            access_structure
+            let is_authorized_subset = access_structure
                 .is_authorized_subset(&previous_round_message_senders)
-                .is_ok()
+                .is_ok();
+            info!(
+                ?previous_round_message_senders,
+                ?is_authorized_subset,
+                ?access_structure,
+                "Checking if we have a quorum of previous round messages"
+            );
+            is_authorized_subset
         } else {
             false
         };
