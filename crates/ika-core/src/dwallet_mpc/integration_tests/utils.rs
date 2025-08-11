@@ -493,7 +493,7 @@ pub(crate) fn override_legit_messages_with_false_messages(
 pub(crate) fn send_start_network_dkg_event(
     ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
-    sui_data_senders: Vec<SuiDataSenders>,
+    sui_data_senders: &mut Vec<SuiDataSenders>,
 ) {
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
