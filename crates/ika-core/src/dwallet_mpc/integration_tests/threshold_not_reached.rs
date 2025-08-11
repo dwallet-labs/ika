@@ -136,8 +136,10 @@ async fn test_threshold_not_reached_once_flow_succeeds() {
 #[cfg(test)]
 async fn test_threshold_not_reached_n_times_flow_succeeds() {
     let committee_size = 7;
-    let malicious_parties: HashMap<usize, Vec<usize>> = HashMap::from([(1, [0].to_vec()), (2, [1].to_vec())]);
-    let delayed_parties: HashMap<usize, Vec<usize>> = HashMap::from([(1, [1, 2].to_vec()), (2, [2].to_vec())]);
+    let malicious_parties: HashMap<usize, Vec<usize>> =
+        HashMap::from([(1, [0].to_vec()), (2, [1].to_vec())]);
+    let delayed_parties: HashMap<usize, Vec<usize>> =
+        HashMap::from([(1, [1, 2].to_vec()), (2, [2].to_vec())]);
 
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
@@ -174,78 +176,72 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
     });
     let mut consensus_round = 1;
     let mut crypto_round = 1;
-    let non_delayed_parties = (0..committee_size)
-        .collect_vec()
-        .into_iter()
-        .filter(|party_index| !delayed_parties.contains(party_index))
-        .collect_vec();
-    utils::advance_some_parties_and_wait_for_completions(
-        &committee,
-        &mut dwallet_mpc_services,
-        &mut sent_consensus_messages_collectors,
-        &epoch_stores,
-        &notify_services,
-        &non_delayed_parties,
-    )
-    .await;
-
-    set_messages_as_malicious(
-        &malicious_parties,
-        &mut sent_consensus_messages_collectors,
-        crypto_round,
-    );
-
-    utils::send_advance_results_between_parties(
-        &committee,
-        &mut sent_consensus_messages_collectors,
-        &mut epoch_stores,
-        consensus_round,
-    );
-    consensus_round += 1;
-
-    utils::advance_some_parties_and_wait_for_completions(
-        &committee,
-        &mut dwallet_mpc_services,
-        &mut sent_consensus_messages_collectors,
-        &epoch_stores,
-        &notify_services,
-        &delayed_parties,
-    )
-    .await;
-    utils::send_advance_results_between_parties(
-        &committee,
-        &mut sent_consensus_messages_collectors,
-        &mut epoch_stores,
-        consensus_round,
-    );
-    crypto_round += 1;
-    consensus_round += 1;
     loop {
-        if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
+        let crypto_round_delayed_parties = delayed_parties
+            .get(&crypto_round)
+            .cloned()
+            .unwrap_or_default();
+        let non_delayed_parties = (0..committee_size)
+            .collect_vec()
+            .into_iter()
+            .filter(|party_index| !crypto_round_delayed_parties.contains(party_index))
+            .collect_vec();
+        if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
             &committee,
             &mut dwallet_mpc_services,
             &mut sent_consensus_messages_collectors,
             &epoch_stores,
             &notify_services,
+            &non_delayed_parties,
         )
         .await
         {
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
-        info!(?consensus_round, "Advanced MPC round");
+        set_messages_as_malicious(
+            &malicious_parties.get(&crypto_round).unwrap_or(&Vec::new()),
+            &mut sent_consensus_messages_collectors,
+            crypto_round as u64,
+        );
         utils::send_advance_results_between_parties(
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
             consensus_round,
         );
-        info!(?consensus_round, "Sent advance results for MPC round");
+        if !crypto_round_delayed_parties.is_empty() {
+            consensus_round += 1;
+            if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
+                &committee,
+                &mut dwallet_mpc_services,
+                &mut sent_consensus_messages_collectors,
+                &epoch_stores,
+                &notify_services,
+                &crypto_round_delayed_parties,
+            )
+            .await
+            {
+                info!(?pending_checkpoint, "MPC flow completed successfully");
+                break;
+            }
+            utils::send_advance_results_between_parties(
+                &committee,
+                &mut sent_consensus_messages_collectors,
+                &mut epoch_stores,
+                consensus_round,
+            );
+        }
+        info!(
+            ?consensus_round,
+            ?crypto_round,
+            "Ran advance and sent results between the validators"
+        );
         consensus_round += 1;
         crypto_round += 1;
     }
-    for malicious_party_index in malicious_parties {
-        let malicious_actor_name = dwallet_mpc_services[malicious_party_index].name;
+    for malicious_party_index in malicious_parties.values().flatten() {
+        let malicious_actor_name = dwallet_mpc_services[*malicious_party_index].name;
         assert!(
             dwallet_mpc_services.iter().all(|service| service
                 .dwallet_mpc_manager()
