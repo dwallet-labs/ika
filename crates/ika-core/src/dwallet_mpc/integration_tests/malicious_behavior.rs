@@ -16,7 +16,7 @@ async fn test_some_malicious_validators_flows_succeed() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
     assert!(
-        committee_size - malicious_parties.len() > committee.quorum_threshold as usize,
+        committee_size - malicious_parties.len() >= committee.quorum_threshold as usize,
         "There should be a quorum of honest parties for the flow to succeed"
     );
     assert_eq!(
