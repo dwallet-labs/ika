@@ -6,7 +6,11 @@ import { bcs, toHex } from '@mysten/bcs';
 import { Ed25519Keypair, Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { keccak_256 } from '@noble/hashes/sha3';
 
-import { createClassGroupsKeypair, userAndNetworkDKGOutputMatch } from './cryptography.js';
+import {
+	createClassGroupsKeypair,
+	userAndNetworkDKGOutputMatch,
+	verifyAndGetDWalletDKGPublicOutput,
+} from './cryptography.js';
 import type { DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './types.js';
 import { encodeToASCII } from './utils.js';
 
@@ -259,39 +263,17 @@ export class UserShareEncryptionKeys {
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 		protocolPublicParameters: Uint8Array,
 	): Promise<Uint8Array> {
-		if (!dWallet.state.Active?.public_output) {
-			throw new Error('DWallet is not active');
-		}
-
-		if (!encryptedUserSecretKeyShare.state.KeyHolderSigned?.user_output_signature) {
-			throw new Error('Encrypted user secret key share is not signed by the key holder');
-		}
-
-		if (
-			!(await this.verifySignature(
-				Uint8Array.from(dWallet.state.Active.public_output),
-				Uint8Array.from(encryptedUserSecretKeyShare.state.KeyHolderSigned.user_output_signature),
-			))
-		) {
-			throw new Error(
-				'Invalid signature. The user output signature does not match the public output.',
-			);
-		}
-
-		if (
-			this.#encryptedSecretShareSigningKeypair.toSuiAddress() !==
-			encryptedUserSecretKeyShare.encryption_key_address
-		) {
-			throw new Error(
-				'Invalid Sui address. The encryption key address does not match the signing keypair address.',
-			);
-		}
+		const dWalletPublicOutput = await verifyAndGetDWalletDKGPublicOutput(
+			dWallet,
+			encryptedUserSecretKeyShare,
+			this.#encryptedSecretShareSigningKeypair.getPublicKey(),
+		);
 
 		return Uint8Array.from(
 			decrypt_user_share(
 				this.decryptionKey,
 				this.encryptionKey,
-				Uint8Array.from(dWallet.state.Active?.public_output),
+				dWalletPublicOutput,
 				Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
 				protocolPublicParameters,
 			),
