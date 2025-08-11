@@ -190,10 +190,6 @@ impl DWalletMPCService {
         }
     }
 
-    pub(crate) fn dwallet_mpc_manager(&self) -> &DWalletMPCManager {
-        &self.dwallet_mpc_manager
-    }
-
     async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
         let (ika_current_epoch_on_sui, last_session_to_complete_in_current_epoch) = self
             .sui_data_receivers

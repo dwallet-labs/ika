@@ -12,17 +12,15 @@ use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::error::IkaResult;
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
+use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutput, IkaNetworkConfig, SessionIdentifier,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
-use tracing::info;
 
 /// A testing implementation of the `AuthorityPerEpochStoreTrait`.
 /// Records all received data for testing purposes.
@@ -217,9 +215,7 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
 }
 
 #[cfg(test)]
-pub fn create_dwallet_mpc_services(
-    size: usize,
-) -> (
+pub fn create_dwallet_mpc_services() -> (
     Vec<DWalletMPCService>,
     Vec<SuiDataSenders>,
     Vec<Arc<TestingSubmitToConsensus>>,
@@ -227,7 +223,7 @@ pub fn create_dwallet_mpc_services(
     Vec<Arc<TestingDWalletCheckpointNotify>>,
 ) {
     let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
-    let (mut committee, _) = Committee::new_simple_test_committee_of_size(size);
+    let (mut committee, _) = Committee::new_simple_test_committee();
     for (authority_name, _) in committee.voting_rights.iter() {
         let seed = RootSeed::random_seed();
         seeds.insert(authority_name.clone(), seed.clone());
@@ -310,120 +306,4 @@ fn create_dwallet_mpc_service(
         epoch_store,
         checkpoint_notify,
     )
-}
-
-pub(crate) fn send_advance_results_between_parties(
-    committee: &Committee,
-    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
-    epoch_stores: &mut Vec<Arc<TestingAuthorityPerEpochStore>>,
-    new_data_round: Round,
-) {
-    for i in 0..committee.voting_rights.len() {
-        let consensus_messages_store = sent_consensus_messages_collectors[i]
-            .submitted_messages
-            .clone();
-        let consensus_messages = consensus_messages_store.lock().unwrap().clone();
-        consensus_messages_store.lock().unwrap().clear();
-        let dwallet_messages: Vec<_> = consensus_messages
-            .clone()
-            .into_iter()
-            .filter_map(|message| {
-                if let ConsensusTransactionKind::DWalletMPCMessage(message) = message.kind {
-                    Some(message)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let dwallet_outputs: Vec<_> = consensus_messages
-            .into_iter()
-            .filter_map(|message| {
-                if let ConsensusTransactionKind::DWalletMPCOutput(message) = message.kind {
-                    Some(message)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        for j in 0..committee.voting_rights.len() {
-            let other_epoch_store = epoch_stores.get(j).unwrap();
-            other_epoch_store
-                .round_to_messages
-                .lock()
-                .unwrap()
-                .entry(new_data_round)
-                .or_default()
-                .extend(dwallet_messages.clone());
-            other_epoch_store
-                .round_to_outputs
-                .lock()
-                .unwrap()
-                .entry(new_data_round)
-                .or_default()
-                .extend(dwallet_outputs.clone());
-
-            // The DWalletMPCService every round will have entries in all the round-specific DB tables.
-            other_epoch_store
-                .round_to_verified_checkpoint
-                .lock()
-                .unwrap()
-                .insert(new_data_round, vec![]);
-        }
-    }
-}
-
-pub(crate) async fn advance_all_parties_and_wait_for_completions(
-    committee: &Committee,
-    dwallet_mpc_services: &mut Vec<DWalletMPCService>,
-    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
-    testing_epoch_stores: &Vec<Arc<TestingAuthorityPerEpochStore>>,
-    notify_services: &Vec<Arc<TestingDWalletCheckpointNotify>>,
-) -> Option<PendingDWalletCheckpoint> {
-    let mut pending_checkpoints = vec![];
-    for i in 0..committee.voting_rights.len() {
-        let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
-        let _ = dwallet_mpc_service.run_service_loop_iteration().await;
-        let consensus_messages_store = sent_consensus_messages_collectors[i]
-            .submitted_messages
-            .clone();
-        let pending_checkpoints_store = testing_epoch_stores[i].pending_checkpoints.clone();
-        let notify_service = notify_services[i].clone();
-        loop {
-            if !consensus_messages_store.lock().unwrap().is_empty() {
-                break;
-            }
-            if *notify_service
-                .checkpoints_notification_count
-                .lock()
-                .unwrap()
-                > 0
-            {
-                let pending_checkpoint = pending_checkpoints_store.lock().unwrap().pop();
-                assert!(
-                    pending_checkpoint.is_some(),
-                    "received a checkpoint notification, but no pending checkpoint was found"
-                );
-                let pending_dwallet_checkpoint = pending_checkpoint.unwrap();
-                info!(?pending_dwallet_checkpoint, party_id=?i+1, "Pending checkpoint found");
-                pending_checkpoints.push(pending_dwallet_checkpoint);
-                break;
-            }
-
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
-        }
-    }
-    if pending_checkpoints.len() == committee.voting_rights.len()
-        && pending_checkpoints
-            .iter()
-            .all(|x| x.clone() == pending_checkpoints[0].clone())
-    {
-        return Some(pending_checkpoints[0].clone());
-    }
-    assert!(
-        pending_checkpoints.is_empty(),
-        "Pending checkpoints are not equal across all parties: {:?}",
-        pending_checkpoints
-    );
-    None
 }
