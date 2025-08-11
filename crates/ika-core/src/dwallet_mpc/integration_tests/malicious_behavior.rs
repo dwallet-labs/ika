@@ -43,20 +43,23 @@ async fn test_malicious_behavior() {
         &notify_services,
     )
     .await;
-    sent_consensus_messages_collectors[3]
+    let mut original_message = sent_consensus_messages_collectors[3]
         .submitted_messages
         .lock()
         .unwrap()
         .remove(0);
-    // let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
-    //     panic!("Network DKG first round should produce a DWalletMPCMessage");
-    // };
-    // msg.message = [0u8; 47].to_vec();
-    // sent_consensus_messages_collectors[0]
-    //     .submitted_messages
-    //     .lock()
-    //     .unwrap()
-    //     .push(original_message);
+    let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
+        panic!("Network DKG first round should produce a DWalletMPCMessage");
+    };
+    let mut new_message: Vec<u8> = vec![0];
+    new_message.extend(bcs::to_bytes::<u64>(&1).unwrap());
+    new_message.extend([3; 48]);
+    msg.message = new_message;
+    sent_consensus_messages_collectors[0]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .push(original_message);
     utils::send_advance_results_between_parties(
         &committee,
         &mut sent_consensus_messages_collectors,
@@ -66,13 +69,12 @@ async fn test_malicious_behavior() {
     mpc_round += 1;
     info!("Starting malicious behavior test");
     loop {
-        if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
+        if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
             &mut dwallet_mpc_services,
             &mut sent_consensus_messages_collectors,
             &epoch_stores,
             &notify_services,
-            3,
         )
         .await
         {
