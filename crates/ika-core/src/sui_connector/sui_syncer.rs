@@ -326,9 +326,9 @@ where
                             key=?key_id,
                             current_epoch=?current_epoch,
                             error=?err,
-                            "failed to get network decryption key data, retrying...",
+                            "failed to get network decryption key data, skipping key",
                         );
-                        continue 'sync_network_keys;
+                        continue;
                     }
                 }
             }

@@ -77,9 +77,14 @@ function isStartDKGFirstRoundEvent(obj: any): obj is StartDKGFirstRoundEvent {
 export async function createDWallet(
 	conf: Config,
 	networkDecryptionKeyPublicOutput: Uint8Array,
+	sui_coin_id?: string,
+	ika_coin_id?: string,
 ): Promise<DWallet> {
 	console.time('launchDKGFirstRound');
-	const firstRoundOutputResult = await launchDKGFirstRound(conf);
+	const firstRoundOutputResult =
+		sui_coin_id !== undefined
+			? await launchDKGFirstRoundWithGivenCoins(conf, sui_coin_id, ika_coin_id)
+			: await launchDKGFirstRound(conf);
 	console.timeEnd('launchDKGFirstRound');
 	const classGroupsSecpKeyPair = await getOrCreateClassGroupsKeyPair(conf);
 	const secondRoundResponse = await launchDKGSecondRound(
@@ -87,6 +92,8 @@ export async function createDWallet(
 		firstRoundOutputResult,
 		networkDecryptionKeyPublicOutput,
 		classGroupsSecpKeyPair,
+		sui_coin_id,
+		ika_coin_id,
 	);
 	await acceptEncryptedUserShare(conf, {
 		dwallet_id: secondRoundResponse.moveResponse.dwallet.id.id,
@@ -107,6 +114,8 @@ export async function launchDKGSecondRound(
 	firstRoundOutputResult: DKGFirstRoundOutputResult,
 	networkDecryptionKeyPublicOutput: Uint8Array,
 	classGroupsSecpKeyPair: ClassGroupsSecpKeyPair,
+	sui_coin_id?: string,
+	ika_coin_id?: string,
 ): Promise<DKGSecondRoundResponse> {
 	const [centralizedPublicKeyShareAndProof, centralizedPublicOutput, centralizedSecretKeyShare] =
 		create_dkg_centralized_output(
@@ -130,6 +139,8 @@ export async function launchDKGSecondRound(
 		centralizedPublicKeyShareAndProof,
 		encryptedUserShareAndProof,
 		centralizedPublicOutput,
+		sui_coin_id,
+		ika_coin_id,
 	);
 	return {
 		moveResponse: secondRoundMoveResponse,
@@ -144,6 +155,8 @@ export async function dkgSecondRoundMoveCall(
 	centralizedPublicKeyShareAndProof: Uint8Array,
 	encryptedUserShareAndProof: Uint8Array,
 	centralizedPublicOutput: Uint8Array,
+	sui_coin_id?: string,
+	ika_coin_id: string = '0x9df87437f4f0fb73bffe6fc6291f568da6e59ad4ad0770743b21cd4e1c030914',
 ): Promise<DKGSecondRoundMoveResponse> {
 	const tx = new Transaction();
 	const dwalletStateArg = tx.sharedObjectRef({
@@ -166,11 +179,22 @@ export async function dkgSecondRoundMoveCall(
 		bcs.vector(bcs.u8()).serialize(conf.suiClientKeypair.getPublicKey().toRawBytes()),
 	);
 
-	const emptyIKACoin = tx.moveCall({
-		target: `${SUI_PACKAGE_ID}::coin::zero`,
-		arguments: [],
-		typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
-	});
+	let ikaCoinArg;
+	let suiCoinArg;
+	let destroyZero = false;
+	if (sui_coin_id) {
+		ikaCoinArg = tx.object(ika_coin_id);
+		suiCoinArg = tx.object(sui_coin_id);
+	} else {
+		ikaCoinArg = tx.moveCall({
+			target: `${SUI_PACKAGE_ID}::coin::zero`,
+			arguments: [],
+			typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
+		});
+		suiCoinArg = tx.gas;
+		destroyZero = true;
+	}
+
 	const sessionIdentifier = await createSessionIdentifier(
 		tx,
 		dwalletStateArg,
@@ -187,15 +211,17 @@ export async function dkgSecondRoundMoveCall(
 			userPublicOutputArg,
 			signerPublicKeyArg,
 			sessionIdentifier,
-			emptyIKACoin,
-			tx.gas,
+			ikaCoinArg,
+			suiCoinArg,
 		],
 	});
-	tx.moveCall({
-		target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
-		arguments: [emptyIKACoin],
-		typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
-	});
+	if (destroyZero) {
+		tx.moveCall({
+			target: `${SUI_PACKAGE_ID}::coin::destroy_zero`,
+			arguments: [ikaCoinArg],
+			typeArguments: [`${conf.ikaConfig.packages.ika_package_id}::ika::IKA`],
+		});
+	}
 	const result = await conf.client.signAndExecuteTransaction({
 		signer: conf.suiClientKeypair,
 		transaction: tx,
@@ -293,8 +319,6 @@ async function launchDKGFirstRound(c: Config): Promise<DKGFirstRoundOutputResult
 
 /**
  * Starts the first round of the DKG protocol to create a new dWallet with given coins.
- *
- * TODO (#1321): Allow running all MPC flows with given coins IDs.
  */
 export async function launchDKGFirstRoundWithGivenCoins(
 	c: Config,
