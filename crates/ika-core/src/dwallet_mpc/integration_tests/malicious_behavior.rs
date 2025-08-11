@@ -14,10 +14,15 @@ async fn test_some_malicious_validators_flows_succeed() {
     let malicious_parties = [1, 2];
 
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
+    let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
     assert!(
         committee_size - malicious_parties.len() > committee.quorum_threshold as usize,
         "There should be a quorum of honest parties for the flow to succeed"
+    );
+    assert_eq!(
+        committee.voting_rights.len(),
+        committee_size,
+        "Committee size should match the expected size"
     );
     let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
