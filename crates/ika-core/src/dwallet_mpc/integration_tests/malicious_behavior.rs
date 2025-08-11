@@ -10,6 +10,9 @@ use tracing::info;
 #[tokio::test]
 #[cfg(test)]
 async fn test_malicious_behavior() {
+    let committee_size = 7;
+    let malicious_parties = [1, 2];
+
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let ika_network_config = IkaNetworkConfig::new_for_testing();
@@ -20,7 +23,7 @@ async fn test_malicious_behavior() {
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
         mut notify_services,
-    ) = utils::create_dwallet_mpc_services();
+    ) = utils::create_dwallet_mpc_services(committee_size);
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DBSuiEvent {
@@ -44,24 +47,26 @@ async fn test_malicious_behavior() {
     )
     .await;
 
-    // Create a malicious message for round 1, and set it as party 3's message.
-    let mut original_message = sent_consensus_messages_collectors[3]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .remove(0);
-    let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
-        panic!("Network DKG first round should produce a DWalletMPCMessage");
-    };
-    let mut new_message: Vec<u8> = vec![0];
-    new_message.extend(bcs::to_bytes::<u64>(&1).unwrap());
-    new_message.extend([3; 48]);
-    msg.message = new_message;
-    sent_consensus_messages_collectors[0]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .push(original_message);
+    for malicious_party_index in malicious_parties {
+        // Create a malicious message for round 1, and set it as the patty's message.
+        let mut original_message = sent_consensus_messages_collectors[malicious_party_index]
+            .submitted_messages
+            .lock()
+            .unwrap()
+            .remove(0);
+        let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
+            panic!("Network DKG first round should produce a DWalletMPCMessage");
+        };
+        let mut new_message: Vec<u8> = vec![0];
+        new_message.extend(bcs::to_bytes::<u64>(&1).unwrap());
+        new_message.extend([3; 48]);
+        msg.message = new_message;
+        sent_consensus_messages_collectors[malicious_party_index]
+            .submitted_messages
+            .lock()
+            .unwrap()
+            .push(original_message);
+    }
 
     utils::send_advance_results_between_parties(
         &committee,
@@ -95,12 +100,14 @@ async fn test_malicious_behavior() {
         info!(?mpc_round, "Sent advance results for MPC round");
         mpc_round += 1;
     }
-    let malicious_actor_name = dwallet_mpc_services[3].name;
-    assert!(
-        dwallet_mpc_services.iter().all(|service| service
-            .dwallet_mpc_manager()
-            .is_malicious_actor(&malicious_actor_name)),
-        "All services should recognize the malicious actor: {}",
-        malicious_actor_name
-    );
+    for malicious_party_index in malicious_parties {
+        let malicious_actor_name = dwallet_mpc_services[malicious_party_index].name;
+        assert!(
+            dwallet_mpc_services.iter().all(|service| service
+                .dwallet_mpc_manager()
+                .is_malicious_actor(&malicious_actor_name)),
+            "All services should recognize the malicious actor: {}",
+            malicious_actor_name
+        );
+    }
 }

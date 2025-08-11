@@ -217,7 +217,9 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
 }
 
 #[cfg(test)]
-pub fn create_dwallet_mpc_services() -> (
+pub fn create_dwallet_mpc_services(
+    size: usize,
+) -> (
     Vec<DWalletMPCService>,
     Vec<SuiDataSenders>,
     Vec<Arc<TestingSubmitToConsensus>>,
@@ -225,7 +227,7 @@ pub fn create_dwallet_mpc_services() -> (
     Vec<Arc<TestingDWalletCheckpointNotify>>,
 ) {
     let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
-    let (mut committee, _) = Committee::new_simple_test_committee();
+    let (mut committee, _) = Committee::new_simple_test_committee_of_size(size);
     for (authority_name, _) in committee.voting_rights.iter() {
         let seed = RootSeed::random_seed();
         seeds.insert(authority_name.clone(), seed.clone());

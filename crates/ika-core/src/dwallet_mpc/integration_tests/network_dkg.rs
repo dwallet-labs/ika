@@ -41,7 +41,7 @@ async fn test_network_dkg_full_flow() {
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
         mut notify_services,
-    ) = utils::create_dwallet_mpc_services();
+    ) = utils::create_dwallet_mpc_services(4);
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DBSuiEvent {
