@@ -44,7 +44,7 @@ async fn test_malicious_behavior() {
     )
     .await;
 
-    // Create a malicious message for round 1, and set it as party 0's message.
+    // Create a malicious message for round 1, and set it as party 3's message.
     let mut original_message = sent_consensus_messages_collectors[3]
         .submitted_messages
         .lock()
