@@ -446,7 +446,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
             let _ = dwallet_mpc_service.run_service_loop_iteration().await;
         }
     }
-    if pending_checkpoints.len() == committee.voting_rights.len()
+    if pending_checkpoints.len() == parties_to_advance.len()
         && pending_checkpoints
             .iter()
             .all(|x| x.clone() == pending_checkpoints[0].clone())
