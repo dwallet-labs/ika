@@ -474,19 +474,22 @@ pub(crate) fn override_legit_messages_with_false_messages(
             .submitted_messages
             .lock()
             .unwrap()
-            .remove(0);
-        let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
-            panic!("Network DKG first round should produce a DWalletMPCMessage");
-        };
-        let mut new_message: Vec<u8> = vec![0];
-        new_message.extend(bcs::to_bytes::<u64>(&crypto_round).unwrap());
-        new_message.extend([3; 48]);
-        msg.message = new_message;
-        sent_consensus_messages_collectors[*malicious_party_index]
-            .submitted_messages
-            .lock()
-            .unwrap()
-            .push(original_message);
+            .pop();
+        original_message.map(|mut original_message| {
+            let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind
+            else {
+                panic!("Network DKG first round should produce a DWalletMPCMessage");
+            };
+            let mut new_message: Vec<u8> = vec![0];
+            new_message.extend(bcs::to_bytes::<u64>(&crypto_round).unwrap());
+            new_message.extend([3; 48]);
+            msg.message = new_message;
+            sent_consensus_messages_collectors[*malicious_party_index]
+                .submitted_messages
+                .lock()
+                .unwrap()
+                .push(original_message);
+        });
     }
 }
 
