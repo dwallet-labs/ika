@@ -191,8 +191,9 @@ export class UserShareEncryptionKeys {
 	}
 
 	/**
-	 * Creates a signature over the DWallet's public output for a transferred DWallet.
-	 * This signature proves authorization to use the DWallet's encrypted share.
+	 * Creates a signature over the DWallet's public output for a transferred or shared DWallet.
+	 * This signature is later used as a fast verification method over the dWallet data (i.e. public output, against which the secret share is also verified.)
+	 * We do this at the time of accepting the dWallet, when we know the sender and their public key/address, against which their own signature on the public output is first verified.
 	 *
 	 * @param dWallet - The DWallet to create a signature for
 	 * @param userPublicOutput - The user's public output from the DKG process, this is used to verify the user's public output signature.
