@@ -5990,6 +5990,7 @@ dependencies = [
  "anemo",
  "anyhow",
  "bcs",
+ "clap",
  "dwallet-classgroups-types",
  "dwallet-mpc-types",
  "dwallet-rng",
@@ -6015,6 +6016,7 @@ dependencies = [
  "sui-types",
  "tempfile",
  "tokio",
+ "url",
 ]
 
 [[package]]
