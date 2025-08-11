@@ -100,7 +100,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             test_state.consensus_round += 1;
             if advance_parties_and_send_result_messages(
                 &mut test_state,
-                &round_non_delayed_parties,
+                &round_delayed_parties,
                 &round_malicious_parties,
             )
             .await
