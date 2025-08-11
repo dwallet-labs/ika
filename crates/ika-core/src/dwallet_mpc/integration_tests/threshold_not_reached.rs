@@ -5,6 +5,7 @@ use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent,
     DWalletSessionEventTrait, IkaNetworkConfig,
 };
+use itertools::Itertools;
 use tracing::info;
 
 #[tokio::test]
@@ -79,6 +80,27 @@ async fn test_threshold_not_reached_but_flow_succeeds() {
             .push(original_message);
     }
 
+    utils::send_advance_results_between_parties(
+        &committee,
+        &mut sent_consensus_messages_collectors,
+        &mut epoch_stores,
+        consensus_round,
+    );
+    consensus_round += 1;
+    let non_delayed_parties = (0..committee_size)
+        .collect_vec()
+        .into_iter()
+        .filter(|party_index| !delayed_parties.contains(party_index))
+        .collect_vec();
+    utils::advance_some_parties_and_wait_for_completions(
+        &committee,
+        &mut dwallet_mpc_services,
+        &mut sent_consensus_messages_collectors,
+        &epoch_stores,
+        &notify_services,
+        &non_delayed_parties,
+    )
+    .await;
     utils::send_advance_results_between_parties(
         &committee,
         &mut sent_consensus_messages_collectors,
