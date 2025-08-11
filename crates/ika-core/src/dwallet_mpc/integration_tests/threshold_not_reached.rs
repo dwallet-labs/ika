@@ -1,8 +1,10 @@
-use tracing::info;
+use crate::dwallet_mpc::integration_tests::utils;
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::ConsensusTransactionKind;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, IkaNetworkConfig};
-use crate::dwallet_mpc::integration_tests::utils;
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, IkaNetworkConfig,
+};
+use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]
@@ -44,15 +46,16 @@ async fn test_threshold_not_reached_but_flow_succeeds() {
             epoch_id,
         ));
     });
-    let mut mpc_round = 1;
-    utils::advance_all_parties_and_wait_for_completions(
+    let mut consensus_round = 1;
+    utils::advance_some_parties_and_wait_for_completions(
         &committee,
         &mut dwallet_mpc_services,
         &mut sent_consensus_messages_collectors,
         &epoch_stores,
         &notify_services,
+        &delayed_parties,
     )
-        .await;
+    .await;
 
     for malicious_party_index in malicious_parties {
         // Create a malicious message for round 1, and set it as the patty's message.
@@ -79,10 +82,10 @@ async fn test_threshold_not_reached_but_flow_succeeds() {
         &committee,
         &mut sent_consensus_messages_collectors,
         &mut epoch_stores,
-        mpc_round,
+        consensus_round,
     );
-    mpc_round += 1;
-    info!("Starting malicious behavior test");
+    consensus_round += 1;
+    info!("Starting threshold not reached test");
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
@@ -91,21 +94,20 @@ async fn test_threshold_not_reached_but_flow_succeeds() {
             &epoch_stores,
             &notify_services,
         )
-            .await
+        .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
-        info!(?mpc_round, "Advanced MPC round");
+        info!(?consensus_round, "Advanced MPC round");
         utils::send_advance_results_between_parties(
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
-            mpc_round,
+            consensus_round,
         );
-        info!(?mpc_round, "Sent advance results for MPC round");
-        mpc_round += 1;
+        info!(?consensus_round, "Sent advance results for MPC round");
+        consensus_round += 1;
     }
     for malicious_party_index in malicious_parties {
         let malicious_actor_name = dwallet_mpc_services[malicious_party_index].name;

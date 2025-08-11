@@ -386,7 +386,8 @@ pub(crate) async fn advance_all_parties_and_wait_for_completions(
         testing_epoch_stores,
         notify_services,
         &[],
-    ).await
+    )
+    .await
 }
 
 pub(crate) async fn advance_some_parties_and_wait_for_completions(
