@@ -316,7 +316,7 @@ pub(crate) fn send_advance_results_between_parties(
     committee: &Committee,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
     epoch_stores: &mut Vec<Arc<TestingAuthorityPerEpochStore>>,
-    new_data_round: Round,
+    new_data_consensus_round: Round,
 ) {
     for i in 0..committee.voting_rights.len() {
         let consensus_messages_store = sent_consensus_messages_collectors[i]
@@ -351,14 +351,14 @@ pub(crate) fn send_advance_results_between_parties(
                 .round_to_messages
                 .lock()
                 .unwrap()
-                .entry(new_data_round)
+                .entry(new_data_consensus_round)
                 .or_default()
                 .extend(dwallet_messages.clone());
             other_epoch_store
                 .round_to_outputs
                 .lock()
                 .unwrap()
-                .entry(new_data_round)
+                .entry(new_data_consensus_round)
                 .or_default()
                 .extend(dwallet_outputs.clone());
 
@@ -367,7 +367,7 @@ pub(crate) fn send_advance_results_between_parties(
                 .round_to_verified_checkpoint
                 .lock()
                 .unwrap()
-                .insert(new_data_round, vec![]);
+                .insert(new_data_consensus_round, vec![]);
         }
     }
 }
