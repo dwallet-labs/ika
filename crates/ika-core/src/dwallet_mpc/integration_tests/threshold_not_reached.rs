@@ -183,14 +183,25 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
     let mut consensus_round = 1;
     let mut crypto_round = 1;
     loop {
-        let crypto_round_delayed_parties = crypto_round_to_delayed_parties
+        let previous_rounds_malicious_parties = crypto_round_to_malicious_parties
+            .iter()
+            .filter(|(round, _)| *round < &crypto_round)
+            .map(|(_, parties)| parties)
+            .flatten()
+            .collect_vec();
+        // We don't want to advance parties that acted maliciously in previous rounds, as their behavior is unexpected.
+        let active_parties = (0..committee_size)
+            .collect_vec()
+            .into_iter()
+            .filter(|party_index| !previous_rounds_malicious_parties.contains(&party_index))
+            .collect_vec();
+        let round_delayed_parties = crypto_round_to_delayed_parties
             .get(&crypto_round)
             .cloned()
             .unwrap_or_default();
-        let non_delayed_parties = (0..committee_size)
-            .collect_vec()
+        let round_non_delayed_parties = active_parties
             .into_iter()
-            .filter(|party_index| !crypto_round_delayed_parties.contains(party_index))
+            .filter(|party_index| !round_delayed_parties.contains(party_index))
             .collect_vec();
         if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
             &committee,
@@ -198,7 +209,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             &mut sent_consensus_messages_collectors,
             &epoch_stores,
             &notify_services,
-            &non_delayed_parties,
+            &round_non_delayed_parties,
         )
         .await
         {
@@ -218,7 +229,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             &mut epoch_stores,
             consensus_round,
         );
-        if !crypto_round_delayed_parties.is_empty() {
+        if !round_delayed_parties.is_empty() {
             consensus_round += 1;
             if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
                 &committee,
@@ -226,7 +237,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
                 &mut sent_consensus_messages_collectors,
                 &epoch_stores,
                 &notify_services,
-                &crypto_round_delayed_parties,
+                &round_delayed_parties,
             )
             .await
             {
