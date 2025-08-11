@@ -10,7 +10,7 @@ use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]
-async fn test_threshold_not_reached_but_flow_succeeds() {
+async fn test_threshold_not_reached_once_flow_succeeds() {
     let committee_size = 4;
     let malicious_parties = [1];
     let delayed_parties = [2];
