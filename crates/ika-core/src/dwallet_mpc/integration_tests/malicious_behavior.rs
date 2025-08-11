@@ -92,5 +92,12 @@ async fn test_malicious_behavior() {
         info!(?mpc_round, "Sent advance results for MPC round");
         mpc_round += 1;
     }
-    // assert!(dwallet_mpc_services[0].dwallet_mpc_manager().is_malicious_actor()
+    let malicious_actor_name = dwallet_mpc_services[0].name;
+    assert!(
+        dwallet_mpc_services.iter().all(|service| service
+            .dwallet_mpc_manager()
+            .is_malicious_actor(&malicious_actor_name)),
+        "All services should recognize the malicious actor: {}",
+        malicious_actor_name
+    );
 }
