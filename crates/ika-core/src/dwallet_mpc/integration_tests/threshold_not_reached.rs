@@ -109,7 +109,6 @@ async fn test_threshold_not_reached_once_flow_succeeds() {
         consensus_round,
     );
     consensus_round += 1;
-    info!("Starting threshold not reached test");
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
