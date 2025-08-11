@@ -43,7 +43,7 @@ async fn test_malicious_behavior() {
         &notify_services,
     )
     .await;
-    
+
     // Create a malicious message for round 1, and set it as party 0's message.
     let mut original_message = sent_consensus_messages_collectors[3]
         .submitted_messages
@@ -62,7 +62,7 @@ async fn test_malicious_behavior() {
         .lock()
         .unwrap()
         .push(original_message);
-    
+
     utils::send_advance_results_between_parties(
         &committee,
         &mut sent_consensus_messages_collectors,
@@ -95,7 +95,7 @@ async fn test_malicious_behavior() {
         info!(?mpc_round, "Sent advance results for MPC round");
         mpc_round += 1;
     }
-    let malicious_actor_name = dwallet_mpc_services[0].name;
+    let malicious_actor_name = dwallet_mpc_services[3].name;
     assert!(
         dwallet_mpc_services.iter().all(|service| service
             .dwallet_mpc_manager()
