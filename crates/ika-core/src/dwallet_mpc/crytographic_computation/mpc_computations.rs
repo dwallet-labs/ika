@@ -60,14 +60,14 @@ pub(crate) fn build_messages_to_advance(
             )
         })
         .collect();
-    info!(
-        ?current_mpc_round,
-        ?rounds_to_delay,
-        ?mpc_round_to_threshold_not_reached_consensus_rounds,
-        ?messages_skeleton,
-        ?access_structure,
-        "Building messages to advance MPC round"
-    );
+    // info!(
+    //     ?current_mpc_round,
+    //     ?rounds_to_delay,
+    //     ?mpc_round_to_threshold_not_reached_consensus_rounds,
+    //     ?messages_skeleton,
+    //     ?access_structure,
+    //     "Building messages to advance MPC round"
+    // );
     // The first round needs no messages as input, and is always ready to advance.
     if current_mpc_round == 1 {
         return Some((None, HashMap::new()));
@@ -132,12 +132,6 @@ pub(crate) fn build_messages_to_advance(
             let is_authorized_subset = access_structure
                 .is_authorized_subset(&previous_round_message_senders)
                 .is_ok();
-            info!(
-                ?previous_round_message_senders,
-                ?is_authorized_subset,
-                ?access_structure,
-                "Checking if we have a quorum of previous round messages"
-            );
             is_authorized_subset
         } else {
             false

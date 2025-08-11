@@ -43,7 +43,7 @@ async fn test_malicious_behavior() {
         &notify_services,
     )
     .await;
-    sent_consensus_messages_collectors[0]
+    sent_consensus_messages_collectors[3]
         .submitted_messages
         .lock()
         .unwrap()
