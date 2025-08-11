@@ -1,5 +1,9 @@
+use crate::SuiDataSenders;
+use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
+use crate::dwallet_mpc::integration_tests::utils::{
+    TestingAuthorityPerEpochStore, TestingDWalletCheckpointNotify, TestingSubmitToConsensus,
+};
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::ConsensusTransactionKind;
 use ika_types::messages_dwallet_mpc::{
@@ -9,6 +13,8 @@ use ika_types::messages_dwallet_mpc::{
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::Arc;
+use sui_types::base_types::EpochId;
+use sui_types::messages_consensus::Round;
 use tracing::info;
 
 #[tokio::test]
@@ -22,14 +28,13 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
 
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
+    let all_flow_malicious_parties = crypto_round_to_malicious_parties
+        .values()
+        .flatten()
+        .collect_vec()
+        .len();
     assert!(
-        committee_size
-            - crypto_round_to_malicious_parties
-                .values()
-                .flatten()
-                .collect_vec()
-                .len()
-            >= committee.quorum_threshold as usize,
+        committee_size - all_flow_malicious_parties >= committee.quorum_threshold as usize,
         "There should be a quorum of honest parties for the flow to succeed"
     );
     assert_eq!(
@@ -44,27 +49,22 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         sui_data_senders,
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
-        mut notify_services,
+        notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
-        let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
-                    &ika_network_config,
-                ),
-                // The base64 encoding of an actual start network DKG event.
-                contents: base64::decode("Z7MmXd0I4lvGWLDA969YOVo7wrZlXr21RMvixIFabCqAU3voWC2pRFG3QwPYD+ta0sX5poLEkq77ovCi3BBQDgEAAAAAAAAAgFN76FgtqURRt0MD2A/rWtLF+aaCxJKu+6LwotwQUA4BAQAAAAAAAAAggZwXRQsb/ha4mk5xZZfqItaokplduZGMnsuEQzdm7UTt2Z+ktotfGXHn2YVaxxqVhDM8UaafXejIDXnaPLxaMAA=").unwrap(),
-                pulled: true,
-            }],
-            epoch_id,
-        ));
-    });
-    let mut consensus_round = 1;
-    let mut crypto_round = 1;
+    utils::send_start_network_dkg_event(&ika_network_config, epoch_id, sui_data_senders);
+    let mut test_state = utils::IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee,
+    };
     loop {
         let previous_rounds_malicious_parties = crypto_round_to_malicious_parties
             .iter()
-            .filter(|(round, _)| *round < &crypto_round)
+            .filter(|(round, _)| *round < &test_state.crypto_round)
             .map(|(_, parties)| parties)
             .flatten()
             .collect_vec();
@@ -75,68 +75,47 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             .filter(|party_index| !previous_rounds_malicious_parties.contains(&party_index))
             .collect_vec();
         let round_delayed_parties = crypto_round_to_delayed_parties
-            .get(&crypto_round)
+            .get(&test_state.crypto_round)
             .cloned()
             .unwrap_or_default();
         let round_non_delayed_parties = active_parties
             .into_iter()
             .filter(|party_index| !round_delayed_parties.contains(party_index))
             .collect_vec();
-        if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
-            &committee,
-            &mut dwallet_mpc_services,
-            &mut sent_consensus_messages_collectors,
-            &epoch_stores,
-            &notify_services,
+        let round_malicious_parties = crypto_round_to_malicious_parties
+            .get(&test_state.crypto_round)
+            .cloned()
+            .unwrap_or_default();
+        if advance_parties_and_send_result_messages(
+            &mut test_state,
             &round_non_delayed_parties,
+            &round_malicious_parties,
         )
         .await
         {
-            info!(?pending_checkpoint, "MPC flow completed successfully");
+            info!("MPC flow completed successfully");
             break;
         }
-        override_legit_messages_with_false_messages(
-            &crypto_round_to_malicious_parties
-                .get(&crypto_round)
-                .unwrap_or(&Vec::new()),
-            &mut sent_consensus_messages_collectors,
-            crypto_round as u64,
-        );
-        utils::send_advance_results_between_parties(
-            &committee,
-            &mut sent_consensus_messages_collectors,
-            &mut epoch_stores,
-            consensus_round,
-        );
         if !round_delayed_parties.is_empty() {
-            consensus_round += 1;
-            if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
-                &committee,
-                &mut dwallet_mpc_services,
-                &mut sent_consensus_messages_collectors,
-                &epoch_stores,
-                &notify_services,
-                &round_delayed_parties,
+            test_state.consensus_round += 1;
+            if advance_parties_and_send_result_messages(
+                &mut test_state,
+                &round_non_delayed_parties,
+                &round_malicious_parties,
             )
             .await
             {
-                info!(?pending_checkpoint, "MPC flow completed successfully");
+                info!("MPC flow completed successfully");
                 break;
             }
-            utils::send_advance_results_between_parties(
-                &committee,
-                &mut sent_consensus_messages_collectors,
-                &mut epoch_stores,
-                consensus_round,
-            );
         }
-        consensus_round += 1;
-        crypto_round += 1;
+        test_state.crypto_round += 1;
+        test_state.consensus_round += 1;
     }
     for malicious_party_index in crypto_round_to_malicious_parties.values().flatten() {
-        let malicious_actor_name = dwallet_mpc_services[*malicious_party_index].name;
+        let malicious_actor_name = test_state.dwallet_mpc_services[*malicious_party_index].name;
         assert!(
-            dwallet_mpc_services.iter().all(|service| service
+            test_state.dwallet_mpc_services.iter().all(|service| service
                 .dwallet_mpc_manager()
                 .is_malicious_actor(&malicious_actor_name)),
             "All services should recognize the malicious actor: {}",
@@ -145,31 +124,34 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
     }
 }
 
-/// Overrides the legitimate messages of malicious parties with false messages for the given crypto round and
-/// malicious parties. When other validators receive these messages, they will mark the malicious parties as malicious.
-pub(crate) fn override_legit_messages_with_false_messages(
+pub(crate) async fn advance_parties_and_send_result_messages(
+    mut test_state: &mut utils::IntegrationTestState,
+    parties_to_advance: &[usize],
     malicious_parties: &[usize],
-    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
-    crypto_round: u64,
-) {
-    for malicious_party_index in malicious_parties {
-        // Create a malicious message for round 1, and set it as the patty's message.
-        let mut original_message = sent_consensus_messages_collectors[*malicious_party_index]
-            .submitted_messages
-            .lock()
-            .unwrap()
-            .remove(0);
-        let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
-            panic!("Network DKG first round should produce a DWalletMPCMessage");
-        };
-        let mut new_message: Vec<u8> = vec![0];
-        new_message.extend(bcs::to_bytes::<u64>(&crypto_round).unwrap());
-        new_message.extend([3; 48]);
-        msg.message = new_message;
-        sent_consensus_messages_collectors[*malicious_party_index]
-            .submitted_messages
-            .lock()
-            .unwrap()
-            .push(original_message);
+) -> bool {
+    if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
+        &test_state.committee,
+        &mut test_state.dwallet_mpc_services,
+        &mut test_state.sent_consensus_messages_collectors,
+        &test_state.epoch_stores,
+        &test_state.notify_services,
+        &parties_to_advance,
+    )
+    .await
+    {
+        info!(?pending_checkpoint, "MPC flow completed successfully");
+        return true;
     }
+    utils::override_legit_messages_with_false_messages(
+        malicious_parties,
+        &mut test_state.sent_consensus_messages_collectors,
+        test_state.crypto_round as u64,
+    );
+    utils::send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        test_state.consensus_round as Round,
+    );
+    false
 }

@@ -15,12 +15,13 @@ use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCOutput, IkaNetworkConfig, SessionIdentifier,
+    DBSuiEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
+    DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig, SessionIdentifier,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use sui_types::base_types::ObjectID;
+use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
 use tracing::info;
 
@@ -32,6 +33,16 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) round_to_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletMPCOutput>>>>,
     pub(crate) round_to_verified_checkpoint:
         Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
+}
+
+pub(crate) struct IntegrationTestState {
+    pub(crate) dwallet_mpc_services: Vec<DWalletMPCService>,
+    pub(crate) sent_consensus_messages_collectors: Vec<Arc<TestingSubmitToConsensus>>,
+    pub(crate) epoch_stores: Vec<Arc<TestingAuthorityPerEpochStore>>,
+    pub(crate) notify_services: Vec<Arc<TestingDWalletCheckpointNotify>>,
+    pub(crate) crypto_round: usize,
+    pub(crate) consensus_round: usize,
+    pub(crate) committee: Committee,
 }
 
 /// A testing implementation of the `DWalletMPCSubmitToConsensus` trait.
@@ -448,4 +459,53 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
         pending_checkpoints
     );
     None
+}
+
+/// Overrides the legitimate messages of malicious parties with false messages for the given crypto round and
+/// malicious parties. When other validators receive these messages, they will mark the malicious parties as malicious.
+pub(crate) fn override_legit_messages_with_false_messages(
+    malicious_parties: &[usize],
+    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
+    crypto_round: u64,
+) {
+    for malicious_party_index in malicious_parties {
+        // Create a malicious message for round 1, and set it as the patty's message.
+        let mut original_message = sent_consensus_messages_collectors[*malicious_party_index]
+            .submitted_messages
+            .lock()
+            .unwrap()
+            .remove(0);
+        let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
+            panic!("Network DKG first round should produce a DWalletMPCMessage");
+        };
+        let mut new_message: Vec<u8> = vec![0];
+        new_message.extend(bcs::to_bytes::<u64>(&crypto_round).unwrap());
+        new_message.extend([3; 48]);
+        msg.message = new_message;
+        sent_consensus_messages_collectors[*malicious_party_index]
+            .submitted_messages
+            .lock()
+            .unwrap()
+            .push(original_message);
+    }
+}
+
+pub(crate) fn send_start_network_dkg_event(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: Vec<SuiDataSenders>,
+) {
+    sui_data_senders.iter().for_each(|mut sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DBSuiEvent {
+                type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
+                    &ika_network_config,
+                ),
+                // The base64 encoding of an actual start network DKG event.
+                contents: base64::decode("Z7MmXd0I4lvGWLDA969YOVo7wrZlXr21RMvixIFabCqAU3voWC2pRFG3QwPYD+ta0sX5poLEkq77ovCi3BBQDgEAAAAAAAAAgFN76FgtqURRt0MD2A/rWtLF+aaCxJKu+6LwotwQUA4BAQAAAAAAAAAggZwXRQsb/ha4mk5xZZfqItaokplduZGMnsuEQzdm7UTt2Z+ktotfGXHn2YVaxxqVhDM8UaafXejIDXnaPLxaMAA=").unwrap(),
+                pulled: true,
+            }],
+            epoch_id,
+        ));
+    });
 }
