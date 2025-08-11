@@ -9,12 +9,16 @@ use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]
-async fn test_malicious_behavior() {
+async fn test_some_malicious_validators_flows_succeed() {
     let committee_size = 7;
     let malicious_parties = [1, 2];
 
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
+    assert!(
+        committee_size - malicious_parties.len() > committee.quorum_threshold as usize,
+        "There should be a quorum of honest parties for the flow to succeed"
+    );
     let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
