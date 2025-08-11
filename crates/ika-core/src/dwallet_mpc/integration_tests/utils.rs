@@ -379,8 +379,29 @@ pub(crate) async fn advance_all_parties_and_wait_for_completions(
     testing_epoch_stores: &Vec<Arc<TestingAuthorityPerEpochStore>>,
     notify_services: &Vec<Arc<TestingDWalletCheckpointNotify>>,
 ) -> Option<PendingDWalletCheckpoint> {
+    advance_some_parties_and_wait_for_completions(
+        committee,
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        testing_epoch_stores,
+        notify_services,
+        &[],
+    ).await
+}
+
+pub(crate) async fn advance_some_parties_and_wait_for_completions(
+    committee: &Committee,
+    dwallet_mpc_services: &mut Vec<DWalletMPCService>,
+    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
+    testing_epoch_stores: &Vec<Arc<TestingAuthorityPerEpochStore>>,
+    notify_services: &Vec<Arc<TestingDWalletCheckpointNotify>>,
+    parties_to_skip: &[usize],
+) -> Option<PendingDWalletCheckpoint> {
     let mut pending_checkpoints = vec![];
     for i in 0..committee.voting_rights.len() {
+        if parties_to_skip.contains(&i) {
+            continue;
+        }
         let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
         let _ = dwallet_mpc_service.run_service_loop_iteration().await;
         let consensus_messages_store = sent_consensus_messages_collectors[i]
