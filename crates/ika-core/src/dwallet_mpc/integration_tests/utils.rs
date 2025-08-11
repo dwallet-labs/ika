@@ -377,31 +377,8 @@ pub(crate) async fn advance_all_parties_and_wait_for_completions(
     testing_epoch_stores: &Vec<Arc<TestingAuthorityPerEpochStore>>,
     notify_services: &Vec<Arc<TestingDWalletCheckpointNotify>>,
 ) -> Option<PendingDWalletCheckpoint> {
-    advance_some_parties_and_wait_for_completions(
-        committee,
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        testing_epoch_stores,
-        notify_services,
-        committee.voting_rights.len(),
-    )
-    .await
-}
-
-pub(crate) async fn advance_some_parties_and_wait_for_completions(
-    committee: &Committee,
-    dwallet_mpc_services: &mut Vec<DWalletMPCService>,
-    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
-    testing_epoch_stores: &Vec<Arc<TestingAuthorityPerEpochStore>>,
-    notify_services: &Vec<Arc<TestingDWalletCheckpointNotify>>,
-    end_index: usize,
-) -> Option<PendingDWalletCheckpoint> {
     let mut pending_checkpoints = vec![];
-    assert!(
-        committee.voting_rights.len() >= end_index,
-        "end_index exceeds committee size"
-    );
-    for i in 0..end_index {
+    for i in 0..committee.voting_rights.len() {
         let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
         let _ = dwallet_mpc_service.run_service_loop_iteration().await;
         let consensus_messages_store = sent_consensus_messages_collectors[i]
@@ -434,7 +411,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
             let _ = dwallet_mpc_service.run_service_loop_iteration().await;
         }
     }
-    if pending_checkpoints.len() == end_index
+    if pending_checkpoints.len() == committee.voting_rights.len()
         && pending_checkpoints
             .iter()
             .all(|x| x.clone() == pending_checkpoints[0].clone())
