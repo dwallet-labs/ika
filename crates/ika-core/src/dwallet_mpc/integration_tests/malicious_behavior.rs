@@ -43,6 +43,8 @@ async fn test_malicious_behavior() {
         &notify_services,
     )
     .await;
+    
+    // Create a malicious message for round 1, and set it as party 0's message.
     let mut original_message = sent_consensus_messages_collectors[3]
         .submitted_messages
         .lock()
@@ -60,6 +62,7 @@ async fn test_malicious_behavior() {
         .lock()
         .unwrap()
         .push(original_message);
+    
     utils::send_advance_results_between_parties(
         &committee,
         &mut sent_consensus_messages_collectors,
