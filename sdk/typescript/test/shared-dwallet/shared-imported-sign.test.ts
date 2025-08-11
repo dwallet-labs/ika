@@ -12,6 +12,7 @@ import {
 	registerTestEncryptionKey,
 	requestTestImportedDWalletVerification,
 	testPresign,
+	testSignPublicUserShare,
 	testSignWithImportedDWalletPublic,
 } from '../helpers/dwallet-test-helpers';
 import {
@@ -115,15 +116,17 @@ describe('Shared Imported DWallet Signing (public user shares)', () => {
 				2000,
 			);
 
+			const { secretShare } = await userShareEncryptionKeys.decryptUserShare(
+				activeDWallet,
+				encryptedUserSecretKeyShare,
+				await ikaClient.getProtocolPublicParameters(activeDWallet),
+			);
+
 			await makeTestImportedDWalletUserSecretKeySharesPublic(
 				ikaClient,
 				suiClient,
 				activeDWallet,
-				await userShareEncryptionKeys.decryptUserShare(
-					activeDWallet,
-					encryptedUserSecretKeyShare,
-					await ikaClient.getProtocolPublicParameters(activeDWallet),
-				),
+				secretShare,
 				testName,
 			);
 

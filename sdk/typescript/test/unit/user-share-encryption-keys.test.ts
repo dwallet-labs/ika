@@ -128,7 +128,7 @@ describe('UserShareEncryptionKeys', () => {
 	});
 
 	describe('decryptUserShare', () => {
-		it('should throw error when DWallet is not active', async () => {
+		it('should throw error when DWallet is not in active state', async () => {
 			const mockDWallet: DWallet = {
 				id: { id: 'test-id' },
 				state: {
@@ -153,7 +153,7 @@ describe('UserShareEncryptionKeys', () => {
 
 			await expect(
 				keys.decryptUserShare(mockDWallet, mockEncryptedShare, protocolParams),
-			).rejects.toThrow('DWallet is not active');
+			).rejects.toThrow('DWallet is not in active state');
 		});
 
 		it('should throw error when DWallet public output is missing', async () => {
@@ -179,7 +179,7 @@ describe('UserShareEncryptionKeys', () => {
 
 			await expect(
 				keys.decryptUserShare(mockDWallet, mockEncryptedShare, protocolParams),
-			).rejects.toThrow('DWallet is not active');
+			).rejects.toThrow('DWallet is not in active state');
 		});
 	});
 

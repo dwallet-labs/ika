@@ -64,19 +64,21 @@ async function main() {
 		'Active',
 	);
 
-	const secretShare = await ikaClient.getEncryptedUserSecretKeyShare(
+	const encryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeyShare(
 		importedKeyDWalletVerificationRequestEvent.event_data.encrypted_user_secret_key_share_id,
+	);
+
+	const { secretShare } = await userShareEncryptionKeys.decryptUserShare(
+		activeDWallet,
+		encryptedUserSecretKeyShare,
+		await ikaClient.getProtocolPublicParameters(activeDWallet),
 	);
 
 	await makeImportedDWalletUserSecretKeySharesPublic(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		await userShareEncryptionKeys.decryptUserShare(
-			activeDWallet,
-			secretShare,
-			await ikaClient.getProtocolPublicParameters(activeDWallet),
-		),
+		secretShare,
 	);
 }
 

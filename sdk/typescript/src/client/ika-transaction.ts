@@ -4,6 +4,7 @@
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
+import { create_sign_centralized_party_message as create_sign_user_message } from '../../../mpc-wasm/dist/node/dwallet_mpc_wasm.js';
 import * as coordinatorTx from '../tx/coordinator.js';
 import type {
 	DKGSecondRoundRequestInput,
@@ -11,8 +12,6 @@ import type {
 } from './cryptography.js';
 import {
 	createRandomSessionIdentifier,
-	createUserSignMessage,
-	createUserSignMessageWithPublicOutput,
 	encryptSecretShare,
 	verifyUserShare,
 } from './cryptography.js';
@@ -742,6 +741,7 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 	}) {
 		this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
+		this.#assertDWalletPublicOutputSet(dWallet);
 
 		await this.#requestSign({
 			verifiedPresignCap,
@@ -749,6 +749,7 @@ export class IkaTransaction {
 			userSignatureInputs: {
 				activeDWallet: dWallet,
 				presign,
+				publicOutput: Uint8Array.from(dWallet.state.Active?.public_output),
 				secretShare: Uint8Array.from(dWallet.public_user_secret_key_share),
 				message,
 				hash: hashScheme,
@@ -1292,7 +1293,6 @@ export class IkaTransaction {
 			importedKeyMessageApproval,
 			userSignatureInputs: {
 				activeDWallet: dWallet,
-				secretShare: Uint8Array.from(dWallet.public_user_secret_key_share),
 				presign,
 				message,
 				hash: hashScheme,
@@ -1334,15 +1334,17 @@ export class IkaTransaction {
 			throw new Error('User share encryption keys are not set');
 		}
 
+		const { secretShare: sourceSecretShare } = await this.#userShareEncryptionKeys.decryptUserShare(
+			dWallet,
+			sourceEncryptedUserSecretKeyShare,
+			await this.#ikaClient.getProtocolPublicParameters(dWallet),
+		);
+
 		await this.#requestReEncryptUserShareFor({
 			dWallet,
 			destinationEncryptionKeyAddress,
 			sourceEncryptedUserSecretKeyShare,
-			sourceSecretShare: await this.#userShareEncryptionKeys.decryptUserShare(
-				dWallet,
-				sourceEncryptedUserSecretKeyShare,
-				await this.#ikaClient.getProtocolPublicParameters(dWallet),
-			),
+			sourceSecretShare,
 			ikaCoin,
 			suiCoin,
 		});
@@ -1509,6 +1511,7 @@ export class IkaTransaction {
 	}): Promise<{
 		publicParameters: Uint8Array;
 		secretShare: Uint8Array;
+		verifiedPublicOutput: Uint8Array;
 	}> {
 		// This needs to be like this because of the way the type system is set up in typescript.
 		if (!this.#userShareEncryptionKeys) {
@@ -1518,11 +1521,12 @@ export class IkaTransaction {
 		const publicParameters =
 			publicParametersFromParam ?? (await this.#ikaClient.getProtocolPublicParameters(dWallet));
 
-		const secretShare = await this.#userShareEncryptionKeys.decryptUserShare(
-			dWallet,
-			encryptedUserSecretKeyShare,
-			publicParameters,
-		);
+		const { secretShare, verifiedPublicOutput } =
+			await this.#userShareEncryptionKeys.decryptUserShare(
+				dWallet,
+				encryptedUserSecretKeyShare,
+				publicParameters,
+			);
 
 		await this.#verifySecretShareReturnPublicParameters({
 			dWallet,
@@ -1530,7 +1534,7 @@ export class IkaTransaction {
 			publicParameters,
 		});
 
-		return { publicParameters, secretShare };
+		return { publicParameters, secretShare, verifiedPublicOutput };
 	}
 
 	#requestDWalletDKGFirstRound({
@@ -1585,37 +1589,39 @@ export class IkaTransaction {
 		userSignatureInputs: UserSignatureInputs;
 	}): Promise<Uint8Array> {
 		this.#assertPresignCompleted(userSignatureInputs.presign);
+		this.#assertDWalletPublicOutputSet(userSignatureInputs.activeDWallet);
 
 		const publicParameters = await this.#ikaClient.getProtocolPublicParameters(
 			userSignatureInputs.activeDWallet,
 		);
 
-		const userSecretKeyShare = await this.#getUserSecretKeyShare({
-			secretShare: userSignatureInputs.secretShare,
-			encryptedUserSecretKeyShare: userSignatureInputs.encryptedUserSecretKeyShare,
-			activeDWallet: userSignatureInputs.activeDWallet,
-			publicParameters,
-		});
+		let secretShare, publicOutput;
 
-		if (userSignatureInputs.publicOutput) {
-			return createUserSignMessageWithPublicOutput(
-				publicParameters,
-				userSignatureInputs.publicOutput,
-				userSecretKeyShare,
-				userSignatureInputs.presign.state.Completed?.presign,
-				userSignatureInputs.message,
-				userSignatureInputs.hash,
-			);
+		// If the dWallet is a shared dWallet, we use the public user secret key share. It is a different trust assumption.
+		// Otherwise, we use the secret share from the user signature inputs.
+		if (userSignatureInputs.activeDWallet.public_user_secret_key_share) {
+			secretShare = Uint8Array.from(userSignatureInputs.activeDWallet.public_user_secret_key_share);
+			publicOutput = Uint8Array.from(userSignatureInputs.activeDWallet.state.Active?.public_output);
 		} else {
-			return createUserSignMessage(
+			const userSecretKeyShareResponse = await this.#getUserSecretKeyShare({
+				secretShare: userSignatureInputs.secretShare,
+				encryptedUserSecretKeyShare: userSignatureInputs.encryptedUserSecretKeyShare,
+				activeDWallet: userSignatureInputs.activeDWallet,
 				publicParameters,
-				userSignatureInputs.activeDWallet,
-				userSecretKeyShare,
-				userSignatureInputs.presign.state.Completed?.presign,
-				userSignatureInputs.message,
-				userSignatureInputs.hash,
-			);
+			});
+
+			secretShare = userSecretKeyShareResponse.secretShare;
+			publicOutput = userSecretKeyShareResponse.verifiedPublicOutput;
 		}
+
+		return this.#createUserSignMessageWithPublicOutput({
+			protocolPublicParameters: publicParameters,
+			publicOutput,
+			userSecretKeyShare: secretShare,
+			presign: userSignatureInputs.presign.state.Completed?.presign,
+			message: userSignatureInputs.message,
+			hash: userSignatureInputs.hash,
+		});
 	}
 
 	async #requestSign({
@@ -1718,9 +1724,12 @@ export class IkaTransaction {
 		encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
 		activeDWallet: DWallet;
 		publicParameters: Uint8Array;
-	}): Promise<Uint8Array> {
+	}): Promise<{
+		secretShare: Uint8Array;
+		verifiedPublicOutput: Uint8Array;
+	}> {
 		if (secretShare) {
-			return secretShare;
+			return { secretShare, verifiedPublicOutput: secretShare };
 		}
 
 		if (!encryptedUserSecretKeyShare) {
@@ -1735,7 +1744,7 @@ export class IkaTransaction {
 			dWallet: activeDWallet,
 			encryptedUserSecretKeyShare,
 			publicParameters,
-		}).then(({ secretShare }) => secretShare);
+		});
 	}
 
 	async #requestReEncryptUserShareFor({
@@ -1832,6 +1841,33 @@ export class IkaTransaction {
 			ikaCoin,
 			suiCoin,
 			this.#transaction,
+		);
+	}
+
+	async #createUserSignMessageWithPublicOutput({
+		protocolPublicParameters,
+		publicOutput,
+		userSecretKeyShare,
+		presign,
+		message,
+		hash,
+	}: {
+		protocolPublicParameters: Uint8Array;
+		publicOutput: Uint8Array;
+		userSecretKeyShare: Uint8Array;
+		presign: Uint8Array;
+		message: Uint8Array;
+		hash: number;
+	}): Promise<Uint8Array> {
+		return new Uint8Array(
+			create_sign_user_message(
+				protocolPublicParameters,
+				publicOutput,
+				userSecretKeyShare,
+				presign,
+				message,
+				hash,
+			),
 		);
 	}
 }

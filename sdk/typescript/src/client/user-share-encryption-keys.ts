@@ -262,22 +262,28 @@ export class UserShareEncryptionKeys {
 		dWallet: DWallet,
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 		protocolPublicParameters: Uint8Array,
-	): Promise<Uint8Array> {
+	): Promise<{
+		verifiedPublicOutput: Uint8Array;
+		secretShare: Uint8Array;
+	}> {
 		const dWalletPublicOutput = await verifyAndGetDWalletDKGPublicOutput(
 			dWallet,
 			encryptedUserSecretKeyShare,
 			this.#encryptedSecretShareSigningKeypair.getPublicKey(),
 		);
 
-		return Uint8Array.from(
-			decrypt_user_share(
-				this.decryptionKey,
-				this.encryptionKey,
-				dWalletPublicOutput,
-				Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
-				protocolPublicParameters,
+		return {
+			verifiedPublicOutput: dWalletPublicOutput,
+			secretShare: Uint8Array.from(
+				decrypt_user_share(
+					this.decryptionKey,
+					this.encryptionKey,
+					dWalletPublicOutput,
+					Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
+					protocolPublicParameters,
+				),
 			),
-		);
+		};
 	}
 
 	/**

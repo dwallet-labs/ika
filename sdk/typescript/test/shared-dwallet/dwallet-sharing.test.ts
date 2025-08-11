@@ -105,15 +105,17 @@ describe('Shared DWallet (make shares public)', () => {
 				2000,
 			);
 
+			const { secretShare } = await userShareEncryptionKeys.decryptUserShare(
+				activeDWallet,
+				encryptedUserSecretKeyShare,
+				await ikaClient.getProtocolPublicParameters(activeDWallet),
+			);
+
 			await makeTestDWalletUserSecretKeySharesPublic(
 				ikaClient,
 				suiClient,
 				activeDWallet,
-				await userShareEncryptionKeys.decryptUserShare(
-					activeDWallet,
-					encryptedUserSecretKeyShare,
-					await ikaClient.getProtocolPublicParameters(activeDWallet),
-				),
+				secretShare,
 				testName,
 			);
 
