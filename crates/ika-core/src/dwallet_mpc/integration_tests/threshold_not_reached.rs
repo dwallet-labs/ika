@@ -136,15 +136,16 @@ async fn test_threshold_not_reached_once_flow_succeeds() {
 #[cfg(test)]
 async fn test_threshold_not_reached_n_times_flow_succeeds() {
     let committee_size = 7;
-    let malicious_parties: HashMap<usize, Vec<usize>> =
+    let crypto_round_to_malicious_parties: HashMap<usize, Vec<usize>> =
         HashMap::from([(1, [0].to_vec()), (2, [1].to_vec())]);
-    let delayed_parties: HashMap<usize, Vec<usize>> =
+    let crypto_round_to_delayed_parties: HashMap<usize, Vec<usize>> =
         HashMap::from([(1, [1, 2].to_vec()), (2, [2].to_vec())]);
 
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
     assert!(
-        committee_size - malicious_parties.len() >= committee.quorum_threshold as usize,
+        committee_size - crypto_round_to_malicious_parties.values().flatten().len()
+            >= committee.quorum_threshold as usize,
         "There should be a quorum of honest parties for the flow to succeed"
     );
     assert_eq!(
@@ -177,7 +178,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
     let mut consensus_round = 1;
     let mut crypto_round = 1;
     loop {
-        let crypto_round_delayed_parties = delayed_parties
+        let crypto_round_delayed_parties = crypto_round_to_delayed_parties
             .get(&crypto_round)
             .cloned()
             .unwrap_or_default();
@@ -200,7 +201,9 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             break;
         }
         set_messages_as_malicious(
-            &malicious_parties.get(&crypto_round).unwrap_or(&Vec::new()),
+            &crypto_round_to_malicious_parties
+                .get(&crypto_round)
+                .unwrap_or(&Vec::new()),
             &mut sent_consensus_messages_collectors,
             crypto_round as u64,
         );
@@ -232,15 +235,10 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
                 consensus_round,
             );
         }
-        info!(
-            ?consensus_round,
-            ?crypto_round,
-            "Ran advance and sent results between the validators"
-        );
         consensus_round += 1;
         crypto_round += 1;
     }
-    for malicious_party_index in malicious_parties.values().flatten() {
+    for malicious_party_index in crypto_round_to_malicious_parties.values().flatten() {
         let malicious_actor_name = dwallet_mpc_services[*malicious_party_index].name;
         assert!(
             dwallet_mpc_services.iter().all(|service| service
