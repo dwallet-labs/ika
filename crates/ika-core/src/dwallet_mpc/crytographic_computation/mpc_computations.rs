@@ -48,10 +48,23 @@ pub(crate) fn build_messages_to_advance(
     mut messages_by_consensus_round: HashMap<u64, MPCRoundToMessagesHashMap>,
     access_structure: &WeightedThresholdAccessStructure,
 ) -> Option<(Option<u64>, MPCRoundToMessagesHashMap)> {
+    let messages_skeleton: HashMap<_, _> = messages_by_consensus_round
+        .iter()
+        .map(|(consensus_round, messages)| {
+            (
+                *consensus_round,
+                messages
+                    .iter()
+                    .map(|(mpc_round, messages)| (*mpc_round, messages.keys().collect_vec()))
+                    .collect::<HashMap<_, _>>(),
+            )
+        })
+        .collect();
     info!(
         ?current_mpc_round,
         ?rounds_to_delay,
         ?mpc_round_to_threshold_not_reached_consensus_rounds,
+        ?messages_skeleton,
         ?access_structure,
         "Building messages to advance MPC round"
     );
