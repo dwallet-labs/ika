@@ -258,6 +258,7 @@ impl DWalletMPCService {
         }
 
         self.process_consensus_rounds_from_storage().await;
+        info!(consensus_round=?self.last_read_consensus_round, party_id=?self.dwallet_mpc_manager.party_id, "performing cryptographic computations");
 
         self.process_cryptographic_computations().await;
     }

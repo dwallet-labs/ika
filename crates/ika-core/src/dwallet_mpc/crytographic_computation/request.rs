@@ -53,6 +53,7 @@ pub(crate) struct Request {
     pub(crate) messages: MPCRoundToMessagesHashMap,
 }
 
+#[derive(Debug)]
 pub(crate) enum ProtocolSpecificData {
     ImportedKeyVerification {
         curve: u32,
