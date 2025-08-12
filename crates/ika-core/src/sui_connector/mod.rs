@@ -74,6 +74,8 @@ impl SuiConnectorService {
         watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     )> {
         let (network_keys_sender, network_keys_receiver) = watch::channel(Default::default());
+        let (system_object_sender, system_object_receiver) = watch::channel(Default::default());
+        let (dwallet_coordinator_object_sender, dwallet_coordinator_receiver) = watch::channel(Default::default());
 
         let sui_notifier = Self::prepare_for_sui(
             sui_connector_config.clone(),
@@ -83,8 +85,8 @@ impl SuiConnectorService {
         .await?;
 
         let sui_executor = SuiExecutor::new(
-            sui_connector_config.ika_system_package_id,
-            sui_connector_config.ika_dwallet_2pc_mpc_package_id,
+            system_object_sender,
+            dwallet_coordinator_object_sender,
             checkpoint_store.clone(),
             system_checkpoint_store.clone(),
             sui_notifier,
@@ -102,6 +104,8 @@ impl SuiConnectorService {
             Duration::from_secs(2),
             next_epoch_committee_sender,
             is_validator,
+            system_object_receiver,
+            dwallet_coordinator_receiver,
             network_keys_sender,
             new_events_sender,
             end_of_publish_sender,

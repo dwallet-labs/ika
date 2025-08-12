@@ -26,14 +26,7 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::messages_system_checkpoints::SystemCheckpointMessage;
 use ika_types::sui::epoch_start_system::EpochStartSystem;
 use ika_types::sui::system_inner_v1::BlsCommittee;
-use ika_types::sui::{
-    ADVANCE_EPOCH_FUNCTION_NAME, APPEND_VECTOR_FUNCTION_NAME,
-    CREATE_SYSTEM_CURRENT_STATUS_INFO_FUNCTION_NAME, DWalletCoordinatorInner,
-    INITIATE_ADVANCE_EPOCH_FUNCTION_NAME, INITIATE_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME,
-    PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME,
-    REQUEST_NETWORK_ENCRYPTION_KEY_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME, SYSTEM_MODULE_NAME,
-    SystemInner, SystemInnerTrait, VECTOR_MODULE_NAME,
-};
+use ika_types::sui::{ADVANCE_EPOCH_FUNCTION_NAME, APPEND_VECTOR_FUNCTION_NAME, CREATE_SYSTEM_CURRENT_STATUS_INFO_FUNCTION_NAME, DWalletCoordinatorInner, INITIATE_ADVANCE_EPOCH_FUNCTION_NAME, INITIATE_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME, PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME, REQUEST_NETWORK_ENCRYPTION_KEY_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME, SYSTEM_MODULE_NAME, SystemInner, SystemInnerTrait, VECTOR_MODULE_NAME, System, DWalletCoordinator};
 use itertools::Itertools;
 use move_core_types::ident_str;
 use move_core_types::language_storage::TypeTag;
@@ -48,6 +41,7 @@ use sui_types::base_types::{ObjectID, TransactionDigest};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction};
 use tokio::sync::watch;
+use tokio::sync::watch::Sender;
 use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
 
@@ -60,8 +54,8 @@ pub enum StopReason {
 const ONE_HOUR_IN_SECONDS: u64 = 60 * 60;
 
 pub struct SuiExecutor<C> {
-    ika_system_package_id: ObjectID,
-    ika_dwallet_2pc_mpc_package_id: ObjectID,
+    system_object_sender: Sender<Option<(System, SystemInner)>>,
+    dwallet_coordinator_object_sender: Sender<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
     dwallet_checkpoint_store: Arc<DWalletCheckpointStore>,
     system_checkpoint_store: Arc<SystemCheckpointStore>,
     sui_notifier: Option<SuiNotifier>,
@@ -82,8 +76,8 @@ where
     C: SuiClientInner + 'static,
 {
     pub fn new(
-        ika_system_package_id: ObjectID,
-        ika_dwallet_2pc_mpc_package_id: ObjectID,
+        system_object_sender: Sender<Option<(System, SystemInner)>>,
+        dwallet_coordinator_object_sender: Sender<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
         dwallet_checkpoint_store: Arc<DWalletCheckpointStore>,
         system_checkpoint_store: Arc<SystemCheckpointStore>,
         sui_notifier: Option<SuiNotifier>,
@@ -91,8 +85,8 @@ where
         metrics: Arc<SuiConnectorMetrics>,
     ) -> Self {
         Self {
-            ika_system_package_id,
-            ika_dwallet_2pc_mpc_package_id,
+            system_object_sender,
+            dwallet_coordinator_object_sender,
             dwallet_checkpoint_store,
             system_checkpoint_store,
             sui_notifier,
@@ -112,6 +106,8 @@ where
     /// checkpoints are created only when there are new completed MPC sessions to write to Sui.
     async fn run_epoch_switch(
         &self,
+        ika_system_package_id: ObjectID,
+        ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         ika_system_state_inner: &SystemInner,
         network_encryption_key_ids: Vec<ObjectID>,
@@ -136,8 +132,8 @@ where
             // we can't call request dkg for the network encryption keys for the epoch.
             let response = retry_with_max_elapsed_time!(
                 Self::process_mid_epoch(
-                    self.ika_system_package_id,
-                    self.ika_dwallet_2pc_mpc_package_id,
+                    ika_system_package_id,
+                    ika_dwallet_2pc_mpc_package_id,
                     sui_notifier,
                     &self.sui_client,
                     self.notifier_tx_lock.clone(),
@@ -153,21 +149,26 @@ where
             info!("Successfully processed mid-epoch");
             epoch_switch_state.ran_mid_epoch = true;
         }
-        let Ok(DWalletCoordinatorInner::V1(coordinator)) =
+        let Ok((dwallet_coordinator, dwallet_coordinator_inner)) =
             self.sui_client.get_dwallet_coordinator_inner().await
         else {
             error!("failed to get dwallet coordinator inner when running epoch switch");
             return;
         };
 
+        let _ = self.dwallet_coordinator_object_sender.send(Some((dwallet_coordinator, dwallet_coordinator_inner.clone())));
+
+        let DWalletCoordinatorInner::V1(coordinator_inner) = dwallet_coordinator_inner;
+
+
         if clock.timestamp_ms > mid_epoch_time
-            && coordinator
+            && coordinator_inner
                 .pricing_and_fee_management
                 .calculation_votes
                 .is_some()
-            && coordinator.next_epoch_active_committee.is_some()
+            && coordinator_inner.next_epoch_active_committee.is_some()
             // network_encryption_key_ids holds only keys that finished dkg
-            && coordinator.dwallet_network_encryption_keys.size == network_encryption_key_ids.len() as u64
+            && coordinator_inner.dwallet_network_encryption_keys.size == network_encryption_key_ids.len() as u64
             && !epoch_switch_state.calculated_protocol_pricing
         {
             info!(
@@ -176,7 +177,7 @@ where
             let result = retry_with_max_elapsed_time!(
                 Self::request_mid_epoch_reconfiguration_and_calculate_protocols_pricing(
                     &self.sui_client,
-                    self.ika_dwallet_2pc_mpc_package_id,
+                    ika_dwallet_2pc_mpc_package_id,
                     network_encryption_key_ids.clone(),
                     sui_notifier,
                     self.notifier_tx_lock.clone(),
@@ -193,21 +194,27 @@ where
             epoch_switch_state.calculated_protocol_pricing = true;
         }
 
+        let SystemInner::V1(system_inner_v1) = &ika_system_state_inner;
+
+        let next_epoch_committee_is_some =
+            system_inner_v1.validator_set.next_epoch_committee.is_some();
+
         // The Epoch was finished.
         let epoch_finish_time = ika_system_state_inner.epoch_start_timestamp_ms()
             + ika_system_state_inner.epoch_duration_ms();
-        let epoch_not_locked = !coordinator
+        let epoch_not_locked = !coordinator_inner
             .sessions_manager
             .locked_last_user_initiated_session_to_complete_in_current_epoch;
         if clock.timestamp_ms > epoch_finish_time
+            && next_epoch_committee_is_some
             && epoch_not_locked
             && !epoch_switch_state.ran_lock_last_session
         {
             info!("Calling `lock_last_active_session_sequence_number()`");
             let response = retry_with_max_elapsed_time!(
                 Self::lock_last_session_to_complete_in_current_epoch(
-                    self.ika_system_package_id,
-                    self.ika_dwallet_2pc_mpc_package_id,
+                    ika_system_package_id,
+                    ika_dwallet_2pc_mpc_package_id,
                     sui_notifier,
                     &self.sui_client,
                     self.notifier_tx_lock.clone(),
@@ -223,15 +230,15 @@ where
             epoch_switch_state.ran_lock_last_session = true;
             info!("Successfully locked last session in current epoch");
         }
-        if coordinator.received_end_of_publish
+        if coordinator_inner.received_end_of_publish
             && system_inner_v1.received_end_of_publish
             && !epoch_switch_state.ran_request_advance_epoch
         {
             info!("Calling `process_request_advance_epoch()`");
             let response = retry_with_max_elapsed_time!(
                 Self::process_request_advance_epoch(
-                    self.ika_system_package_id,
-                    self.ika_dwallet_2pc_mpc_package_id,
+                    ika_system_package_id,
+                    ika_dwallet_2pc_mpc_package_id,
                     sui_notifier,
                     &self.sui_client.clone(),
                     self.notifier_tx_lock.clone(),
@@ -283,34 +290,39 @@ where
 
         loop {
             interval.tick().await;
-            let ika_system_state_inner = self.sui_client.must_get_system_inner_object().await;
-            let epoch_on_sui: u64 = ika_system_state_inner.epoch();
+            let (system, system_inner) = self.sui_client.must_get_system_inner_object().await;
+            let ika_system_package_id = system.package_id;
+            let _ = self.system_object_sender.send(Some((system, system_inner.clone())));
+            let epoch_on_sui: u64 = system_inner.epoch();
             if epoch_on_sui > epoch {
                 fail_point_async!("crash");
                 info!(epoch, "Finished epoch");
                 let epoch_start_system_state = self
                     .sui_client
-                    .must_get_epoch_start_system(&ika_system_state_inner)
+                    .must_get_epoch_start_system(&system_inner)
                     .await;
                 return StopReason::EpochComplete(
-                    Box::new(ika_system_state_inner),
+                    Box::new(system_inner),
                     epoch_start_system_state,
                 );
             }
             if epoch_on_sui < epoch {
                 error!("epoch_on_sui cannot be less than epoch");
             }
-            let dwallet_coordinator_inner = self
+            let (dwallet_coordinator, dwallet_coordinator_inner) = self
                 .sui_client
-                .must_get_dwallet_coordinator_inner_v1()
+                .must_get_dwallet_coordinator_inner()
                 .await;
+            let ika_dwallet_2pc_mpc_package_id = dwallet_coordinator.package_id;
+            let _ = self.dwallet_coordinator_object_sender.send(Some((dwallet_coordinator, dwallet_coordinator_inner.clone())));
+            let DWalletCoordinatorInner::V1(dwallet_coordinator_inner) = dwallet_coordinator_inner;
             let last_processed_dwallet_checkpoint_sequence_number: u64 =
                 dwallet_coordinator_inner.last_processed_checkpoint_sequence_number;
             let next_dwallet_checkpoint_sequence_number =
                 last_processed_dwallet_checkpoint_sequence_number + 1;
 
             let last_processed_system_checkpoint_sequence_number: u64 =
-                ika_system_state_inner.last_processed_checkpoint_sequence_number();
+                system_inner.last_processed_checkpoint_sequence_number();
             let next_system_checkpoint_sequence_number =
                 last_processed_system_checkpoint_sequence_number + 1;
 
@@ -324,8 +336,10 @@ where
                         .collect_vec()
                 };
                 self.run_epoch_switch(
+                    ika_system_package_id,
+                    ika_dwallet_2pc_mpc_package_id,
                     sui_notifier,
-                    &ika_system_state_inner,
+                    &system_inner,
                     network_encryption_key_ids,
                     &mut epoch_switch_state,
                 )
@@ -347,7 +361,7 @@ where
                                 .dwallet_checkpoint_sequence
                                 .set(next_dwallet_checkpoint_sequence_number as i64);
 
-                            let active_members: BlsCommittee = ika_system_state_inner
+                            let active_members: BlsCommittee = system_inner
                                 .validator_set()
                                 .clone()
                                 .active_committee;
@@ -371,7 +385,7 @@ where
 
                             let response = retry_with_max_elapsed_time!(
                                 Self::handle_dwallet_checkpoint_execution_task(
-                                    self.ika_dwallet_2pc_mpc_package_id,
+                                    ika_dwallet_2pc_mpc_package_id,
                                     signature.clone(),
                                     signers_bitmap.clone(),
                                     message.clone(),
@@ -421,7 +435,7 @@ where
                             .system_checkpoint_sequence
                             .set(next_dwallet_checkpoint_sequence_number as i64);
 
-                        let active_members: BlsCommittee = ika_system_state_inner
+                        let active_members: BlsCommittee = system_inner
                             .validator_set()
                             .clone()
                             .active_committee;
@@ -438,7 +452,7 @@ where
                         self.metrics.system_checkpoint_write_requests_total.inc();
                         let response = retry_with_max_elapsed_time!(
                             Self::handle_system_checkpoint_execution_task(
-                                self.ika_system_package_id,
+                                ika_system_package_id,
                                 signature.clone(),
                                 signers_bitmap.clone(),
                                 message.clone(),

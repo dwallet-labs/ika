@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 //! This crate contains the cryptographic logic for the centralized 2PC-MPC party.
 
 // Allowed to improve code readability.
