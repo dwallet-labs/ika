@@ -410,20 +410,21 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     parties_to_advance: &[usize],
 ) -> Option<PendingDWalletCheckpoint> {
     let mut pending_checkpoints = vec![];
-    for i in 0..committee.voting_rights.len() {
-        if !parties_to_advance.contains(&i) {
-            continue;
-        }
-        let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
-        let _ = dwallet_mpc_service.run_service_loop_iteration().await;
-        let consensus_messages_store = sent_consensus_messages_collectors[i]
-            .submitted_messages
-            .clone();
-        let pending_checkpoints_store = testing_epoch_stores[i].pending_checkpoints.clone();
-        let notify_service = notify_services[i].clone();
-        loop {
+    let mut completed_parties = vec![];
+    while completed_parties.len() != parties_to_advance.len() {
+        for i in 0..committee.voting_rights.len() {
+            if !parties_to_advance.contains(&i) {
+                continue;
+            }
+            let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
+            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
+            let consensus_messages_store = sent_consensus_messages_collectors[i]
+                .submitted_messages
+                .clone();
+            let pending_checkpoints_store = testing_epoch_stores[i].pending_checkpoints.clone();
+            let notify_service = notify_services[i].clone();
             if !consensus_messages_store.lock().unwrap().is_empty() {
-                break;
+                completed_parties.push(i);
             }
             if *notify_service
                 .checkpoints_notification_count
@@ -439,12 +440,12 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 let pending_dwallet_checkpoint = pending_checkpoint.unwrap();
                 info!(?pending_dwallet_checkpoint, party_id=?i+1, "Pending checkpoint found");
                 pending_checkpoints.push(pending_dwallet_checkpoint);
-                break;
+                completed_parties.push(i);
             }
 
-            tokio::time::sleep(Duration::from_millis(100)).await;
             let _ = dwallet_mpc_service.run_service_loop_iteration().await;
         }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     if pending_checkpoints.len() == parties_to_advance.len()
         && pending_checkpoints

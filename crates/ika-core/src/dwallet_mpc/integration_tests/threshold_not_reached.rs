@@ -20,7 +20,7 @@ use tracing::info;
 #[tokio::test]
 #[cfg(test)]
 async fn test_threshold_not_reached_n_times_flow_succeeds() {
-    let committee_size = 7;
+    let committee_size = 4;
     let crypto_round_to_malicious_parties: HashMap<usize, Vec<usize>> =
         HashMap::from([(1, [0].to_vec()), (2, [1].to_vec())]);
     let crypto_round_to_delayed_parties: HashMap<usize, Vec<usize>> =
