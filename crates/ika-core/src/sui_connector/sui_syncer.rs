@@ -6,12 +6,13 @@
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
-use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, StakeUnit};
+use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
+    DBSuiEvent, DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData,
+    DWalletNetworkEncryptionKeyState,
 };
 use ika_types::sui::{DWalletCoordinatorInner, SystemInner, SystemInnerTrait};
 use mysten_metrics::spawn_logged_monitored_task;
@@ -59,6 +60,8 @@ where
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
         new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
         end_of_publish_sender: Sender<Option<u64>>,
+        last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
+        uncompleted_events_sender: Sender<(Vec<DBSuiEvent>, EpochId)>,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
         info!("Starting SuiSyncer");
         let mut task_handles = vec![];
@@ -77,8 +80,18 @@ where
             ));
             info!("Starting end of publish sync task");
             tokio::spawn(Self::sync_dwallet_end_of_publish(
-                sui_client_clone,
+                sui_client_clone.clone(),
                 end_of_publish_sender,
+            ));
+            info!("Syncing last session to complete in current epoch");
+            tokio::spawn(Self::sync_last_session_to_complete_in_current_epoch(
+                sui_client_clone.clone(),
+                last_session_to_complete_in_current_epoch_sender,
+            ));
+            info!("Syncing uncompleted events");
+            tokio::spawn(Self::sync_uncompleted_events(
+                sui_client_clone,
+                uncompleted_events_sender,
             ));
         }
 
@@ -97,6 +110,65 @@ where
             ));
         }
         Ok(task_handles)
+    }
+
+    async fn sync_last_session_to_complete_in_current_epoch(
+        sui_client: Arc<SuiClient<C>>,
+        last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
+    ) {
+        loop {
+            let coordinator_state = sui_client.must_get_dwallet_coordinator_inner().await;
+
+            let DWalletCoordinatorInner::V1(inner) = coordinator_state;
+            if let Err(err) = last_session_to_complete_in_current_epoch_sender.send((
+                inner.current_epoch,
+                inner
+                    .sessions_manager
+                    .last_user_initiated_session_to_complete_in_current_epoch,
+            )) {
+                error!(
+                    error=?err,
+                    epoch=?inner.current_epoch,
+                    last_session_to_complete_in_current_epoch=?inner.sessions_manager.last_user_initiated_session_to_complete_in_current_epoch,
+                    "failed to send last session to complete in current epoch",
+                )
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    async fn sync_uncompleted_events(
+        sui_client: Arc<SuiClient<C>>,
+        uncompleted_events_sender: Sender<(Vec<DBSuiEvent>, EpochId)>,
+    ) {
+        loop {
+            match sui_client.pull_dwallet_mpc_uncompleted_events().await {
+                Ok((events, epoch)) => {
+                    for event in &events {
+                        debug!(
+                            event_type=?event.type_,
+                            current_epoch=?epoch,
+                            contents=?event.contents.clone(),
+                            "Successfully fetched an uncompleted event from Sui"
+                        );
+                    }
+                    if let Err(err) = uncompleted_events_sender.send((events, epoch)) {
+                        error!(
+                            error=?err,
+                            current_epoch=?epoch,
+                            "failed to send uncompleted events to the channel"
+                        );
+                    };
+                }
+                Err(err) => {
+                    warn!(
+                        error=?err,
+                         "failed to load missed events from Sui"
+                    );
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
     }
 
     async fn sync_next_committee(
@@ -235,8 +307,8 @@ where
                 info!("No new network keys to fetch");
                 continue;
             }
-
-            let mut all_fetched_network_keys_data = HashMap::new();
+            let mut all_fetched_network_keys_data: HashMap<_, _> =
+                (*network_keys_sender.borrow().clone()).clone();
             for (key_id, network_dec_key_shares) in keys_to_fetch.into_iter() {
                 match sui_client
                     .get_network_encryption_key_with_full_data_by_epoch(

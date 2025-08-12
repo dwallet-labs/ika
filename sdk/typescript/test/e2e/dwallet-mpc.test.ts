@@ -7,8 +7,8 @@ import {
 	sample_dwallet_keypair,
 	verify_secp_signature,
 } from '@dwallet-network/dwallet-mpc-wasm';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
-import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
+import { SuiClient } from '@mysten/sui/client';
+import { requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -19,6 +19,7 @@ import {
 	delay,
 	DWALLET_NETWORK_VERSION,
 	getAllChildObjectsIDs,
+	getNetworkDecryptionKeyID,
 	getNetworkPublicParameters,
 	getObjectWithType,
 	isCoordinatorInner,
@@ -26,6 +27,7 @@ import {
 	isValidator,
 } from '../../src/dwallet-mpc/globals';
 import { createImportedDWallet } from '../../src/dwallet-mpc/import-dwallet';
+import { createNetworkKey } from '../../src/dwallet-mpc/network-dkg';
 import { presign } from '../../src/dwallet-mpc/presign';
 import {
 	isDWalletWithPublicUserSecretKeyShares,
@@ -40,6 +42,36 @@ import {
 	verifySignWithPartialUserSignatures,
 } from '../../src/dwallet-mpc/sign';
 
+const SUI_FULLNODE_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
+const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
+// const SUI_FULLNODE_URL = getFullnodeUrl('localnet');
+// const SUI_FAUCET_HOST = getFaucetHost('localnet');
+
+export async function createConf(): Promise<Config> {
+	const keypair = Ed25519Keypair.generate();
+	const dWalletSeed = crypto.getRandomValues(new Uint8Array(32));
+	const encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+		Buffer.from(dWalletSeed).toString('hex'),
+	);
+	const address = keypair.getPublicKey().toSuiAddress();
+	console.log(`Address: ${address}`);
+	const suiClient = new SuiClient({ url: SUI_FULLNODE_URL });
+	await requestSuiFromFaucetV2({
+		host: SUI_FAUCET_HOST,
+		recipient: address,
+	});
+
+	return {
+		suiClientKeypair: keypair,
+		client: suiClient,
+		timeout: fiveMinutes,
+		// todo(zeev): fix this, bad parsing, bad path, needs to be localized.
+		ikaConfig: require(path.resolve(process.cwd(), '../../ika_config.json')),
+		dWalletSeed,
+		encryptedSecretShareSigningKeypair,
+	};
+}
+
 const fiveMinutes = 5 * 60 * 1000;
 describe('Test dWallet MPC', () => {
 	let conf: Config;
@@ -52,9 +84,9 @@ describe('Test dWallet MPC', () => {
 		);
 		const address = keypair.getPublicKey().toSuiAddress();
 		console.log(`Address: ${address}`);
-		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
+		const suiClient = new SuiClient({ url: SUI_FULLNODE_URL });
 		await requestSuiFromFaucetV2({
-			host: getFaucetHost('localnet'),
+			host: SUI_FAUCET_HOST,
 			recipient: address,
 		});
 
@@ -70,59 +102,40 @@ describe('Test dWallet MPC', () => {
 	});
 
 	it('read the network decryption key', async () => {
-		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		console.log(`networkDecryptionKeyPublicOutput: ${networkDecryptionKeyPublicOutput}`);
 	});
 
 	it('should create a dWallet (DKG)', async () => {
-		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.log(`dWallet has been created successfully: ${dwallet}`);
 	});
 
 	it('should run presign', async () => {
-		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.log(`dWallet has been created successfully: ${dwallet}`);
 		const completedPresign = await presign(conf, dwallet.dwalletID);
 		console.log(`presign has been created successfully: ${completedPresign.id.id}`);
 	});
 
 	it('should sign full flow', async () => {
-		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
-		console.log('Creating dWallet...');
-		console.time('Step 1: dWallet Creation');
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
-		console.log(`dWallet has been created successfully: ${dwallet.dwalletID}`);
-		console.timeEnd('Step 1: dWallet Creation');
-		await delay(checkpointCreationTime);
-		console.log('Running Presign...');
-		console.time('Step 2: Presign Phase');
-		const completedPresign = await presign(conf, dwallet.dwalletID);
-		console.timeEnd('Step 2: Presign Phase');
-		console.log(`Step 2: Presign completed | presignID = ${completedPresign.id.id}`);
-		await delay(checkpointCreationTime);
-		console.log('Running Sign...');
-		console.time('Step 3: Sign Phase');
-		const signRes = await sign(
-			conf,
-			completedPresign.id.id,
-			dwallet.dwallet_cap_id,
-			Buffer.from('hello world'),
-			dwallet.secret_share,
-			networkDecryptionKeyPublicOutput,
-			Hash.KECCAK256,
-		);
-		console.log(`Sing completed successfully: ${signRes.id.id}`);
-		console.timeEnd('Step 3: Sign Phase');
-		const isValid = verify_secp_signature(
-			public_key_from_dwallet_output(dwallet.output),
-			signRes.state.fields.signature,
-			Buffer.from('hello world'),
-			networkDecryptionKeyPublicOutput,
-			Hash.KECCAK256,
-		);
-		expect(isValid).toBeTruthy();
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		await runFullFlowTestWithNetworkKey(conf, networkKeyID);
+	});
+
+	it('run multiple full flows simultaneously', async () => {
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		const tasks = [];
+		for (let i = 0; i < 5; i++) {
+			const conf = await createConf();
+			tasks.push(runFullFlowTestWithNetworkKey(conf, networkKeyID));
+		}
+		await Promise.all(tasks);
 	});
 
 	it('should launch DKG first round with given coins', async () => {
@@ -154,9 +167,10 @@ describe('Test dWallet MPC', () => {
 	});
 
 	it('should create a dwallet and publish its secret share', async () => {
-		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		console.log('Creating dWallet...');
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.log(`dWallet has been created successfully: ${dwallet.dwalletID}`);
 		await delay(checkpointCreationTime);
 		console.log('Running publish secret share...');
@@ -168,9 +182,10 @@ describe('Test dWallet MPC', () => {
 	});
 
 	it('should create a dwallet, publish its secret share and sign with the published share', async () => {
-		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		console.log('Creating dWallet...');
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.log(`dWallet has been created successfully: ${dwallet.dwalletID}`);
 		await delay(checkpointCreationTime);
 		console.log('Running publish secret share...');
@@ -211,11 +226,12 @@ describe('Test dWallet MPC', () => {
 	});
 
 	it('should complete future sign', async () => {
-		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 
 		console.log('Step 1: dWallet Creation');
 		console.time('Step 1: dWallet Creation');
-		const dwallet = await createDWallet(conf, networkDecryptionKeyPublicOutput);
+		const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
 		console.timeEnd('Step 1: dWallet Creation');
 		console.log(`Step 1: dWallet created | dWalletID = ${dwallet.dwalletID}`);
 		await delay(checkpointCreationTime);
@@ -251,16 +267,18 @@ describe('Test dWallet MPC', () => {
 	});
 
 	it('should create an imported dWallet', async () => {
-		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		const [secretKey, _publicKey] = sample_dwallet_keypair(networkDecryptionKeyPublicOutput);
-		const dwallet = await createImportedDWallet(conf, secretKey);
+		const dwallet = await createImportedDWallet(conf, secretKey, networkKeyID);
 		console.log({ ...dwallet });
 	});
 
 	it('should create an imported dWallet, publish its secret share and sign with it', async () => {
-		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		const [secretKey, _publicKey] = sample_dwallet_keypair(networkDecryptionKeyPublicOutput);
-		const dwallet = await createImportedDWallet(conf, secretKey);
+		const dwallet = await createImportedDWallet(conf, secretKey, networkKeyID);
 		await delay(checkpointCreationTime);
 		console.log({ ...dwallet });
 		console.log('Running publish secret share...');
@@ -300,9 +318,10 @@ describe('Test dWallet MPC', () => {
 	});
 
 	it('should create an imported dWallet, sign with it & verify the signature against the original public key', async () => {
-		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf);
+		const networkKeyID = await getNetworkDecryptionKeyID(conf);
+		const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
 		const [secretKey, publicKey] = sample_dwallet_keypair(networkDecryptionKeyPublicOutput);
-		const dwallet = await createImportedDWallet(conf, secretKey);
+		const dwallet = await createImportedDWallet(conf, secretKey, networkKeyID);
 		console.log({ ...dwallet });
 		await delay(checkpointCreationTime);
 		console.log('Running Presign...');
@@ -354,7 +373,67 @@ describe('Test dWallet MPC', () => {
 
 		console.log(operatorCapIDs.join(' '));
 	});
+
+	it('should create a network key', async () => {
+		const publisherMnemonic =
+			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
+		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
+		const keyID = await createNetworkKey(
+			conf,
+			'0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa',
+		);
+		console.log({ keyID });
+	});
+
+	it('should create a network key & run full flow with it', async () => {
+		const publisherMnemonic =
+			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
+		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
+		const networkKeyID = await createNetworkKey(
+			conf,
+			'0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa',
+		);
+		console.log({ networkKeyID });
+		await runFullFlowTestWithNetworkKey(conf, networkKeyID);
+	});
 });
+
+export async function runFullFlowTestWithNetworkKey(conf: Config, networkKeyID: string) {
+	const networkDecryptionKeyPublicOutput = await getNetworkPublicParameters(conf, networkKeyID);
+	console.log('Creating dWallet...');
+	console.time('Step 1: dWallet Creation');
+	const dwallet = await createDWallet(conf, networkKeyID, networkDecryptionKeyPublicOutput);
+	console.log(`dWallet has been created successfully: ${dwallet.dwalletID}`);
+	console.timeEnd('Step 1: dWallet Creation');
+	await delay(checkpointCreationTime);
+	console.log('Running Presign...');
+	console.time('Step 2: Presign Phase');
+	const completedPresign = await presign(conf, dwallet.dwalletID);
+	console.timeEnd('Step 2: Presign Phase');
+	console.log(`Step 2: Presign completed | presignID = ${completedPresign.id.id}`);
+	await delay(checkpointCreationTime);
+	console.log('Running Sign...');
+	console.time('Step 3: Sign Phase');
+	const signRes = await sign(
+		conf,
+		completedPresign.id.id,
+		dwallet.dwallet_cap_id,
+		Buffer.from('hello world'),
+		dwallet.secret_share,
+		networkDecryptionKeyPublicOutput,
+		Hash.KECCAK256,
+	);
+	console.log(`Sing completed successfully: ${signRes.id.id}`);
+	console.timeEnd('Step 3: Sign Phase');
+	const isValid = verify_secp_signature(
+		public_key_from_dwallet_output(dwallet.output),
+		signRes.state.fields.signature,
+		Buffer.from('hello world'),
+		networkDecryptionKeyPublicOutput,
+		Hash.KECCAK256,
+	);
+	expect(isValid).toBeTruthy();
+}
 
 describe('tests that do not require faucet requests', () => {
 	let conf: Config;
@@ -367,7 +446,7 @@ describe('tests that do not require faucet requests', () => {
 		);
 		const address = keypair.getPublicKey().toSuiAddress();
 		console.log(`Address: ${address}`);
-		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
+		const suiClient = new SuiClient({ url: SUI_FULLNODE_URL });
 		conf = {
 			suiClientKeypair: keypair,
 			client: suiClient,
@@ -383,10 +462,10 @@ describe('tests that do not require faucet requests', () => {
 		// eslint-disable-next-line no-constant-condition
 		while (true) {
 			const dynamicFields = await conf.client.getDynamicFields({
-				parentId: conf.ikaConfig.ika_dwallet_coordinator_object_id,
+				parentId: conf.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 			});
 			const coordinatorInner = await conf.client.getDynamicFieldObject({
-				parentId: conf.ikaConfig.ika_dwallet_coordinator_object_id,
+				parentId: conf.ikaConfig.objects.ika_dwallet_coordinator_object_id,
 				name: dynamicFields.data[DWALLET_NETWORK_VERSION].name,
 			});
 			if (!isCoordinatorInner(coordinatorInner.data?.content)) {

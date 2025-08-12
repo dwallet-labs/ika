@@ -9,6 +9,7 @@ import sha3 from 'js-sha3';
 
 export const DWALLET_COORDINATOR_MOVE_MODULE_NAME = 'coordinator';
 export const DWALLET_COORDINATOR_INNER_MOVE_MODULE_NAME = 'coordinator_inner';
+export const DWALLET_SYSTEM_MOVE_MODULE_NAME = 'system';
 export const DWALLET_NETWORK_VERSION = 0;
 
 export const SUI_PACKAGE_ID = '0x2';
@@ -138,6 +139,7 @@ export interface SystemInner {
 	fields: {
 		value: {
 			fields: {
+				epoch: number;
 				validator_set: {
 					fields: {
 						validators: {
@@ -160,6 +162,21 @@ export function isSystemInner(obj: any): obj is SystemInner {
 		obj?.fields?.value?.fields?.validator_set?.fields?.validators?.fields?.id?.id !== undefined &&
 		obj?.fields?.value?.fields?.validator_set?.fields?.validators?.fields?.size !== undefined
 	);
+}
+
+export async function getSystemInner(conf: Config): Promise<SystemInner> {
+	const dynamicFields = await conf.client.getDynamicFields({
+		parentId: conf.ikaConfig.objects.ika_system_object_id,
+	});
+	const innerCoordinatorState = await conf.client.getDynamicFieldObject({
+		parentId: conf.ikaConfig.objects.ika_system_object_id,
+		name: dynamicFields.data[0].name,
+	});
+	const systemInner = innerCoordinatorState.data?.content;
+	if (!isSystemInner(systemInner)) {
+		throw new Error('Invalid inner system state');
+	}
+	return systemInner;
 }
 
 export interface Validator {
@@ -361,8 +378,14 @@ async function readTableVecAsRawBytes(c: Config, table_id: string): Promise<Uint
 	return new Uint8Array(data.flatMap((arr) => Array.from(arr)));
 }
 
-export async function getNetworkPublicParameters(c: Config): Promise<Uint8Array> {
-	const networkDecryptionKeyPublicOutputID = await getNetworkDecryptionKeyPublicOutputID(c, null);
+export async function getNetworkPublicParameters(
+	c: Config,
+	networkDecryptionKeyID: string,
+): Promise<Uint8Array> {
+	const networkDecryptionKeyPublicOutputID = await getNetworkDecryptionKeyPublicOutputID(
+		c,
+		networkDecryptionKeyID,
+	);
 	const currentEpoch = await getNetworkCurrentEpochNumber(c);
 	const cachedPP = getCachedPublicParameters(networkDecryptionKeyPublicOutputID, currentEpoch);
 	if (cachedPP) {
