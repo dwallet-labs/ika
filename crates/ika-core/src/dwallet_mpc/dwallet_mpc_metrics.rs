@@ -245,25 +245,21 @@ impl DWalletMPCMetrics {
     /// # Arguments
     /// * `mpc_event_data` - The MPC protocol initialization data containing context
     /// * `mpc_round` — String identifier for the specific MPC round.
-    pub fn add_advance_call(&self, request_input: &MPCRequestInput, mpc_round: &str) {
+    pub fn add_advance_call(
+        &self,
+        protocol: &str,
+        curve: &str,
+        hash_scheme: &str,
+        signature_algorithm: &str,
+        mpc_round: &str,
+    ) {
         if mpc_round == "1" {
             self.session_start_count
-                .with_label_values(&[
-                    &request_input.to_string(),
-                    &request_input.get_curve(),
-                    &request_input.get_hash_scheme(),
-                    &request_input.get_signature_algorithm(),
-                ])
+                .with_label_values(&[protocol, curve, hash_scheme, signature_algorithm])
                 .inc();
         }
         self.advance_calls
-            .with_label_values(&[
-                &request_input.to_string(),
-                &request_input.get_curve(),
-                mpc_round,
-                &request_input.get_hash_scheme(),
-                &request_input.get_signature_algorithm(),
-            ])
+            .with_label_values(&[protocol, curve, mpc_round, hash_scheme, signature_algorithm])
             .inc();
     }
 
@@ -277,60 +273,33 @@ impl DWalletMPCMetrics {
     /// * `mpc_round` — String identifier for the specific MPC round.
     pub fn add_advance_completion(
         &self,
-        mpc_event_data: &MPCRequestInput,
+        protocol: &str,
+        curve: &str,
+        hash_scheme: &str,
+        signature_algorithm: &str,
         mpc_round: &str,
         duration_ms: i64,
     ) {
         self.advance_completions
-            .with_label_values(&[
-                &mpc_event_data.to_string(),
-                &mpc_event_data.get_curve(),
-                mpc_round,
-                &mpc_event_data.get_hash_scheme(),
-                &mpc_event_data.get_signature_algorithm(),
-            ])
+            .with_label_values(&[protocol, curve, mpc_round, hash_scheme, signature_algorithm])
             .inc();
         let current_avg = self
             .computation_duration_avg
-            .with_label_values(&[
-                &mpc_event_data.to_string(),
-                &mpc_event_data.get_curve(),
-                mpc_round,
-                &mpc_event_data.get_hash_scheme(),
-                &mpc_event_data.get_signature_algorithm(),
-            ])
+            .with_label_values(&[protocol, curve, mpc_round, hash_scheme, signature_algorithm])
             .get();
         let advance_completions_count = self
             .advance_completions
-            .with_label_values(&[
-                &mpc_event_data.to_string(),
-                &mpc_event_data.get_curve(),
-                mpc_round,
-                &mpc_event_data.get_hash_scheme(),
-                &mpc_event_data.get_signature_algorithm(),
-            ])
+            .with_label_values(&[protocol, curve, mpc_round, hash_scheme, signature_algorithm])
             .get();
         let new_avg = (current_avg * (advance_completions_count as f64 - 1.0) + duration_ms as f64)
             / (advance_completions_count as f64);
         self.computation_duration_avg
-            .with_label_values(&[
-                &mpc_event_data.to_string(),
-                &mpc_event_data.get_curve(),
-                mpc_round,
-                &mpc_event_data.get_hash_scheme(),
-                &mpc_event_data.get_signature_algorithm(),
-            ])
+            .with_label_values(&[protocol, curve, mpc_round, hash_scheme, signature_algorithm])
             .set(new_avg);
         if advance_completions_count > 1 {
             let current_variance = self
                 .computation_duration_variance
-                .with_label_values(&[
-                    &mpc_event_data.to_string(),
-                    &mpc_event_data.get_curve(),
-                    mpc_round,
-                    &mpc_event_data.get_hash_scheme(),
-                    &mpc_event_data.get_signature_algorithm(),
-                ])
+                .with_label_values(&[protocol, curve, mpc_round, hash_scheme, signature_algorithm])
                 .get();
             let new_variance = update_variance(
                 current_avg,
@@ -340,23 +309,11 @@ impl DWalletMPCMetrics {
                 advance_completions_count,
             );
             self.computation_duration_variance
-                .with_label_values(&[
-                    &mpc_event_data.to_string(),
-                    &mpc_event_data.get_curve(),
-                    mpc_round,
-                    &mpc_event_data.get_hash_scheme(),
-                    &mpc_event_data.get_signature_algorithm(),
-                ])
+                .with_label_values(&[protocol, curve, mpc_round, hash_scheme, signature_algorithm])
                 .set(new_variance);
         } else {
             self.computation_duration_variance
-                .with_label_values(&[
-                    &mpc_event_data.to_string(),
-                    &mpc_event_data.get_curve(),
-                    mpc_round,
-                    &mpc_event_data.get_hash_scheme(),
-                    &mpc_event_data.get_signature_algorithm(),
-                ])
+                .with_label_values(&[protocol, curve, mpc_round, hash_scheme, signature_algorithm])
                 .set(0.0);
         }
     }
@@ -372,18 +329,15 @@ impl DWalletMPCMetrics {
     /// * `duration_ms` — Duration of the completion in milliseconds.
     pub fn set_last_completion_duration(
         &self,
-        mpc_event_data: &MPCRequestInput,
+        protocol: &str,
+        curve: &str,
+        hash_scheme: &str,
+        signature_algorithm: &str,
         mpc_round: &str,
         duration_ms: i64,
     ) {
         self.last_completion_duration
-            .with_label_values(&[
-                &mpc_event_data.to_string(),
-                &mpc_event_data.get_curve(),
-                mpc_round,
-                &mpc_event_data.get_hash_scheme(),
-                &mpc_event_data.get_signature_algorithm(),
-            ])
+            .with_label_values(&[protocol, curve, mpc_round, hash_scheme, signature_algorithm])
             .set(duration_ms);
     }
 }

@@ -28,7 +28,6 @@ use ika_types::messages_dwallet_mpc::{
 };
 use serde::de::DeserializeOwned;
 use std::mem;
-use std::time::Duration;
 use sui_types::dynamic_field::Field;
 use sui_types::id::ID;
 use tokio::sync::broadcast;

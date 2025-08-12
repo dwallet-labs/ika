@@ -49,7 +49,7 @@ pub(crate) struct DWalletMPCSession {
 
     /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
     /// Used to build the input of messages to advance each round of the session.
-    pub(super) messages_by_consensus_round: HashMap<u64, MPCRoundToMessagesHashMap>,
+    pub(super) messages_by_consensus_round: HashMap<u64, HashMap<PartyID, MPCMessage>>,
 
     outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
 }
@@ -136,11 +136,7 @@ impl DWalletMPCSession {
             .entry(consensus_round)
             .or_default();
 
-        let mpc_round_messages_map = consensus_round_messages_map
-            .entry(mpc_round_number)
-            .or_default();
-
-        if let Vacant(e) = mpc_round_messages_map.entry(sender_party_id) {
+        if let Vacant(e) = consensus_round_messages_map.entry(sender_party_id) {
             e.insert(message.message);
         }
     }
