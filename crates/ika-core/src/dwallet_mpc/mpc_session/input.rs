@@ -10,7 +10,7 @@ use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationPartyPublicInputGenerator, ReconfigurationSecp256k1Party,
 };
-use crate::dwallet_mpc::sign::{SignFirstParty, sign_session_public_input};
+use crate::dwallet_mpc::sign::{SignParty, sign_session_public_input};
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -32,7 +32,7 @@ pub enum PublicInput {
     DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
     DKGSecond(<DWalletDKGSecondParty as mpc::Party>::PublicInput),
     Presign(<PresignParty as mpc::Party>::PublicInput),
-    Sign(<SignFirstParty as mpc::Party>::PublicInput),
+    Sign(<SignParty as mpc::Party>::PublicInput),
     NetworkEncryptionKeyDkg(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
     EncryptedShareVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     PartialSignatureVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),

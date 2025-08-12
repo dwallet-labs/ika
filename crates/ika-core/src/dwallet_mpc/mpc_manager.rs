@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::SuiDataReceivers;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::build_messages_to_advance;
 use crate::dwallet_mpc::crytographic_computation::{
-    ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
+    ComputationId, ComputationRequest, CryptographicComputationsOrchestrator, ProtocolSpecificData,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_session::{DWalletMPCSession, DWalletMPCSessionOutput, MPCEventData};
@@ -28,7 +27,7 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData,
-    IkaNetworkConfig, MPCRequestInput, SessionIdentifier, SessionType,
+    IkaNetworkConfig, SessionIdentifier, SessionType,
 };
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -422,52 +421,71 @@ impl DWalletMPCManager {
             mpc_event_data.cmp(other_mpc_event_data)
         });
 
-        let computation_requests: Vec<_> = ready_to_advance_sessions
-            .into_iter()
-            .flat_map(|(session, mpc_event_data)| {
-                let rounds_to_delay = self.consensus_rounds_delay_for_mpc_round(
-                    session.current_mpc_round,
-                    &mpc_event_data,
-                );
+        let computation_requests: Vec<(ComputationId, ComputationRequest)> =
+            ready_to_advance_sessions
+                .into_iter()
+                .filter_map(|(session, mpc_event_data)| {
+                    let consensus_round = session
+                        .messages_by_consensus_round
+                        .keys()
+                        .max()
+                        .cloned()
+                        .unwrap_or_default();
 
-                build_messages_to_advance(
-                    session.current_mpc_round,
-                    rounds_to_delay,
-                    session
-                        .mpc_round_to_threshold_not_reached_consensus_rounds
-                        .clone(),
-                    session.messages_by_consensus_round.clone(),
-                    &self.access_structure,
-                )
-                .map(|(consensus_round, messages_for_advance)| {
-                    let attempt_number = session.get_attempt_number();
+                    let protocol_name = mpc_event_data.request_input.to_string();
 
-                    // Safe to `unwrap()`, as the session is ready to advance so `mpc_event_data` must be `Some()`.
-                    let mpc_event_data = session.mpc_event_data.clone().unwrap();
+                    match ProtocolSpecificData::try_new_if_ready_to_advance(
+                        mpc_event_data,
+                        self.party_id,
+                        &self.access_structure,
+                        consensus_round.clone(),
+                        session.messages_by_consensus_round.clone(),
+                        self.network_dkg_third_round_delay,
+                        self.decryption_key_reconfiguration_third_round_delay,
+                        self.network_keys
+                            .validator_private_dec_key_data
+                            .class_groups_decryption_key
+                            .clone(),
+                    ) {
+                        Ok(protocol_specific_data) => {
+                            protocol_specific_data.map(|protocol_specific_data| {
+                                let attempt_number = session.get_attempt_number();
 
-                    let computation_id = ComputationId {
-                        session_identifier: session.session_identifier,
-                        consensus_round,
-                        mpc_round: session.current_mpc_round,
-                        attempt_number,
-                    };
+                                // Safe to `unwrap()`, as the session is ready to advance so `mpc_event_data` must be `Some()`.
+                                let mpc_event_data = session.mpc_event_data.clone().unwrap();
 
-                    let computation_request = ComputationRequest {
-                        party_id: self.party_id,
-                        validator_name: self.validator_name,
-                        committee: self.committee.clone(),
-                        access_structure: self.access_structure.clone(),
-                        request_input: mpc_event_data.request_input,
-                        private_input: mpc_event_data.private_input,
-                        public_input: mpc_event_data.public_input,
-                        decryption_key_shares: mpc_event_data.decryption_key_shares,
-                        messages: messages_for_advance,
-                    };
+                                let computation_id = ComputationId {
+                                    session_identifier: session.session_identifier,
+                                    consensus_round: Some(consensus_round),
+                                    mpc_round: session.current_mpc_round,
+                                    attempt_number,
+                                };
 
-                    (computation_id, computation_request)
+                                let computation_request = ComputationRequest {
+                                    party_id: self.party_id,
+                                    protocol_name,
+                                    validator_name: self.validator_name,
+                                    access_structure: self.access_structure.clone(),
+                                    protocol_specific_data,
+                                    decryption_key_shares: mpc_event_data.decryption_key_shares,
+                                    messages: session.messages_by_consensus_round.clone(),
+                                };
+
+                                (computation_id, computation_request)
+                            })
+                        }
+                        Err(err) => {
+                            error!(
+                                protocol =? protocol_name,
+                                session_identifier =? session.session_identifier,
+                                mpc_round =? session.current_mpc_round,
+                                "Failed to create protocol specific data for MPC session: {err}"
+                            );
+                            None
+                        }
+                    }
                 })
-            })
-            .collect();
+                .collect();
 
         let completed_computation_results = self
             .cryptographic_computations_orchestrator
@@ -681,32 +699,6 @@ impl DWalletMPCManager {
                 authority=?self.validator_name,
                 "node recognized itself as malicious"
             );
-        }
-    }
-
-    /// Returns the number of additional (delay) consensus rounds the session should wait for before advancing.
-    ///
-    /// This method returns the protocol-specific delay for certain MPC rounds in specific protocols
-    /// (NetworkDkg, DecryptionKeyReconfiguration).
-    ///
-    /// - **NetworkDkg protocol**: requires delay for the third round
-    ///   using `network_dkg_third_round_delay` config.
-    /// - **DecryptionKeyReconfiguration protocol**: requires delay for the third round
-    ///   using `decryption_key_reconfiguration_third_round_delay` config.
-    /// - **Other protocols**: No delay required, always ready to advance
-    pub(crate) fn consensus_rounds_delay_for_mpc_round(
-        &self,
-        current_mpc_round: u64,
-        mpc_event_data: &MPCEventData,
-    ) -> u64 {
-        match mpc_event_data.request_input {
-            MPCRequestInput::NetworkEncryptionKeyDkg(_, _) if current_mpc_round == 3 => {
-                self.network_dkg_third_round_delay
-            }
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(_) if current_mpc_round == 3 => {
-                self.decryption_key_reconfiguration_third_round_delay
-            }
-            _ => 0,
         }
     }
 

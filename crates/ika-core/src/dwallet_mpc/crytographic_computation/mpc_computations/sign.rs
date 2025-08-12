@@ -26,8 +26,7 @@ use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
-pub(crate) type SignFirstParty =
-    <AsyncProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
+pub(crate) type SignParty = <AsyncProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
 pub(crate) type SignPublicInput =
     <AsyncProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedPartyPublicInput;
 
@@ -68,7 +67,7 @@ pub(crate) fn sign_session_public_input(
     access_structure: &WeightedThresholdAccessStructure,
     network_keys: &DwalletMPCNetworkKeys,
     protocol_public_parameters: ProtocolPublicParameters,
-) -> DwalletMPCResult<<SignFirstParty as Party>::PublicInput> {
+) -> DwalletMPCResult<<SignParty as Party>::PublicInput> {
     let decryption_pp = network_keys.get_decryption_key_share_public_parameters(
         // The `StartSignRoundEvent` is assign with a Secp256k1 dwallet.
         // Todo (#473): Support generic network key scheme
@@ -82,7 +81,7 @@ pub(crate) fn sign_session_public_input(
         deserialized_event.session_identifier_digest(),
     )?;
 
-    <SignFirstParty as SignPartyPublicInputGenerator>::generate_public_input(
+    <SignParty as SignPartyPublicInputGenerator>::generate_public_input(
         protocol_public_parameters,
         deserialized_event
             .event_data
@@ -172,10 +171,10 @@ pub(crate) trait SignPartyPublicInputGenerator: Party {
         centralized_signed_message: Vec<u8>,
         decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-    ) -> DwalletMPCResult<<SignFirstParty as Party>::PublicInput>;
+    ) -> DwalletMPCResult<<SignParty as Party>::PublicInput>;
 }
 
-impl SignPartyPublicInputGenerator for SignFirstParty {
+impl SignPartyPublicInputGenerator for SignParty {
     fn generate_public_input(
         protocol_public_parameters: ProtocolPublicParameters,
         dkg_output: SerializedWrappedMPCPublicOutput,
@@ -184,7 +183,7 @@ impl SignPartyPublicInputGenerator for SignFirstParty {
         centralized_signed_message: SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-    ) -> DwalletMPCResult<<SignFirstParty as Party>::PublicInput> {
+    ) -> DwalletMPCResult<<SignParty as Party>::PublicInput> {
         let dkg_output = bcs::from_bytes(&dkg_output)?;
         let presign = bcs::from_bytes(&presign)?;
         let centralized_signed_message = bcs::from_bytes(&centralized_signed_message)?;
