@@ -1480,7 +1480,7 @@ export class IkaTransaction {
 		}
 	}
 
-	async #decryptSecretShareAndVerifySecretShare({
+	async #decryptAndVerifySecretShare({
 		dWallet,
 		encryptedUserSecretKeyShare,
 		publicParameters: publicParametersFromParam,
@@ -1727,7 +1727,7 @@ export class IkaTransaction {
 			throw new Error('User share encryption keys are not set');
 		}
 
-		return this.#decryptSecretShareAndVerifySecretShare({
+		return this.#decryptAndVerifySecretShare({
 			dWallet: activeDWallet,
 			encryptedUserSecretKeyShare,
 			publicParameters,
