@@ -409,43 +409,57 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     notify_services: &Vec<Arc<TestingDWalletCheckpointNotify>>,
     parties_to_advance: &[usize],
 ) -> Option<PendingDWalletCheckpoint> {
-    let mut pending_checkpoints = vec![];
+    let mut tasks = vec![];
     for i in 0..committee.voting_rights.len() {
         if !parties_to_advance.contains(&i) {
             continue;
         }
-        let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
-        let _ = dwallet_mpc_service.run_service_loop_iteration().await;
+        let mut dwallet_mpc_service = dwallet_mpc_services.remove(0);
         let consensus_messages_store = sent_consensus_messages_collectors[i]
             .submitted_messages
             .clone();
         let pending_checkpoints_store = testing_epoch_stores[i].pending_checkpoints.clone();
         let notify_service = notify_services[i].clone();
-        loop {
-            if !consensus_messages_store.lock().unwrap().is_empty() {
-                break;
-            }
-            if *notify_service
-                .checkpoints_notification_count
-                .lock()
-                .unwrap()
-                > 0
-            {
-                let pending_checkpoint = pending_checkpoints_store.lock().unwrap().pop();
-                assert!(
-                    pending_checkpoint.is_some(),
-                    "received a checkpoint notification, but no pending checkpoint was found"
-                );
-                let pending_dwallet_checkpoint = pending_checkpoint.unwrap();
-                info!(?pending_dwallet_checkpoint, party_id=?i+1, "Pending checkpoint found");
-                pending_checkpoints.push(pending_dwallet_checkpoint);
-                break;
-            }
+        let task = async move {
+            loop {
+                let _ = dwallet_mpc_service.run_service_loop_iteration().await;
+                if !consensus_messages_store.lock().unwrap().is_empty() {
+                    return (dwallet_mpc_service, None);
+                }
+                if *notify_service
+                    .checkpoints_notification_count
+                    .lock()
+                    .unwrap()
+                    > 0
+                {
+                    let pending_checkpoint = pending_checkpoints_store.lock().unwrap().pop();
+                    assert!(
+                        pending_checkpoint.is_some(),
+                        "received a checkpoint notification, but no pending checkpoint was found"
+                    );
+                    let pending_dwallet_checkpoint = pending_checkpoint.unwrap();
+                    info!(?pending_dwallet_checkpoint, party_id=?i+1, "Pending checkpoint found");
+                    return (dwallet_mpc_service, Some(pending_dwallet_checkpoint));
+                }
 
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
-        }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let _ = dwallet_mpc_service.run_service_loop_iteration().await;
+            }
+        };
+        tasks.push(task);
     }
+    let results = futures::future::join_all(tasks).await;
+    let mut pending_checkpoints = vec![];
+    let returned_dwallet_mpc_services: Vec<_> = results
+        .into_iter()
+        .map(|(dwallet_mpc_service, pending_checkpoint)| {
+            if let Some(pending_checkpoint) = pending_checkpoint {
+                pending_checkpoints.push(pending_checkpoint);
+            }
+            dwallet_mpc_service
+        })
+        .collect();
+    dwallet_mpc_services.extend(returned_dwallet_mpc_services);
     if pending_checkpoints.len() == parties_to_advance.len()
         && pending_checkpoints
             .iter()
