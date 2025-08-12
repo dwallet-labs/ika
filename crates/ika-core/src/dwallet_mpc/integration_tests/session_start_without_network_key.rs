@@ -38,9 +38,8 @@ async fn test_session_start_before_network_key_is_available() {
     };
     let all_parties: Vec<usize> = (0..committee_size).collect();
     loop {
-        if utils::advance_parties_and_send_result_messages(&mut test_state, &all_parties, &[])
+        if let Some(network_dkg_output_checkpoint) = utils::advance_parties_and_send_result_messages(&mut test_state, &all_parties, &[])
             .await
-            .is_some()
         {
             info!("MPC flow completed successfully");
             break;
