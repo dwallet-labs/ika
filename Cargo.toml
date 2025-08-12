@@ -180,7 +180,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 roaring = "0.11.1"
 rstest = "0.25.0"
-schemars = { version = "0.8.21", features = ["either"] }
+schemars = { version = "0.8.22", features = ["either"] }
 scopeguard = "1.1"
 serde = { version = "1.0.144", features = ["derive", "rc"] }
 serde-env = "0.2.0"
