@@ -140,7 +140,10 @@ impl<P> SuiClient<P>
 where
     P: SuiClientInner,
 {
-    pub async fn get_pricing_info(&self, coordinator_inner: DWalletCoordinatorInner) -> Vec<Entry<PricingInfoKey, PricingInfoValue>> {
+    pub async fn get_pricing_info(
+        &self,
+        coordinator_inner: DWalletCoordinatorInner,
+    ) -> Vec<Entry<PricingInfoKey, PricingInfoValue>> {
         let DWalletCoordinatorInner::V1(coordinator_inner) = coordinator_inner;
         coordinator_inner
             .pricing_and_fee_management
@@ -198,10 +201,10 @@ where
 
         if !user_missed_events.is_empty() || !system_missed_events.is_empty() {
             info!(
-                    number_of_user_missed_events = user_missed_events.len(),
-                    number_of_system_missed_events = system_missed_events.len(),
-                    "retrieved missed events from Sui successfully"
-                );
+                number_of_user_missed_events = user_missed_events.len(),
+                number_of_system_missed_events = system_missed_events.len(),
+                "retrieved missed events from Sui successfully"
+            );
         } else {
             debug!("retrieved zero missed events from Sui");
         }
@@ -239,7 +242,9 @@ where
         Ok(())
     }
 
-    pub async fn get_dwallet_coordinator_inner(&self) -> IkaResult<(DWalletCoordinator, DWalletCoordinatorInner)> {
+    pub async fn get_dwallet_coordinator_inner(
+        &self,
+    ) -> IkaResult<(DWalletCoordinator, DWalletCoordinatorInner)> {
         let result = self
             .inner
             .get_dwallet_coordinator(self.ika_dwallet_coordinator_object_id)
@@ -633,7 +638,7 @@ where
 
     pub async fn get_dwallet_mpc_network_keys(
         &self,
-        coordinator_inner: &DWalletCoordinatorInner
+        coordinator_inner: &DWalletCoordinatorInner,
     ) -> IkaResult<HashMap<ObjectID, DWalletNetworkEncryptionKey>> {
         let DWalletCoordinatorInner::V1(coordinator_inner) = coordinator_inner;
         self.inner
@@ -659,7 +664,9 @@ where
             })
     }
 
-    pub async fn must_get_dwallet_coordinator_inner(&self) -> (DWalletCoordinator, DWalletCoordinatorInner) {
+    pub async fn must_get_dwallet_coordinator_inner(
+        &self,
+    ) -> (DWalletCoordinator, DWalletCoordinatorInner) {
         loop {
             match retry_with_max_elapsed_time!(
                 self.get_dwallet_coordinator_inner(),

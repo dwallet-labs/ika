@@ -26,7 +26,14 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::messages_system_checkpoints::SystemCheckpointMessage;
 use ika_types::sui::epoch_start_system::EpochStartSystem;
 use ika_types::sui::system_inner_v1::BlsCommittee;
-use ika_types::sui::{ADVANCE_EPOCH_FUNCTION_NAME, APPEND_VECTOR_FUNCTION_NAME, CREATE_SYSTEM_CURRENT_STATUS_INFO_FUNCTION_NAME, DWalletCoordinatorInner, INITIATE_ADVANCE_EPOCH_FUNCTION_NAME, INITIATE_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME, PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME, REQUEST_NETWORK_ENCRYPTION_KEY_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME, SYSTEM_MODULE_NAME, SystemInner, SystemInnerTrait, VECTOR_MODULE_NAME, System, DWalletCoordinator};
+use ika_types::sui::{
+    ADVANCE_EPOCH_FUNCTION_NAME, APPEND_VECTOR_FUNCTION_NAME,
+    CREATE_SYSTEM_CURRENT_STATUS_INFO_FUNCTION_NAME, DWalletCoordinator, DWalletCoordinatorInner,
+    INITIATE_ADVANCE_EPOCH_FUNCTION_NAME, INITIATE_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME,
+    PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME,
+    REQUEST_NETWORK_ENCRYPTION_KEY_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME, SYSTEM_MODULE_NAME,
+    System, SystemInner, SystemInnerTrait, VECTOR_MODULE_NAME,
+};
 use itertools::Itertools;
 use move_core_types::ident_str;
 use move_core_types::language_storage::TypeTag;
@@ -55,7 +62,8 @@ const ONE_HOUR_IN_SECONDS: u64 = 60 * 60;
 
 pub struct SuiExecutor<C> {
     system_object_sender: Sender<Option<(System, SystemInner)>>,
-    dwallet_coordinator_object_sender: Sender<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
+    dwallet_coordinator_object_sender:
+        Sender<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
     dwallet_checkpoint_store: Arc<DWalletCheckpointStore>,
     system_checkpoint_store: Arc<SystemCheckpointStore>,
     sui_notifier: Option<SuiNotifier>,
@@ -77,7 +85,9 @@ where
 {
     pub fn new(
         system_object_sender: Sender<Option<(System, SystemInner)>>,
-        dwallet_coordinator_object_sender: Sender<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
+        dwallet_coordinator_object_sender: Sender<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
         dwallet_checkpoint_store: Arc<DWalletCheckpointStore>,
         system_checkpoint_store: Arc<SystemCheckpointStore>,
         sui_notifier: Option<SuiNotifier>,
@@ -156,10 +166,12 @@ where
             return;
         };
 
-        let _ = self.dwallet_coordinator_object_sender.send(Some((dwallet_coordinator, dwallet_coordinator_inner.clone())));
+        let _ = self.dwallet_coordinator_object_sender.send(Some((
+            dwallet_coordinator,
+            dwallet_coordinator_inner.clone(),
+        )));
 
         let DWalletCoordinatorInner::V1(coordinator_inner) = dwallet_coordinator_inner;
-
 
         if clock.timestamp_ms > mid_epoch_time
             && coordinator_inner
@@ -292,7 +304,9 @@ where
             interval.tick().await;
             let (system, system_inner) = self.sui_client.must_get_system_inner_object().await;
             let ika_system_package_id = system.package_id;
-            let _ = self.system_object_sender.send(Some((system, system_inner.clone())));
+            let _ = self
+                .system_object_sender
+                .send(Some((system, system_inner.clone())));
             let epoch_on_sui: u64 = system_inner.epoch();
             if epoch_on_sui > epoch {
                 fail_point_async!("crash");
@@ -301,20 +315,18 @@ where
                     .sui_client
                     .must_get_epoch_start_system(&system_inner)
                     .await;
-                return StopReason::EpochComplete(
-                    Box::new(system_inner),
-                    epoch_start_system_state,
-                );
+                return StopReason::EpochComplete(Box::new(system_inner), epoch_start_system_state);
             }
             if epoch_on_sui < epoch {
                 error!("epoch_on_sui cannot be less than epoch");
             }
-            let (dwallet_coordinator, dwallet_coordinator_inner) = self
-                .sui_client
-                .must_get_dwallet_coordinator_inner()
-                .await;
+            let (dwallet_coordinator, dwallet_coordinator_inner) =
+                self.sui_client.must_get_dwallet_coordinator_inner().await;
             let ika_dwallet_2pc_mpc_package_id = dwallet_coordinator.package_id;
-            let _ = self.dwallet_coordinator_object_sender.send(Some((dwallet_coordinator, dwallet_coordinator_inner.clone())));
+            let _ = self.dwallet_coordinator_object_sender.send(Some((
+                dwallet_coordinator,
+                dwallet_coordinator_inner.clone(),
+            )));
             let DWalletCoordinatorInner::V1(dwallet_coordinator_inner) = dwallet_coordinator_inner;
             let last_processed_dwallet_checkpoint_sequence_number: u64 =
                 dwallet_coordinator_inner.last_processed_checkpoint_sequence_number;
@@ -361,10 +373,8 @@ where
                                 .dwallet_checkpoint_sequence
                                 .set(next_dwallet_checkpoint_sequence_number as i64);
 
-                            let active_members: BlsCommittee = system_inner
-                                .validator_set()
-                                .clone()
-                                .active_committee;
+                            let active_members: BlsCommittee =
+                                system_inner.validator_set().clone().active_committee;
                             let auth_sig = dwallet_checkpoint_message.auth_sig();
                             let signature = auth_sig.signature.as_bytes().to_vec();
                             let signers_bitmap = Self::calculate_signers_bitmap(
@@ -435,10 +445,8 @@ where
                             .system_checkpoint_sequence
                             .set(next_dwallet_checkpoint_sequence_number as i64);
 
-                        let active_members: BlsCommittee = system_inner
-                            .validator_set()
-                            .clone()
-                            .active_committee;
+                        let active_members: BlsCommittee =
+                            system_inner.validator_set().clone().active_committee;
                         let auth_sig = system_checkpoint.auth_sig();
                         let signature = auth_sig.signature.as_bytes().to_vec();
                         let signers_bitmap =

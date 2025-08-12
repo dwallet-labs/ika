@@ -14,7 +14,9 @@ use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData,
     DWalletNetworkEncryptionKeyState,
 };
-use ika_types::sui::{DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait};
+use ika_types::sui::{
+    DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
+};
 use mysten_metrics::spawn_logged_monitored_task;
 use std::{collections::HashMap, sync::Arc};
 use sui_json_rpc_types::SuiEvent;
@@ -58,7 +60,9 @@ where
         next_epoch_committee_sender: Sender<Committee>,
         is_validator: bool,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
-        dwallet_coordinator_object_receiver: Receiver<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
+        dwallet_coordinator_object_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
         new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
         end_of_publish_sender: Sender<Option<u64>>,
@@ -122,12 +126,18 @@ where
     }
 
     async fn sync_last_session_to_complete_in_current_epoch(
-        dwallet_coordinator_object_receiver: Receiver<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
+        dwallet_coordinator_object_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
     ) {
         tokio::time::sleep(Duration::from_secs(2)).await;
         loop {
-            let Some((_, coordinator_inner)) = dwallet_coordinator_object_receiver.borrow().as_ref().cloned() else {
+            let Some((_, coordinator_inner)) = dwallet_coordinator_object_receiver
+                .borrow()
+                .as_ref()
+                .cloned()
+            else {
                 warn!("DWalletCoordinator object not available, retrying...");
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
@@ -153,17 +163,26 @@ where
 
     async fn sync_uncompleted_events(
         sui_client: Arc<SuiClient<C>>,
-        dwallet_coordinator_object_receiver: Receiver<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
+        dwallet_coordinator_object_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
         uncompleted_events_sender: Sender<(Vec<DBSuiEvent>, EpochId)>,
     ) {
         tokio::time::sleep(Duration::from_secs(2)).await;
         loop {
-            let Some((_, coordinator_inner)) = dwallet_coordinator_object_receiver.borrow().as_ref().cloned() else {
+            let Some((_, coordinator_inner)) = dwallet_coordinator_object_receiver
+                .borrow()
+                .as_ref()
+                .cloned()
+            else {
                 warn!("DWalletCoordinator object not available, retrying...");
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             };
-            match sui_client.pull_dwallet_mpc_uncompleted_events(&coordinator_inner).await {
+            match sui_client
+                .pull_dwallet_mpc_uncompleted_events(&coordinator_inner)
+                .await
+            {
                 Ok((events, epoch)) => {
                     for event in &events {
                         debug!(
@@ -297,7 +316,9 @@ where
     async fn sync_dwallet_network_keys(
         sui_client: Arc<SuiClient<C>>,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
-        dwallet_coordinator_object_receiver: Receiver<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
+        dwallet_coordinator_object_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     ) {
         // Last fetched network keys (id to epoch) to avoid fetching the same keys repeatedly.
@@ -309,7 +330,11 @@ where
                 warn!("System object not available, retrying...");
                 continue;
             };
-            let Some((_, dwallet_coordinator_inner)) = dwallet_coordinator_object_receiver.borrow().as_ref().cloned() else {
+            let Some((_, dwallet_coordinator_inner)) = dwallet_coordinator_object_receiver
+                .borrow()
+                .as_ref()
+                .cloned()
+            else {
                 warn!("DWalletCoordinator object not available, retrying...");
                 continue;
             };
@@ -374,7 +399,9 @@ where
 
     async fn sync_dwallet_end_of_publish(
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
-        dwallet_coordinator_object_receiver: Receiver<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
+        dwallet_coordinator_object_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
         end_of_publish_sender: Sender<Option<u64>>,
     ) {
         loop {
@@ -385,7 +412,11 @@ where
                 continue;
             };
             let SystemInner::V1(system_inner_v1) = system_inner;
-            let Some((_, coordinator_inner)) = dwallet_coordinator_object_receiver.borrow().as_ref().cloned() else {
+            let Some((_, coordinator_inner)) = dwallet_coordinator_object_receiver
+                .borrow()
+                .as_ref()
+                .cloned()
+            else {
                 warn!("DWalletCoordinator object not available, retrying...");
                 continue;
             };
@@ -474,7 +505,8 @@ where
             // as it is unexpected to change often.
             if loop_index % 10 == 0 {
                 debug!("Querying epoch start cursor from Sui");
-                let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
+                let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned()
+                else {
                     warn!("System object not available, retrying...");
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     continue;

@@ -75,7 +75,8 @@ impl SuiConnectorService {
     )> {
         let (network_keys_sender, network_keys_receiver) = watch::channel(Default::default());
         let (system_object_sender, system_object_receiver) = watch::channel(Default::default());
-        let (dwallet_coordinator_object_sender, dwallet_coordinator_receiver) = watch::channel(Default::default());
+        let (dwallet_coordinator_object_sender, dwallet_coordinator_receiver) =
+            watch::channel(Default::default());
 
         let sui_notifier = Self::prepare_for_sui(
             sui_connector_config.clone(),
