@@ -478,7 +478,7 @@ pub(crate) fn override_legit_messages_with_false_messages(
         original_message.map(|mut original_message| {
             let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind
             else {
-                panic!("Network DKG first round should produce a DWalletMPCMessage");
+                panic!("Only DWalletMPCMessage messages can be overridden with false messages");
             };
             let mut new_message: Vec<u8> = vec![0];
             new_message.extend(bcs::to_bytes::<u64>(&crypto_round).unwrap());
