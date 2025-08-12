@@ -24,7 +24,7 @@ use ika_core::consensus_manager::UpdatableConsensusClient;
 
 use ika_types::digests::ChainIdentifier;
 use ika_types::sui::SystemInner;
-use sui_types::base_types::{ConciseableName, ObjectID};
+use sui_types::base_types::ConciseableName;
 use tap::tap::TapFallible;
 use tokio::runtime::Handle;
 use tokio::sync::{Mutex, broadcast, watch};
@@ -41,9 +41,7 @@ use ika_config::node_config_metrics::NodeConfigMetrics;
 use ika_config::object_storage_config::{ObjectStoreConfig, ObjectStoreType};
 use ika_config::{ConsensusConfig, NodeConfig};
 use ika_core::authority::AuthorityState;
-use ika_core::authority::authority_per_epoch_store::{
-    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
-};
+use ika_core::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
@@ -65,7 +63,6 @@ use ika_network::discovery::TrustedPeerChangeEvent;
 use ika_network::{discovery, state_sync};
 use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
 use mysten_metrics::{RegistryService, spawn_monitored_task};
-use sui_json_rpc_types::SuiEvent;
 use sui_macros::{fail_point_async, replay_log};
 use sui_storage::{FileCompression, StorageFormat};
 use sui_types::base_types::EpochId;
@@ -180,12 +177,11 @@ use ika_core::system_checkpoints::{
 };
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_sui_client::{SuiClient, SuiConnectorClient};
-use ika_types::messages_dwallet_mpc::{DWalletNetworkEncryptionKeyData, IkaNetworkConfig};
+use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 #[cfg(msim)]
 pub use simulator::set_jwk_injector;
 #[cfg(msim)]
 use simulator::*;
-use tokio::sync::watch::Receiver;
 
 pub struct IkaNode {
     config: NodeConfig,
@@ -790,7 +786,7 @@ impl IkaNode {
         ika_node_metrics: Arc<IkaNodeMetrics>,
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
         previous_epoch_last_system_checkpoint_sequence_number: u64,
-        sui_client: Arc<SuiConnectorClient>,
+        _sui_client: Arc<SuiConnectorClient>,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
     ) -> Result<ValidatorComponents> {
@@ -1139,7 +1135,6 @@ impl IkaNode {
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
     ) -> Result<()> {
-        let sui_client_clone2 = sui_client.clone();
         loop {
             let run_with_range = self.config.run_with_range;
 
