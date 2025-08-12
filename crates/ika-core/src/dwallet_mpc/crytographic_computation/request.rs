@@ -47,8 +47,6 @@ pub(crate) struct Request {
     pub(crate) validator_name: AuthorityPublicKeyBytes,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
     pub(crate) protocol_specific_data: ProtocolSpecificData,
-    pub(crate) decryption_key_shares:
-        Option<HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>>,
     /// Round -> Messages map.
     pub(crate) messages: MPCRoundToMessagesHashMap,
 }
@@ -96,6 +94,7 @@ pub(crate) enum ProtocolSpecificData {
         signature_algorithm: u32,
         public_input: <SignParty as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<SignParty as mpc::Party>::Message>,
+        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
 
     NetworkEncryptionKeyDkg {
@@ -108,6 +107,7 @@ pub(crate) enum ProtocolSpecificData {
     NetworkEncryptionKeyReconfiguration {
         public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
+        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
 
     EncryptedShareVerification {
@@ -271,6 +271,12 @@ impl ProtocolSpecificData {
                     return Ok(None);
                 };
                 if let PublicInput::Sign(public_input) = &mpc_event_data.public_input {
+                    let Some(decryption_key_shares) = mpc_event_data.decryption_key_shares else {
+                        return Err(DwalletMPCError::MissingDwalletMPCDecryptionKeyShares(
+                            "sign request requires decryption key shares, but none were found"
+                                .to_string(),
+                        ));
+                    };
                     ProtocolSpecificData::Sign {
                         curve: session_event.event_data.curve,
                         hash_scheme: Hash::try_from(session_event.event_data.hash_scheme)
@@ -278,6 +284,7 @@ impl ProtocolSpecificData {
                         signature_algorithm: session_event.event_data.signature_algorithm,
                         public_input: public_input.clone(),
                         advance_request,
+                        decryption_key_shares,
                     }
                 } else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
@@ -359,12 +366,16 @@ impl ProtocolSpecificData {
                 else {
                     return Ok(None);
                 };
+                let Some(decryption_key_shares) = mpc_event_data.decryption_key_shares else {
+                    return Err(DwalletMPCError::MissingDwalletMPCDecryptionKeyShares("reconfiguration request requires decryption key shares, but none were found".to_string()));
+                };
                 if let PublicInput::NetworkEncryptionKeyReconfiguration(public_input) =
                     &mpc_event_data.public_input
                 {
                     ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
                         public_input: public_input.clone(),
                         advance_request,
+                        decryption_key_shares,
                     }
                 } else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
@@ -690,63 +701,50 @@ impl Request {
             ProtocolSpecificData::Sign {
                 public_input,
                 advance_request,
+                decryption_key_shares,
                 ..
             } => {
-                if let Some(decryption_key_shares) = self.decryption_key_shares.clone() {
-                    if computation_id.mpc_round == MPC_SIGN_SECOND_ROUND {
-                        if let Some(sign_first_round_messages) = self.messages.get(&1) {
-                            let decrypters = sign_first_round_messages.keys().copied().collect();
-                            update_expected_decrypters_metrics(
-                                &public_input.expected_decrypters,
-                                decrypters,
-                                &self.access_structure,
-                                dwallet_mpc_metrics,
-                            );
-                        }
+                if computation_id.mpc_round == MPC_SIGN_SECOND_ROUND {
+                    if let Some(sign_first_round_messages) = self.messages.get(&1) {
+                        let decrypters = sign_first_round_messages.keys().copied().collect();
+                        update_expected_decrypters_metrics(
+                            &public_input.expected_decrypters,
+                            decrypters,
+                            &self.access_structure,
+                            dwallet_mpc_metrics,
+                        );
                     }
+                }
 
-                    let result = Party::<SignParty>::advance_with_guaranteed_output(
-                        session_id,
-                        self.party_id,
-                        &self.access_structure,
-                        advance_request,
-                        Some(decryption_key_shares),
-                        &public_input,
-                        &mut rng,
-                    )?;
+                let result = Party::<SignParty>::advance_with_guaranteed_output(
+                    session_id,
+                    self.party_id,
+                    &self.access_structure,
+                    advance_request,
+                    Some(decryption_key_shares),
+                    &public_input,
+                    &mut rng,
+                )?;
 
-                    match result {
-                        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-                            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-                        }
-                        GuaranteedOutputDeliveryRoundResult::Finalize {
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // Wrap the public output with its version.
+                        let public_output_value =
+                            bcs::to_bytes(&VersionedSignOutput::V1(public_output_value))?;
+
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,
                             private_output,
-                        } => {
-                            // Wrap the public output with its version.
-                            let public_output_value =
-                                bcs::to_bytes(&VersionedSignOutput::V1(public_output_value))?;
-
-                            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                                public_output_value,
-                                malicious_parties,
-                                private_output,
-                            })
-                        }
+                        })
                     }
-                } else {
-                    error!(
-                        should_never_happen=?true,
-                        validator=?self.validator_name,
-                        session_identifier=?computation_id.session_identifier,
-                        mpc_round=?computation_id.mpc_round,
-                        access_structure=?self.access_structure,
-                        ?messages_skeleton,
-                        "no decryption key shares for a session that requires them (sign)"
-                    );
-
-                    Err(DwalletMPCError::InvalidSessionPublicInput)
                 }
             }
             ProtocolSpecificData::NetworkEncryptionKeyDkg {
@@ -816,58 +814,44 @@ impl Request {
             ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
                 public_input,
                 advance_request,
+                decryption_key_shares,
             } => {
-                if let Some(decryption_key_shares) = self.decryption_key_shares.clone() {
-                    let decryption_key_shares = decryption_key_shares
-                        .iter()
-                        .map(|(party_id, share)| (*party_id, share.decryption_key_share))
-                        .collect::<HashMap<_, _>>();
+                let decryption_key_shares = decryption_key_shares
+                    .iter()
+                    .map(|(party_id, share)| (*party_id, share.decryption_key_share))
+                    .collect::<HashMap<_, _>>();
 
-                    let result =
-                        Party::<ReconfigurationSecp256k1Party>::advance_with_guaranteed_output(
-                            session_id,
-                            self.party_id,
-                            &self.access_structure,
-                            advance_request,
-                            Some(decryption_key_shares.clone()),
-                            &public_input,
-                            &mut rng,
+                let result =
+                    Party::<ReconfigurationSecp256k1Party>::advance_with_guaranteed_output(
+                        session_id,
+                        self.party_id,
+                        &self.access_structure,
+                        advance_request,
+                        Some(decryption_key_shares.clone()),
+                        &public_input,
+                        &mut rng,
+                    )?;
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // Wrap the public output with its version.
+                        let public_output_value = bcs::to_bytes(
+                            &VersionedDecryptionKeyReconfigurationOutput::V1(public_output_value),
                         )?;
 
-                    match result {
-                        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-                            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-                        }
-                        GuaranteedOutputDeliveryRoundResult::Finalize {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,
                             private_output,
-                        } => {
-                            // Wrap the public output with its version.
-                            let public_output_value =
-                                bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V1(
-                                    public_output_value,
-                                ))?;
-
-                            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                                public_output_value,
-                                malicious_parties,
-                                private_output,
-                            })
-                        }
+                        })
                     }
-                } else {
-                    error!(
-                    should_never_happen=?true,
-                    validator=?self.validator_name,
-                    session_identifier=?computation_id.session_identifier,
-                    mpc_round=?computation_id.mpc_round,
-                    access_structure=?self.access_structure,
-                    ?messages_skeleton,
-                    "no decryption key shares for a session that requires them (reconfiguration)"
-                    );
-
-                    Err(DwalletMPCError::InvalidSessionPublicInput)
                 }
             }
             ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {

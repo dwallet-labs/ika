@@ -426,7 +426,7 @@ impl DWalletMPCManager {
                         .messages_by_consensus_round
                         .keys()
                         .max()
-                        .cloned()
+                        .copied()
                         .unwrap_or_default();
 
                     let protocol_name = mpc_event_data.request_input.to_string();
@@ -448,9 +448,6 @@ impl DWalletMPCManager {
                             protocol_specific_data.map(|protocol_specific_data| {
                                 let attempt_number = session.get_attempt_number();
 
-                                // Safe to `unwrap()`, as the session is ready to advance so `mpc_event_data` must be `Some()`.
-                                let mpc_event_data = session.mpc_event_data.clone().unwrap();
-
                                 let computation_id = ComputationId {
                                     session_identifier: session.session_identifier,
                                     consensus_round: Some(consensus_round),
@@ -464,7 +461,6 @@ impl DWalletMPCManager {
                                     validator_name: self.validator_name,
                                     access_structure: self.access_structure.clone(),
                                     protocol_specific_data,
-                                    decryption_key_shares: mpc_event_data.decryption_key_shares,
                                     messages: session.messages_by_consensus_round.clone(),
                                 };
 
