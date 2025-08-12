@@ -1213,6 +1213,7 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme used for the message
 	 * @param params.message - The message bytes to sign
 	 * @param params.secretShare - The user's unencrypted secret share
+	 * @param params.publicOutput - The public output to use for signing which should be verified before using this method.
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
@@ -1226,6 +1227,7 @@ export class IkaTransaction {
 		hashScheme,
 		message,
 		secretShare,
+		publicOutput,
 		ikaCoin,
 		suiCoin,
 	}: {
@@ -1236,6 +1238,7 @@ export class IkaTransaction {
 		hashScheme: Hash;
 		message: Uint8Array;
 		secretShare: Uint8Array;
+		publicOutput: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
@@ -1245,6 +1248,7 @@ export class IkaTransaction {
 			userSignatureInputs: {
 				activeDWallet: dWallet,
 				secretShare,
+				publicOutput,
 				presign,
 				message,
 				hash: hashScheme,
