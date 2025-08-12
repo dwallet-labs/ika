@@ -419,7 +419,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
         .map_err(|_| DwalletMPCError::TokioRecv)?
 }
 
-pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
+fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
     epoch: u64,
     key_scheme: DWalletMPCNetworkKeyScheme,
     access_structure: &WeightedThresholdAccessStructure,
