@@ -512,3 +512,35 @@ pub(crate) fn send_start_network_dkg_event(
         ));
     });
 }
+
+pub(crate) async fn advance_parties_and_send_result_messages(
+    mut test_state: &mut IntegrationTestState,
+    parties_to_advance: &[usize],
+    malicious_parties: &[usize],
+) -> bool {
+    if let Some(pending_checkpoint) = advance_some_parties_and_wait_for_completions(
+        &test_state.committee,
+        &mut test_state.dwallet_mpc_services,
+        &mut test_state.sent_consensus_messages_collectors,
+        &test_state.epoch_stores,
+        &test_state.notify_services,
+        &parties_to_advance,
+    )
+    .await
+    {
+        info!(?pending_checkpoint, "MPC flow completed successfully");
+        return true;
+    }
+    override_legit_messages_with_false_messages(
+        malicious_parties,
+        &mut test_state.sent_consensus_messages_collectors,
+        test_state.crypto_round as u64,
+    );
+    send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        test_state.consensus_round as Round,
+    );
+    false
+}
