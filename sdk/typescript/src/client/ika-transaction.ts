@@ -1361,7 +1361,7 @@ export class IkaTransaction {
 	 * Transfer an encrypted user share from the current user to another address.
 	 * This re-encrypts the user's share with the destination address's encryption key.
 	 *
-	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
+	 * SECURITY WARNING: This method does not verify `secretShare`,
 	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
 	 * This method is used when developer has access to the user's unencrypted secret share.
@@ -1582,7 +1582,7 @@ export class IkaTransaction {
 
 		let secretShare, publicOutput;
 
-		// If the dWallet is a shared dWallet, we use the public user secret key share. It is a different trust assumption in which no zero-trust security is assured.
+		// If the dWallet is a public user-share dWallet, we use the public user secret key share. It is a different trust assumption in which no zero-trust security is assured.
 		// Otherwise, we use the secret share from the user signature inputs.
 		if (userSignatureInputs.activeDWallet.public_user_secret_key_share) {
 			secretShare = Uint8Array.from(userSignatureInputs.activeDWallet.public_user_secret_key_share);
