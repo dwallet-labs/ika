@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::SuiDataReceivers;
+use crate::dwallet_mpc::crytographic_computation::protocol_specific_data::ProtocolSpecificData;
 use crate::dwallet_mpc::crytographic_computation::{
-    ComputationId, ComputationRequest, CryptographicComputationsOrchestrator, ProtocolSpecificData,
+    ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_session::{DWalletMPCSession, DWalletMPCSessionOutput, MPCEventData};
@@ -472,7 +473,7 @@ impl DWalletMPCManager {
                                 protocol =? protocol_name,
                                 session_identifier =? session.session_identifier,
                                 mpc_round =? session.current_mpc_round,
-                                "Failed to create protocol specific data for MPC session: {err}"
+                                "failed to create protocol specific data for MPC session: {err}"
                             );
                             None
                         }

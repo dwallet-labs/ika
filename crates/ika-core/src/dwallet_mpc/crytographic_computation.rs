@@ -4,11 +4,12 @@
 pub(super) mod mpc_computations;
 pub(super) mod native_computations;
 mod orchestrator;
+pub(crate) mod protocol_specific_data;
 mod request;
 
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
 pub(crate) use orchestrator::CryptographicComputationsOrchestrator;
-pub(crate) use request::ProtocolSpecificData;
+pub(crate) use protocol_specific_data::ProtocolSpecificData;
 pub(crate) use request::Request as ComputationRequest;
 
 const MPC_SIGN_SECOND_ROUND: u64 = 2;
