@@ -92,6 +92,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             &round_malicious_parties,
         )
         .await
+        .is_some()
         {
             info!("MPC flow completed successfully");
             break;
@@ -104,6 +105,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
                 &round_malicious_parties,
             )
             .await
+            .is_some()
             {
                 info!("MPC flow completed successfully");
                 break;

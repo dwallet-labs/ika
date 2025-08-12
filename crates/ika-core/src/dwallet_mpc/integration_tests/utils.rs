@@ -517,7 +517,7 @@ pub(crate) async fn advance_parties_and_send_result_messages(
     mut test_state: &mut IntegrationTestState,
     parties_to_advance: &[usize],
     malicious_parties: &[usize],
-) -> bool {
+) -> Option<PendingDWalletCheckpoint> {
     if let Some(pending_checkpoint) = advance_some_parties_and_wait_for_completions(
         &test_state.committee,
         &mut test_state.dwallet_mpc_services,
@@ -529,7 +529,7 @@ pub(crate) async fn advance_parties_and_send_result_messages(
     .await
     {
         info!(?pending_checkpoint, "MPC flow completed successfully");
-        return true;
+        return Some(pending_checkpoint);
     }
     override_legit_messages_with_false_messages(
         malicious_parties,
@@ -542,5 +542,5 @@ pub(crate) async fn advance_parties_and_send_result_messages(
         &mut test_state.epoch_stores,
         test_state.consensus_round as Round,
     );
-    false
+    None
 }
