@@ -214,36 +214,11 @@ export class UserShareEncryptionKeys {
 		sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 		sourceEncryptionKey: EncryptionKey,
 	): Promise<Uint8Array> {
-		if (!dWallet.state.Active?.public_output) {
-			throw new Error('DWallet is not in active state');
-		}
-
-		if (!sourceEncryptedUserSecretKeyShare.state.KeyHolderSigned?.user_output_signature) {
-			throw new Error('Source encrypted user secret key share is not signed by the key holder');
-		}
-
-		const dWalletPublicOutput = Uint8Array.from(dWallet.state.Active?.public_output);
-
-		const sourcePublicKey = new Ed25519PublicKey(sourceEncryptionKey.signer_public_key);
-
-		if (
-			sourcePublicKey.toSuiAddress() !== sourceEncryptedUserSecretKeyShare.encryption_key_address
-		) {
-			throw new Error('Source encryption key address does not match the public key');
-		}
-
-		if (
-			!(await sourcePublicKey.verify(
-				dWalletPublicOutput,
-				Uint8Array.from(
-					sourceEncryptedUserSecretKeyShare.state.KeyHolderSigned?.user_output_signature,
-				),
-			))
-		) {
-			throw new Error(
-				'Invalid signature. The user output signature does not match the public output.',
-			);
-		}
+		const dWalletPublicOutput = await verifyAndGetDWalletDKGPublicOutput(
+			dWallet,
+			sourceEncryptedUserSecretKeyShare,
+			new Ed25519PublicKey(sourceEncryptionKey.signer_public_key),
+		);
 
 		return await this.#encryptedSecretShareSigningKeypair.sign(dWalletPublicOutput);
 	}

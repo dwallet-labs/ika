@@ -1464,41 +1464,20 @@ export class IkaTransaction {
 		}
 	}
 
-	#assertUserShareVerification(
-		dWallet: DWallet,
-		secretShare: Uint8Array,
-		publicParameters: Uint8Array,
-	) {
-		this.#assertDWalletPublicOutputSet(dWallet);
-
-		const userShareVerified = verifyUserShare(
-			secretShare,
-			Uint8Array.from(dWallet.state.Active?.public_output),
-			publicParameters,
-		);
+	async #verifySecretShare({
+		verifiedPublicOutput,
+		secretShare,
+		publicParameters,
+	}: {
+		verifiedPublicOutput: Uint8Array;
+		secretShare: Uint8Array;
+		publicParameters: Uint8Array;
+	}) {
+		const userShareVerified = verifyUserShare(secretShare, verifiedPublicOutput, publicParameters);
 
 		if (!userShareVerified) {
 			throw new Error('User share verification failed');
 		}
-	}
-
-	async #verifySecretShareReturnPublicParameters({
-		dWallet,
-		secretShare,
-		publicParameters: publicParametersFromParam,
-	}: {
-		dWallet: DWallet;
-		secretShare: Uint8Array;
-		publicParameters?: Uint8Array;
-	}) {
-		this.#assertDWalletPublicOutputSet(dWallet);
-
-		const publicParameters =
-			publicParametersFromParam ?? (await this.#ikaClient.getProtocolPublicParameters(dWallet));
-
-		this.#assertUserShareVerification(dWallet, secretShare, publicParameters);
-
-		return publicParameters;
 	}
 
 	async #decryptSecretShareAndVerifySecretShare({
@@ -1529,8 +1508,8 @@ export class IkaTransaction {
 				publicParameters,
 			);
 
-		await this.#verifySecretShareReturnPublicParameters({
-			dWallet,
+		await this.#verifySecretShare({
+			verifiedPublicOutput,
 			secretShare,
 			publicParameters,
 		});
@@ -1609,6 +1588,7 @@ export class IkaTransaction {
 				encryptedUserSecretKeyShare: userSignatureInputs.encryptedUserSecretKeyShare,
 				activeDWallet: userSignatureInputs.activeDWallet,
 				publicParameters,
+				publicOutput: userSignatureInputs.publicOutput,
 			});
 
 			secretShare = userSecretKeyShareResponse.secretShare;
@@ -1720,17 +1700,23 @@ export class IkaTransaction {
 		encryptedUserSecretKeyShare,
 		activeDWallet,
 		publicParameters,
+		publicOutput,
 	}: {
 		secretShare?: Uint8Array;
 		encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
 		activeDWallet: DWallet;
 		publicParameters: Uint8Array;
+		publicOutput?: Uint8Array;
 	}): Promise<{
 		secretShare: Uint8Array;
 		verifiedPublicOutput: Uint8Array;
 	}> {
 		if (secretShare) {
-			return { secretShare, verifiedPublicOutput: secretShare };
+			if (!publicOutput) {
+				throw new Error('Public output is required when providing secret share directly');
+			}
+
+			return { secretShare, verifiedPublicOutput: publicOutput };
 		}
 
 		if (!encryptedUserSecretKeyShare) {
