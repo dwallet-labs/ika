@@ -646,7 +646,8 @@ export class IkaTransaction {
 	 * Sign a message using a DWallet with a secret share.
 	 * This performs the actual signing operation using the presign and user's secret share.
 	 *
-	 * WARNING: This method is unsafe and should only be used if you know what you are doing.
+	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
+	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
 	 * This method is used when developer has access to the user's unencrypted secret share and public output which should be verified before using this method.
 	 *
