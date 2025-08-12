@@ -39,7 +39,7 @@ use rand_chacha::ChaCha20Rng;
 use std::collections::HashMap;
 use sui_types::base_types::ObjectID;
 use tokio::sync::oneshot;
-use tracing::error;
+use tracing::{error, info};
 use twopc_mpc::ProtocolPublicParameters;
 use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -274,7 +274,10 @@ pub(crate) fn advance_network_dkg(
             let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
                 unreachable!();
             };
-
+            info!(
+                attempt_number=?advance_request.attempt_number,
+                "advancing network DKG"
+            );
             let result = Party::<Secp256k1Party>::advance_with_guaranteed_output(
                 session_id,
                 party_id,
