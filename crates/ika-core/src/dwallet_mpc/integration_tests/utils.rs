@@ -512,10 +512,13 @@ pub(crate) fn override_message_with_one_of_messages(
             else {
                 panic!("Network DKG first round should produce a DWalletMPCMessage");
             };
-
+            info!(
+                ?parties_to_override,
+                "Overriding message for malicious party"
+            );
             msg.message = valid_round_messages
                 .iter()
-                .find(|valid_msg| *valid_msg.clone() != msg.message)
+                .find(|valid_msg| (*valid_msg).clone() != msg.message)
                 .unwrap()
                 .clone();
             sent_consensus_messages_collectors[*malicious_party_index]
