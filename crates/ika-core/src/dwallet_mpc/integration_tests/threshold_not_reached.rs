@@ -147,11 +147,39 @@ pub(crate) async fn advance_parties_and_send_result_messages(
         info!(?pending_checkpoint, "MPC flow completed successfully");
         return true;
     }
-    utils::override_legit_messages_with_false_messages(
-        malicious_parties,
-        &mut test_state.sent_consensus_messages_collectors,
-        test_state.crypto_round as u64,
-    );
+    let existing_messages = test_state
+        .sent_consensus_messages_collectors
+        .iter()
+        .filter_map(|collector| {
+            collector
+                .submitted_messages
+                .lock()
+                .unwrap()
+                .first()
+                .cloned()
+        })
+        .filter_map(|message| {
+            if let ConsensusTransactionKind::DWalletMPCMessage(msg) = &message.kind {
+                Some(msg.message.clone())
+            } else {
+                None
+            }
+        })
+        .collect_vec();
+    if !existing_messages.is_empty() {
+        utils::override_message_with_one_of_messages(
+            malicious_parties,
+            &mut test_state.sent_consensus_messages_collectors,
+            existing_messages,
+        );
+    } else {
+        utils::override_legit_messages_with_false_messages(
+            malicious_parties,
+            &mut test_state.sent_consensus_messages_collectors,
+            test_state.crypto_round as u64,
+        )
+    }
+
     utils::send_advance_results_between_parties(
         &test_state.committee,
         &mut test_state.sent_consensus_messages_collectors,

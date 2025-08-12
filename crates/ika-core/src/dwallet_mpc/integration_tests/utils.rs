@@ -494,6 +494,39 @@ pub(crate) fn override_legit_messages_with_false_messages(
     }
 }
 
+/// Overrides the message of the given parties with one of the given valid round messages that is not theirs.
+pub(crate) fn override_message_with_one_of_messages(
+    parties_to_override: &[usize],
+    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
+    valid_round_messages: Vec<Vec<u8>>,
+) {
+    for malicious_party_index in parties_to_override {
+        // Create a malicious message for round 1, and set it as the patty's message.
+        let mut original_message = sent_consensus_messages_collectors[*malicious_party_index]
+            .submitted_messages
+            .lock()
+            .unwrap()
+            .pop();
+        original_message.map(|mut original_message| {
+            let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind
+            else {
+                panic!("Network DKG first round should produce a DWalletMPCMessage");
+            };
+
+            msg.message = valid_round_messages
+                .iter()
+                .find(|valid_msg| *valid_msg.clone() != msg.message)
+                .unwrap()
+                .clone();
+            sent_consensus_messages_collectors[*malicious_party_index]
+                .submitted_messages
+                .lock()
+                .unwrap()
+                .push(original_message);
+        });
+    }
+}
+
 pub(crate) fn send_start_network_dkg_event(
     ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
