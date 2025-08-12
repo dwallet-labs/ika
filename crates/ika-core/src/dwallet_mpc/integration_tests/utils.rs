@@ -413,7 +413,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     let mut completed_parties = vec![];
     while completed_parties.len() != parties_to_advance.len() {
         for i in 0..committee.voting_rights.len() {
-            if !parties_to_advance.contains(&i) {
+            if !parties_to_advance.contains(&i) || completed_parties.contains(&i) {
                 continue;
             }
             let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
