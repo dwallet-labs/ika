@@ -445,6 +445,23 @@ impl DWalletMPCManager {
                             .clone(),
                     ) {
                         Ok(protocol_specific_data) => {
+                            let messages_skeleton = session
+                                .messages_by_consensus_round
+                                .clone()
+                                .iter()
+                                .map(|(round, messages_map)| {
+                                    (
+                                        *round,
+                                        messages_map.keys().copied().sorted().collect::<Vec<_>>(),
+                                    )
+                                })
+                                .collect::<HashMap<_, _>>();
+                            info!(
+                                ?messages_skeleton,
+                                should_advance=?protocol_specific_data.is_some(),
+                                party_id=? self.party_id,
+                                "checking if session is ready to advance",
+                            );
                             protocol_specific_data.map(|protocol_specific_data| {
                                 let attempt_number = session.get_attempt_number();
 

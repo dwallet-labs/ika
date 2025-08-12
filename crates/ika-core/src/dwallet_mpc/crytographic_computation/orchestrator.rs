@@ -23,6 +23,7 @@ use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -255,6 +256,21 @@ impl CryptographicComputationsOrchestrator {
         let signature_algorithm = computation_request
             .protocol_specific_data
             .signature_algorithm_name();
+        let messages_skeleton = computation_request
+            .messages
+            .iter()
+            .map(|(round, messages_map)| {
+                (
+                    *round,
+                    messages_map.keys().copied().sorted().collect::<Vec<_>>(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        info!(
+            ?messages_skeleton,
+            ?party_id,
+            "try spawning cryptographic computation",
+        );
         info!(
             party_id,
             session_identifier=?computation_id.session_identifier,
