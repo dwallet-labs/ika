@@ -824,7 +824,8 @@ export class IkaTransaction {
 	 * Request a future sign operation, which creates a partial user signature that can be used later.
 	 * This allows for pre-signing messages that can be completed later without revealing the full signature.
 	 *
-	 * WARNING: This method is unsafe and should only be used if you know what you are doing.
+	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
+	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
 	 * This method is used when developer has access to the user's unencrypted secret share and public output which should be verified before using this method.
 	 *
@@ -945,7 +946,8 @@ export class IkaTransaction {
 	 * Request a future sign operation and transfer the capability to a specified receiver.
 	 * This creates a partial user signature capability that can be delegated to another address.
 	 *
-	 * WARNING: This method is unsafe and should only be used if you know what you are doing.
+	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
+	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
 	 * This method is used when developer has access to the user's unencrypted secret share.
 	 *
@@ -1198,7 +1200,8 @@ export class IkaTransaction {
 	 * Sign a message using a DWallet created from an imported key with encrypted user shares.
 	 * This method is specifically for DWallets that were created from imported keys rather than generated through DKG.
 	 *
-	 * WARNING: This method is unsafe and should only be used if you know what you are doing.
+	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
+	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
 	 * This method is used when developer has access to the user's unencrypted secret share.
 	 *
@@ -1358,7 +1361,8 @@ export class IkaTransaction {
 	 * Transfer an encrypted user share from the current user to another address.
 	 * This re-encrypts the user's share with the destination address's encryption key.
 	 *
-	 * WARNING: This method is unsafe and should only be used if you know what you are doing.
+	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
+	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
 	 * This method is used when developer has access to the user's unencrypted secret share.
 	 *
