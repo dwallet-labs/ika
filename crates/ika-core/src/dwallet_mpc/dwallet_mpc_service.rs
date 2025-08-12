@@ -148,7 +148,7 @@ impl DWalletMPCService {
         sui_data_receivers: SuiDataReceivers,
     ) -> Self {
         DWalletMPCService {
-            last_read_consensus_round: Some(0),
+            last_read_consensus_round: None,
             epoch_store,
             dwallet_submit_to_consensus,
             state: authority_state,
@@ -258,7 +258,11 @@ impl DWalletMPCService {
         }
 
         self.process_consensus_rounds_from_storage().await;
-        info!(consensus_round=?self.last_read_consensus_round, party_id=?self.dwallet_mpc_manager.party_id, "performing cryptographic computations");
+        info!(
+            consensus_round=?self.last_read_consensus_round,
+            party_id=?self.dwallet_mpc_manager.party_id,
+            "performing cryptographic computations"
+        );
 
         self.process_cryptographic_computations().await;
     }

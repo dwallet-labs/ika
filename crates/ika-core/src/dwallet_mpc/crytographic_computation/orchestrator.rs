@@ -23,10 +23,10 @@ use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
-use itertools::Itertools;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, error, info};
@@ -256,7 +256,8 @@ impl CryptographicComputationsOrchestrator {
         let signature_algorithm = computation_request
             .protocol_specific_data
             .signature_algorithm_name();
-        let messages_skeleton = computation_request.messages
+        let messages_skeleton = computation_request
+            .messages
             .iter()
             .map(|(round, messages_map)| {
                 (
