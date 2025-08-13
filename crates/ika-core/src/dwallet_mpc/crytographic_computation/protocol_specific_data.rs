@@ -675,8 +675,8 @@ impl AdvanceSpecificData {
         };
         match signature_alg {
             None => "".to_string(),
-            Some(curve) => {
-                if curve == &0 {
+            Some(signature_alg) => {
+                if signature_alg == &0 {
                     "ECDSA".to_string()
                 } else {
                     "Unknown".to_string()

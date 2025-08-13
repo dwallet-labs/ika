@@ -42,10 +42,10 @@ import {
 	verifySignWithPartialUserSignatures,
 } from '../../src/dwallet-mpc/sign';
 
-const SUI_FULLNODE_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
-const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
-// const SUI_FULLNODE_URL = getFullnodeUrl('localnet');
-// const SUI_FAUCET_HOST = getFaucetHost('localnet');
+// const SUI_FULLNODE_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
+// const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
+const SUI_FULLNODE_URL = 'http://127.0.0.1:9000';
+const SUI_FAUCET_HOST = 'http://127.0.0.1:9123/gas';
 
 export async function createConf(): Promise<Config> {
 	const keypair = Ed25519Keypair.generate();
