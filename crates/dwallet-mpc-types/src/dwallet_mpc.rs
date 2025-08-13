@@ -1,6 +1,5 @@
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use thiserror::Error;
 
 /// Alias for an MPC message.
@@ -17,44 +16,6 @@ pub type MPCPublicInput = Vec<u8>;
 
 /// Alias for MPC private input.
 pub type MPCPrivateInput = Option<Vec<u8>>;
-
-/// Possible statuses of an MPC Session:
-///
-/// - `Pending`:
-///   The instance is queued because the maximum number of active MPC instances
-///   [`DWalletMPCManager::max_active_mpc_instances`] has been reached.
-///   It is waiting for active instances to complete before activation.
-///
-/// - `Active`:
-///   The session is currently running, and new messages are forwarded to it
-///   for processing.
-///
-/// - `Finished`:
-///   The session has been removed from the active instances.
-///   Incoming messages are no longer forwarded to the session,
-///   but they are not flagged as malicious.
-///
-/// - `Failed`:
-///   The session has failed due to an unrecoverable error.
-///   This status indicates that the session cannot proceed further.
-#[derive(Clone, PartialEq, Debug)]
-pub enum MPCSessionStatus {
-    Active,
-    ComputationCompleted,
-    Completed,
-    Failed,
-}
-
-impl fmt::Display for MPCSessionStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MPCSessionStatus::Active => write!(f, "Active"),
-            MPCSessionStatus::ComputationCompleted => write!(f, "Computation Completed"),
-            MPCSessionStatus::Completed => write!(f, "Completed"),
-            MPCSessionStatus::Failed => write!(f, "Failed"),
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum NetworkDecryptionKeyPublicOutputType {
