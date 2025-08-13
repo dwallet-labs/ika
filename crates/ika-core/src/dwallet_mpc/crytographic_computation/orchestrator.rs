@@ -236,24 +236,20 @@ impl CryptographicComputationsOrchestrator {
 
         dwallet_mpc_metrics.add_advance_call(
             &computation_request.protocol_name,
-            &computation_request.protocol_specific_data.curve_name(),
+            &computation_request.advance_specific_data.curve_name(),
+            &computation_request.advance_specific_data.hash_scheme_name(),
             &computation_request
-                .protocol_specific_data
-                .hash_scheme_name(),
-            &computation_request
-                .protocol_specific_data
+                .advance_specific_data
                 .signature_algorithm_name(),
             &computation_id.mpc_round.to_string(),
         );
 
         let party_id = computation_request.party_id;
         let protocol = computation_request.protocol_name.to_string();
-        let curve = computation_request.protocol_specific_data.curve_name();
-        let hash_scheme = computation_request
-            .protocol_specific_data
-            .hash_scheme_name();
+        let curve = computation_request.advance_specific_data.curve_name();
+        let hash_scheme = computation_request.advance_specific_data.hash_scheme_name();
         let signature_algorithm = computation_request
-            .protocol_specific_data
+            .advance_specific_data
             .signature_algorithm_name();
         info!(
             party_id,

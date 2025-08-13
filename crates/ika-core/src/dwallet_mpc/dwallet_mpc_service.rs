@@ -17,12 +17,12 @@ use crate::dwallet_checkpoints::{
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::mpc_session::MPCEventData;
+use crate::dwallet_mpc::mpc_session::{MPCEventData, MPCSessionStatus};
 use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
-use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPCSessionStatus};
+use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage};
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
@@ -561,7 +561,7 @@ impl DWalletMPCService {
                 .mpc_sessions
                 .get(&session_identifier)
             {
-                if session.status == MPCSessionStatus::Active {
+                if matches!(session.status, MPCSessionStatus::Active(..)) {
                     if let Some(mpc_event_data) = session.mpc_event_data.clone() {
                         match computation_result {
                             Ok(GuaranteedOutputDeliveryRoundResult::Advance { message }) => {

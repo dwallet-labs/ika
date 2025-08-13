@@ -4,17 +4,21 @@
 mod input;
 mod mpc_event_data;
 
-use dwallet_mpc_types::dwallet_mpc::{MPCMessage, MPCSessionStatus};
+use dwallet_mpc_types::dwallet_mpc::MPCMessage;
 use group::PartyID;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{
+    DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier, SessionType,
+};
 use std::collections::hash_map::Entry::Vacant;
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, error, info};
 
+use crate::dwallet_mpc::crytographic_computation::ProtocolSpecificData;
 pub(crate) use crate::dwallet_mpc::mpc_session::mpc_event_data::MPCEventData;
 pub(crate) use input::{PublicInput, session_input_from_event};
+use std::fmt;
 
 pub(crate) type MPCRoundToMessagesHashMap = HashMap<u64, HashMap<PartyID, MPCMessage>>;
 
@@ -241,5 +245,45 @@ impl DWalletMPCSession {
 
     pub(crate) fn mpc_event_data(&self) -> Option<&MPCEventData> {
         self.mpc_event_data.as_ref()
+    }
+}
+
+/// Possible statuses of an MPC Session:
+///
+/// - `Pending`:
+///   The instance is queued because the maximum number of active MPC instances
+///   [`DWalletMPCManager::max_active_mpc_instances`] has been reached.
+///   It is waiting for active instances to complete before activation.
+///
+/// - `Active`:
+///   The session is currently running, and new messages are forwarded to it
+///   for processing.
+///
+/// - `Finished`:
+///   The session has been removed from the active instances.
+///   Incoming messages are no longer forwarded to the session,
+///   but they are not flagged as malicious.
+///
+/// - `Failed`:
+///   The session has failed due to an unrecoverable error.
+///   This status indicates that the session cannot proceed further.
+#[derive(Debug, Clone)]
+pub enum MPCSessionStatus {
+    Active(ProtocolSpecificData),
+    WaitingForEvent,
+    ComputationCompleted,
+    Completed,
+    Failed,
+}
+
+impl fmt::Display for MPCSessionStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MPCSessionStatus::Active(..) => write!(f, "Active"),
+            MPCSessionStatus::WaitingForEvent => write!(f, "Waiting for Event"),
+            MPCSessionStatus::ComputationCompleted => write!(f, "Computation Completed"),
+            MPCSessionStatus::Completed => write!(f, "Completed"),
+            MPCSessionStatus::Failed => write!(f, "Failed"),
+        }
     }
 }

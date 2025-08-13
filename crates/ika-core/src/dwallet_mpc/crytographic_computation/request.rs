@@ -1,7 +1,9 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_mpc::crytographic_computation::protocol_specific_data::ProtocolSpecificData;
+use crate::dwallet_mpc::crytographic_computation::protocol_specific_data::{
+    AdvanceSpecificData, ProtocolSpecificData,
+};
 use crate::dwallet_mpc::crytographic_computation::{ComputationId, MPC_SIGN_SECOND_ROUND};
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
@@ -47,7 +49,7 @@ pub(crate) struct Request {
     pub(crate) protocol_name: String,
     pub(crate) validator_name: AuthorityPublicKeyBytes,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
-    pub(crate) protocol_specific_data: ProtocolSpecificData,
+    pub(crate) advance_specific_data: AdvanceSpecificData,
     /// Round -> Messages map.
     pub(crate) messages: MPCRoundToMessagesHashMap,
 }
@@ -93,11 +95,11 @@ impl Request {
         let mut rng = root_seed.mpc_round_rng(
             session_id,
             computation_id.mpc_round,
-            computation_id.attempt_number,
+            computation_id.consensus_round.unwrap_or_default(),
         );
 
-        match self.protocol_specific_data {
-            ProtocolSpecificData::ImportedKeyVerification {
+        match self.advance_specific_data {
+            AdvanceSpecificData::ImportedKeyVerification {
                 public_input,
                 encrypted_centralized_secret_share_and_proof,
                 encryption_key,
@@ -149,7 +151,7 @@ impl Request {
                     }
                 }
             }
-            ProtocolSpecificData::DKGFirst {
+            AdvanceSpecificData::DKGFirst {
                 public_input,
                 advance_request,
                 ..
@@ -186,7 +188,7 @@ impl Request {
                     }
                 }
             }
-            ProtocolSpecificData::DKGSecond {
+            AdvanceSpecificData::DKGSecond {
                 public_input,
                 encrypted_centralized_secret_share_and_proof,
                 encryption_key,
@@ -241,7 +243,7 @@ impl Request {
                     }
                 }
             }
-            ProtocolSpecificData::Presign {
+            AdvanceSpecificData::Presign {
                 public_input,
                 advance_request,
                 ..
@@ -276,7 +278,7 @@ impl Request {
                     }
                 }
             }
-            ProtocolSpecificData::Sign {
+            AdvanceSpecificData::Sign {
                 public_input,
                 advance_request,
                 decryption_key_shares,
@@ -325,11 +327,12 @@ impl Request {
                     }
                 }
             }
-            ProtocolSpecificData::NetworkEncryptionKeyDkg {
+            AdvanceSpecificData::NetworkEncryptionKeyDkg {
                 key_scheme,
                 public_input,
                 advance_request,
                 class_groups_decryption_key,
+                ..
             } => advance_network_dkg(
                 session_id,
                 &self.access_structure,
@@ -340,7 +343,7 @@ impl Request {
                 advance_request,
                 &mut rng,
             ),
-            ProtocolSpecificData::EncryptedShareVerification {
+            AdvanceSpecificData::EncryptedShareVerification {
                 encrypted_centralized_secret_share_and_proof,
                 decentralized_public_output,
                 encryption_key,
@@ -361,7 +364,7 @@ impl Request {
                     Err(err) => Err(err),
                 }
             }
-            ProtocolSpecificData::PartialSignatureVerification {
+            AdvanceSpecificData::PartialSignatureVerification {
                 message,
                 hash_type,
                 dwallet_decentralized_output,
@@ -389,10 +392,11 @@ impl Request {
                     malicious_parties: vec![],
                 })
             }
-            ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
+            AdvanceSpecificData::NetworkEncryptionKeyReconfiguration {
                 public_input,
                 advance_request,
                 decryption_key_shares,
+                ..
             } => {
                 let decryption_key_shares = decryption_key_shares
                     .iter()
@@ -432,7 +436,7 @@ impl Request {
                     }
                 }
             }
-            ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
+            AdvanceSpecificData::MakeDWalletUserSecretKeySharesPublic {
                 protocol_public_parameters,
                 public_user_secret_key_shares,
                 dwallet_decentralized_output,
