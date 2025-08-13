@@ -486,9 +486,9 @@ impl DWalletMPCManager {
                         return None;
                     };
 
-                    let attempt_number = session.get_attempt_number();
                     match advance_specific_data {
                         Some(advance_specific_data) => {
+                            let attempt_number = advance_specific_data.get_attempt_number();
                             let computation_id = ComputationId {
                                 session_identifier: session.session_identifier,
                                 consensus_round: Some(consensus_round),

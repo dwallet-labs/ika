@@ -755,4 +755,33 @@ impl AdvanceSpecificData {
             }
         }
     }
+
+    pub fn get_attempt_number(&self) -> u64 {
+        match self {
+            AdvanceSpecificData::DKGFirst {
+                advance_request, ..
+            } => advance_request.attempt_number,
+            AdvanceSpecificData::DKGSecond {
+                advance_request, ..
+            } => advance_request.attempt_number,
+            AdvanceSpecificData::Presign {
+                advance_request, ..
+            } => advance_request.attempt_number,
+            AdvanceSpecificData::Sign {
+                advance_request, ..
+            } => advance_request.attempt_number,
+            AdvanceSpecificData::NetworkEncryptionKeyDkg {
+                advance_request, ..
+            } => advance_request.attempt_number,
+            AdvanceSpecificData::NetworkEncryptionKeyReconfiguration {
+                advance_request, ..
+            } => advance_request.attempt_number,
+            AdvanceSpecificData::EncryptedShareVerification { .. } => 1,
+            AdvanceSpecificData::PartialSignatureVerification { .. } => 1,
+            AdvanceSpecificData::MakeDWalletUserSecretKeySharesPublic { .. } => 1,
+            AdvanceSpecificData::ImportedKeyVerification {
+                advance_request, ..
+            } => advance_request.attempt_number,
+        }
+    }
 }
