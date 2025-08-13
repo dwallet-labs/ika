@@ -502,7 +502,6 @@ impl DWalletMPCManager {
                                 validator_name: self.validator_name,
                                 access_structure: self.access_structure.clone(),
                                 advance_specific_data,
-                                messages: session.messages_by_consensus_round.clone(),
                             };
 
                             Some((computation_id, computation_request))

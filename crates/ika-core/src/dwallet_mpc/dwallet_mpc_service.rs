@@ -750,7 +750,7 @@ impl DWalletMPCService {
         rejected: bool,
     ) -> Vec<DWalletCheckpointMessageKind> {
         info!(
-            mpc_protocol=?protocol_specific_data, // yael
+            mpc_protocol=?protocol_specific_data,
             session_identifier=?session_identifier,
             "Creating session output message for checkpoint"
         );

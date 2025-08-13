@@ -50,8 +50,6 @@ pub(crate) struct Request {
     pub(crate) validator_name: AuthorityPublicKeyBytes,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
     pub(crate) advance_specific_data: AdvanceSpecificData,
-    /// Round -> Messages map.
-    pub(crate) messages: MPCRoundToMessagesHashMap,
 }
 
 impl Request {
@@ -63,24 +61,12 @@ impl Request {
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-        let messages_skeleton = self
-            .messages
-            .iter()
-            .map(|(round, messages_map)| {
-                (
-                    *round,
-                    messages_map.keys().copied().sorted().collect::<Vec<_>>(),
-                )
-            })
-            .collect::<HashMap<_, _>>();
-
         info!(
             mpc_protocol=?self.protocol_name,
             validator=?self.validator_name,
             session_identifier=?computation_id.session_identifier,
             mpc_round=?computation_id.mpc_round,
             access_structure=?self.access_structure,
-            ?messages_skeleton,
             "Advancing an MPC session"
         );
         let session_id =
@@ -285,15 +271,7 @@ impl Request {
                 ..
             } => {
                 if computation_id.mpc_round == MPC_SIGN_SECOND_ROUND {
-                    if let Some(sign_first_round_messages) = self.messages.get(&1) {
-                        let decrypters = sign_first_round_messages.keys().copied().collect();
-                        update_expected_decrypters_metrics(
-                            &public_input.expected_decrypters,
-                            decrypters,
-                            &self.access_structure,
-                            dwallet_mpc_metrics,
-                        );
-                    }
+                    // Todo (#1408): Return update_expected_decrypters_metrics
                 }
 
                 let result = Party::<SignParty>::advance_with_guaranteed_output(
