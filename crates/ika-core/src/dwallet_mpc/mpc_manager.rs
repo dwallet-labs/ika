@@ -83,8 +83,8 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) next_active_committee: Option<Committee>,
     pub(crate) dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 
-    network_dkg_third_round_delay: u64,
-    decryption_key_reconfiguration_third_round_delay: u64,
+    pub(crate) network_dkg_third_round_delay: u64,
+    pub(crate) decryption_key_reconfiguration_third_round_delay: u64,
     sui_data_receivers: SuiDataReceivers,
 }
 

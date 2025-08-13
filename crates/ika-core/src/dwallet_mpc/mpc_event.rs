@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::dwallet_mpc::crytographic_computation::ProtocolSpecificData;
 use crate::dwallet_mpc::dwallet_dkg::{
     dwallet_dkg_first_party_session_request, dwallet_dkg_second_party_session_request,
     dwallet_imported_key_verification_request_event_session_request,
@@ -9,7 +10,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::encrypt_user_share::start_encrypted_share_verification_session_request;
 use crate::dwallet_mpc::make_dwallet_user_secret_key_shares_public::make_dwallet_user_secret_key_shares_public_request_event_session_request;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::mpc_session::MPCEventData;
+use crate::dwallet_mpc::mpc_session::{MPCEventData, MPCSessionStatus};
 use crate::dwallet_mpc::network_dkg::network_dkg_session_request;
 use crate::dwallet_mpc::presign::presign_party_session_request;
 use crate::dwallet_mpc::reconfiguration::network_decryption_key_reconfiguration_session_request_from_event;
@@ -182,8 +183,8 @@ impl DWalletMPCManager {
         }
 
         if let Some(session) = self.mpc_sessions.get(&session_identifier) {
-            if session.mpc_event_data.is_some() {
-                // The corresponding session already has its event data set, nothing to do.
+            if matches!(session.status, MPCSessionStatus::Active(_)) {
+                // The corresponding session already has its data set, nothing to do.
                 return;
             }
         }
@@ -208,7 +209,24 @@ impl DWalletMPCManager {
             .add_received_event_start(&mpc_event_data.request_input);
 
         if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
-            session.mpc_event_data = Some(mpc_event_data.clone());
+            if matches!(session.status, MPCSessionStatus::WaitingForEvent) {
+                let Ok(protocol_specific_data) = ProtocolSpecificData::try_new(
+                    mpc_event_data,
+                    self.network_dkg_third_round_delay,
+                    self.decryption_key_reconfiguration_third_round_delay,
+                    self.network_keys
+                        .validator_private_dec_key_data
+                        .class_groups_decryption_key
+                        .clone(),
+                ) else {
+                    error!(
+                        session_identifier=?session_identifier,
+                        "failed to create protocol specific data for MPC session"
+                    );
+                    return;
+                };
+                session.status = MPCSessionStatus::Active(protocol_specific_data);
+            }
         } else {
             self.new_mpc_session(&session_identifier, Some(mpc_event_data));
         }
