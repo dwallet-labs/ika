@@ -96,8 +96,6 @@ pub enum ConsensusCertificateResult {
     EndOfPublish,
     /// The consensus message was ignored (e.g. because it has already been processed).
     Ignored,
-    /// An executable transaction (can be a user tx or a system tx)
-    IkaTransaction(Vec<DWalletCheckpointMessageKind>),
     /// Everything else, e.g. AuthorityCapabilities, CheckpointSignatures, etc.
     ConsensusMessage,
     /// A system message in consensus was ignored (e.g. because of end of epoch).
@@ -1167,10 +1165,6 @@ impl AuthorityPerEpochStore {
                 )
                 .await?
             {
-                ConsensusCertificateResult::IkaTransaction(cert) => {
-                    notifications.push(key.clone());
-                    verified_dwallet_checkpoint_certificates.extend(cert);
-                }
                 ConsensusCertificateResult::SystemTransaction(certs) => {
                     notifications.push(key.clone());
                     verified_system_checkpoint_certificates.extend(certs);
