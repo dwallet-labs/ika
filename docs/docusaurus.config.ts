@@ -74,15 +74,27 @@ const config: Config = {
 			items: [
 				{
 					type: 'docSidebar',
-					sidebarId: 'developerGuidesSidebar',
+					sidebarId: 'sdkGuidesSidebar',
 					position: 'left',
-					label: 'Developer Guides',
+					label: 'SDK Guides',
 				},
 				{
 					type: 'docSidebar',
 					sidebarId: 'coreConceptsSidebar',
 					position: 'left',
 					label: 'Core Concepts',
+				},
+				{
+					type: 'docSidebar',
+					sidebarId: 'operatorGuidesSidebar',
+					position: 'left',
+					label: 'Operator Guides',
+				},
+				{
+					type: 'docSidebar',
+					sidebarId: 'codeExamplesSidebar',
+					position: 'left',
+					label: 'Code Examples',
 				},
 			],
 		},
