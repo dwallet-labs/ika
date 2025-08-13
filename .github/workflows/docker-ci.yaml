@@ -1,0 +1,44 @@
+name: Build & Upload Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      cargo_build_flags:
+        description: 'Build flags for cargo'
+        required: false
+        default: '--no-default-features'
+      imageTag:
+        description: 'Tag for the Docker image'
+        required: false
+        default: 'latest'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker auth for GAR
+        run: |
+          cat > key.json <<EOF
+          ${{ secrets.GAR_KEY }}
+          EOF
+          gcloud auth activate-service-account --key-file=key.json
+          gcloud auth configure-docker us-docker.pkg.dev --quiet
+        env:
+          CLOUDSDK_CORE_PROJECT: common-449616
+
+      - name: Build and push Docker image
+        working-directory: sdk/typescript/test/chaos-test
+        env:
+          DOCKER_TAG: "us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:${{ github.event.inputs.imageTag }}"
+        run: |
+          touch .env
+          ./build.sh ${{ github.event.inputs.cargo_build_flags }}
+          docker push "$DOCKER_TAG"
