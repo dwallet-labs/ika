@@ -509,7 +509,7 @@ pub(crate) fn send_start_network_dkg_event(
                 contents: bcs::to_bytes(&new_dwallet_session_event(
                     true,
                     1,
-                    [1u8].to_vec(),
+                    [1u8; 32].to_vec(),
                     DWalletNetworkDKGEncryptionKeyRequestEvent {
                         dwallet_network_encryption_key_id: ObjectID::random(),
                         params_for_network: vec![],
