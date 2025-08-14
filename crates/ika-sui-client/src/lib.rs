@@ -631,7 +631,6 @@ where
         }
     }
 
-
     pub async fn get_dwallet_mpc_network_keys(
         &self,
         coordinator_inner: &DWalletCoordinatorInner,
