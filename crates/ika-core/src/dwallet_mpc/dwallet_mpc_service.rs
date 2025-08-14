@@ -20,12 +20,12 @@ use crate::dwallet_checkpoints::{
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::mpc_session::MPCEventData;
+use crate::dwallet_mpc::mpc_session::{MPCEventData, MPCSessionStatus};
 use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
-use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage, MPCSessionStatus};
+use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage};
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
@@ -78,7 +78,7 @@ pub struct DWalletMPCService {
     exit: Receiver<()>,
     end_of_publish: bool,
     dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-    pub sui_data_receivers: SuiDataReceivers,
+    pub sui_data_requests: SuiDataReceivers,
     pub name: AuthorityName,
     pub epoch: EpochId,
     pub protocol_config: ProtocolConfig,
@@ -140,7 +140,7 @@ impl DWalletMPCService {
             exit,
             end_of_publish: false,
             dwallet_mpc_metrics,
-            sui_data_receivers: sui_data_receivers.clone(),
+            sui_data_requests: sui_data_receivers.clone(),
             name: validator_name,
             epoch: epoch_id,
             protocol_config,
@@ -180,7 +180,7 @@ impl DWalletMPCService {
             exit: watch::channel(()).1,
             end_of_publish: false,
             dwallet_mpc_metrics: DWalletMPCMetrics::new(&Registry::new()),
-            sui_data_receivers,
+            sui_data_requests: sui_data_receivers,
             name: authority_name,
             epoch: 1,
             protocol_config: ProtocolConfig::get_for_min_version(),
@@ -194,7 +194,7 @@ impl DWalletMPCService {
 
     async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
         let (ika_current_epoch_on_sui, last_session_to_complete_in_current_epoch) = self
-            .sui_data_receivers
+            .sui_data_requests
             .last_session_to_complete_in_current_epoch_receiver
             .borrow()
             .clone();
@@ -286,27 +286,24 @@ impl DWalletMPCService {
     }
 
     async fn handle_new_events(&mut self) -> DwalletMPCResult<()> {
-        let uncompleted_events = self.load_uncompleted_events().await;
-        let pulled_events = match self.receive_new_sui_events() {
-            Ok(new_events) => new_events,
+        let uncompleted_requests = self.load_uncompleted_requests().await;
+        let pulled_requests = match self.receive_new_sui_requests() {
+            Ok(requests) => requests,
             Err(e) => {
                 error!(
                     error=?e,
-                    "failed to receive dWallet MPC events");
+                    "failed to receive dWallet new dWallet requests");
                 return Err(DwalletMPCError::TokioRecv);
             }
         };
-        let events = [uncompleted_events, pulled_events].concat();
+        let requests = [uncompleted_requests, pulled_requests].concat();
 
-        let events = self.dwallet_mpc_manager.parse_sui_events(events);
-        let events_session_identifiers = events
-            .iter()
-            .map(|e| e.session_request.session_identifier)
-            .collect_vec();
+        let requests_session_identifiers =
+            requests.iter().map(|e| e.session_identifier).collect_vec();
 
         match self
             .state
-            .get_dwallet_mpc_sessions_completed_status(events_session_identifiers.clone())
+            .get_dwallet_mpc_sessions_completed_status(requests_session_identifiers.clone())
         {
             Ok(mpc_session_identifier_to_computation_completed) => {
                 for (session_identifier, session_completed) in
@@ -320,14 +317,14 @@ impl DWalletMPCService {
 
                         info!(
                             ?session_identifier,
-                            "Got an event for a session that was previously computation completed, marking it as computation completed"
+                            "Got a request for a session that was previously computation completed, marking it as computation completed"
                         );
                     }
                 }
             }
             Err(e) => {
                 error!(
-                    ?events_session_identifiers,
+                    ?requests_session_identifiers,
                     error=?e,
                     "Could not read from the DB completed sessions, got error"
                 );
@@ -335,7 +332,7 @@ impl DWalletMPCService {
         }
 
         self.dwallet_mpc_manager
-            .handle_mpc_event_batch(events)
+            .handle_mpc_request_batch(events)
             .await;
         Ok(())
     }
@@ -578,7 +575,7 @@ impl DWalletMPCService {
                 .get(&session_identifier)
             {
                 if session.status == MPCSessionStatus::Active {
-                    if let Some(mpc_event_data) = session.mpc_event_data.clone() {
+                    if let Some(mpc_event_data) = session.request_data.clone() {
                         match computation_result {
                             Ok(GuaranteedOutputDeliveryRoundResult::Advance { message }) => {
                                 info!(

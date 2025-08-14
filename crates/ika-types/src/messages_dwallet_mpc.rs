@@ -328,6 +328,9 @@ pub struct MPCSessionRequest {
     pub epoch: u64,
     pub requires_network_key_data: bool,
     pub requires_next_active_committee: bool,
+    // True when the event was pulled from the state of the object,
+    // and False when it was pushed as an event.
+    pub pulled: bool,
 }
 
 pub trait DWalletSessionEventTrait {

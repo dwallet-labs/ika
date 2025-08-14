@@ -21,6 +21,7 @@ mod mpc_event;
 
 #[cfg(test)]
 mod integration_tests;
+pub(crate) mod session_request;
 
 pub(crate) use crytographic_computation::mpc_computations::{
     dwallet_dkg, network_dkg, presign, reconfiguration, sign,

@@ -499,11 +499,11 @@ impl IkaNode {
             .set(config.supported_protocol_versions.unwrap().max.as_u64() as i64);
         let sui_data_receivers = SuiDataReceivers {
             network_keys_receiver,
-            new_events_receiver,
+            new_requests_receiver: new_events_receiver,
             next_epoch_committee_receiver,
             last_session_to_complete_in_current_epoch_receiver,
             end_of_publish_receiver,
-            uncompleted_events_receiver,
+            uncompleted_requests_receiver: uncompleted_events_receiver,
         };
         let validator_components = if state.is_validator(&epoch_store) {
             let components = Self::construct_validator_components(

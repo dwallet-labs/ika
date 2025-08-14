@@ -7,15 +7,18 @@ use crate::dwallet_mpc::crytographic_computation::{
     ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
-use crate::dwallet_mpc::mpc_session::{DWalletMPCSession, DWalletMPCSessionOutput, MPCEventData};
+use crate::dwallet_mpc::mpc_session::{
+    DWalletMPCSession, DWalletMPCSessionOutput, MPCEventData, MPCSessionStatus,
+};
 use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
+use crate::dwallet_mpc::session_request::{AdvanceSpecificData, DWalletSessionRequest};
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
 };
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCSessionStatus};
+use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
@@ -77,8 +80,8 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) network_keys: Box<DwalletMPCNetworkKeys>,
     /// Events that wait for the network key to update.
     /// Once we get the network key, these events will be executed.
-    pub(crate) events_pending_for_network_key: HashMap<ObjectID, Vec<DWalletMPCEvent>>,
-    pub(crate) events_pending_for_next_active_committee: Vec<DWalletMPCEvent>,
+    pub(crate) requests_pending_for_network_key: HashMap<ObjectID, Vec<DWalletSessionRequest>>,
+    pub(crate) requests_pending_for_next_active_committee: Vec<DWalletSessionRequest>,
     pub(crate) next_active_committee: Option<Committee>,
     pub(crate) dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 
@@ -159,8 +162,8 @@ impl DWalletMPCManager {
             recognized_self_as_malicious: false,
             network_keys: Box::new(dwallet_network_keys),
             sui_data_receivers,
-            events_pending_for_next_active_committee: Vec::new(),
-            events_pending_for_network_key: HashMap::new(),
+            requests_pending_for_next_active_committee: Vec::new(),
+            requests_pending_for_network_key: HashMap::new(),
             dwallet_mpc_metrics,
             next_active_committee: None,
             validator_name,
@@ -330,7 +333,11 @@ impl DWalletMPCManager {
                 // This can happen if the session is not in the active sessions,
                 // but we still want to store the message.
                 // We will create a new session for it.
-                self.new_mpc_session(&session_identifier, None);
+                self.new_mpc_session(
+                    &session_identifier,
+                    None,
+                    MPCSessionStatus::WaitingForSessionRequest,
+                );
                 // Safe to `unwrap()`: we just created the session.
                 self.mpc_sessions.get_mut(&session_identifier).unwrap()
             }
@@ -346,20 +353,22 @@ impl DWalletMPCManager {
     pub(super) fn new_mpc_session(
         &mut self,
         session_identifier: &SessionIdentifier,
-        mpc_event_data: Option<MPCEventData>,
+        request: Option<DWalletSessionRequest>,
+        status: MPCSessionStatus,
     ) {
         info!(
-            "Received start MPC flow event for session identifier {:?}",
-            session_identifier
+            status=?status,
+            "Received start MPC flow request for session identifier {:?}",
+            session_identifier,
         );
-        let with_mpc_event_data = mpc_event_data.is_some();
+        let with_mpc_event_data = request.is_some();
 
         let new_session = DWalletMPCSession::new(
             self.validator_name,
-            MPCSessionStatus::Active,
+            status,
             *session_identifier,
             self.party_id,
-            mpc_event_data,
+            request,
         );
 
         info!(
@@ -395,10 +404,13 @@ impl DWalletMPCManager {
         let mut ready_to_advance_sessions: Vec<_> = self
             .mpc_sessions
             .iter()
-            .filter(|(_, session)| session.status == MPCSessionStatus::Active)
             .filter_map(|(_, session)| {
+                if !matches!(session.status, MPCSessionStatus::Active { .. }) {
+                    return None;
+                }
+
                 // Only sessions with MPC event data should be advanced
-                session.mpc_event_data.clone().and_then(|mpc_event_data| {
+                session.request_data.clone().and_then(|mpc_event_data| {
                     // Always advance system sessions, and only advance user session
                     // if they come before the last session to complete in the current epoch (at the current time).
                     let should_advance = match mpc_event_data.session_type {
@@ -418,33 +430,47 @@ impl DWalletMPCManager {
             })
             .collect();
 
-        ready_to_advance_sessions.sort_by(|(_, mpc_event_data), (_, other_mpc_event_data)| {
-            mpc_event_data.cmp(other_mpc_event_data)
-        });
+        ready_to_advance_sessions
+            .sort_by(|(_, request), (_, other_request)| request.cmp(other_request));
 
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
             .flat_map(|(session, mpc_event_data)| {
-                let rounds_to_delay = self.consensus_rounds_delay_for_mpc_round(
-                    session.current_mpc_round,
-                    &mpc_event_data,
-                );
+                // Safe to `unwrap()`, as the session is ready to advance so `request_data` must be `Some()`.
+                let request_data = session.request_data.clone().unwrap();
 
-                build_messages_to_advance(
-                    session.current_mpc_round,
-                    rounds_to_delay,
-                    session
-                        .mpc_round_to_threshold_not_reached_consensus_rounds
-                        .clone(),
-                    session.messages_by_consensus_round.clone(),
+                let MPCSessionStatus::Active {
+                    public_input,
+                    private_input,
+                } = &session.status
+                else {
+                    error!(
+                        should_never_happen =? true,
+                        session_identifier=?session.session_identifier,
+                        "session is not active, cannot perform cryptographic computation",
+                    );
+                    return None;
+                };
+                let consensus_round = session.messages_by_consensus_round.keys().max();
+
+                AdvanceSpecificData::try_new(
+                    request_data.protocol_specific_data,
+                    self.party_id,
                     &self.access_structure,
-                )
-                .map(|(consensus_round, messages_for_advance)| {
+                    consensus_round.unwrap_or_else(1),
+                    session.messages_by_consensus_round.clone(),
+                    public_input,
+                    self.network_dkg_third_round_delay,
+                    self.decryption_key_reconfiguration_third_round_delay,
+                    self.network_keys
+                        .validator_private_dec_key_data
+                        .class_groups_decryption_key
+                        .clone(),
+                )?
+                .map(|advance_specific_data| {
                     let attempt_number = session.get_attempt_number();
 
-                    // Safe to `unwrap()`, as the session is ready to advance so `mpc_event_data` must be `Some()`.
-                    let mpc_event_data = session.mpc_event_data.clone().unwrap();
-
+                    // Yael: When could the `consensus_round` be `None`?
                     let computation_id = ComputationId {
                         session_identifier: session.session_identifier,
                         consensus_round,
@@ -454,14 +480,10 @@ impl DWalletMPCManager {
 
                     let computation_request = ComputationRequest {
                         party_id: self.party_id,
+                        protocol_name: request_data.protocol_specific_data.to_string(),
                         validator_name: self.validator_name,
-                        committee: self.committee.clone(),
                         access_structure: self.access_structure.clone(),
-                        request_input: mpc_event_data.request_input,
-                        private_input: mpc_event_data.private_input,
-                        public_input: mpc_event_data.public_input,
-                        decryption_key_shares: mpc_event_data.decryption_key_shares,
-                        messages: messages_for_advance,
+                        advance_specific_data,
                     };
 
                     (computation_id, computation_request)
@@ -633,7 +655,11 @@ impl DWalletMPCManager {
                 // This can happen if the session is not in the active sessions,
                 // but we still want to store the message.
                 // We will create a new session for it.
-                self.new_mpc_session(&session_identifier, None);
+                self.new_mpc_session(
+                    &session_identifier,
+                    None,
+                    MPCSessionStatus::WaitingForSessionRequest,
+                );
                 // Safe to `unwrap()`: we just created the session.
                 self.mpc_sessions.get_mut(&session_identifier).unwrap()
             }
@@ -787,7 +813,11 @@ impl DWalletMPCManager {
                 // This can happen if the session is not in the active sessions,
                 // but we still want to store the message.
                 // We will create a new session for it.
-                self.new_mpc_session(session_identifier, None);
+                self.new_mpc_session(
+                    session_identifier,
+                    None,
+                    MPCSessionStatus::WaitingForSessionRequest,
+                );
                 // Safe to `unwrap()`: we just created the session.
                 self.mpc_sessions.get_mut(session_identifier).unwrap()
             }

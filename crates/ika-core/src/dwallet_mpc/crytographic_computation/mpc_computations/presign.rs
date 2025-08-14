@@ -18,19 +18,19 @@ pub(crate) type PresignParty = <AsyncProtocol as twopc_mpc::presign::Protocol>::
 
 pub(crate) fn presign_public_input(
     session_identifier: SessionIdentifier,
-    deserialized_event: PresignRequestEvent,
+    dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
     protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
 ) -> DwalletMPCResult<<PresignParty as mpc::Party>::PublicInput> {
     <PresignParty as PresignPartyPublicInputGenerator>::generate_public_input(
         protocol_public_parameters,
         // TODO: IMPORTANT: for global presign for schnorr / eddsa signature where the presign is not per dWallet - change the code to support it.
         // The Presign Party Public Input would not take the `DKGOutput` as input in that case - probably the go-to would be to have it as an Option in the `Protocol` trait.
-        deserialized_event.dwallet_public_output.clone().ok_or(
-            DwalletMPCError::MPCSessionError {
+        dwallet_public_output
+            .clone()
+            .ok_or(DwalletMPCError::MPCSessionError {
                 session_identifier,
                 error: "presign public input cannot be None as we only support ECDSA".to_string(),
-            },
-        )?,
+            })?,
     )
 }
 

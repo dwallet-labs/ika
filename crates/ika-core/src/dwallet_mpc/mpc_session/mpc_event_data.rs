@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::mpc_session::input::PublicInput;
-use crate::dwallet_mpc::mpc_session::session_input_from_event;
+use crate::dwallet_mpc::mpc_session::session_input_from_request;
 use crate::dwallet_mpc::network_dkg::DwalletMPCNetworkKeys;
 use dwallet_mpc_types::dwallet_mpc::MPCPrivateInput;
 use group::PartyID;
@@ -43,7 +43,7 @@ impl MPCEventData {
             ClassGroupsEncryptionKeyAndProof,
         >,
     ) -> Result<Self, DwalletMPCError> {
-        let (public_input, private_input) = session_input_from_event(
+        let (public_input, private_input) = session_input_from_request(
             event.clone(),
             access_structure,
             committee,

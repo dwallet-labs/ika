@@ -7,7 +7,7 @@ use group::PartyID;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use itertools::Itertools;
 use mpc::{
-    AsynchronouslyAdvanceable, GuaranteedOutputDeliveryParty, GuaranteedOutputDeliveryRoundResult,
+    AsynchronouslyAdvanceable, GuaranteedOutputDeliveryRoundResult,
     WeightedThresholdAccessStructure,
 };
 use rand_chacha::ChaCha20Rng;

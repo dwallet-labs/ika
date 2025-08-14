@@ -4,6 +4,7 @@
 
 extern crate core;
 
+use dwallet_mpc::session_request::DWalletSessionRequest;
 use ika_types::committee::Committee;
 use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletNetworkEncryptionKeyData};
 use std::collections::HashMap;
@@ -36,24 +37,24 @@ pub mod runtime;
 
 pub struct SuiDataReceivers {
     pub network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-    pub new_events_receiver: broadcast::Receiver<Vec<SuiEvent>>,
+    pub new_requests_receiver: broadcast::Receiver<Vec<DWalletSessionRequest>>,
     pub next_epoch_committee_receiver: Receiver<Committee>,
     pub last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
     pub end_of_publish_receiver: Receiver<Option<u64>>,
-    pub uncompleted_events_receiver: Receiver<(Vec<DBSuiEvent>, EpochId)>,
+    pub uncompleted_requests_receiver: Receiver<(Vec<DWalletSessionRequest>, EpochId)>,
 }
 
 impl Clone for SuiDataReceivers {
     fn clone(&self) -> Self {
         Self {
             network_keys_receiver: self.network_keys_receiver.clone(),
-            new_events_receiver: self.new_events_receiver.resubscribe(),
+            new_requests_receiver: self.new_requests_receiver.resubscribe(),
             next_epoch_committee_receiver: self.next_epoch_committee_receiver.clone(),
             last_session_to_complete_in_current_epoch_receiver: self
                 .last_session_to_complete_in_current_epoch_receiver
                 .clone(),
             end_of_publish_receiver: self.end_of_publish_receiver.clone(),
-            uncompleted_events_receiver: self.uncompleted_events_receiver.clone(),
+            uncompleted_requests_receiver: self.uncompleted_requests_receiver.clone(),
         }
     }
 }
@@ -96,11 +97,11 @@ impl SuiDataReceivers {
         (
             SuiDataReceivers {
                 network_keys_receiver,
-                new_events_receiver,
+                new_requests_receiver: new_events_receiver,
                 next_epoch_committee_receiver,
                 last_session_to_complete_in_current_epoch_receiver,
                 end_of_publish_receiver,
-                uncompleted_events_receiver,
+                uncompleted_requests_receiver: uncompleted_events_receiver,
             },
             senders,
         )
