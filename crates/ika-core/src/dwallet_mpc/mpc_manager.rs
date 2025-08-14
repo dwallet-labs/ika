@@ -2,11 +2,16 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::SuiDataReceivers;
+use crate::dwallet_mpc::crytographic_computation::protocol_specific_data::{
+    AdvanceSpecificData, ProtocolSpecificData,
+};
 use crate::dwallet_mpc::crytographic_computation::{
-    ComputationId, ComputationRequest, CryptographicComputationsOrchestrator, ProtocolSpecificData,
+    ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
-use crate::dwallet_mpc::mpc_session::{DWalletMPCSession, DWalletMPCSessionOutput, MPCEventData};
+use crate::dwallet_mpc::mpc_session::{
+    DWalletMPCSession, DWalletMPCSessionOutput, MPCEventData, MPCSessionStatus,
+};
 use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
 use crate::dwallet_mpc::{
@@ -14,7 +19,7 @@ use crate::dwallet_mpc::{
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
 };
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCSessionStatus};
+use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
@@ -22,7 +27,7 @@ use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
-use ika_types::dwallet_mpc_error::DwalletMPCResult;
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData,
@@ -78,8 +83,8 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) next_active_committee: Option<Committee>,
     pub(crate) dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 
-    network_dkg_third_round_delay: u64,
-    decryption_key_reconfiguration_third_round_delay: u64,
+    pub(crate) network_dkg_third_round_delay: u64,
+    pub(crate) decryption_key_reconfiguration_third_round_delay: u64,
     sui_data_receivers: SuiDataReceivers,
 }
 
@@ -332,7 +337,7 @@ impl DWalletMPCManager {
             }
         };
 
-        if session.status == MPCSessionStatus::Active {
+        if matches!(session.status, MPCSessionStatus::Active(..)) {
             session.add_message(consensus_round, mpc_round_number, sender_party_id, message);
         }
     }
@@ -348,11 +353,33 @@ impl DWalletMPCManager {
             "Received start MPC flow event for session identifier {:?}",
             session_identifier
         );
+
+        let session_status = match mpc_event_data.clone() {
+            Some(mpc_event_data) => {
+                let Ok(protocol_specific_data) = ProtocolSpecificData::try_new(
+                    mpc_event_data,
+                    self.network_dkg_third_round_delay,
+                    self.decryption_key_reconfiguration_third_round_delay,
+                    self.network_keys
+                        .validator_private_dec_key_data
+                        .class_groups_decryption_key
+                        .clone(),
+                ) else {
+                    error!(
+                        session_identifier=?session_identifier,
+                        "failed to create protocol specific data for MPC session"
+                    );
+                    return;
+                };
+                MPCSessionStatus::Active(protocol_specific_data)
+            }
+            None => MPCSessionStatus::WaitingForEvent,
+        };
         let with_mpc_event_data = mpc_event_data.is_some();
 
         let new_session = DWalletMPCSession::new(
             self.validator_name,
-            MPCSessionStatus::Active,
+            session_status,
             *session_identifier,
             self.party_id,
             mpc_event_data,
@@ -391,7 +418,7 @@ impl DWalletMPCManager {
         let mut ready_to_advance_sessions: Vec<_> = self
             .mpc_sessions
             .iter()
-            .filter(|(_, session)| session.status == MPCSessionStatus::Active)
+            .filter(|(_, session)| matches!(session.status, MPCSessionStatus::Active(..)))
             .filter_map(|(_, session)| {
                 // Only sessions with MPC event data should be advanced
                 session.mpc_event_data.clone().and_then(|mpc_event_data| {
@@ -420,63 +447,71 @@ impl DWalletMPCManager {
 
         let computation_requests: Vec<(ComputationId, ComputationRequest)> =
             ready_to_advance_sessions
-                .into_iter()
+                .iter()
                 .filter_map(|(session, mpc_event_data)| {
                     let consensus_round = session
                         .messages_by_consensus_round
                         .keys()
                         .max()
-                        .cloned()
+                        .copied()
                         .unwrap_or_default();
 
                     let protocol_name = mpc_event_data.request_input.to_string();
+                    let MPCSessionStatus::Active(protocol_specific_data) = &session.status else {
+                        error!(
+                            should_never_happen =? true,
+                            protocol =? protocol_name,
+                            session_identifier =? session.session_identifier,
+                            mpc_round =? session.current_mpc_round,
+                            "session is not active, cannot advance"
+                        );
+                        return None;
+                    };
 
-                    match ProtocolSpecificData::try_new_if_ready_to_advance(
-                        mpc_event_data,
-                        self.party_id,
-                        &self.access_structure,
-                        consensus_round.clone(),
-                        session.messages_by_consensus_round.clone(),
-                        self.network_dkg_third_round_delay,
-                        self.decryption_key_reconfiguration_third_round_delay,
-                        self.network_keys
-                            .validator_private_dec_key_data
-                            .class_groups_decryption_key
-                            .clone(),
-                    ) {
-                        Ok(protocol_specific_data) => {
-                            protocol_specific_data.map(|protocol_specific_data| {
-                                let attempt_number = session.get_attempt_number();
+                    let Ok(advance_specific_data) =
+                        AdvanceSpecificData::try_from_protocol_specific_data(
+                            protocol_specific_data,
+                            self.party_id,
+                            &self.access_structure,
+                            consensus_round.clone(),
+                            session.messages_by_consensus_round.clone(),
+                        )
+                    else {
+                        error!(
+                            protocol =? protocol_name,
+                            session_identifier =? session.session_identifier,
+                            mpc_round =? session.current_mpc_round,
+                            "failed to create advance specific data for MPC session"
+                        );
+                        return None;
+                    };
 
-                                // Safe to `unwrap()`, as the session is ready to advance so `mpc_event_data` must be `Some()`.
-                                let mpc_event_data = session.mpc_event_data.clone().unwrap();
+                    match advance_specific_data {
+                        Some(advance_specific_data) => {
+                            let attempt_number = advance_specific_data.get_attempt_number();
+                            let computation_id = ComputationId {
+                                session_identifier: session.session_identifier,
+                                consensus_round: Some(consensus_round),
+                                mpc_round: session.current_mpc_round,
+                                attempt_number,
+                            };
 
-                                let computation_id = ComputationId {
-                                    session_identifier: session.session_identifier,
-                                    consensus_round: Some(consensus_round),
-                                    mpc_round: session.current_mpc_round,
-                                    attempt_number,
-                                };
+                            let computation_request = ComputationRequest {
+                                party_id: self.party_id,
+                                protocol_name,
+                                validator_name: self.validator_name,
+                                access_structure: self.access_structure.clone(),
+                                advance_specific_data,
+                            };
 
-                                let computation_request = ComputationRequest {
-                                    party_id: self.party_id,
-                                    protocol_name,
-                                    validator_name: self.validator_name,
-                                    access_structure: self.access_structure.clone(),
-                                    protocol_specific_data,
-                                    decryption_key_shares: mpc_event_data.decryption_key_shares,
-                                    messages: session.messages_by_consensus_round.clone(),
-                                };
-
-                                (computation_id, computation_request)
-                            })
+                            Some((computation_id, computation_request))
                         }
-                        Err(err) => {
-                            error!(
+                        None => {
+                            debug!(
                                 protocol =? protocol_name,
                                 session_identifier =? session.session_identifier,
                                 mpc_round =? session.current_mpc_round,
-                                "Failed to create protocol specific data for MPC session: {err}"
+                                "session is not ready to advance, skipping"
                             );
                             None
                         }

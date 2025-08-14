@@ -215,7 +215,7 @@ impl DwalletMPCNetworkKeys {
     }
 
     /// Retrieves the decryption key shares for the current authority.
-    pub(crate) fn get_decryption_key_shares(
+    pub fn get_decryption_key_shares(
         &self,
         key_id: &ObjectID,
     ) -> DwalletMPCResult<HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>> {
