@@ -15,7 +15,6 @@ import { IkaTransaction } from '../../src/client/ika-transaction.js';
 import { getNetworkConfig } from '../../src/client/network-configs.js';
 import { Hash, IkaConfig, SignatureAlgorithm } from '../../src/client/types.js';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
-import { Config, getSystemInner, isSystemInner, SystemInner } from '../../src/dwallet-mpc/globals';
 import { createCompleteDWallet, testPresign, testSign } from './dwallet-test-helpers';
 
 // Store random seeds per test to ensure deterministic behavior within each test

@@ -63,13 +63,13 @@ describe('Network keys creation tests', () => {
 			const suiClient = createTestSuiClient();
 			const ikaClient = createTestIkaClient(suiClient);
 			// First wait for an epoch switch, to avoid creating the keys in the second half of the epoch.
-			// await waitForEpochSwitch(ikaClient);
+			await waitForEpochSwitch(ikaClient);
 			const keys = [];
 			for (let i = 0; i < numOfNetworkKeys; i++) {
 				const networkKeyID = await testCreateNetworkKey(suiClient, protocolCapID, publisherKeypair);
 				keys.push(networkKeyID);
 			}
-			// await waitForEpochSwitch(ikaClient);
+			await waitForEpochSwitch(ikaClient);
 			console.log('Epoch switched, start running full flows');
 			const tasks = keys
 				.map((networkKeyID) =>
