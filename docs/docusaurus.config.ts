@@ -102,8 +102,19 @@ const config: Config = {
 			copyright: `Copyright © ${new Date().getFullYear()} dWallet Labs, Ltd.`,
 		},
 		prism: {
-			theme: prismThemes.github,
-			darkTheme: prismThemes.dracula,
+			theme: prismThemes.oneLight,
+			darkTheme: prismThemes.oneDark,
+			additionalLanguages: [
+				'bash',
+				'json',
+				'toml',
+				'yaml',
+				'rust',
+				'typescript',
+				'javascript',
+				'python',
+			],
+			defaultLanguage: 'typescript',
 		},
 		mermaid: {
 			theme: {

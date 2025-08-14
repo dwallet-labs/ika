@@ -5,6 +5,7 @@
  */
 
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&display=swap');
+@import './prism-overrides.css';
 
 /* You can override the default Infima variables here. */
 :root {

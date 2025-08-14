@@ -46,5 +46,3 @@ This verification process is critical for Ika to function as a composable modula
 to empower builders on existing networks to control assets and manage logic across multiple blockchains securely.
 With light clients and state proofs, Ika signs transactions on behalf of users only when a valid state proof from a
 controlling smart contract is provided, ensuring the transaction's legitimacy and the network's security.
-
-The first light client implemented on Ika is a [Sui light client](../developers-guide/lightclients/sui-lightclient.md).
