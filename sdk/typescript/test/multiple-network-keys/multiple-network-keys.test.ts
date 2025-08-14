@@ -11,12 +11,12 @@ describe('Network keys creation tests', () => {
 		await ikaClient.initialize();
 
 		const publisherMnemonic =
-			'circle item cruel elegant rescue cluster bone before ecology rude comfort rare';
+			'spatial crunch gloom joy during vapor hold genius gold fold athlete glide';
 
 		let publisherKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		const keyID = await testCreateNetworkKey(
 			suiClient,
-			'0x6c39e2381922a6fab197043992d162a694166517a665330d862bdecd68401281',
+			'0xf70a9cc2d1c5c6a2e90ec25f930da6610fc932b99e150337b9f832f1eeddd977',
 			publisherKeypair,
 		);
 		console.log({ keyID });
