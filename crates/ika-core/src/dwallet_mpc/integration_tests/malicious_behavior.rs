@@ -217,7 +217,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
         mpc_round += 1;
     }
     for malicious_party_index in all_malicious_parties {
-        let malicious_actor_name = dwallet_mpc_services[malicious_party_index].name;
+        let malicious_actor_name = dwallet_mpc_services[*malicious_party_index as usize].name;
         assert!(
             dwallet_mpc_services.iter().all(|service| service
                 .dwallet_mpc_manager()
