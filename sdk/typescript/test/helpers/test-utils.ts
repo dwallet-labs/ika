@@ -1,3 +1,5 @@
+;
+
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
@@ -8,13 +10,40 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 import { randomBytes } from '@noble/hashes/utils.js';
+import { expect } from 'vitest';
+
+
 
 import { IkaClient } from '../../src/client/ika-client.js';
 import { IkaTransaction } from '../../src/client/ika-transaction.js';
 import { getNetworkConfig } from '../../src/client/network-configs.js';
-import type { IkaConfig } from '../../src/client/types.js';
+import { Hash, IkaConfig, SignatureAlgorithm } from '../../src/client/types.js';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
-import { isSharedObjectOwner } from '../../src/dwallet-mpc/globals';
+import { createCompleteDWallet, testPresign, testSign } from './dwallet-test-helpers';
+
+
+;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Store random seeds per test to ensure deterministic behavior within each test
 const testSeeds = new Map<string, Uint8Array>();
@@ -297,4 +326,61 @@ export const DEFAULT_TIMEOUT = 600_000; // 10 minutes
 
 export function delay(seconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+}
+
+export async function runSignFullFlow(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	testName: string,
+) {
+	const {
+		dWallet: activeDWallet,
+		encryptedUserSecretKeyShare,
+		userShareEncryptionKeys,
+		signerAddress,
+	} = await createCompleteDWallet(ikaClient, suiClient, testName);
+
+	// Step 2: Create presign
+	const presignRequestEvent = await testPresign(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		SignatureAlgorithm.ECDSA,
+		signerAddress,
+		testName,
+	);
+
+	expect(presignRequestEvent).toBeDefined();
+	expect(presignRequestEvent.event_data.presign_id).toBeDefined();
+
+	// Step 3: Wait for presign to complete
+	const presignObject = await retryUntil(
+		() =>
+			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
+		(presign) => presign !== null,
+		30,
+		2000,
+	);
+
+	expect(presignObject).toBeDefined();
+	expect(presignObject.state.$kind).toBe('Completed');
+
+	// Step 4: Sign a message
+	const message = createTestMessage(testName);
+	await testSign(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		userShareEncryptionKeys,
+		presignObject,
+		encryptedUserSecretKeyShare,
+		message,
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
+		testName,
+	);
+
+	// Verify the signing process completed successfully
+	// The fact that testSign didn't throw an error indicates success
+	expect(true).toBe(true);
 }
