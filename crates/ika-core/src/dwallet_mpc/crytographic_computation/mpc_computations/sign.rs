@@ -7,6 +7,7 @@
 
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::network_dkg::DwalletMPCNetworkKeys;
+use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedUserSignedMessage,
@@ -128,29 +129,37 @@ pub(crate) fn update_expected_decrypters_metrics(
 
 pub(crate) fn sign_party_session_request(
     deserialized_event: &DWalletSessionEvent<SignRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
+    pulled: bool,
+) -> DWalletSessionRequest {
+    DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
+        protocol_specific_data: ProtocolSpecificData::new(MPCRequestInput::Sign(
+            deserialized_event.clone(),
+        )),
         epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::Sign(deserialized_event.clone()),
         requires_network_key_data: true,
         requires_next_active_committee: false,
+        pulled,
     }
 }
 
 pub(crate) fn get_verify_partial_signatures_session_request(
     deserialized_event: &DWalletSessionEvent<FutureSignRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
+    pulled: bool,
+) -> DWalletSessionRequest {
+    DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
+        protocol_specific_data: ProtocolSpecificData::new(
+            MPCRequestInput::PartialSignatureVerification(deserialized_event.clone()),
+        ),
         epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::PartialSignatureVerification(deserialized_event.clone()),
         requires_network_key_data: true,
         requires_next_active_committee: false,
+        pulled,
     }
 }
 

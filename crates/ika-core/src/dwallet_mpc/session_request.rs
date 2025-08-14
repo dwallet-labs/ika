@@ -63,7 +63,6 @@ pub(crate) enum ProtocolSpecificData {
         encryption_key: Vec<u8>,
         dwallet_id: ObjectID,
         encrypted_user_secret_key_share_id: ObjectID,
-        session_sequence_number: u64,
         dwallet_network_encryption_key_id: ObjectID,
         centralized_party_message: Vec<u8>,
     },
@@ -73,14 +72,12 @@ pub(crate) enum ProtocolSpecificData {
         public_user_secret_key_shares: Vec<u8>,
         dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
         dwallet_id: ObjectID,
-        session_sequence_number: u64,
         dwallet_network_encryption_key_id: ObjectID,
     },
 
     DKGFirst {
         curve: DWalletMPCNetworkKeyScheme,
         dwallet_id: ObjectID,
-        session_sequence_number: u64,
         dwallet_network_encryption_key_id: ObjectID,
     },
 
@@ -89,7 +86,6 @@ pub(crate) enum ProtocolSpecificData {
         encrypted_centralized_secret_share_and_proof: Vec<u8>,
         encryption_key: Vec<u8>,
         dwallet_id: ObjectID,
-        session_sequence_number: u64,
         encrypted_secret_share_id: ObjectID,
         dwallet_network_encryption_key_id: ObjectID,
         first_round_output: SerializedWrappedMPCPublicOutput,
@@ -101,7 +97,6 @@ pub(crate) enum ProtocolSpecificData {
         signature_algorithm: SignatureAlgorithm,
         dwallet_id: Option<ObjectID>,
         presign_id: ObjectID,
-        session_sequence_number: u64,
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
         dwallet_network_encryption_key_id: ObjectID,
     },
@@ -110,13 +105,10 @@ pub(crate) enum ProtocolSpecificData {
         curve: DWalletMPCNetworkKeyScheme,
         hash_scheme: Hash,
         signature_algorithm: SignatureAlgorithm,
-        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
         dwallet_id: ObjectID,
         sign_id: ObjectID,
         is_future_sign: bool,
-        session_sequence_number: u64,
         dwallet_network_encryption_key_id: ObjectID,
-        session_identifier: SessionIdentifier,
         dwallet_decentralized_public_output: SerializedWrappedMPCPublicOutput,
         message: Vec<u8>,
         presign: SerializedWrappedMPCPublicOutput,
@@ -126,13 +118,10 @@ pub(crate) enum ProtocolSpecificData {
     NetworkEncryptionKeyDkg {
         key_scheme: DWalletMPCNetworkKeyScheme,
         dwallet_network_encryption_key_id: ObjectID,
-        session_sequence_number: u64,
     },
 
     NetworkEncryptionKeyReconfiguration {
-        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
         dwallet_network_encryption_key_id: ObjectID,
-        session_sequence_number: u64,
     },
 
     EncryptedShareVerification {
@@ -142,7 +131,6 @@ pub(crate) enum ProtocolSpecificData {
         encryption_key: Vec<u8>,
         dwallet_id: ObjectID,
         encrypted_user_secret_key_share_id: ObjectID,
-        session_sequence_number: u64,
         dwallet_network_encryption_key_id: ObjectID,
     },
 
@@ -156,14 +144,13 @@ pub(crate) enum ProtocolSpecificData {
         partially_signed_message: SerializedWrappedMPCPublicOutput,
         dwallet_id: ObjectID,
         partial_centralized_signed_message_id: ObjectID,
-        session_sequence_number: u64,
         dwallet_network_encryption_key_id: ObjectID,
     },
 }
 
 impl ProtocolSpecificData {
-    pub fn try_new(mpc_event_data: MPCEventData) -> Result<Self, DwalletMPCError> {
-        let res = match mpc_event_data.request_input {
+    pub fn new(request_input: MPCRequestInput) -> Self {
+        match request_input {
             MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(session_event) => {
                 ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
                     curve: session_event.event_data.curve.try_into()?,
@@ -172,7 +159,9 @@ impl ProtocolSpecificData {
                         .public_user_secret_key_shares,
                     dwallet_decentralized_output: session_event.event_data.public_output,
                     dwallet_id: session_event.event_data.dwallet_id,
-                    session_sequence_number: mpc_event_data.session_sequence_number,
+                    dwallet_network_encryption_key_id: session_event
+                        .event_data
+                        .dwallet_network_encryption_key_id,
                 }
             }
             MPCRequestInput::DWalletImportedKeyVerificationRequest(event_data) => {
@@ -186,13 +175,18 @@ impl ProtocolSpecificData {
                     encrypted_user_secret_key_share_id: event_data
                         .event_data
                         .encrypted_user_secret_key_share_id,
-                    session_sequence_number: mpc_event_data.session_sequence_number,
+                    dwallet_network_encryption_key_id: event_data
+                        .event_data
+                        .dwallet_network_encryption_key_id,
+                    centralized_party_message: event_data.event_data.centralized_party_message,
                 }
             }
             MPCRequestInput::DKGFirst(event_data) => ProtocolSpecificData::DKGFirst {
                 curve: event_data.event_data.curve.try_into()?,
                 dwallet_id: event_data.event_data.dwallet_id,
-                session_sequence_number: event_data.session_sequence_number,
+                dwallet_network_encryption_key_id: event_data
+                    .event_data
+                    .dwallet_network_encryption_key_id,
             },
             MPCRequestInput::DKGSecond(event_data) => ProtocolSpecificData::DKGSecond {
                 curve: event_data.event_data.curve.try_into()?,
@@ -201,47 +195,51 @@ impl ProtocolSpecificData {
                     .encrypted_centralized_secret_share_and_proof,
                 encryption_key: event_data.event_data.encryption_key,
                 dwallet_id: event_data.event_data.dwallet_id,
-                session_sequence_number: event_data.session_sequence_number,
                 encrypted_secret_share_id: event_data.event_data.encrypted_user_secret_key_share_id,
+                dwallet_network_encryption_key_id: event_data
+                    .event_data
+                    .dwallet_network_encryption_key_id,
+                first_round_output: event_data.event_data.first_round_output,
+                centralized_public_key_share_and_proof: event_data
+                    .event_data
+                    .centralized_public_key_share_and_proof,
             },
             MPCRequestInput::Presign(session_event) => ProtocolSpecificData::Presign {
                 curve: session_event.event_data.curve.try_into()?,
                 signature_algorithm: session_event.event_data.signature_algorithm.try_into()?,
                 dwallet_id: session_event.event_data.dwallet_id,
                 presign_id: session_event.event_data.presign_id,
-                session_sequence_number: mpc_event_data.session_sequence_number,
+                dwallet_public_output: session_event.event_data.dwallet_public_output,
+                dwallet_network_encryption_key_id: session_event
+                    .event_data
+                    .dwallet_network_encryption_key_id,
             },
-            MPCRequestInput::Sign(session_event) => {
-                let Some(decryption_key_shares) = mpc_event_data.decryption_key_shares else {
-                    return Err(DwalletMPCError::MissingDwalletMPCDecryptionKeyShares(
-                        "sign request requires decryption key shares, but none were found"
-                            .to_string(),
-                    ));
-                };
-                ProtocolSpecificData::Sign {
-                    curve: session_event.event_data.curve.try_into()?,
-                    hash_scheme: Hash::try_from(session_event.event_data.hash_scheme)
-                        .map_err(|_| DwalletMPCError::InvalidSessionPublicInput)?,
-                    signature_algorithm: session_event.event_data.signature_algorithm.try_into()?,
-                    decryption_key_shares,
-                    dwallet_id: session_event.event_data.dwallet_id,
-                    sign_id: session_event.event_data.sign_id,
-                    is_future_sign: session_event.event_data.is_future_sign,
-                    session_sequence_number: mpc_event_data.session_sequence_number,
-                }
-            }
+            MPCRequestInput::Sign(session_event) => ProtocolSpecificData::Sign {
+                curve: session_event.event_data.curve.try_into()?,
+                hash_scheme: Hash::try_from(session_event.event_data.hash_scheme)
+                    .map_err(|_| DwalletMPCError::InvalidSessionPublicInput)?,
+                signature_algorithm: session_event.event_data.signature_algorithm.try_into()?,
+                dwallet_id: session_event.event_data.dwallet_id,
+                sign_id: session_event.event_data.sign_id,
+                is_future_sign: session_event.event_data.is_future_sign,
+                dwallet_network_encryption_key_id: session_event
+                    .event_data
+                    .dwallet_network_encryption_key_id,
+                dwallet_decentralized_public_output: session_event
+                    .event_data
+                    .dwallet_decentralized_public_output,
+                message: session_event.event_data.message,
+                presign: session_event.event_data.presign,
+                message_centralized_signature: session_event
+                    .event_data
+                    .message_centralized_signature,
+            },
             MPCRequestInput::NetworkEncryptionKeyDkg(key_scheme, session_event) => {
                 ProtocolSpecificData::NetworkEncryptionKeyDkg {
                     key_scheme,
-                    // class_groups_decryption_key,
-                    // mpc_round_to_consensus_rounds_delay: HashMap::from([(
-                    //     3,
-                    //     network_dkg_third_round_delay,
-                    // )]),
                     dwallet_network_encryption_key_id: session_event
                         .event_data
                         .dwallet_network_encryption_key_id,
-                    session_sequence_number: mpc_event_data.session_sequence_number,
                 }
             }
             MPCRequestInput::EncryptedShareVerification(event_data) => {
@@ -256,7 +254,9 @@ impl ProtocolSpecificData {
                     encrypted_user_secret_key_share_id: event_data
                         .event_data
                         .encrypted_user_secret_key_share_id,
-                    session_sequence_number: mpc_event_data.session_sequence_number,
+                    dwallet_network_encryption_key_id: event_data
+                        .event_data
+                        .dwallet_network_encryption_key_id,
                 }
             }
             MPCRequestInput::PartialSignatureVerification(event_data) => {
@@ -272,27 +272,19 @@ impl ProtocolSpecificData {
                     partial_centralized_signed_message_id: event_data
                         .event_data
                         .partial_centralized_signed_message_id,
-                    session_sequence_number: mpc_event_data.session_sequence_number,
+                    dwallet_network_encryption_key_id: event_data
+                        .event_data
+                        .dwallet_network_encryption_key_id,
                 }
             }
             MPCRequestInput::NetworkEncryptionKeyReconfiguration(session_event) => {
-                let Some(decryption_key_shares) = mpc_event_data.decryption_key_shares else {
-                    return Err(DwalletMPCError::MissingDwalletMPCDecryptionKeyShares("reconfiguration request requires decryption key shares, but none were found".to_string()));
-                };
                 ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
-                    decryption_key_shares,
-                    // mpc_round_to_consensus_rounds_delay: HashMap::from([(
-                    //     3,
-                    //     decryption_key_reconfiguration_third_round_delay,
-                    // )]),
                     dwallet_network_encryption_key_id: session_event
                         .event_data
                         .dwallet_network_encryption_key_id,
-                    session_sequence_number: mpc_event_data.session_sequence_number,
                 }
             }
-        };
-        Ok(res)
+        }
     }
 
     pub fn curve(&self) -> String {

@@ -10,6 +10,7 @@ use crate::dwallet_mpc::make_dwallet_user_secret_key_shares_public::make_dwallet
 use crate::dwallet_mpc::network_dkg::network_dkg_session_request;
 use crate::dwallet_mpc::presign::presign_party_session_request;
 use crate::dwallet_mpc::reconfiguration::network_decryption_key_reconfiguration_session_request_from_event;
+use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 use crate::dwallet_mpc::sign::{
     get_verify_partial_signatures_session_request, sign_party_session_request,
 };
@@ -26,12 +27,13 @@ use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;
 use sui_types::dynamic_field::Field;
 use sui_types::id::ID;
+
 pub(crate) fn parse_sui_event(
     packages_config: &IkaNetworkConfig,
     event_type: StructTag,
     contents: &[u8],
     pulled: bool,
-) -> anyhow::Result<Option<DWalletMPCEvent>> {
+) -> anyhow::Result<Option<DWalletSessionRequest>> {
     let session_request = if event_type
         == DWalletSessionEvent::<DWalletImportedKeyVerificationRequestEvent>::type_(packages_config)
     {
@@ -39,6 +41,7 @@ pub(crate) fn parse_sui_event(
             deserialize_event_contents::<DWalletImportedKeyVerificationRequestEvent>(
                 &contents, pulled,
             )?,
+            pulled,
         )
     } else if event_type
         == DWalletSessionEvent::<MakeDWalletUserSecretKeySharesPublicRequestEvent>::type_(
@@ -49,34 +52,37 @@ pub(crate) fn parse_sui_event(
             deserialize_event_contents::<MakeDWalletUserSecretKeySharesPublicRequestEvent>(
                 &contents, pulled,
             )?,
+            pulled,
         )
     } else if event_type
         == DWalletSessionEvent::<DWalletDKGFirstRoundRequestEvent>::type_(packages_config)
     {
-        dwallet_dkg_first_party_session_request(deserialize_event_contents::<
-            DWalletDKGFirstRoundRequestEvent,
-        >(&contents, pulled)?)?
+        dwallet_dkg_first_party_session_request(
+            deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(&contents, pulled)?,
+            pulled,
+        )
     } else if event_type
         == DWalletSessionEvent::<DWalletDKGSecondRoundRequestEvent>::type_(packages_config)
     {
-        dwallet_dkg_second_party_session_request(deserialize_event_contents::<
-            DWalletDKGSecondRoundRequestEvent,
-        >(&contents, pulled)?)
+        dwallet_dkg_second_party_session_request(
+            deserialize_event_contents::<DWalletDKGSecondRoundRequestEvent>(&contents, pulled)?,
+            pulled,
+        )
     } else if event_type == DWalletSessionEvent::<PresignRequestEvent>::type_(packages_config) {
         let deserialized_event: DWalletSessionEvent<PresignRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
-        presign_party_session_request(deserialized_event)
+        presign_party_session_request(deserialized_event, pulled)
     } else if event_type == DWalletSessionEvent::<SignRequestEvent>::type_(packages_config) {
         let deserialized_event: DWalletSessionEvent<SignRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
-        sign_party_session_request(&deserialized_event)
+        sign_party_session_request(&deserialized_event, pulled)
     } else if event_type == DWalletSessionEvent::<FutureSignRequestEvent>::type_(packages_config) {
         let deserialized_event: DWalletSessionEvent<FutureSignRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
-        get_verify_partial_signatures_session_request(&deserialized_event)
+        get_verify_partial_signatures_session_request(&deserialized_event, pulled)
     } else if event_type
         == DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(packages_config)
     {
@@ -100,17 +106,12 @@ pub(crate) fn parse_sui_event(
         let deserialized_event: DWalletSessionEvent<EncryptedShareVerificationRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
-        start_encrypted_share_verification_session_request(deserialized_event)
+        start_encrypted_share_verification_session_request(deserialized_event, pulled)
     } else {
         return Ok(None);
     };
 
-    let event = DWalletMPCEvent {
-        session_request,
-        pulled,
-    };
-
-    Ok(Some(event))
+    Ok(Some(session_request))
 }
 
 /// The type of the event is different when we receive an emitted event and when we

@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedEncryptedUserShare,
@@ -15,15 +16,19 @@ use twopc_mpc::secp256k1::class_groups::AsyncProtocol;
 
 pub(crate) fn start_encrypted_share_verification_session_request(
     deserialized_event: DWalletSessionEvent<EncryptedShareVerificationRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
+    pulled: bool,
+) -> DWalletSessionRequest {
+    DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
+        protocol_specific_data: ProtocolSpecificData::new(
+            MPCRequestInput::EncryptedShareVerification(deserialized_event.clone()),
+        ),
         epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::EncryptedShareVerification(deserialized_event),
         requires_network_key_data: true,
         requires_next_active_committee: false,
+        pulled,
     }
 }
 

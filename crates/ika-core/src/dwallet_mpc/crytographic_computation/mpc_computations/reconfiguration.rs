@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
@@ -104,15 +105,18 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationSecp256k1Party 
 
 pub(crate) fn network_decryption_key_reconfiguration_session_request_from_event(
     deserialized_event: DWalletSessionEvent<DWalletEncryptionKeyReconfigurationRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
+) -> DWalletSessionRequest {
+    DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
+        protocol_specific_data: ProtocolSpecificData::new(
+            MPCRequestInput::NetworkEncryptionKeyReconfiguration(deserialized_event.clone()),
+        ),
         epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::NetworkEncryptionKeyReconfiguration(deserialized_event),
         requires_network_key_data: true,
         requires_next_active_committee: true,
+        pulled: false,
     }
 }
 

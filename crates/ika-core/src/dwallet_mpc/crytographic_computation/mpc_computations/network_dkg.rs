@@ -6,12 +6,12 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::crytographic_computation::advance;
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationSecp256k1Party,
     instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output,
 };
+use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 use class_groups::dkg::{Secp256k1Party, Secp256k1PublicInput};
 use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
@@ -320,48 +320,59 @@ pub(crate) fn network_dkg_public_input(
 pub(crate) fn network_dkg_session_request(
     deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
     key_scheme: DWalletMPCNetworkKeyScheme,
-) -> DwalletMPCResult<MPCSessionRequest> {
+    pulled: bool,
+) -> DwalletMPCResult<DWalletSessionRequest> {
     match key_scheme {
-        DWalletMPCNetworkKeyScheme::Secp256k1 => {
-            Ok(network_dkg_secp256k1_session_request(deserialized_event))
-        }
-        DWalletMPCNetworkKeyScheme::Ristretto => {
-            Ok(network_dkg_ristretto_session_request(deserialized_event))
-        }
+        DWalletMPCNetworkKeyScheme::Secp256k1 => Ok(network_dkg_secp256k1_session_request(
+            deserialized_event,
+            pulled,
+        )),
+        DWalletMPCNetworkKeyScheme::Ristretto => Ok(network_dkg_ristretto_session_request(
+            deserialized_event,
+            pulled,
+        )),
     }
 }
 
 fn network_dkg_secp256k1_session_request(
     deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
+    pulled: bool,
+) -> DWalletSessionRequest {
+    DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::NetworkEncryptionKeyDkg(
-            DWalletMPCNetworkKeyScheme::Secp256k1,
-            deserialized_event,
+        protocol_specific_data: ProtocolSpecificData::new(
+            MPCRequestInput::NetworkEncryptionKeyDkg(
+                DWalletMPCNetworkKeyScheme::Secp256k1,
+                deserialized_event.clone(),
+            ),
         ),
+        epoch: deserialized_event.epoch,
         requires_network_key_data: false,
         requires_next_active_committee: false,
+        pulled,
     }
 }
 
 fn network_dkg_ristretto_session_request(
     deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
+    pulled: bool,
+) -> DWalletSessionRequest {
+    DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::NetworkEncryptionKeyDkg(
-            DWalletMPCNetworkKeyScheme::Ristretto,
-            deserialized_event,
+        protocol_specific_data: ProtocolSpecificData::new(
+            MPCRequestInput::NetworkEncryptionKeyDkg(
+                DWalletMPCNetworkKeyScheme::Ristretto,
+                deserialized_event.clone(),
+            ),
         ),
+        epoch: deserialized_event.epoch,
         requires_network_key_data: false,
         requires_next_active_committee: false,
+        pulled,
     }
 }
 

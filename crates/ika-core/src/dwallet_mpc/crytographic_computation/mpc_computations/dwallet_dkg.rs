@@ -4,6 +4,7 @@
 //! This module provides a wrapper around the DKG protocol from the 2PC-MPC library.
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
+use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
     VersionedPublicKeyShareAndProof,
@@ -16,6 +17,7 @@ use ika_types::messages_dwallet_mpc::{
 };
 use mpc::Party;
 use twopc_mpc::dkg::Protocol;
+
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = <AsyncProtocol as Protocol>::EncryptionOfSecretKeyShareRoundParty;
 pub(crate) type DWalletImportedKeyVerificationParty =
@@ -45,43 +47,55 @@ pub(crate) fn dwallet_dkg_second_public_input(
 
 pub(crate) fn dwallet_imported_key_verification_request_event_session_request(
     deserialized_event: DWalletSessionEvent<DWalletImportedKeyVerificationRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
+    pulled: bool,
+) -> DWalletSessionRequest {
+    DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
+        protocol_specific_data: ProtocolSpecificData::new(
+            MPCRequestInput::DWalletImportedKeyVerificationRequest(deserialized_event.clone()),
+        ),
         epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::DWalletImportedKeyVerificationRequest(deserialized_event),
         requires_network_key_data: true,
         requires_next_active_committee: false,
+        pulled,
     }
 }
 
 pub(crate) fn dwallet_dkg_first_party_session_request(
     deserialized_event: DWalletSessionEvent<DWalletDKGFirstRoundRequestEvent>,
-) -> anyhow::Result<MPCSessionRequest> {
-    Ok(MPCSessionRequest {
+    pulled: bool,
+) -> DWalletSessionRequest {
+    DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
+        protocol_specific_data: ProtocolSpecificData::new(MPCRequestInput::DKGFirst(
+            deserialized_event.clone(),
+        )),
         epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::DKGFirst(deserialized_event),
         requires_network_key_data: true,
         requires_next_active_committee: false,
-    })
+        pulled,
+    }
 }
 
 pub(crate) fn dwallet_dkg_second_party_session_request(
     deserialized_event: DWalletSessionEvent<DWalletDKGSecondRoundRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
+    pulled: bool,
+) -> DWalletSessionRequest {
+    DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
+        protocol_specific_data: ProtocolSpecificData::new(MPCRequestInput::DKGSecond(
+            deserialized_event.clone(),
+        )),
         epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::DKGSecond(deserialized_event.clone()),
         requires_network_key_data: true,
         requires_next_active_committee: false,
+        pulled,
     }
 }
 
