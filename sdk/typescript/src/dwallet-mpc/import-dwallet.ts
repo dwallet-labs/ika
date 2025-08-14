@@ -1,7 +1,4 @@
-import {
-	create_imported_dwallet_centralized_step,
-	encrypt_secret_share,
-} from '@dwallet-network/dwallet-mpc-wasm';
+import { create_imported_dwallet_centralized_step, encrypt_secret_share } from '@ika.xyz/mpc-wasm';
 import { bcs } from '@mysten/bcs';
 import { Transaction } from '@mysten/sui/transactions';
 

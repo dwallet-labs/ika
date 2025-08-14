@@ -1,4 +1,4 @@
-import { create_sign_centralized_output } from '@dwallet-network/dwallet-mpc-wasm';
+import { create_sign_centralized_party_message } from '@ika.xyz/mpc-wasm';
 import { bcs } from '@mysten/bcs';
 import type { TransactionResult } from '@mysten/sui/dist/cjs/transactions/Transaction';
 import { Transaction } from '@mysten/sui/transactions';
@@ -144,7 +144,7 @@ export async function sign(
 	const presign = await getObjectWithType(conf, presignID, isPresign);
 
 	console.time('create_sign_centralized_output');
-	const centralizedSignedMessage = create_sign_centralized_output(
+	const centralizedSignedMessage = create_sign_centralized_party_message(
 		networkDecryptionKeyPublicOutput,
 		activeDWallet.state.fields.public_output,
 		secretKey,
@@ -204,7 +204,7 @@ export async function signWithImportedDWallet(
 	const activeDWallet = await getObjectWithType(conf, dwalletID, isActiveDWallet);
 	const presign = await getObjectWithType(conf, presignID, isPresign);
 
-	const centralizedSignedMessage = create_sign_centralized_output(
+	const centralizedSignedMessage = create_sign_centralized_party_message(
 		networkDecryptionKeyPublicOutput,
 		activeDWallet.state.fields.public_output,
 		secretKey,
@@ -291,7 +291,7 @@ export async function createUnverifiedPartialUserSignatureCap(
 	const dWalletStateData = await getDWalletSecpState(conf);
 	const tx = new Transaction();
 
-	const centralizedSignedMessage = create_sign_centralized_output(
+	const centralizedSignedMessage = create_sign_centralized_party_message(
 		networkDecryptionKeyPublicOutput,
 		activeDWallet.state.fields.public_output,
 		secretKey,

@@ -3,7 +3,7 @@ import {
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
 	verify_user_share,
-} from '@dwallet-network/dwallet-mpc-wasm';
+} from '@ika.xyz/mpc-wasm';
 import { bcs, toHex } from '@mysten/bcs';
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';

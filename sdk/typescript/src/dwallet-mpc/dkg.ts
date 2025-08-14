@@ -1,9 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd..
 // SPDX-License-Identifier: BSD-3-Clause-Clear
-import {
-	create_dkg_centralized_output,
-	encrypt_secret_share,
-} from '@dwallet-network/dwallet-mpc-wasm';
+
+import { create_dkg_centralized_output, encrypt_secret_share } from '@ika.xyz/mpc-wasm';
 import { bcs } from '@mysten/bcs';
 import { Transaction } from '@mysten/sui/transactions';
 

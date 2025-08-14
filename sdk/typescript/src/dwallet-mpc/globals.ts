@@ -1,11 +1,11 @@
 // Copyright (c) dWallet Labs, Ltd..
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 import * as fs from 'node:fs';
-import { network_dkg_public_output_to_protocol_pp } from '@dwallet-network/dwallet-mpc-wasm';
+import { network_dkg_public_output_to_protocol_pp } from '@ika.xyz/mpc-wasm';
 import type { SuiClient } from '@mysten/sui/client';
 import type { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import type { Transaction } from '@mysten/sui/transactions';
-import sha3 from 'js-sha3';
+import { keccak_256 } from '@noble/hashes/sha3';
 
 export const DWALLET_COORDINATOR_MOVE_MODULE_NAME = 'coordinator';
 export const DWALLET_COORDINATOR_INNER_MOVE_MODULE_NAME = 'coordinator_inner';
@@ -536,8 +536,12 @@ function u64ToBytesBigEndian(value: number | bigint): Uint8Array {
 export function sessionIdentifierDigest(sessionIdentifier: Uint8Array): Uint8Array {
 	const version = 0; // Version of the session identifier
 	// Calculate the user session identifier for digest
-	const data = [...u64ToBytesBigEndian(version), ...encodeToASCII('USER'), ...sessionIdentifier];
+	const data = Uint8Array.from([
+		...u64ToBytesBigEndian(version),
+		...encodeToASCII('USER'),
+		...sessionIdentifier,
+	]);
 	// Compute the SHA3-256 digest of the serialized data
-	const digest = sha3.keccak256.digest(data);
+	const digest = keccak_256(data);
 	return Uint8Array.from(digest);
 }

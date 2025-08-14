@@ -6,7 +6,7 @@ import {
 	public_key_from_dwallet_output,
 	sample_dwallet_keypair,
 	verify_secp_signature,
-} from '@dwallet-network/dwallet-mpc-wasm';
+} from '@ika.xyz/mpc-wasm';
 import { SuiClient } from '@mysten/sui/client';
 import { requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
@@ -41,6 +41,37 @@ import {
 	signWithImportedDWallet,
 	verifySignWithPartialUserSignatures,
 } from '../../src/dwallet-mpc/sign';
+import { runFullFlowTestWithNetworkKey, waitForEpochSwitch } from './utils/utils';
+
+// const SUI_FULLNODE_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
+// const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
+const SUI_FULLNODE_URL = getFullnodeUrl('localnet');
+const SUI_FAUCET_HOST = getFaucetHost('localnet');
+
+export async function createConf(): Promise<Config> {
+	const keypair = Ed25519Keypair.generate();
+	const dWalletSeed = crypto.getRandomValues(new Uint8Array(32));
+	const encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+		Buffer.from(dWalletSeed).toString('hex'),
+	);
+	const address = keypair.getPublicKey().toSuiAddress();
+	console.log(`Address: ${address}`);
+	const suiClient = new SuiClient({ url: SUI_FULLNODE_URL });
+	await requestSuiFromFaucetV2({
+		host: SUI_FAUCET_HOST,
+		recipient: address,
+	});
+
+	return {
+		suiClientKeypair: keypair,
+		client: suiClient,
+		timeout: fiveMinutes,
+		// todo(zeev): fix this, bad parsing, bad path, needs to be localized.
+		ikaConfig: require(path.resolve(process.cwd(), '../../ika_config.json')),
+		dWalletSeed,
+		encryptedSecretShareSigningKeypair,
+	};
+}
 
 const SUI_FULLNODE_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
 const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
@@ -130,13 +161,51 @@ describe('Test dWallet MPC', () => {
 
 	it('run multiple full flows simultaneously', async () => {
 		const networkKeyID = await getNetworkDecryptionKeyID(conf);
-		const tasks = [];
+		const tasks: Promise<void>[] = [];
 		for (let i = 0; i < 5; i++) {
 			const conf = await createConf();
 			tasks.push(runFullFlowTestWithNetworkKey(conf, networkKeyID));
 		}
 		await Promise.all(tasks);
 	});
+
+	it(
+		'create multiple network keys and run multiple full flows with each of them',
+		async () => {
+			// IMPORTANT: Update with values from your Ika chain before running the test.
+			// The publisher mnemonic can be fetched from the publisher logs while it deploys the Ika network,
+			// and the protocol Cap ID is one of the objects owned by it with the type `ProtocolCap`.
+			const protocolCapID = '0x437441f8bda550e82b24ad90e59182a8079ead3dd7cab342e2fb45297888ac3f';
+			const publisherMnemonic =
+				'circle item cruel elegant rescue cluster bone before ecology rude comfort rare';
+
+			const keyCreatorConf = await createConf();
+			keyCreatorConf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
+			const numOfNetworkKeys = 2;
+			const flowsPerKey = 2;
+			// First wait for an epoch switch, to avoid creating the keys in the second half of the epoch.
+			await waitForEpochSwitch(conf);
+			const keys = [];
+			for (let i = 0; i < numOfNetworkKeys; i++) {
+				const networkKeyID = await createNetworkKey(keyCreatorConf, protocolCapID);
+				keys.push(networkKeyID);
+			}
+			await waitForEpochSwitch(conf);
+			console.log('Epoch switched, start running full flows');
+			const tasks = keys
+				.map((networkKeyID) =>
+					Array(flowsPerKey)
+						.fill(null)
+						.map(async () => {
+							const conf = await createConf();
+							return runFullFlowTestWithNetworkKey(conf, networkKeyID);
+						}),
+				)
+				.flat();
+			await Promise.all(tasks);
+		},
+		60 * 1000 * 60 * 4,
+	);
 
 	it('should launch DKG first round with given coins', async () => {
 		console.log('Creating dWallet...');
@@ -376,22 +445,22 @@ describe('Test dWallet MPC', () => {
 
 	it('should create a network key', async () => {
 		const publisherMnemonic =
-			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
+			'erupt aunt update illness ask shoulder pistol wheel scorpion fault box middle';
 		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		const keyID = await createNetworkKey(
 			conf,
-			'0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa',
+			'0x6c39e2381922a6fab197043992d162a694166517a665330d862bdecd68401281',
 		);
 		console.log({ keyID });
 	});
 
 	it('should create a network key & run full flow with it', async () => {
 		const publisherMnemonic =
-			'whisper afford shoulder vintage seed kangaroo rifle coil because weasel gospel similar';
+			'key energy weapon biology worth crack aspect citizen ceiling banner network emotion';
 		conf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
 		const networkKeyID = await createNetworkKey(
 			conf,
-			'0x4eed37337544635334398828075b8e18c37d521b8267114d08fd09604d5519fa',
+			'0xebaa6271f1a71c37d55771bbe927a245ff680f4d28531627ab0ab8f72bf26fad',
 		);
 		console.log({ networkKeyID });
 		await runFullFlowTestWithNetworkKey(conf, networkKeyID);

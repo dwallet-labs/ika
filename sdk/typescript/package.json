@@ -1,160 +1,66 @@
 {
-	"name": "@ika-io/ika",
-	"author": "Mysten Labs <build@mystenlabs.com>",
-	"description": "Ika TypeScript API(Work in Progress)",
-	"homepage": "https://sdk.mystenlabs.com",
-	"version": "1.14.3",
+	"name": "@ika.xyz/sdk",
+	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
+	"description": "Ika TypeScript SDK",
+	"homepage": "https://sdk.ika.xyz",
+	"version": "1.0.0",
 	"license": "BSD-3-Clause-Clear",
 	"sideEffects": false,
 	"files": [
 		"CHANGELOG.md",
-		"LICENSE",
-		"README.md",
-		"bcs",
-		"builder",
-		"client",
-		"cryptography",
 		"dist",
-		"faucet",
-		"graphql",
-		"keypairs",
-		"multisig",
-		"src",
-		"transactions",
-		"utils",
-		"verify",
-		"zklogin"
+		"src"
 	],
 	"engines": {
 		"node": ">=18"
 	},
 	"type": "commonjs",
 	"exports": {
-		"./bcs": {
-			"import": "./dist/esm/bcs/index.js",
-			"require": "./dist/cjs/bcs/index.js"
-		},
-		"./client": {
-			"import": "./dist/esm/client/index.js",
-			"require": "./dist/cjs/client/index.js"
-		},
-		"./cryptography": {
-			"import": "./dist/esm/cryptography/index.js",
-			"require": "./dist/cjs/cryptography/index.js"
-		},
-		"./faucet": {
-			"import": "./dist/esm/faucet/index.js",
-			"require": "./dist/cjs/faucet/index.js"
-		},
-		"./graphql": {
-			"import": "./dist/esm/graphql/index.js",
-			"require": "./dist/cjs/graphql/index.js"
-		},
-		"./keypairs/ed25519": {
-			"import": "./dist/esm/keypairs/ed25519/index.js",
-			"require": "./dist/cjs/keypairs/ed25519/index.js"
-		},
-		"./keypairs/secp256k1": {
-			"import": "./dist/esm/keypairs/secp256k1/index.js",
-			"require": "./dist/cjs/keypairs/secp256k1/index.js"
-		},
-		"./keypairs/secp256r1": {
-			"import": "./dist/esm/keypairs/secp256r1/index.js",
-			"require": "./dist/cjs/keypairs/secp256r1/index.js"
-		},
-		"./multisig": {
-			"import": "./dist/esm/multisig/index.js",
-			"require": "./dist/cjs/multisig/index.js"
-		},
-		"./transactions": {
-			"import": "./dist/esm/transactions/index.js",
-			"require": "./dist/cjs/transactions/index.js"
-		},
-		"./utils": {
-			"import": "./dist/esm/utils/index.js",
-			"require": "./dist/cjs/utils/index.js"
-		},
-		"./verify": {
-			"import": "./dist/esm/verify/index.js",
-			"require": "./dist/cjs/verify/index.js"
-		},
-		"./zklogin": {
-			"import": "./dist/esm/zklogin/index.js",
-			"require": "./dist/cjs/zklogin/index.js"
-		},
-		"./graphql/schemas/2024.1": {
-			"import": "./dist/esm/graphql/schemas/2024.1/index.js",
-			"require": "./dist/cjs/graphql/schemas/2024.1/index.js"
-		},
-		"./graphql/schemas/2024.4": {
-			"import": "./dist/esm/graphql/schemas/2024.4/index.js",
-			"require": "./dist/cjs/graphql/schemas/2024.4/index.js"
+		".": {
+			"import": "./dist/esm/index.js",
+			"require": "./dist/cjs/index.js"
 		}
 	},
 	"scripts": {
-		"clean": "rm -rf tsconfig.tsbuildinfo ./dist",
-		"codegen:version": "node genversion.mjs",
-		"build": "tsc",
-		"build:package": "build-package",
-		"vitest": "vitest",
-		"test": "pnpm test:typecheck && pnpm test:unit",
-		"test:typecheck": "tsc -p ./test",
-		"test:unit": "vitest run unit __tests__",
-		"test:e2e": "wait-on http://127.0.0.1:9123 -l --timeout 180000 && vitest run e2e",
-		"test:e2e:nowait": "vitest run e2e",
-		"prepare:e2e": "docker-compose down && docker-compose up -d && cargo build --bin ika --profile dev && cross-env RUST_LOG=warn,ika=error,anemo_tower=warn,consensus=off ../../target/debug/ika start --with-faucet --force-regenesis --with-indexer --pg-port 5435 --pg-db-name ika_indexer_v2 --with-graphql",
-		"prepublishOnly": "pnpm build",
-		"size": "size-limit",
-		"analyze": "size-limit --why",
+		"build": "build-package",
+		"test": "echo 'No unit tests for kiosk SDK'",
+		"pre-commit": "pnpm prettier:fix && pnpm lint && pnpm build",
+		"prepublishOnly": "pnpm turbo build",
 		"prettier:check": "prettier -c \"**/*.ts\" --ignore-unknown",
 		"prettier:fix": "prettier -w --ignore-unknown .",
 		"eslint:check": "eslint --max-warnings=0 .",
 		"eslint:fix": "pnpm run eslint:check --fix",
 		"lint": "pnpm run eslint:check && pnpm run prettier:check",
 		"lint:fix": "pnpm run eslint:fix && pnpm run prettier:fix",
-		"update-schemas": "pnpm tsx scripts/update-graphql-schemas.ts",
-		"generate-schema": "gql.tada generate-output"
+		"test:e2e": "vitest run e2e",
+		"postinstall": "pnpm create-summaries && pnpm sui-ts-codegen generate",
+		"create-summaries:ika": "cd ../../contracts/ika && sui move summary",
+		"create-summaries:dwallet_2pc_mpc": "cd ../../contracts/ika_dwallet_2pc_mpc && sui move summary",
+		"create-summaries:common": "cd ../../contracts/ika_common && sui move summary",
+		"create-summaries:system": "cd ../../contracts/ika_system && sui move summary",
+		"create-summaries": "pnpm create-summaries:ika && pnpm create-summaries:dwallet_2pc_mpc && pnpm create-summaries:common && pnpm create-summaries:system"
 	},
 	"bugs": {
-		"url": "https://github.com/MystenLabs/sui/issues/new"
+		"url": "https://github.com/dwallet-labs/ika/issues/new"
 	},
 	"publishConfig": {
 		"access": "public"
 	},
 	"devDependencies": {
-		"@iarna/toml": "^2.2.5",
+		"@ika.xyz/build-scripts": "workspace:*",
 		"@types/node": "^22.15.21",
-		"@types/tmp": "^0.2.6",
-		"@types/ws": "^8.18.1",
-		"cross-env": "^7.0.3",
-		"graphql-config": "^5.1.5",
-		"msw": "^2.8.4",
-		"tmp": "^0.2.3",
-		"ts-retry-promise": "^0.8.1",
 		"typescript": "^5.8.3",
-		"vite": "6.3.5",
-		"vitest": "3.1.4",
-		"wait-on": "^8.0.3",
-		"ws": "^8.18.2"
+		"vitest": "3.1.4"
 	},
 	"dependencies": {
-		"@dwallet-network/dwallet-mpc-wasm": "workspace:*",
-		"@graphql-typed-document-node/core": "^3.2.0",
-		"@kubernetes/client-node": "^1.1.2",
-		"@mysten/bcs": "^1.6.1",
-		"@mysten/sui": "^1.30.1",
-		"@noble/curves": "^1.9.1",
+		"@ika.xyz/mpc-wasm": "workspace:*",
+		"@kubernetes/client-node": "^1.3.0",
+		"@mysten/bcs": "^1.7.0",
+		"@mysten/codegen": "^0.3.0",
+		"@mysten/sui": "^1.37.1",
 		"@noble/hashes": "^1.8.0",
-		"@scure/bip32": "^1.7.0",
-		"@scure/bip39": "^1.6.0",
-		"@suchipi/femver": "^1.0.0",
-		"bech32": "^2.0.0",
-		"dotenv": "^16.5.0",
+		"dotenv": "^17.2.1",
 		"execa": "^9.6.0",
-		"gql.tada": "^1.8.10",
-		"graphql": "^16.11.0",
-		"js-sha3": "^0.9.3",
-		"tweetnacl": "^1.0.3",
-		"valibot": "^1.1.0"
+		"typedoc": "^0.28.9"
 	}
 }

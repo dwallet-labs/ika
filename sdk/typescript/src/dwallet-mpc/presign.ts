@@ -9,7 +9,7 @@ import {
 	getObjectWithType,
 	SUI_PACKAGE_ID,
 } from './globals.js';
-import type { Config } from './globals.ts';
+import type { Config } from './globals.js';
 
 export interface CompletedPresign {
 	state: {

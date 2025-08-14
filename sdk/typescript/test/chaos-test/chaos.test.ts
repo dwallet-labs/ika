@@ -4,8 +4,9 @@ import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
 import { execa } from 'execa';
 import { describe, it } from 'vitest';
 
-import { delay, getNetworkDecryptionKeyID, getSystemInner } from '../../src/dwallet-mpc/globals';
-import { createConf, runFullFlowTestWithNetworkKey } from '../e2e/dwallet-mpc.test';
+import { delay, getNetworkDecryptionKeyID } from '../../src/dwallet-mpc/globals';
+import { createConf } from '../e2e/dwallet-mpc.test';
+import { runFullFlowTestWithNetworkKey, waitForEpochSwitch } from '../e2e/utils/utils';
 import { createConfigMaps } from './config-map';
 import { NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
 import { createNetworkServices } from './network-service';
@@ -40,7 +41,7 @@ describe('chaos tests', () => {
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
-		await killValidatorPod(kc, NAMESPACE_NAME, Number(2));
+		await killValidatorPod(kc, NAMESPACE_NAME, Number(5));
 	});
 
 	it('should start a validator pod', async () => {
@@ -91,17 +92,7 @@ describe('chaos tests', () => {
 
 		console.log('Ika network deployed, waiting for epoch switch');
 		const conf = await createConf();
-		let systemInner = await getSystemInner(conf);
-		const startEpoch = systemInner.fields.value.fields.epoch;
-		let epochSwitched = false;
-		while (!epochSwitched) {
-			systemInner = await getSystemInner(conf);
-			if (systemInner.fields.value.fields.epoch > startEpoch) {
-				epochSwitched = true;
-			} else {
-				await delay(5_000);
-			}
-		}
+		await waitForEpochSwitch(conf);
 		console.log('Epoch switched, start new validators & kill old ones');
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
