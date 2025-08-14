@@ -1,14 +1,18 @@
-;
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 import { describe, expect, it } from 'vitest';
 
-
-
 import { Hash, SignatureAlgorithm } from '../../src/client/types';
 import { createCompleteDWallet, testPresign, testSign } from '../helpers/dwallet-test-helpers';
-import { createTestIkaClient, createTestMessage, createTestSuiClient, DEFAULT_TIMEOUT, delay, retryUntil, runSignFullFlow } from '../helpers/test-utils';
-
+import {
+	createTestIkaClient,
+	createTestMessage,
+	createTestSuiClient,
+	DEFAULT_TIMEOUT,
+	delay,
+	retryUntil,
+	runSignFullFlow,
+} from '../helpers/test-utils';
 
 describe('DWallet Signing', () => {
 	it(
