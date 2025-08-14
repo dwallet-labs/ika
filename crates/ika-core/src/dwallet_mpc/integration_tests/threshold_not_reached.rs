@@ -60,6 +60,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         crypto_round: 1,
         consensus_round: 1,
         committee,
+        sui_data_senders,
     };
     loop {
         let previous_rounds_malicious_parties = crypto_round_to_malicious_parties

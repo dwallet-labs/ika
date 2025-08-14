@@ -43,6 +43,7 @@ pub(crate) struct IntegrationTestState {
     pub(crate) crypto_round: usize,
     pub(crate) consensus_round: usize,
     pub(crate) committee: Committee,
+    pub(crate) sui_data_senders: Vec<SuiDataSenders>,
 }
 
 /// A testing implementation of the `DWalletMPCSubmitToConsensus` trait.
@@ -492,6 +493,7 @@ pub(crate) fn override_legit_messages_with_false_messages(
         });
     }
 }
+use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 
 pub(crate) fn send_start_network_dkg_event(
     ika_network_config: &IkaNetworkConfig,
@@ -504,9 +506,17 @@ pub(crate) fn send_start_network_dkg_event(
                 type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
                     &ika_network_config,
                 ),
-                // The base64 encoding of an actual start network DKG event.
-                contents: base64::decode("Z7MmXd0I4lvGWLDA969YOVo7wrZlXr21RMvixIFabCqAU3voWC2pRFG3QwPYD+ta0sX5poLEkq77ovCi3BBQDgEAAAAAAAAAgFN76FgtqURRt0MD2A/rWtLF+aaCxJKu+6LwotwQUA4BAQAAAAAAAAAggZwXRQsb/ha4mk5xZZfqItaokplduZGMnsuEQzdm7UTt2Z+ktotfGXHn2YVaxxqVhDM8UaafXejIDXnaPLxaMAA=").unwrap(),
-                pulled: true,
+                contents: bcs::to_bytes(&new_dwallet_session_event(
+                    true,
+                    1,
+                    [1u8].to_vec(),
+                    DWalletNetworkDKGEncryptionKeyRequestEvent {
+                        dwallet_network_encryption_key_id: ObjectID::random(),
+                        params_for_network: vec![],
+                    },
+                ))
+                .unwrap(),
+                pulled: false,
             }],
             epoch_id,
         ));

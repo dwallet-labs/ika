@@ -957,4 +957,26 @@ pub mod test_helpers {
             event_data,
         }
     }
+
+    pub fn new_dwallet_session_event<E: DWalletSessionEventTrait>(
+        is_system: bool,
+        session_sequence_number: u64,
+        session_identifier_preimage: Vec<u8>,
+        event_data: E,
+    ) -> DWalletSessionEvent<E> {
+        let session_type = if is_system {
+            SessionType::System
+        } else {
+            SessionType::User
+        };
+
+        DWalletSessionEvent {
+            epoch: 1,
+            session_object_id: ObjectID::random(),
+            session_type,
+            session_sequence_number,
+            session_identifier_preimage,
+            event_data,
+        }
+    }
 }
