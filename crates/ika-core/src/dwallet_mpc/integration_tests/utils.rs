@@ -544,3 +544,37 @@ pub(crate) async fn advance_parties_and_send_result_messages(
     );
     false
 }
+
+pub(crate) fn replace_party_message_with_other_party_message(
+    party_to_replace: usize,
+    other_party: usize,
+    crypto_round: u64,
+    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
+) {
+    let original_message = sent_consensus_messages_collectors[party_to_replace]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    let mut other_party_message = sent_consensus_messages_collectors[other_party]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .first()
+        .unwrap()
+        .clone();
+    let ConsensusTransactionKind::DWalletMPCMessage(ref mut other_party_message_content) = other_party_message.kind else {
+        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
+    };
+    let ConsensusTransactionKind::DWalletMPCMessage(mut original_message) = original_message.kind else {
+        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
+    };
+    other_party_message_content.authority = original_message.authority;
+    sent_consensus_messages_collectors[party_to_replace]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .push(other_party_message)
+}
