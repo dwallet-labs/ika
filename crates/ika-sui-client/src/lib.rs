@@ -631,10 +631,6 @@ where
         }
     }
 
-    // pub async fn must_get_dwallet_coordinator_inner_v1(&self) -> DWalletCoordinatorInnerV1 {
-    //     let DWalletCoordinatorInner::V1(inner_v1) = self.must_get_dwallet_coordinator_inner().await;
-    //     inner_v1
-    // }
 
     pub async fn get_dwallet_mpc_network_keys(
         &self,
