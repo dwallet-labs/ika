@@ -3,6 +3,9 @@ import { describe, it } from 'vitest';
 
 import { testCreateNetworkKey } from '../helpers/network-dkg-test-helpers';
 import { createTestIkaClient, createTestSuiClient, runSignFullFlow } from '../helpers/test-utils';
+import { runFullFlowTestWithNetworkKey, waitForEpochSwitch } from '../e2e/utils/utils';
+import { createNetworkKey } from '../../src/dwallet-mpc/network-dkg';
+import { createConf } from '../e2e/dwallet-mpc.test';
 
 describe('Network keys creation tests', () => {
 	it('should create a network key', async () => {
@@ -40,4 +43,43 @@ describe('Network keys creation tests', () => {
 		ikaClient.encryptionKeyOptions.encryptionKeyID = keyID;
 		await runSignFullFlow(ikaClient, suiClient, 'network-key-full-flow');
 	});
+
+	it(
+		'create multiple network keys and run multiple full flows with each of them',
+		async () => {
+			// IMPORTANT: Update with values from your Ika chain before running the test.
+			// The publisher mnemonic can be fetched from the publisher logs while it deploys the Ika network,
+			// and the protocol Cap ID is one of the objects owned by it with the type `ProtocolCap`.
+			const protocolCapID = '0x437441f8bda550e82b24ad90e59182a8079ead3dd7cab342e2fb45297888ac3f';
+			const publisherMnemonic =
+				'circle item cruel elegant rescue cluster bone before ecology rude comfort rare';
+
+			const keyCreatorConf = await createConf();
+			keyCreatorConf.suiClientKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
+			const numOfNetworkKeys = 2;
+			const flowsPerKey = 2;
+			// First wait for an epoch switch, to avoid creating the keys in the second half of the epoch.
+			await waitForEpochSwitch(conf);
+			const keys = [];
+			for (let i = 0; i < numOfNetworkKeys; i++) {
+				const networkKeyID = await createNetworkKey(keyCreatorConf, protocolCapID);
+				keys.push(networkKeyID);
+			}
+			await waitForEpochSwitch(conf);
+			console.log('Epoch switched, start running full flows');
+			const tasks = keys
+				.map((networkKeyID) =>
+					Array(flowsPerKey)
+						.fill(null)
+						.map(async () => {
+							const conf = await createConf();
+							return runFullFlowTestWithNetworkKey(conf, networkKeyID);
+						}),
+				)
+				.flat();
+			await Promise.all(tasks);
+		},
+		60 * 1000 * 60 * 4,
+	);
+
 });
