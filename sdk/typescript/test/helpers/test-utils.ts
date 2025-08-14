@@ -394,7 +394,7 @@ export async function waitForEpochSwitch(ikaClient: IkaClient) {
 		if (await ikaClient.getEpoch() > startEpoch) {
 			epochSwitched = true;
 		} else {
-			await delay(5_000);
+			await delay(5);
 		}
 	}
 }
