@@ -19,9 +19,6 @@ import { isSharedObjectOwner } from '../../src/dwallet-mpc/globals';
 // Store random seeds per test to ensure deterministic behavior within each test
 const testSeeds = new Map<string, Uint8Array>();
 
-export const DWALLET_COORDINATOR_MOVE_MODULE_NAME = 'coordinator';
-export const DWALLET_SYSTEM_MOVE_MODULE_NAME = 'system';
-
 export async function getObjectWithType<TObject>(
 	suiClient: SuiClient,
 	objectID: string,
@@ -31,7 +28,7 @@ export async function getObjectWithType<TObject>(
 	const startTime = Date.now();
 	while (Date.now() - startTime <= timeout) {
 		// Wait for a bit before polling again, objects might not be available immediately.
-		const interval = 500;
+		const interval = 1;
 		await delay(interval);
 		const res = await suiClient.getObject({
 			id: objectID,

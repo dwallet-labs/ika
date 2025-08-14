@@ -11,6 +11,23 @@ describe('Network keys creation tests', () => {
 		await ikaClient.initialize();
 
 		const publisherMnemonic =
+			'dwarf cake vanish damage music express alter creek deal stomach favorite prosper';
+
+		let publisherKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
+		const keyID = await testCreateNetworkKey(
+			suiClient,
+			'0xf544325c13894dd444fb2f5becba917fd59de0ad2f50996b284793d7d6d3e173',
+			publisherKeypair,
+		);
+		console.log({ keyID });
+	});
+
+	it('should create a network key and run a full flow with it', async () => {
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+
+		const publisherMnemonic =
 			'spatial crunch gloom joy during vapor hold genius gold fold athlete glide';
 
 		let publisherKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);

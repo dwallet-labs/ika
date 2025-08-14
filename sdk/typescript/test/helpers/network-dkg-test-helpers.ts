@@ -50,6 +50,8 @@ export async function testCreateNetworkKey(
 			`Unexpected event type: ${JSON.stringify(startDKGEvent)}. Expected StartNetworkDKGEvent.`,
 		);
 	}
+	console.log('Start DKG Event:', startDKGEvent);
+	console.log('Network Key ID:', startDKGEvent.event_data.dwallet_network_encryption_key_id);
 	await getObjectWithType(
 		suiClient,
 		startDKGEvent.event_data.dwallet_network_encryption_key_id,
