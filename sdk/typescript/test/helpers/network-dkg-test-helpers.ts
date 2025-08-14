@@ -1,4 +1,3 @@
-import { bcs } from '@mysten/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 
@@ -6,13 +5,8 @@ import { ActiveNetworkKey } from '../../src/dwallet-mpc/network-dkg';
 import { requestDwalletNetworkEncryptionKeyDkgByCap } from '../../src/tx/coordinator';
 import { verifyProtocolCap } from '../../src/tx/system';
 import {
-	Config,
 	createTestIkaClient,
-	createTestIkaTransaction,
-	DWALLET_COORDINATOR_MOVE_MODULE_NAME,
-	DWALLET_SYSTEM_MOVE_MODULE_NAME,
 	executeTestTransaction,
-	getInitialSharedVersion,
 	getObjectWithType,
 } from './test-utils';
 
@@ -54,7 +48,7 @@ export async function testCreateNetworkKey(
 		);
 	}
 	await getObjectWithType(
-		c,
+		suiClient,
 		startDKGEvent.event_data.dwallet_network_encryption_key_id,
 		isActiveNetworkKey,
 	);
