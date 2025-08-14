@@ -2,7 +2,6 @@ import { SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 
-import { ActiveNetworkKey } from '../../src/dwallet-mpc/network-dkg';
 import { requestDwalletNetworkEncryptionKeyDkgByCap } from '../../src/tx/coordinator';
 import { verifyProtocolCap } from '../../src/tx/system';
 import {
@@ -11,6 +10,13 @@ import {
 	executeTestTransactionWithKeypair,
 	getObjectWithType,
 } from './test-utils';
+
+interface ActiveNetworkKey {
+	state: {
+		variant: 'NetworkDKGCompleted';
+	};
+	id: { id: string };
+}
 
 export async function testCreateNetworkKey(
 	suiClient: SuiClient,
