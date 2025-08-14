@@ -1,6 +1,5 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
-
 import { describe, expect, it } from 'vitest';
 
 import { Hash, SignatureAlgorithm } from '../../src/client/types';
@@ -12,6 +11,7 @@ import {
 	DEFAULT_TIMEOUT,
 	delay,
 	retryUntil,
+	runSignFullFlow,
 } from '../helpers/test-utils';
 
 describe('DWallet Signing', () => {
@@ -24,59 +24,7 @@ describe('DWallet Signing', () => {
 			await ikaClient.initialize();
 
 			// Step 1: Create complete DWallet
-			const {
-				dWallet: activeDWallet,
-				encryptedUserSecretKeyShare,
-				userShareEncryptionKeys,
-				signerAddress,
-			} = await createCompleteDWallet(ikaClient, suiClient, testName);
-
-			// Step 2: Create presign
-			const presignRequestEvent = await testPresign(
-				ikaClient,
-				suiClient,
-				activeDWallet,
-				SignatureAlgorithm.ECDSA,
-				signerAddress,
-				testName,
-			);
-
-			expect(presignRequestEvent).toBeDefined();
-			expect(presignRequestEvent.event_data.presign_id).toBeDefined();
-
-			// Step 3: Wait for presign to complete
-			const presignObject = await retryUntil(
-				() =>
-					ikaClient.getPresignInParticularState(
-						presignRequestEvent.event_data.presign_id,
-						'Completed',
-					),
-				(presign) => presign !== null,
-				30,
-				2000,
-			);
-
-			expect(presignObject).toBeDefined();
-			expect(presignObject.state.$kind).toBe('Completed');
-
-			// Step 4: Sign a message
-			const message = createTestMessage(testName);
-			await testSign(
-				ikaClient,
-				suiClient,
-				activeDWallet,
-				userShareEncryptionKeys,
-				presignObject,
-				encryptedUserSecretKeyShare,
-				message,
-				Hash.KECCAK256,
-				SignatureAlgorithm.ECDSA,
-				testName,
-			);
-
-			// Verify the signing process completed successfully
-			// The fact that testSign didn't throw an error indicates success
-			expect(true).toBe(true);
+			await runSignFullFlow(ikaClient, suiClient, testName);
 		},
 		DEFAULT_TIMEOUT,
 	);

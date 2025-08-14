@@ -41,6 +41,8 @@ import { objResToBcs } from './utils.js';
 export class IkaClient {
 	/** The Ika network configuration including package IDs and object references */
 	public ikaConfig: IkaConfig;
+	/** Default encryption key options for the client */
+	public encryptionKeyOptions: EncryptionKeyOptions;
 
 	/** The underlying Sui client for blockchain interactions */
 	private client: SuiClient;
@@ -69,8 +71,6 @@ export class IkaClient {
 	}>;
 	/** Promise for ongoing encryption key fetching to prevent duplicate requests */
 	private encryptionKeysPromise?: Promise<NetworkEncryptionKey[]>;
-	/** Default encryption key options for the client */
-	private encryptionKeyOptions: EncryptionKeyOptions;
 
 	/**
 	 * Creates a new IkaClient instance
