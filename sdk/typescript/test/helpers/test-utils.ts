@@ -1,4 +1,4 @@
-import { Config, getSystemInner } from '../../src/dwallet-mpc/globals';
+import { Config, getSystemInner, isSystemInner, SystemInner } from '../../src/dwallet-mpc/globals';
 
 ;
 
@@ -387,13 +387,11 @@ export async function runSignFullFlow(
 	expect(true).toBe(true);
 }
 
-export async function waitForEpochSwitch(conf: Config) {
-	let systemInner = await getSystemInner(conf);
-	const startEpoch = systemInner.fields.value.fields.epoch;
+export async function waitForEpochSwitch(ikaClient: IkaClient) {
+	const startEpoch = await ikaClient.getEpoch();
 	let epochSwitched = false;
 	while (!epochSwitched) {
-		systemInner = await getSystemInner(conf);
-		if (systemInner.fields.value.fields.epoch > startEpoch) {
+		if (await ikaClient.getEpoch() > startEpoch) {
 			epochSwitched = true;
 		} else {
 			await delay(5_000);
