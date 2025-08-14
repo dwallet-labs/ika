@@ -6,7 +6,8 @@ import { describe, it } from 'vitest';
 
 import {
 	createTestIkaClient,
-	createTestSuiClient, delay,
+	createTestSuiClient,
+	delay,
 	runSignFullFlow,
 	waitForEpochSwitch,
 } from '../helpers/test-utils';
