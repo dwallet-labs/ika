@@ -1,3 +1,5 @@
+import { Config, getSystemInner } from '../../src/dwallet-mpc/globals';
+
 ;
 
 // Copyright (c) dWallet Labs, Ltd.
@@ -383,4 +385,18 @@ export async function runSignFullFlow(
 	// Verify the signing process completed successfully
 	// The fact that testSign didn't throw an error indicates success
 	expect(true).toBe(true);
+}
+
+export async function waitForEpochSwitch(conf: Config) {
+	let systemInner = await getSystemInner(conf);
+	const startEpoch = systemInner.fields.value.fields.epoch;
+	let epochSwitched = false;
+	while (!epochSwitched) {
+		systemInner = await getSystemInner(conf);
+		if (systemInner.fields.value.fields.epoch > startEpoch) {
+			epochSwitched = true;
+		} else {
+			await delay(5_000);
+		}
+	}
 }

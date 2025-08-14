@@ -3,7 +3,6 @@ import { describe, it } from 'vitest';
 
 import { testCreateNetworkKey } from '../helpers/network-dkg-test-helpers';
 import { createTestIkaClient, createTestSuiClient, runSignFullFlow } from '../helpers/test-utils';
-import { runFullFlowTestWithNetworkKey, waitForEpochSwitch } from '../e2e/utils/utils';
 import { createNetworkKey } from '../../src/dwallet-mpc/network-dkg';
 import { createConf } from '../e2e/dwallet-mpc.test';
 
@@ -73,7 +72,7 @@ describe('Network keys creation tests', () => {
 						.fill(null)
 						.map(async () => {
 							const conf = await createConf();
-							return runFullFlowTestWithNetworkKey(conf, networkKeyID);
+							return runFullFlowTestWithNetworkKey(networkKeyID);
 						}),
 				)
 				.flat();
@@ -83,3 +82,11 @@ describe('Network keys creation tests', () => {
 	);
 
 });
+
+export async function runFullFlowTestWithNetworkKey(networkKeyID: string, nameSuffix = '') {
+	const suiClient = createTestSuiClient();
+	const ikaClient = createTestIkaClient(suiClient);
+	await ikaClient.initialize();
+	ikaClient.encryptionKeyOptions.encryptionKeyID = networkKeyID;
+	await runSignFullFlow(ikaClient, suiClient, `network-key-full-flow-${nameSuffix}`);
+}
