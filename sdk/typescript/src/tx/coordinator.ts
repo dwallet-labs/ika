@@ -206,7 +206,7 @@ export function requestDwalletNetworkEncryptionKeyDkgByCap(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
 	paramsForNetwork: Uint8Array,
-	verifiedProtocolCap: string,
+	verifiedProtocolCap: TransactionObjectArgument,
 	tx: Transaction,
 ) {
 	tx.moveCall({
@@ -214,7 +214,7 @@ export function requestDwalletNetworkEncryptionKeyDkgByCap(
 		arguments: [
 			coordinatorObjectRef,
 			tx.pure(bcs.vector(bcs.u8()).serialize(paramsForNetwork)),
-			tx.object(verifiedProtocolCap),
+			verifiedProtocolCap,
 		],
 	});
 }

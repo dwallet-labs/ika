@@ -14,9 +14,46 @@ import { IkaTransaction } from '../../src/client/ika-transaction.js';
 import { getNetworkConfig } from '../../src/client/network-configs.js';
 import type { IkaConfig } from '../../src/client/types.js';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
+import { isSharedObjectOwner } from '../../src/dwallet-mpc/globals';
 
 // Store random seeds per test to ensure deterministic behavior within each test
 const testSeeds = new Map<string, Uint8Array>();
+
+export const DWALLET_COORDINATOR_MOVE_MODULE_NAME = 'coordinator';
+export const DWALLET_SYSTEM_MOVE_MODULE_NAME = 'system';
+
+export async function getObjectWithType<TObject>(
+	suiClient: SuiClient,
+	objectID: string,
+	isObject: (obj: any) => obj is TObject,
+): Promise<TObject> {
+	let timeout = 600_000; // Default timeout of 10 minutes
+	const startTime = Date.now();
+	while (Date.now() - startTime <= timeout) {
+		// Wait for a bit before polling again, objects might not be available immediately.
+		const interval = 500;
+		await delay(interval);
+		const res = await suiClient.getObject({
+			id: objectID,
+			options: { showContent: true },
+		});
+
+		const objectData =
+			res.data?.content?.dataType === 'moveObject' && isObject(res.data.content.fields)
+				? (res.data.content.fields as TObject)
+				: null;
+
+		if (objectData) {
+			return objectData;
+		}
+	}
+	const seconds = ((Date.now() - startTime) / 1000).toFixed(2);
+	throw new Error(
+		`timeout: unable to fetch an object within ${
+			timeout / (60 * 1000)
+		} minutes (${seconds} seconds passed).`,
+	);
+}
 
 /**
  * Creates a deterministic seed for a test.
