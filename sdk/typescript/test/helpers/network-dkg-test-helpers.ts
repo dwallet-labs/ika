@@ -6,7 +6,6 @@ import { requestDwalletNetworkEncryptionKeyDkgByCap } from '../../src/tx/coordin
 import { verifyProtocolCap } from '../../src/tx/system';
 import {
 	createTestIkaClient,
-	executeTestTransaction,
 	executeTestTransactionWithKeypair,
 	getObjectWithType,
 } from './test-utils';
