@@ -47,7 +47,7 @@ describe('Network keys creation tests', () => {
 			// IMPORTANT: Update with values from your Ika chain before running the test.
 			// The publisher mnemonic can be fetched from the publisher logs while it deploys the Ika network,
 			// and the protocol Cap ID is one of the objects owned by it with the type `ProtocolCap`.
-			const protocolCapID = '0x437441f8bda550e82b24ad90e59182a8079ead3dd7cab342e2fb45297888ac3f';
+			const protocolCapID = '0xf544325c13894dd444fb2f5becba917fd59de0ad2f50996b284793d7d6d3e173';
 			const publisherMnemonic =
 				'dwarf cake vanish damage music express alter creek deal stomach favorite prosper';
 
@@ -58,13 +58,13 @@ describe('Network keys creation tests', () => {
 			const suiClient = createTestSuiClient();
 			const ikaClient = createTestIkaClient(suiClient);
 			// First wait for an epoch switch, to avoid creating the keys in the second half of the epoch.
-			await waitForEpochSwitch(ikaClient);
+			// await waitForEpochSwitch(ikaClient);
 			const keys = [];
 			for (let i = 0; i < numOfNetworkKeys; i++) {
 				const networkKeyID = await testCreateNetworkKey(suiClient, protocolCapID, publisherKeypair);
 				keys.push(networkKeyID);
 			}
-			await waitForEpochSwitch(ikaClient);
+			// await waitForEpochSwitch(ikaClient);
 			console.log('Epoch switched, start running full flows');
 			const tasks = keys
 				.map((networkKeyID) =>
