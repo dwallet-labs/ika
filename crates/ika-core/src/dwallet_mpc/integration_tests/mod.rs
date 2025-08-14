@@ -3,3 +3,4 @@ mod malicious_behavior;
 mod network_dkg;
 mod threshold_not_reached;
 mod utils;
+mod simultanious_sessions;
