@@ -155,6 +155,17 @@ export async function executeTestTransaction(
 	const seed = createDeterministicSeed(testName);
 	const signerKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
+	return await executeTestTransactionWithKeypair(suiClient, transaction, signerKeypair);
+}
+
+/**
+ * Executes a transaction with deterministic signing using a provided keypair.
+ */
+export async function executeTestTransactionWithKeypair(
+	suiClient: SuiClient,
+	transaction: Transaction,
+	signerKeypair: Ed25519Keypair,
+) {
 	return suiClient.signAndExecuteTransaction({
 		transaction,
 		signer: signerKeypair,

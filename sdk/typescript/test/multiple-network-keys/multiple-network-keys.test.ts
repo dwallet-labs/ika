@@ -5,8 +5,7 @@ import { testCreateNetworkKey } from '../helpers/network-dkg-test-helpers';
 import { createTestIkaClient, createTestSuiClient } from '../helpers/test-utils';
 
 describe('Network keys creation tests', () => {
-	it(async () => {
-		const testName = 'network-key-creation-test';
+	it('should create a network key', async () => {
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
@@ -18,7 +17,7 @@ describe('Network keys creation tests', () => {
 		const keyID = await testCreateNetworkKey(
 			suiClient,
 			'0x6c39e2381922a6fab197043992d162a694166517a665330d862bdecd68401281',
-			testName,
+			publisherKeypair,
 		);
 		console.log({ keyID });
 	});

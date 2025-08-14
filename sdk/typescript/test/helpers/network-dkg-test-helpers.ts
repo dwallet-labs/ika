@@ -4,12 +4,17 @@ import { Transaction } from '@mysten/sui/transactions';
 import { ActiveNetworkKey } from '../../src/dwallet-mpc/network-dkg';
 import { requestDwalletNetworkEncryptionKeyDkgByCap } from '../../src/tx/coordinator';
 import { verifyProtocolCap } from '../../src/tx/system';
-import { createTestIkaClient, executeTestTransaction, getObjectWithType } from './test-utils';
+import {
+	createTestIkaClient,
+	executeTestTransaction,
+	executeTestTransactionWithKeypair,
+	getObjectWithType,
+} from './test-utils';
 
 export async function testCreateNetworkKey(
 	suiClient: SuiClient,
 	protocolCapID: string,
-	testName: string,
+	publisherKeypair: Ed25519Keypair,
 ): Promise<string> {
 	const ikaClient = createTestIkaClient(suiClient);
 	const tx = new Transaction();
@@ -36,7 +41,7 @@ export async function testCreateNetworkKey(
 		verifiedProtocolCap,
 		tx,
 	);
-	const result = await executeTestTransaction(suiClient, tx, testName);
+	const result = await executeTestTransactionWithKeypair(suiClient, tx, publisherKeypair);
 	const startDKGEvent = result.events?.at(0)?.parsedJson;
 	if (!isStartNetworkDKGEvent(startDKGEvent)) {
 		throw new Error(
