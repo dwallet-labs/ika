@@ -149,7 +149,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If initialization fails
 	 * @private
 	 */
-	private async ensureInitialized(): Promise<{
+	async ensureInitialized(): Promise<{
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
 	}> {

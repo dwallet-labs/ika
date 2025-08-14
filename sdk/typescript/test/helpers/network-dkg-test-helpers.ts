@@ -18,6 +18,7 @@ export async function testCreateNetworkKey(
 	publisherKeypair: Ed25519Keypair,
 ): Promise<string> {
 	const ikaClient = createTestIkaClient(suiClient);
+	await ikaClient.ensureInitialized();
 	const tx = new Transaction();
 	const coordinatorStateArg = tx.sharedObjectRef({
 		objectId: ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID,
