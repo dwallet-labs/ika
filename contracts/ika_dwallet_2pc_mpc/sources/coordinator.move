@@ -27,6 +27,7 @@ use sui::dynamic_field;
 use sui::sui::SUI;
 use sui::vec_map::VecMap;
 use ika_common::upgrade_package_approver::UpgradePackageApprover;
+use ika_dwallet_2pc_mpc::coordinator_inner::DWallet;
 
 // === Errors ===
 
@@ -37,7 +38,7 @@ const EInvalidMigration: u64 = 1;
 
 // === Constants ===
 /// Flag to indicate the version of the ika system.
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 
 // === Structs ===
 
@@ -479,11 +480,33 @@ public fun request_sign(
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
 ) {
+    let _ = self
+        .request_sign_and_return_id(
+            presign_cap,
+            message_approval,
+            message_centralized_signature,
+            session_identifier,
+            payment_ika,
+            payment_sui,
+            ctx,
+        );
+}
+
+public fun request_sign_and_return_id(
+    self: &mut DWalletCoordinator,
+    presign_cap: VerifiedPresignCap,
+    message_approval: MessageApproval,
+    message_centralized_signature: vector<u8>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): ID {
     self
         .inner_mut()
         .request_sign(
-            message_approval,
             presign_cap,
+            message_approval,
             message_centralized_signature,
             session_identifier,
             payment_ika,
@@ -502,11 +525,33 @@ public fun request_imported_key_sign(
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
 ) {
+    let _ = self
+        .request_imported_key_sign_and_return_id(
+            presign_cap,
+            message_approval,
+            message_centralized_signature,
+            session_identifier,
+            payment_ika,
+            payment_sui,
+            ctx,
+        );
+}
+
+public fun request_imported_key_sign_and_return_id(
+    self: &mut DWalletCoordinator,
+    presign_cap: VerifiedPresignCap,
+    message_approval: ImportedKeyMessageApproval,
+    message_centralized_signature: vector<u8>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): ID {
     self
         .inner_mut()
         .request_imported_key_sign(
-            message_approval,
             presign_cap,
+            message_approval,
             message_centralized_signature,
             session_identifier,
             payment_ika,
@@ -571,6 +616,26 @@ public fun request_sign_with_partial_user_signature(
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
 ) {
+    let _ = self
+        .request_sign_with_partial_user_signature_and_return_id(
+            partial_user_signature_cap,
+            message_approval,
+            session_identifier,
+            payment_ika,
+            payment_sui,
+            ctx,
+        );
+}
+
+public fun request_sign_with_partial_user_signature_and_return_id(
+    self: &mut DWalletCoordinator,
+    partial_user_signature_cap: VerifiedPartialUserSignatureCap,
+    message_approval: MessageApproval,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): ID {
     self
         .inner_mut()
         .request_sign_with_partial_user_signature(
@@ -592,6 +657,26 @@ public fun request_imported_key_sign_with_partial_user_signature(
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
 ) {
+    let _ = self
+        .request_imported_key_sign_with_partial_user_signature_and_return_id(
+            partial_user_signature_cap,
+            message_approval,
+            session_identifier,
+            payment_ika,
+            payment_sui,
+            ctx,
+        );
+}
+
+public fun request_imported_key_sign_with_partial_user_signature_and_return_id(
+    self: &mut DWalletCoordinator,
+    partial_user_signature_cap: VerifiedPartialUserSignatureCap,
+    message_approval: ImportedKeyMessageApproval,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): ID {
     self
         .inner_mut()
         .request_imported_key_sign_with_partial_user_signature(
@@ -628,6 +713,20 @@ public fun match_partial_user_signature_with_imported_key_message_approval(
             partial_user_signature_cap,
             message_approval,
         )
+}
+
+public fun has_dwallet(
+    self: &DWalletCoordinator,
+    dwallet_id: ID,
+): bool {
+    self.inner().has_dwallet(dwallet_id)
+}
+
+public fun get_dwallet(
+    self: &DWalletCoordinator,
+    dwallet_id: ID,
+): &DWallet {
+    self.inner().get_dwallet(dwallet_id)
 }
 
 public fun current_pricing(self: &DWalletCoordinator): PricingInfo {
