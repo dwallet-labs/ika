@@ -1,7 +1,7 @@
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
 };
-use crate::dwallet_mpc::mpc_session::{MPCEventData, MPCRoundToMessagesHashMap, PublicInput};
+use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
 use crate::dwallet_mpc::sign::SignParty;
@@ -19,11 +19,12 @@ use ika_types::messages_dwallet_mpc::{
 use message_digest::message_digest::Hash;
 use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResult};
 use mpc::{GuaranteesOutputDelivery, WeightedThresholdAccessStructure};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use sui_types::base_types::ObjectID;
 use twopc_mpc::sign::Protocol;
 
-#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequest {
     pub session_type: SessionType,
     /// Unique identifier for the MPC session.
@@ -853,6 +854,29 @@ impl AdvanceSpecificData {
             AdvanceSpecificData::ImportedKeyVerification {
                 advance_request, ..
             } => advance_request.attempt_number,
+        }
+    }
+}
+
+impl PartialOrd<Self> for DWalletSessionRequest {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DWalletSessionRequest {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // System sessions have a higher priority than user session and therefore come first (are smaller).
+        // Both system and user sessions are sorted by their sequence number between themselves.
+        match (self.session_type, other.session_type) {
+            (SessionType::User, SessionType::User) => self
+                .session_sequence_number
+                .cmp(&other.session_sequence_number),
+            (SessionType::System, SessionType::User) => Ordering::Less,
+            (SessionType::System, SessionType::System) => self
+                .session_sequence_number
+                .cmp(&other.session_sequence_number),
+            (SessionType::User, SessionType::System) => Ordering::Greater,
         }
     }
 }

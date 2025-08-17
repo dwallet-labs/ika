@@ -20,7 +20,7 @@ use crate::dwallet_checkpoints::{
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::mpc_session::{MPCEventData, MPCSessionStatus};
+use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
 use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;

@@ -8,7 +8,7 @@ use crate::dwallet_mpc::crytographic_computation::{
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_session::{
-    DWalletMPCSession, DWalletMPCSessionOutput, MPCEventData, MPCSessionStatus,
+    DWalletMPCSession, DWalletMPCSessionOutput, MPCSessionStatus,
 };
 use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
@@ -715,31 +715,31 @@ impl DWalletMPCManager {
         }
     }
 
-    /// Returns the number of additional (delay) consensus rounds the session should wait for before advancing.
-    ///
-    /// This method returns the protocol-specific delay for certain MPC rounds in specific protocols
-    /// (NetworkDkg, DecryptionKeyReconfiguration).
-    ///
-    /// - **NetworkDkg protocol**: requires delay for the third round
-    ///   using `network_dkg_third_round_delay` config.
-    /// - **DecryptionKeyReconfiguration protocol**: requires delay for the third round
-    ///   using `decryption_key_reconfiguration_third_round_delay` config.
-    /// - **Other protocols**: No delay required, always ready to advance
-    pub(crate) fn consensus_rounds_delay_for_mpc_round(
-        &self,
-        current_mpc_round: u64,
-        mpc_event_data: &MPCEventData,
-    ) -> u64 {
-        match mpc_event_data.request_input {
-            MPCRequestInput::NetworkEncryptionKeyDkg(_, _) if current_mpc_round == 3 => {
-                self.network_dkg_third_round_delay
-            }
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(_) if current_mpc_round == 3 => {
-                self.decryption_key_reconfiguration_third_round_delay
-            }
-            _ => 0,
-        }
-    }
+    // Returns the number of additional (delay) consensus rounds the session should wait for before advancing.
+    //
+    // This method returns the protocol-specific delay for certain MPC rounds in specific protocols
+    // (NetworkDkg, DecryptionKeyReconfiguration).
+    //
+    // - **NetworkDkg protocol**: requires delay for the third round
+    //   using `network_dkg_third_round_delay` config.
+    // - **DecryptionKeyReconfiguration protocol**: requires delay for the third round
+    //   using `decryption_key_reconfiguration_third_round_delay` config.
+    // - **Other protocols**: No delay required, always ready to advance
+    // pub(crate) fn consensus_rounds_delay_for_mpc_round(
+    //     &self,
+    //     current_mpc_round: u64,
+    //     mpc_event_data: &MPCEventData,
+    // ) -> u64 {
+    //     match mpc_event_data.request_input {
+    //         MPCRequestInput::NetworkEncryptionKeyDkg(_, _) if current_mpc_round == 3 => {
+    //             self.network_dkg_third_round_delay
+    //         }
+    //         MPCRequestInput::NetworkEncryptionKeyReconfiguration(_) if current_mpc_round == 3 => {
+    //             self.decryption_key_reconfiguration_third_round_delay
+    //         }
+    //         _ => 0,
+    //     }
+    // }
 
     /// Builds the outputs to finalize based on the outputs received in the consensus rounds.
     /// If a majority vote is reached, it returns the malicious voters (didn't vote with majority) and the majority vote.

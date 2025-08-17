@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 mod input;
-mod mpc_event_data;
 
 use dwallet_mpc_types::dwallet_mpc::{MPCMessage, MPCPrivateInput};
 use group::PartyID;
@@ -15,7 +14,6 @@ use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-pub(crate) use crate::dwallet_mpc::mpc_session::mpc_event_data::MPCEventData;
 use crate::dwallet_mpc::session_request::DWalletSessionRequest;
 use ika_types::error::{IkaError, IkaResult};
 pub(crate) use input::{PublicInput, session_input_from_request};
