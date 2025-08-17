@@ -14,7 +14,11 @@ use ika_types::error::IkaResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletMPCMessage, DWalletMPCOutput,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
+    IkaNetworkConfig, SessionIdentifier,
+};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -550,7 +554,7 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
     sui_data_senders: &mut Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
-    dwallet_network_encryption_key_id: ObjectID
+    dwallet_network_encryption_key_id: ObjectID,
 ) {
     let dwallet_id = ObjectID::random();
     let dwallet_cap_id = ObjectID::random();
