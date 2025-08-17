@@ -2,11 +2,11 @@
 id: receiving-a-dwallet-share
 title: Receiving a DWallet Share
 description: Accept a transferred DWallet user share from another person
-sidebar_position: 3
+sidebar_position: 5
 sidebar_label: Receiving a DWallet Share
 ---
 
-import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
+import { Info, Warning, Construction } from '../../../src/components/InfoBox';
 
 # Receiving a DWallet Share
 

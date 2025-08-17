@@ -2,11 +2,11 @@
 id: transferring-a-dwallet-share
 title: Transferring a DWallet Share
 description: Transfer your DWallet user share to another person
-sidebar_position: 2
+sidebar_position: 4
 sidebar_label: Transferring a DWallet Share
 ---
 
-import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
+import { Info, Warning, Construction } from '../../../src/components/InfoBox';
 
 # Transferring a DWallet Share
 
@@ -15,7 +15,7 @@ import { Info, Warning, Construction } from '../../../../src/components/InfoBox'
 Transfer your DWallet's encrypted user share to another person. This allows them to sign with your DWallet while maintaining zero-trust security through re-encryption.
 
 <Info title="Prerequisites">
-- An active DWallet with your encrypted user share (created through normal DKG)
+- An active DWallet with your encrypted user share (created through normal DKG or imported)
 - Recipient's Sui address
 - Recipient must have registered their encryption key
 - Your `UserShareEncryptionKeys`
@@ -49,18 +49,6 @@ await ikaTx.transferUserShare({
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
-
-const result = await suiClient.signAndExecuteTransaction({
-	transaction: tx,
-	signer: yourKeypair,
-	options: { showEvents: true },
-});
-
-// Extract the new encrypted share ID for the recipient
-const transferEvent = result.events?.find((event) =>
-	event.type.includes('EncryptedShareVerificationRequestEvent'),
-);
-const recipientEncryptedShareId = transferEvent?.parsedJson?.encrypted_user_secret_key_share_id;
 ```
 
 ### Method 2: Transfer with Pre-decrypted Share
