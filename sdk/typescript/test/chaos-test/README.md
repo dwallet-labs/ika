@@ -26,3 +26,29 @@ cp ./ika-dns-service.ika.svc.cluster.local/publisher/ika_config.json ../../../..
 ```
 Now you can run the standard TS tests against your new network.  
 You can also run the dedicated tests to kill and start validator nodes from the `./chaos.test.ts` file.
+
+### Apply fake network conditions to the Ika network
+After completing the steps in the "Run a custom Ika network on k8s" section above, you can apply fake network
+conditions to the Ika network. In the following steps, we will use Chaos Mesh to introduce network delay.
+### 1. Install Chaos Mesh
+Run the following command to install Chaos Mesh:
+```bash
+curl -sSL https://mirrors.chaos-mesh.org/v2.7.2/install.sh | bash
+```
+
+### 2. Introduce network delay
+Run the following command from this directory:
+```bash
+kubectl apply -f ./network-delay.yaml
+```
+You can now run the standard TS tests against your new network with the network delay applied, and see they will take
+longer to complete due to the network delay.
+
+### 3. Remove network delay
+Run the following command from this directory:
+```bash
+kubectl delete networkchaos slow-network-conditions -n ika
+```
+You can play with Chaos Mesh to introduce many other network conditions, such as packet loss, duplication, etc.
+Read more about Chaos Mesh [here](https://chaos-mesh.org/docs/).
+
