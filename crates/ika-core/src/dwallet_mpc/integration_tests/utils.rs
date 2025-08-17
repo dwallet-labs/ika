@@ -508,7 +508,7 @@ pub(crate) fn override_legit_messages_with_false_messages(
 }
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 
-pub(crate) fn send_start_network_dkg_event(
+pub(crate) fn send_start_network_dkg_event_to_all_parties(
     ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
@@ -519,6 +519,23 @@ pub(crate) fn send_start_network_dkg_event(
         sui_data_senders,
         [1u8; 32],
         1,
+        &(0..sui_data_senders.len()).collect::<Vec<_>>(),
+    );
+}
+
+pub(crate) fn send_start_network_dkg_event(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: &mut Vec<SuiDataSenders>,
+    parties: &[usize],
+) {
+    send_configurable_start_network_dkg_event(
+        ika_network_config,
+        epoch_id,
+        sui_data_senders,
+        [1u8; 32],
+        1,
+        parties,
     );
 }
 
@@ -528,29 +545,43 @@ pub(crate) fn send_configurable_start_network_dkg_event(
     sui_data_senders: &mut Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
+    parties: &[usize],
 ) {
     let key_id = ObjectID::random();
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
-        let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
-                    &ika_network_config,
-                ),
-                contents: bcs::to_bytes(&new_dwallet_session_event(
-                    true,
-                    session_sequence_number,
-                    session_identifier_preimage.to_vec().clone(),
-                    DWalletNetworkDKGEncryptionKeyRequestEvent {
-                        dwallet_network_encryption_key_id: key_id,
-                        params_for_network: vec![],
-                    },
-                ))
-                .unwrap(),
-                pulled: false,
-            }],
-            epoch_id,
-        ));
-    });
+    let start_network_dkg_event = DBSuiEvent {
+        type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
+            &ika_network_config,
+        ),
+        contents: bcs::to_bytes(&new_dwallet_session_event(
+            true,
+            session_sequence_number,
+            session_identifier_preimage.to_vec().clone(),
+            DWalletNetworkDKGEncryptionKeyRequestEvent {
+                dwallet_network_encryption_key_id: key_id,
+                params_for_network: vec![],
+            },
+        ))
+        .unwrap(),
+        pulled: false,
+    };
+    send_event_to_parties(epoch_id, sui_data_senders, start_network_dkg_event, parties);
+}
+
+pub(crate) fn send_event_to_parties(
+    epoch_id: EpochId,
+    sui_data_senders: &mut Vec<SuiDataSenders>,
+    event: DBSuiEvent,
+    parties: &[usize],
+) {
+    sui_data_senders
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| parties.contains(i))
+        .for_each(|(_, mut sui_data_sender)| {
+            let _ = sui_data_sender
+                .uncompleted_events_sender
+                .send((vec![event.clone()], epoch_id));
+        });
 }
 
 pub(crate) fn send_start_dwallet_dkg_first_round_event(
