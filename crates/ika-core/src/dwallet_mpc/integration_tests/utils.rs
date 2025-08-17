@@ -439,6 +439,10 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 .unwrap()
                 > 0
             {
+                *notify_service
+                    .checkpoints_notification_count
+                    .lock()
+                    .unwrap() = 0;
                 let pending_checkpoint = pending_checkpoints_store.lock().unwrap().pop();
                 assert!(
                     pending_checkpoint.is_some(),
