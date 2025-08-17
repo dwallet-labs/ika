@@ -21,12 +21,10 @@ use tracing::info;
 #[cfg(test)]
 async fn test_threshold_not_reached_n_times_flow_succeeds() {
     let committee_size = 4;
-    // let crypto_round_to_malicious_parties: HashMap<usize, Vec<usize>> =
-    //     HashMap::from([(1, [0].to_vec())]);
-    // let crypto_round_to_delayed_parties: HashMap<usize, Vec<usize>> =
-    //     HashMap::from([(1, [1].to_vec())]);
-    let crypto_round_to_malicious_parties: HashMap<usize, Vec<usize>> = HashMap::from([]);
-    let crypto_round_to_delayed_parties: HashMap<usize, Vec<usize>> = HashMap::from([]);
+    let crypto_round_to_malicious_parties: HashMap<usize, Vec<usize>> =
+        HashMap::from([(1, [0].to_vec())]);
+    let crypto_round_to_delayed_parties: HashMap<usize, Vec<usize>> =
+        HashMap::from([(1, [1].to_vec())]);
 
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
@@ -62,7 +60,6 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         crypto_round: 1,
         consensus_round: 1,
         committee,
-        sui_data_senders,
     };
     loop {
         let previous_rounds_malicious_parties = crypto_round_to_malicious_parties
