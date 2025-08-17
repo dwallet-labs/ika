@@ -31,7 +31,6 @@ async fn test_malicious_parties_detected_in_correct_time() {
         HashMap::from([(1, [0].to_vec())]);
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let mut test_state = create_test_state(committee_size);
-    let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
     let all_malicious_parties = crypto_round_to_malicious_parties
         .values()
         .flatten()
