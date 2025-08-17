@@ -53,7 +53,7 @@ async fn test_network_dkg_full_flow() {
             &epoch_stores,
             &notify_services,
         )
-            .await
+        .await
         {
             assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
             info!(?pending_checkpoint, "MPC flow completed successfully");
