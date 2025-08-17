@@ -48,7 +48,7 @@ async fn test_network_dkg_full_flow() {
         epoch_id,
         &mut sui_data_senders,
     );
-    let mut mpc_round = 1;
+    let mut consensus_round = 1;
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
@@ -59,7 +59,7 @@ async fn test_network_dkg_full_flow() {
         )
         .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
+            assert_eq!(consensus_round, 5, "Network DKG should complete after 4 rounds");
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
@@ -68,8 +68,8 @@ async fn test_network_dkg_full_flow() {
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
-            mpc_round,
+            consensus_round,
         );
-        mpc_round += 1;
+        consensus_round += 1;
     }
 }
