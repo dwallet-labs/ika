@@ -63,6 +63,12 @@ async fn message_before_event() {
         dwallet_mpc_service.run_service_loop_iteration().await;
     }
     consensus_round += 1;
+    send_start_network_dkg_event_to_some_parties(
+        &ika_network_config,
+        epoch_id,
+        &mut sui_data_senders,
+        &parties_that_receive_session_message_before_start_event,
+    );
     utils::advance_some_parties_and_wait_for_completions(
         &committee,
         &mut dwallet_mpc_services,
