@@ -60,7 +60,7 @@ async fn test_network_dkg_full_flow() {
             break;
         }
 
-        utils::send_advance_result_between_parties(
+        utils::send_advance_results_between_parties(
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,

@@ -52,7 +52,7 @@ async fn dwallet_dkg_first_round() {
             break;
         }
 
-        utils::send_advance_result_between_parties(
+        utils::send_advance_results_between_parties(
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
@@ -112,7 +112,7 @@ async fn dwallet_dkg_first_round() {
             break;
         }
 
-        utils::send_advance_result_between_parties(
+        utils::send_advance_results_between_parties(
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,

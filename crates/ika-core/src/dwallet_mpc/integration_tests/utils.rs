@@ -325,7 +325,7 @@ fn create_dwallet_mpc_service(
     )
 }
 
-pub(crate) fn send_advance_result_between_parties(
+pub(crate) fn send_advance_results_between_parties(
     committee: &Committee,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
     epoch_stores: &mut Vec<Arc<TestingAuthorityPerEpochStore>>,
@@ -610,7 +610,7 @@ pub(crate) async fn advance_parties_and_send_result_messages(
         &mut test_state.sent_consensus_messages_collectors,
         test_state.crypto_round as u64,
     );
-    send_advance_result_between_parties(
+    send_advance_results_between_parties(
         &test_state.committee,
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
