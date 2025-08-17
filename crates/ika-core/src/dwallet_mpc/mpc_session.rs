@@ -110,7 +110,7 @@ impl DWalletMPCSession {
         let mpc_protocol = self
             .request_data
             .as_ref()
-            .map(|event_data| event_data.request_input.to_string())
+            .map(|event_data| event_data.protocol_specific_data.to_string())
             .unwrap_or_default();
         debug!(
             session_identifier=?message.session_identifier,
@@ -169,7 +169,7 @@ impl DWalletMPCSession {
     /// Records a threshold not reached error that we got when advancing
     /// this session with messages up to `consensus_round`.
     pub(crate) fn record_threshold_not_reached(&mut self, consensus_round: u64) {
-        let request_input = &self.request_data.as_ref().unwrap().request_input;
+        let request_input = &self.request_data.as_ref().unwrap().protocol_specific_data.to_string();
 
         error!(
             mpc_protocol=?request_input,
@@ -199,7 +199,7 @@ impl DWalletMPCSession {
         let mpc_protocol = self
             .request_data
             .as_ref()
-            .map(|event_data| event_data.request_input.to_string())
+            .map(|event_data| event_data.protocol_specific_data.to_string())
             .unwrap_or_default();
         debug!(
             session_identifier=?output.session_identifier,
@@ -250,7 +250,7 @@ impl DWalletMPCSession {
         self.status = MPCSessionStatus::ComputationCompleted;
     }
 
-    pub(crate) fn mpc_event_data(&self) -> Option<&MPCEventData> {
+    pub(crate) fn request_data(&self) -> Option<&DWalletSessionRequest> {
         self.request_data.as_ref()
     }
 }
@@ -390,7 +390,7 @@ impl DWalletMPCManager {
         if request.requires_network_key_data {
             if let Some(network_encryption_key_id) = request
                 .protocol_specific_data
-                .get_network_encryption_key_id()
+                .network_encryption_key_id()
             {
                 if !self
                     .network_keys
@@ -458,8 +458,8 @@ impl DWalletMPCManager {
             &self.access_structure,
             &self.committee,
             &self.network_keys,
-            &self.next_active_committee,
-            &self.validators_class_groups_public_keys_and_proofs,
+            self.next_active_committee.clone(),
+            self.validators_class_groups_public_keys_and_proofs.clone(),
         ) {
             Ok((public_input, private_input)) => (public_input, private_input),
             Err(e) => {

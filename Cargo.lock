@@ -5797,6 +5797,7 @@ dependencies = [
  "serde_json",
  "shared-crypto",
  "static_assertions",
+ "strum_macros 0.27.1",
  "sui-json-rpc-types",
  "sui-macros",
  "sui-protocol-config",

@@ -6,10 +6,7 @@ use commitment::CommitmentSizedNumber;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use itertools::Itertools;
-use mpc::{
-    AsynchronouslyAdvanceable, GuaranteedOutputDeliveryRoundResult,
-    WeightedThresholdAccessStructure,
-};
+use mpc::{AsynchronouslyAdvanceable, GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure};
 use rand_chacha::ChaCha20Rng;
 use std::collections::hash_map::Entry::Vacant;
 use std::collections::{HashMap, HashSet};
@@ -157,7 +154,7 @@ pub(crate) fn build_messages_to_advance(
 ///
 /// By maintaining a structured transition between instantiated types, and their
 /// serialized forms, this function ensures compatibility across various components.
-pub(crate) fn advance<P: AsynchronouslyAdvanceable>(
+pub(crate) fn advance<P: AsynchronouslyAdvanceable + GuaranteesOutputDelivery>(
     session_id: CommitmentSizedNumber,
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
@@ -168,7 +165,7 @@ pub(crate) fn advance<P: AsynchronouslyAdvanceable>(
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     // When a `ThresholdNotReached` error is received, the system now waits for additional messages
     // (including those from previous rounds) and retries.
-    match P::advance_with_guaranteed_output(
+    match advance_with_guaranteed_output::<P>(
         session_id,
         party_id,
         access_structure,

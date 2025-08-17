@@ -30,67 +30,67 @@ pub struct MPCEventData {
     pub(crate) requires_network_key_data: bool,
     pub(crate) requires_next_active_committee: bool,
 }
-
-impl MPCEventData {
-    pub(crate) fn try_new(
-        event: DWalletMPCEvent,
-        access_structure: &WeightedThresholdAccessStructure,
-        committee: &Committee,
-        network_keys: &DwalletMPCNetworkKeys,
-        next_active_committee: Option<Committee>,
-        validators_class_groups_public_keys_and_proofs: HashMap<
-            PartyID,
-            ClassGroupsEncryptionKeyAndProof,
-        >,
-    ) -> Result<Self, DwalletMPCError> {
-        let (public_input, private_input) = session_input_from_request(
-            event.clone(),
-            access_structure,
-            committee,
-            network_keys,
-            next_active_committee,
-            validators_class_groups_public_keys_and_proofs,
-        )?;
-
-        let needs_decryption_key_shares = matches!(
-            event.session_request.request_input.clone(),
-            MPCRequestInput::Sign(_) | MPCRequestInput::NetworkEncryptionKeyReconfiguration(_)
-        );
-
-        let decryption_key_shares = if needs_decryption_key_shares {
-            if let Some(network_encryption_key_id) = event
-                .session_request
-                .request_input
-                .get_network_encryption_key_id()
-            {
-                Some(network_keys.get_decryption_key_shares(&network_encryption_key_id)?)
-            } else {
-                error!(
-                    should_never_happen =? true,
-                    session_identifier=?event.session_request.session_identifier,
-                    "failed to get network encryption key ID for a session that requires decryption key shares",
-                );
-
-                None
-            }
-        } else {
-            None
-        };
-
-        let mpc_event_data = Self {
-            session_type: event.session_request.session_type,
-            session_sequence_number: event.session_request.session_sequence_number,
-            request_input: event.session_request.request_input,
-            private_input,
-            decryption_key_shares,
-            public_input,
-            requires_network_key_data: event.session_request.requires_network_key_data,
-            requires_next_active_committee: event.session_request.requires_next_active_committee,
-        };
-
-        Ok(mpc_event_data)
-    }
-}
+//
+// impl MPCEventData {
+//     pub(crate) fn try_new(
+//         event: DWalletMPCEvent,
+//         access_structure: &WeightedThresholdAccessStructure,
+//         committee: &Committee,
+//         network_keys: &DwalletMPCNetworkKeys,
+//         next_active_committee: Option<Committee>,
+//         validators_class_groups_public_keys_and_proofs: HashMap<
+//             PartyID,
+//             ClassGroupsEncryptionKeyAndProof,
+//         >,
+//     ) -> Result<Self, DwalletMPCError> {
+//         let (public_input, private_input) = session_input_from_request(
+//             event.clone(),
+//             access_structure,
+//             committee,
+//             network_keys,
+//             next_active_committee,
+//             validators_class_groups_public_keys_and_proofs,
+//         )?;
+//
+//         let needs_decryption_key_shares = matches!(
+//             event.session_request.request_input.clone(),
+//             MPCRequestInput::Sign(_) | MPCRequestInput::NetworkEncryptionKeyReconfiguration(_)
+//         );
+//
+//         let decryption_key_shares = if needs_decryption_key_shares {
+//             if let Some(network_encryption_key_id) = event
+//                 .session_request
+//                 .request_input
+//                 .get_network_encryption_key_id()
+//             {
+//                 Some(network_keys.get_decryption_key_shares(&network_encryption_key_id)?)
+//             } else {
+//                 error!(
+//                     should_never_happen =? true,
+//                     session_identifier=?event.session_request.session_identifier,
+//                     "failed to get network encryption key ID for a session that requires decryption key shares",
+//                 );
+//
+//                 None
+//             }
+//         } else {
+//             None
+//         };
+//
+//         let mpc_event_data = Self {
+//             session_type: event.session_request.session_type,
+//             session_sequence_number: event.session_request.session_sequence_number,
+//             request_input: event.session_request.request_input,
+//             private_input,
+//             decryption_key_shares,
+//             public_input,
+//             requires_network_key_data: event.session_request.requires_network_key_data,
+//             requires_next_active_committee: event.session_request.requires_next_active_committee,
+//         };
+//
+//         Ok(mpc_event_data)
+//     }
+// }
 
 impl PartialOrd<Self> for MPCEventData {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {

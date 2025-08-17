@@ -9,7 +9,7 @@ use sha3::Digest;
 use sha3::digest::FixedOutput;
 
 /// Supported hash functions for message digest.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Hash {
     KECCAK256 = 0,
     SHA256 = 1,

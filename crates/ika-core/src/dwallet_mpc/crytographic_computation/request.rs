@@ -1,9 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_mpc::crytographic_computation::protocol_specific_data::{
-    AdvanceSpecificData, ProtocolSpecificData,
-};
 use crate::dwallet_mpc::crytographic_computation::{ComputationId, MPC_SIGN_SECOND_ROUND};
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
@@ -43,6 +40,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{error, info};
 use twopc_mpc::sign::Protocol;
+use crate::dwallet_mpc::session_request::AdvanceSpecificData;
 
 pub(crate) struct Request {
     pub(crate) party_id: PartyID,

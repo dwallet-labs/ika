@@ -51,14 +51,14 @@ pub struct NetworkEncryptionKeyPublicData {
 }
 
 #[repr(u32)]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash, Copy)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash, Copy, Ord, PartialOrd)]
 pub enum DWalletMPCNetworkKeyScheme {
     Secp256k1 = 0,
     Ristretto = 1,
 }
 
 #[repr(u32)]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash, Copy)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash, Copy, Ord, PartialOrd)]
 pub enum SignatureAlgorithm {
     ECDSA,
 }

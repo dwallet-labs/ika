@@ -25,6 +25,7 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
+use group::PartyID;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, error, info};
@@ -37,7 +38,8 @@ const COMPUTATION_UPDATE_CHANNEL_SIZE: usize = 10_000;
 
 struct ComputationCompletionUpdate {
     computation_id: ComputationId,
-    computation_request: ComputationRequest,
+    party_id: PartyID,
+    protocol_name: String,
     computation_result: DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>,
     elapsed_ms: u128,
 }
@@ -114,8 +116,8 @@ impl CryptographicComputationsOrchestrator {
     ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
         let mut completed_computation_results = HashMap::new();
         while let Ok(computation_update) = self.completed_computation_receiver.try_recv() {
-            let party_id = computation_update.computation_request.party_id;
-            let request_input = computation_update.computation_request.request_input.clone();
+            let party_id = computation_update.party_id;
+            let request_input = computation_update.protocol_name;
             let session_identifier = computation_update.computation_id.session_identifier;
             let mpc_round = computation_update.computation_id.mpc_round;
             let attempt_number = computation_update.computation_id.attempt_number;
@@ -151,17 +153,17 @@ impl CryptographicComputationsOrchestrator {
                     "Cryptographic computation completed successfully"
                 );
 
-                dwallet_mpc_metrics.add_advance_completion(
-                    &request_input,
-                    &mpc_round.to_string(),
-                    elapsed_ms as i64,
-                );
-
-                dwallet_mpc_metrics.set_last_completion_duration(
-                    &request_input,
-                    &mpc_round.to_string(),
-                    elapsed_ms as i64,
-                );
+                // dwallet_mpc_metrics.add_advance_completion(
+                //     &request_input,
+                //     &mpc_round.to_string(),
+                //     elapsed_ms as i64,
+                // );
+                //
+                // dwallet_mpc_metrics.set_last_completion_duration(
+                //     &request_input,
+                //     &mpc_round.to_string(),
+                //     elapsed_ms as i64,
+                // );
             }
 
             self.currently_running_cryptographic_computations
@@ -200,7 +202,7 @@ impl CryptographicComputationsOrchestrator {
                 session_identifier=?computation_id.session_identifier,
                 mpc_round=?computation_id.mpc_round,
                 attempt_number=?computation_id.attempt_number,
-                mpc_protocol=?computation_request.request_input,
+                mpc_protocol=?computation_request.protocol_name,
                 "No available CPU cores to perform cryptographic computation"
             );
 
@@ -220,19 +222,19 @@ impl CryptographicComputationsOrchestrator {
 
         let handle = Handle::current();
 
-        dwallet_mpc_metrics.add_advance_call(
-            &computation_request.request_input,
-            &computation_id.mpc_round.to_string(),
-        );
+        // dwallet_mpc_metrics.add_advance_call(
+        //     &computation_request.protocol_name,
+        //     &computation_id.mpc_round.to_string(),
+        // );
 
         let party_id = computation_request.party_id;
-        let request_input = computation_request.request_input.clone();
+        let protocol_name = computation_request.protocol_name.clone();
         info!(
             party_id,
             session_identifier=?computation_id.session_identifier,
             mpc_round=?computation_id.mpc_round,
             attempt_number=?computation_id.attempt_number,
-            mpc_protocol=?request_input,
+            mpc_protocol=?protocol_name,
             "Starting cryptographic computation",
         );
 
@@ -241,7 +243,7 @@ impl CryptographicComputationsOrchestrator {
         rayon::spawn_fifo(move || {
             let advance_start_time = Instant::now();
 
-            let computation_result = computation_request.clone().compute(
+            let computation_result = computation_request.compute(
                 computation_id,
                 root_seed,
                 dwallet_mpc_metrics.clone(),
@@ -254,7 +256,8 @@ impl CryptographicComputationsOrchestrator {
                 if let Err(err) = computation_channel_sender
                     .send(ComputationCompletionUpdate {
                         computation_id,
-                        computation_request,
+                        party_id,
+                        protocol_name,
                         computation_result,
                         elapsed_ms,
                     })

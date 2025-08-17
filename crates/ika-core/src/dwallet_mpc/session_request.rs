@@ -1,7 +1,7 @@
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
 };
-use crate::dwallet_mpc::mpc_session::{MPCEventData, PublicInput};
+use crate::dwallet_mpc::mpc_session::{MPCEventData, MPCRoundToMessagesHashMap, PublicInput};
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
 use crate::dwallet_mpc::sign::SignParty;
@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use sui_types::base_types::ObjectID;
 use twopc_mpc::sign::Protocol;
 
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct DWalletSessionRequest {
     pub session_type: SessionType,
     /// Unique identifier for the MPC session.
@@ -55,8 +56,10 @@ impl DWalletSessionRequest {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(strum_macros::Display)]
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum ProtocolSpecificData {
+    #[strum(to_string = "ImportedKeyVerification")]
     ImportedKeyVerification {
         curve: DWalletMPCNetworkKeyScheme,
         encrypted_centralized_secret_share_and_proof: Vec<u8>,
@@ -67,6 +70,7 @@ pub(crate) enum ProtocolSpecificData {
         centralized_party_message: Vec<u8>,
     },
 
+    #[strum(to_string = "MakeDWalletUserSecretKeySharesPublic")]
     MakeDWalletUserSecretKeySharesPublic {
         curve: DWalletMPCNetworkKeyScheme,
         public_user_secret_key_shares: Vec<u8>,
@@ -75,12 +79,14 @@ pub(crate) enum ProtocolSpecificData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
+    #[strum(to_string = "DKGFirst")]
     DKGFirst {
         curve: DWalletMPCNetworkKeyScheme,
         dwallet_id: ObjectID,
         dwallet_network_encryption_key_id: ObjectID,
     },
 
+    #[strum(to_string = "DKGSecond")]
     DKGSecond {
         curve: DWalletMPCNetworkKeyScheme,
         encrypted_centralized_secret_share_and_proof: Vec<u8>,
@@ -92,6 +98,7 @@ pub(crate) enum ProtocolSpecificData {
         centralized_public_key_share_and_proof: SerializedWrappedMPCPublicOutput,
     },
 
+    #[strum(to_string = "Presign")]
     Presign {
         curve: DWalletMPCNetworkKeyScheme,
         signature_algorithm: SignatureAlgorithm,
@@ -101,6 +108,7 @@ pub(crate) enum ProtocolSpecificData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
+    #[strum(to_string = "Sign")]
     Sign {
         curve: DWalletMPCNetworkKeyScheme,
         hash_scheme: Hash,
@@ -115,15 +123,18 @@ pub(crate) enum ProtocolSpecificData {
         message_centralized_signature: SerializedWrappedMPCPublicOutput,
     },
 
+    #[strum(to_string = "NetworkEncryptionKeyDkg")]
     NetworkEncryptionKeyDkg {
         key_scheme: DWalletMPCNetworkKeyScheme,
         dwallet_network_encryption_key_id: ObjectID,
     },
 
+    #[strum(to_string = "NetworkEncryptionKeyReconfiguration")]
     NetworkEncryptionKeyReconfiguration {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
+    #[strum(to_string = "EncryptedShareVerification")]
     EncryptedShareVerification {
         curve: DWalletMPCNetworkKeyScheme,
         encrypted_centralized_secret_share_and_proof: Vec<u8>,
@@ -134,6 +145,7 @@ pub(crate) enum ProtocolSpecificData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
+    #[strum(to_string = "PartialSignatureVerification")]
     PartialSignatureVerification {
         curve: DWalletMPCNetworkKeyScheme,
         message: Vec<u8>,
@@ -307,9 +319,9 @@ impl ProtocolSpecificData {
     pub fn hash_scheme(&self) -> String {
         match self {
             AdvanceSpecificData::Sign { hash_scheme, .. }
-            | AdvanceSpecificData::PartialSignatureVerification { hash_type, .. } => {
+            | AdvanceSpecificData::PartialSignatureVerification { hash_type: hash_scheme, .. } => {
                 hash_scheme.to_string()
-            }
+            },
             AdvanceSpecificData::DKGFirst { .. }
             | AdvanceSpecificData::DKGSecond { .. }
             | AdvanceSpecificData::Presign { .. }
@@ -342,6 +354,23 @@ impl ProtocolSpecificData {
             | AdvanceSpecificData::NetworkEncryptionKeyReconfiguration { .. }
             | AdvanceSpecificData::MakeDWalletUserSecretKeySharesPublic { .. }
             | AdvanceSpecificData::ImportedKeyVerification { .. } => "Unknown".to_string(),
+        }
+    }
+
+    pub fn network_encryption_key_id(&self) -> Option<ObjectID> {
+        match self {
+            ProtocolSpecificData::DKGFirst { dwallet_network_encryption_key_id, .. }
+            | ProtocolSpecificData::DKGSecond { dwallet_network_encryption_key_id, .. }
+            | ProtocolSpecificData::Presign { dwallet_network_encryption_key_id, .. }
+            | ProtocolSpecificData::Sign { dwallet_network_encryption_key_id, .. }
+            | ProtocolSpecificData::NetworkEncryptionKeyDkg { dwallet_network_encryption_key_id, .. }
+            | ProtocolSpecificData::NetworkEncryptionKeyReconfiguration { dwallet_network_encryption_key_id, .. }
+            | ProtocolSpecificData::EncryptedShareVerification { dwallet_network_encryption_key_id, .. }
+            | ProtocolSpecificData::PartialSignatureVerification { dwallet_network_encryption_key_id, .. }
+            | ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic { dwallet_network_encryption_key_id, .. }
+            | ProtocolSpecificData::ImportedKeyVerification { dwallet_network_encryption_key_id, .. } => {
+                Some(*dwallet_network_encryption_key_id)
+            },
         }
     }
 }
@@ -432,7 +461,7 @@ impl AdvanceSpecificData {
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
         consensus_round: u64,
-        messages_by_consensus_round: HashMap<u64, HashMap<PartyID, MPCMessage>>,
+        messages_by_consensus_round: HashMap<u64, MPCRoundToMessagesHashMap>,
         public_input: PublicInput,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
@@ -731,7 +760,7 @@ impl AdvanceSpecificData {
     pub fn hash_scheme_name(&self) -> String {
         match self {
             AdvanceSpecificData::Sign { hash_scheme, .. }
-            | AdvanceSpecificData::PartialSignatureVerification { hash_type, .. } => {
+            | AdvanceSpecificData::PartialSignatureVerification { hash_type: hash_scheme, .. } => {
                 hash_scheme.to_string()
             }
             AdvanceSpecificData::DKGFirst { .. }

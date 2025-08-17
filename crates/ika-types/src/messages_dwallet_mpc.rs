@@ -341,7 +341,19 @@ pub trait DWalletSessionEventTrait {
 /// User initiated sessions have a sequence number, which is used to determine in which epoch the session will get
 /// completed.
 /// System sessions are guaranteed to always get completed in the epoch they were created in.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, JsonSchema, Eq, PartialEq, Hash)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    Copy,
+    JsonSchema,
+    Eq,
+    PartialEq,
+    Hash,
+    Ord,
+    PartialOrd
+)]
 pub enum SessionType {
     User,
     System,

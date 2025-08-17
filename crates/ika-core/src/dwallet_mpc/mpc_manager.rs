@@ -343,7 +343,7 @@ impl DWalletMPCManager {
             }
         };
 
-        if session.status == MPCSessionStatus::Active {
+        if let MPCSessionStatus::Active{..} = session.status {
             session.add_message(consensus_round, mpc_round_number, sender_party_id, message);
         }
     }
@@ -451,22 +451,23 @@ impl DWalletMPCManager {
                     );
                     return None;
                 };
-                let consensus_round = session.messages_by_consensus_round.keys().max();
+                let consensus_round = session.messages_by_consensus_round.keys().max().copied();
 
                 AdvanceSpecificData::try_new(
-                    request_data.protocol_specific_data,
+                    &request_data.protocol_specific_data,
                     self.party_id,
                     &self.access_structure,
-                    consensus_round.unwrap_or_else(1),
+                    consensus_round
+                        .unwrap_or_default(),
                     session.messages_by_consensus_round.clone(),
-                    public_input,
+                    public_input.clone(),
                     self.network_dkg_third_round_delay,
                     self.decryption_key_reconfiguration_third_round_delay,
                     self.network_keys
                         .validator_private_dec_key_data
                         .class_groups_decryption_key
                         .clone(),
-                )?
+                ).ok()?
                 .map(|advance_specific_data| {
                     let attempt_number = session.get_attempt_number();
 
@@ -795,9 +796,9 @@ impl DWalletMPCManager {
     pub(crate) fn complete_mpc_session(&mut self, session_identifier: &SessionIdentifier) {
         if let Some(session) = self.mpc_sessions.get_mut(session_identifier) {
             session.mark_mpc_session_as_completed();
-            if let Some(mpc_event_data) = session.mpc_event_data() {
-                self.dwallet_mpc_metrics
-                    .add_completion(&mpc_event_data.request_input);
+            if let Some(mpc_event_data) = session.request_data() {
+                // self.dwallet_mpc_metrics
+                //     .add_completion(&mpc_event_data.request_input);
             }
             session.clear_data();
         }

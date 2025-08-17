@@ -195,7 +195,7 @@ pub(crate) fn session_input_from_request(
             Ok((
                 PublicInput::Presign(presign_public_input(
                     request.session_identifier,
-                    dwallet_public_output,
+                    dwallet_public_output.clone(),
                     protocol_public_parameters,
                 )?),
                 None,
@@ -221,10 +221,10 @@ pub(crate) fn session_input_from_request(
                     dwallet_network_encryption_key_id,
                     request.session_identifier,
                     dwallet_decentralized_public_output,
-                    message,
+                    message.clone(),
                     presign,
                     message_centralized_signature,
-                    hash_scheme,
+                    hash_scheme.clone(),
                     access_structure,
                     network_keys,
                     protocol_public_parameters,

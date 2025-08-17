@@ -63,6 +63,7 @@ use tokio::sync::watch;
 use tokio::sync::watch::error::RecvError;
 use tokio::sync::watch::{Receiver, Ref};
 use tracing::{debug, error, info, warn};
+use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 
 const DELAY_NO_ROUNDS_SEC: u64 = 2;
 const READ_INTERVAL_MS: u64 = 20;
@@ -266,7 +267,7 @@ impl DWalletMPCService {
         self.sync_last_session_to_complete_in_current_epoch().await;
 
         // Receive **new** dWallet MPC events and save them in the local DB.
-        if let Err(err) = self.handle_new_events().await {
+        if let Err(err) = self.handle_new_requests().await {
             error!(?err, "failed to handle new events from DWallet MPC service")
         }
 
@@ -285,7 +286,7 @@ impl DWalletMPCService {
             .await;
     }
 
-    async fn handle_new_events(&mut self) -> DwalletMPCResult<()> {
+    async fn handle_new_requests(&mut self) -> DwalletMPCResult<()> {
         let uncompleted_requests = self.load_uncompleted_requests().await;
         let pulled_requests = match self.receive_new_sui_requests() {
             Ok(requests) => requests,
@@ -332,7 +333,7 @@ impl DWalletMPCService {
         }
 
         self.dwallet_mpc_manager
-            .handle_mpc_request_batch(events)
+            .handle_mpc_request_batch(requests)
             .await;
         Ok(())
     }
@@ -574,8 +575,8 @@ impl DWalletMPCService {
                 .mpc_sessions
                 .get(&session_identifier)
             {
-                if session.status == MPCSessionStatus::Active {
-                    if let Some(mpc_event_data) = session.request_data.clone() {
+                if let MPCSessionStatus::Active { public_input, private_input } = &session.status {
+                    if let Some(session_request) = session.request_data.clone() {
                         match computation_result {
                             Ok(GuaranteedOutputDeliveryRoundResult::Advance { message }) => {
                                 info!(
@@ -636,7 +637,7 @@ impl DWalletMPCService {
 
                                 let consensus_message = self.new_dwallet_mpc_output(
                                     session_identifier,
-                                    &mpc_event_data,
+                                    &session_request,
                                     public_output_value,
                                     malicious_authorities,
                                     rejected,
@@ -686,7 +687,7 @@ impl DWalletMPCService {
 
                                 let consensus_message = self.new_dwallet_mpc_output(
                                     session_identifier,
-                                    &mpc_event_data,
+                                    &session_request,
                                     vec![],
                                     vec![],
                                     rejected,
@@ -750,14 +751,14 @@ impl DWalletMPCService {
     fn new_dwallet_mpc_output(
         &self,
         session_identifier: SessionIdentifier,
-        mpc_event_data: &MPCEventData,
+        session_request: &DWalletSessionRequest,
         output: Vec<u8>,
         malicious_authorities: Vec<AuthorityName>,
         rejected: bool,
     ) -> ConsensusTransaction {
         let output = Self::build_dwallet_checkpoint_message_kinds_from_output(
             &session_identifier,
-            &mpc_event_data.request_input,
+            session_request,
             output,
             rejected,
         );
@@ -771,120 +772,116 @@ impl DWalletMPCService {
 
     fn build_dwallet_checkpoint_message_kinds_from_output(
         session_identifier: &SessionIdentifier,
-        request_input: &MPCRequestInput,
+        session_request: &DWalletSessionRequest,
         output: Vec<u8>,
         rejected: bool,
     ) -> Vec<DWalletCheckpointMessageKind> {
         info!(
-            mpc_protocol=?request_input,
+            mpc_protocol=?session_request.protocol_specific_data,
             session_identifier=?session_identifier,
             "Creating session output message for checkpoint"
         );
-        match &request_input {
-            MPCRequestInput::DKGFirst(request_input) => {
+        match &session_request.protocol_specific_data {
+            ProtocolSpecificData::DKGFirst { dwallet_id, .. } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
                     DKGFirstRoundOutput {
-                        dwallet_id: request_input.event_data.dwallet_id.to_vec(),
+                        dwallet_id: dwallet_id.to_vec(),
                         output,
-                        session_sequence_number: request_input.session_sequence_number,
+                        session_sequence_number: session_request.session_sequence_number,
                         rejected,
                     },
                 );
                 vec![tx]
             }
-            MPCRequestInput::DKGSecond(request_input) => {
+            ProtocolSpecificData::DKGSecond{  dwallet_id, encrypted_secret_share_id, .. } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(
                     DKGSecondRoundOutput {
                         output,
-                        dwallet_id: request_input.event_data.dwallet_id.to_vec(),
-                        encrypted_secret_share_id: request_input
-                            .event_data
-                            .encrypted_user_secret_key_share_id
-                            .to_vec(),
+                        dwallet_id: dwallet_id.to_vec(),
+                        encrypted_secret_share_id: encrypted_secret_share_id.to_vec(),
                         rejected,
-                        session_sequence_number: request_input.session_sequence_number,
+                        session_sequence_number: session_request.session_sequence_number,
                     },
                 );
                 vec![tx]
             }
-            MPCRequestInput::Presign(request_input) => {
+            ProtocolSpecificData::Presign {
+                dwallet_id,
+                presign_id,
+                ..
+            } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletPresign(PresignOutput {
                     presign: output,
-                    dwallet_id: request_input.event_data.dwallet_id.map(|id| id.to_vec()),
-                    presign_id: request_input.event_data.presign_id.to_vec(),
+                    dwallet_id: dwallet_id.map(|id| id.to_vec()),
+                    presign_id: presign_id.to_vec(),
                     rejected,
-                    session_sequence_number: request_input.session_sequence_number,
+                    session_sequence_number: session_request.session_sequence_number,
                 });
                 vec![tx]
             }
-            MPCRequestInput::Sign(request_input) => {
+            ProtocolSpecificData::Sign{
+                dwallet_id,
+                sign_id,
+                is_future_sign,
+                ..
+            } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletSign(SignOutput {
                     signature: output,
-                    dwallet_id: request_input.event_data.dwallet_id.to_vec(),
-                    is_future_sign: request_input.event_data.is_future_sign,
-                    sign_id: request_input.event_data.sign_id.to_vec(),
+                    dwallet_id: dwallet_id.to_vec(),
+                    is_future_sign: *is_future_sign,
+                    sign_id: sign_id.to_vec(),
                     rejected,
-                    session_sequence_number: request_input.session_sequence_number,
+                    session_sequence_number: session_request.session_sequence_number,
                 });
                 vec![tx]
             }
-            MPCRequestInput::EncryptedShareVerification(request_input) => {
+            ProtocolSpecificData::EncryptedShareVerification{ dwallet_id, encrypted_user_secret_key_share_id, ..} => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(
                     EncryptedUserShareOutput {
-                        dwallet_id: request_input.event_data.dwallet_id.to_vec(),
-                        encrypted_user_secret_key_share_id: request_input
-                            .event_data
-                            .encrypted_user_secret_key_share_id
+                        dwallet_id: dwallet_id.to_vec(),
+                        encrypted_user_secret_key_share_id: encrypted_user_secret_key_share_id
                             .to_vec(),
                         rejected,
-                        session_sequence_number: request_input.session_sequence_number,
+                        session_sequence_number: session_request.session_sequence_number,
                     },
                 );
                 vec![tx]
             }
-            MPCRequestInput::PartialSignatureVerification(request_input) => {
+            ProtocolSpecificData::PartialSignatureVerification{  dwallet_id, partial_centralized_signed_message_id, .. } => {
                 let tx =
                     DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(
                         PartialSignatureVerificationOutput {
-                            dwallet_id: request_input.event_data.dwallet_id.to_vec(),
-                            partial_centralized_signed_message_id: request_input
-                                .event_data
-                                .partial_centralized_signed_message_id
+                            dwallet_id: dwallet_id.to_vec(),
+                            partial_centralized_signed_message_id: partial_centralized_signed_message_id
                                 .to_vec(),
                             rejected,
-                            session_sequence_number: request_input.session_sequence_number,
+                            session_sequence_number: session_request.session_sequence_number,
                         },
                     );
                 vec![tx]
             }
-            MPCRequestInput::NetworkEncryptionKeyDkg(_key_scheme, request_input) => {
+            ProtocolSpecificData::NetworkEncryptionKeyDkg{ dwallet_network_encryption_key_id, .. } => {
                 let slices = if rejected {
                     vec![MPCNetworkDKGOutput {
-                        dwallet_network_encryption_key_id: request_input
-                            .event_data
-                            .dwallet_network_encryption_key_id
-                            .clone()
+                        dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                             .to_vec(),
                         public_output: vec![],
                         supported_curves: vec![DWalletMPCNetworkKeyScheme::Secp256k1 as u32],
                         is_last: true,
                         rejected: true,
-                        session_sequence_number: request_input.session_sequence_number,
+                        session_sequence_number: session_request.session_sequence_number,
                     }]
                 } else {
                     Self::slice_public_output_into_messages(
                         output,
                         |public_output_chunk, is_last| MPCNetworkDKGOutput {
-                            dwallet_network_encryption_key_id: request_input
-                                .event_data
-                                .dwallet_network_encryption_key_id
-                                .clone()
+                            dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                                 .to_vec(),
                             public_output: public_output_chunk,
                             supported_curves: vec![DWalletMPCNetworkKeyScheme::Secp256k1 as u32],
                             is_last,
                             rejected: false,
-                            session_sequence_number: request_input.session_sequence_number,
+                            session_sequence_number: session_request.session_sequence_number,
                         },
                     )
                 };
@@ -895,34 +892,29 @@ impl DWalletMPCService {
                     .collect();
                 messages
             }
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(request_input) => {
+            ProtocolSpecificData::NetworkEncryptionKeyReconfiguration{ dwallet_network_encryption_key_id } => {
                 let slices = if rejected {
                     vec![MPCNetworkReconfigurationOutput {
-                        dwallet_network_encryption_key_id: request_input
-                            .event_data
-                            .dwallet_network_encryption_key_id
-                            .clone()
+                        dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                             .to_vec(),
                         public_output: vec![],
                         supported_curves: vec![DWalletMPCNetworkKeyScheme::Secp256k1 as u32],
                         is_last: true,
                         rejected: true,
-                        session_sequence_number: request_input.session_sequence_number,
+                        session_sequence_number: session_request.session_sequence_number,
                     }]
                 } else {
                     Self::slice_public_output_into_messages(
                         output,
                         |public_output_chunk, is_last| MPCNetworkReconfigurationOutput {
-                            dwallet_network_encryption_key_id: request_input
-                                .event_data
-                                .dwallet_network_encryption_key_id
+                            dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                                 .clone()
                                 .to_vec(),
                             public_output: public_output_chunk,
                             supported_curves: vec![DWalletMPCNetworkKeyScheme::Secp256k1 as u32],
                             is_last,
                             rejected: false,
-                            session_sequence_number: request_input.session_sequence_number,
+                            session_sequence_number: session_request.session_sequence_number,
                         },
                     )
                 };
@@ -935,32 +927,27 @@ impl DWalletMPCService {
                     .collect();
                 messages
             }
-            MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(request_input) => {
+            ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic{ public_user_secret_key_shares, dwallet_id, .. } => {
                 let tx = DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(
                     MakeDWalletUserSecretKeySharesPublicOutput {
-                        dwallet_id: request_input.event_data.dwallet_id.to_vec(),
-                        public_user_secret_key_shares: request_input
-                            .event_data
-                            .public_user_secret_key_shares
+                        dwallet_id: dwallet_id.to_vec(),
+                        public_user_secret_key_shares: public_user_secret_key_shares
                             .clone(),
                         rejected,
-                        session_sequence_number: request_input.session_sequence_number,
+                        session_sequence_number: session_request.session_sequence_number,
                     },
                 );
                 vec![tx]
             }
-            MPCRequestInput::DWalletImportedKeyVerificationRequest(request_input) => {
+            ProtocolSpecificData::ImportedKeyVerification{ curve, encrypted_centralized_secret_share_and_proof, encryption_key, dwallet_id, encrypted_user_secret_key_share_id, dwallet_network_encryption_key_id, centralized_party_message } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(
                     DWalletImportedKeyVerificationOutput {
-                        dwallet_id: request_input.event_data.dwallet_id.to_vec().clone(),
+                        dwallet_id: dwallet_id.to_vec().clone(),
                         public_output: output,
-                        encrypted_user_secret_key_share_id: request_input
-                            .event_data
-                            .encrypted_user_secret_key_share_id
-                            .to_vec()
-                            .clone(),
+                        encrypted_user_secret_key_share_id: encrypted_user_secret_key_share_id
+                            .to_vec(),
                         rejected,
-                        session_sequence_number: request_input.session_sequence_number,
+                        session_sequence_number: session_request.session_sequence_number,
                     },
                 );
                 vec![tx]
