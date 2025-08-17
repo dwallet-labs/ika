@@ -520,6 +520,7 @@ pub(crate) fn send_configurable_start_network_dkg_event(
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
 ) {
+    let key_id = ObjectID::random();
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DBSuiEvent {
@@ -531,7 +532,7 @@ pub(crate) fn send_configurable_start_network_dkg_event(
                     session_sequence_number,
                     session_identifier_preimage.to_vec().clone(),
                     DWalletNetworkDKGEncryptionKeyRequestEvent {
-                        dwallet_network_encryption_key_id: ObjectID::random(),
+                        dwallet_network_encryption_key_id: key_id,
                         params_for_network: vec![],
                     },
                 ))
