@@ -1,4 +1,4 @@
-### Chaos Tests Setup
+### System Tests Setup
 Copy the `.env.example` file to `.env` and set the variables in it with configuration of your choice.
 
 ### Run the end to end, epoch switch with new members test
