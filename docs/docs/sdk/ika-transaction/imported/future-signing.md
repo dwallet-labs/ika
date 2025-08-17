@@ -24,6 +24,7 @@ Future signing with imported DWallets allows you to create partial signatures th
 
 <Warning title="Two-Phase Process">
 **Phase 1:** Create partial signature using your encrypted share
+
 **Phase 2:** Complete signature later with imported key message approval - uses specialized imported DWallet methods
 </Warning>
 

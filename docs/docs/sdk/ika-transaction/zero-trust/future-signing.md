@@ -24,6 +24,7 @@ Future signing allows you to create partial signatures that can be completed lat
 
 <Warning title="Two-Phase Process">
 **Phase 1:** Create partial signature using your encrypted share
+
 **Phase 2:** Complete the signature later with message approval - maintains zero-trust security
 </Warning>
 
