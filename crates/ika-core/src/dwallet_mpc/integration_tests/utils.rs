@@ -523,6 +523,22 @@ pub(crate) fn send_start_network_dkg_event_to_all_parties(
     );
 }
 
+pub(crate) fn send_start_network_dkg_event_to_some_parties(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: &mut Vec<SuiDataSenders>,
+    parties: &[usize],
+) {
+    send_configurable_start_network_dkg_event(
+        ika_network_config,
+        epoch_id,
+        sui_data_senders,
+        [1u8; 32],
+        1,
+        parties,
+    );
+}
+
 pub(crate) fn send_start_network_dkg_event(
     ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,

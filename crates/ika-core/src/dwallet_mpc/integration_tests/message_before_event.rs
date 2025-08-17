@@ -2,6 +2,7 @@ use crate::SuiDataSenders;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event_to_all_parties,
+    send_start_network_dkg_event_to_some_parties,
 };
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
@@ -24,7 +25,9 @@ async fn message_before_event() {
     let ika_network_config = IkaNetworkConfig::new_for_testing();
 
     let parties_that_receive_session_message_before_start_event = vec![0, 1];
-
+    let parties_that_receive_session_message_after_start_event = (0..committee.voting_rights.len())
+        .filter(|i| !parties_that_receive_session_message_before_start_event.contains(i))
+        .collect::<Vec<_>>();
     let epoch_id = 1;
     let (
         mut dwallet_mpc_services,
@@ -33,9 +36,49 @@ async fn message_before_event() {
         mut epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
-    send_start_network_dkg_event_to_all_parties(&ika_network_config, epoch_id, &mut sui_data_senders);
+
+    send_start_network_dkg_event_to_some_parties(
+        &ika_network_config,
+        epoch_id,
+        &mut sui_data_senders,
+        &parties_that_receive_session_message_after_start_event,
+    );
     let mut consensus_round = 1;
-    let mut network_key_checkpoint = None;
+    utils::advance_some_parties_and_wait_for_completions(
+        &committee,
+        &mut dwallet_mpc_services,
+        &mut sent_consensus_messages_collectors,
+        &epoch_stores,
+        &notify_services,
+        &parties_that_receive_session_message_after_start_event,
+    )
+    .await;
+    utils::send_advance_results_between_parties(
+        &committee,
+        &mut sent_consensus_messages_collectors,
+        &mut epoch_stores,
+        consensus_round,
+    );
+    for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
+        dwallet_mpc_service.run_service_loop_iteration().await;
+    }
+    consensus_round += 1;
+    utils::advance_some_parties_and_wait_for_completions(
+        &committee,
+        &mut dwallet_mpc_services,
+        &mut sent_consensus_messages_collectors,
+        &epoch_stores,
+        &notify_services,
+        &parties_that_receive_session_message_before_start_event,
+    )
+    .await;
+    utils::send_advance_results_between_parties(
+        &committee,
+        &mut sent_consensus_messages_collectors,
+        &mut epoch_stores,
+        consensus_round,
+    );
+    consensus_round += 1;
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
@@ -47,11 +90,10 @@ async fn message_before_event() {
         .await
         {
             assert_eq!(
-                consensus_round, 5,
-                "Network DKG should complete after 4 rounds"
+                consensus_round, 6,
+                "Network DKG should complete after 4 rounds, and one round was added for the delayed parties"
             );
             info!(?pending_checkpoint, "MPC flow completed successfully");
-            network_key_checkpoint = Some(pending_checkpoint);
             break;
         }
 
@@ -63,8 +105,5 @@ async fn message_before_event() {
         );
         consensus_round += 1;
     }
-    let Some(network_key_checkpoint) = network_key_checkpoint else {
-        panic!("Network key checkpoint should not be None");
-    };
-    info!(?network_key_checkpoint, "Network key checkpoint received");
+    info!("MPC flow completed successfully");
 }
