@@ -2,7 +2,7 @@
 id: making-a-dwallet-public
 title: Making a DWallet Public
 description: Make DWallet secret shares public for shared access
-sidebar_position: 3
+sidebar_position: 1
 sidebar_label: Making a DWallet Public
 ---
 

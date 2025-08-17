@@ -1,14 +1,14 @@
 ---
-id: transferring-a-dwallet
-title: Transferring a DWallet
+id: transferring-a-dwallet-share
+title: Transferring a DWallet Share
 description: Transfer your DWallet user share to another person
 sidebar_position: 2
-sidebar_label: Transferring a DWallet
+sidebar_label: Transferring a DWallet Share
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Transferring a DWallet
+# Transferring a DWallet Share
 
 <Construction />
 

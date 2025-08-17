@@ -2,7 +2,7 @@
 id: importing-a-dwallet
 title: Importing a DWallet
 description: Import existing cryptographic keys as DWallets
-sidebar_position: 2
+sidebar_position: 1
 sidebar_label: Importing a DWallet
 ---
 

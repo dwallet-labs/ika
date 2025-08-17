@@ -1,14 +1,14 @@
 ---
-id: receiving-a-dwallet
-title: Receiving a DWallet
+id: receiving-a-dwallet-share
+title: Receiving a DWallet Share
 description: Accept a transferred DWallet user share from another person
 sidebar_position: 3
-sidebar_label: Receiving a DWallet
+sidebar_label: Receiving a DWallet Share
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Receiving a DWallet
+# Receiving a DWallet Share
 
 <Construction />
 
@@ -51,26 +51,7 @@ await suiClient.signAndExecuteTransaction({
 });
 ```
 
-## Step 2: Wait for Transfer Completion
-
-Wait for the transferred share to be ready for acceptance:
-
-```typescript
-import { retryUntil } from '@ika.xyz/sdk';
-
-// Wait for the transferred share to be network verified
-const yourEncryptedUserShare = await retryUntil(
-	() =>
-		ikaClient.getEncryptedUserSecretKeyShareInParticularState(
-			transferredEncryptedShareId, // Provided by sender
-			'NetworkVerificationCompleted',
-		),
-	30,
-	2000,
-);
-```
-
-## Step 3: Get Sender's Encryption Key
+## Step 2: Get Sender's Encryption Key
 
 Retrieve the sender's encryption key for verification:
 
@@ -79,7 +60,7 @@ Retrieve the sender's encryption key for verification:
 const senderEncryptionKey = await ikaClient.getActiveEncryptionKey(senderAddress);
 ```
 
-## Step 4: Accept the Transferred Share
+## Step 3: Accept the Transferred Share
 
 Accept the transferred encrypted user share:
 
