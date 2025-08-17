@@ -42,7 +42,7 @@ pub(crate) struct IntegrationTestState {
     pub(crate) sent_consensus_messages_collectors: Vec<Arc<TestingSubmitToConsensus>>,
     pub(crate) epoch_stores: Vec<Arc<TestingAuthorityPerEpochStore>>,
     pub(crate) notify_services: Vec<Arc<TestingDWalletCheckpointNotify>>,
-    pub(crate) crypto_round: usize,
+    pub(crate) mpc_round: usize,
     pub(crate) consensus_round: usize,
     pub(crate) committee: Committee,
     pub(crate) sui_data_senders: Vec<SuiDataSenders>,
@@ -644,7 +644,7 @@ pub(crate) async fn advance_parties_and_send_result_messages(
     override_legit_messages_with_false_messages(
         malicious_parties,
         &mut test_state.sent_consensus_messages_collectors,
-        test_state.crypto_round as u64,
+        test_state.mpc_round as u64,
     );
     send_advance_results_between_parties(
         &test_state.committee,

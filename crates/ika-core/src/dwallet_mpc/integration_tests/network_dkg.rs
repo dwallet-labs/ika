@@ -59,7 +59,10 @@ async fn test_network_dkg_full_flow() {
         )
         .await
         {
-            assert_eq!(consensus_round, 5, "Network DKG should complete after 4 rounds");
+            assert_eq!(
+                consensus_round, 5,
+                "Network DKG should complete after 4 rounds"
+            );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }

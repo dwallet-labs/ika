@@ -61,7 +61,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
-        crypto_round: 1,
+        mpc_round: 1,
         consensus_round: 1,
         committee,
         sui_data_senders,
@@ -69,7 +69,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
     loop {
         let previous_rounds_malicious_parties = crypto_round_to_malicious_parties
             .iter()
-            .filter(|(round, _)| *round < &test_state.crypto_round)
+            .filter(|(round, _)| *round < &test_state.mpc_round)
             .map(|(_, parties)| parties)
             .flatten()
             .collect_vec();
@@ -80,7 +80,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             .filter(|party_index| !previous_rounds_malicious_parties.contains(&party_index))
             .collect_vec();
         let round_delayed_parties = crypto_round_to_delayed_parties
-            .get(&test_state.crypto_round)
+            .get(&test_state.mpc_round)
             .cloned()
             .unwrap_or_default();
         let round_non_delayed_parties = active_parties
@@ -88,7 +88,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             .filter(|party_index| !round_delayed_parties.contains(party_index))
             .collect_vec();
         let round_malicious_parties = crypto_round_to_malicious_parties
-            .get(&test_state.crypto_round)
+            .get(&test_state.mpc_round)
             .cloned()
             .unwrap_or_default();
         if utils::advance_parties_and_send_result_messages(
@@ -114,7 +114,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
                 break;
             }
         }
-        test_state.crypto_round += 1;
+        test_state.mpc_round += 1;
         test_state.consensus_round += 1;
     }
     for malicious_party_index in all_malicious_parties.clone() {
