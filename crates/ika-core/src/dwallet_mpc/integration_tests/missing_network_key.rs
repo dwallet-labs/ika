@@ -78,9 +78,9 @@ async fn network_key_received_after_start_event() {
             Some(ObjectID::from_bytes(message.dwallet_network_encryption_key_id.clone()).unwrap());
         network_key_bytes.extend(message.public_output.clone())
     }
-    let parties_that_receive_network_key_early = (0..committee.voting_rights.len()).filter(|i| {
-        !parties_that_receive_network_key_after_start_event.contains(i)
-    }).collect::<Vec<_>>();
+    let parties_that_receive_network_key_early = (0..committee.voting_rights.len())
+        .filter(|i| !parties_that_receive_network_key_after_start_event.contains(i))
+        .collect::<Vec<_>>();
     send_network_key_to_parties(
         parties_that_receive_network_key_early,
         &mut sui_data_senders,
@@ -95,9 +95,9 @@ async fn network_key_received_after_start_event() {
         2,
         key_id.unwrap(),
     );
-    for dwallet_mpc_service in dwallet_mpc_services.iter_mut(){
+    for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
         dwallet_mpc_service.run_service_loop_iteration().await;
-    };
+    }
     send_network_key_to_parties(
         parties_that_receive_network_key_after_start_event,
         &mut sui_data_senders,
