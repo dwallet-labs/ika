@@ -6,7 +6,7 @@ sidebar_position: 2
 sidebar_label: Querying
 ---
 
-import { Construction } from '../../../3src/components/InfoBox';
+import { Construction } from '../../../src/components/InfoBox';
 
 # Querying
 
