@@ -50,12 +50,6 @@ async fn test_malicious_parties_detected_in_correct_time() {
     let epoch_id = 1;
     utils::send_start_network_dkg_event(&ika_network_config, epoch_id, &mut test_state.sui_data_senders);
     loop {
-        let previous_rounds_malicious_parties = crypto_round_to_malicious_parties
-            .iter()
-            .filter(|(round, _)| *round < &test_state.crypto_round)
-            .map(|(_, parties)| parties)
-            .flatten()
-            .collect_vec();
         let active_parties = (0..committee_size)
             .collect_vec();
         let round_malicious_parties = crypto_round_to_malicious_parties
