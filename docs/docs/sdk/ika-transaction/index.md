@@ -6,9 +6,11 @@ sidebar_position: 1
 sidebar_label: Ika Transaction
 ---
 
-import { Info, Warning } from '../../../src/components/InfoBox';
+import { Info, Warning, Construction } from '../../../src/components/InfoBox';
 
 # IkaTransaction
+
+<Construction />
 
 `IkaTransaction` is the client for building transactions that involve DWallet operations. It wraps Sui transactions and provides high-level methods for Distributed Key Generation (DKG), presigning, signing, and key management operations.
 
