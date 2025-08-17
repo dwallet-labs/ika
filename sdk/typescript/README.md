@@ -1,480 +1,152 @@
-# Docs site
+### @ika.xyz/sdk — TypeScript SDK for Ika Network
 
-For more complete docs, visit the [Ika TypeScript SDK docs](https://sdk.mystenlabs.com/)
+This package provides a TypeScript SDK for interacting with the Ika Network on Sui.
 
-# Ika TypeScript SDK
+- Programmatically build transaction blocks for dWallet flows (DKG, presign, sign, imported-key
+  flows)
+- Query network state (coordinator/system, DWallets, presigns, encryption keys objects)
+- Handle user share encryption and decryption with MPC WASM helpers
 
-This is the Ika TypeScript SDK built on the Ika
-[JSON RPC API](https://github.com/MystenLabs/sui/blob/main/docs/content/references/ika-api.mdx). It
-provides utility classes and functions for applications to sign transactions and interact with the
-Ika network.
+### Install
 
-WARNING: Note that we are still iterating on the RPC and SDK API before TestNet, therefore please
-expect frequent breaking changes in the short-term. We expect the API to stabilize after the
-upcoming TestNet launch.
-
-## Working with Devnet
-
-The SDK will be published to [npm registry](https://www.npmjs.com/package/@ika-io/ika) with the same
-bi-weekly release cycle as the Devnet validators and
-[RPC Server](https://github.com/MystenLabs/sui/blob/main/docs/content/references/ika-api.mdx). To
-use the SDK in your project, you can do:
+Use bun (preferred):
 
 ```bash
-$ npm install @ika-io/ika
+bun add @ika.xyz/sdk
 ```
 
-You can also use your preferred npm client, such as yarn or pnpm.
+Peer/runtime requirements:
 
-## Working with local network
+- Node >= 18
 
-Note that the `latest` tag for the [published SDK](https://www.npmjs.com/package/@ika-io/ika) might
-go out of sync with the RPC server on the `main` branch until the next release. If you're developing
-against a local network, we recommend using the `experimental`-tagged packages, which contain the
-latest changes from `main`.
+### Build (in this repo)
+
+From the repo root:
 
 ```bash
-npm install @ika-io/ika@experimental
+pnpm install
+pnpm sdk build
 ```
 
-Refer to the
-[JSON RPC](https://github.com/MystenLabs/sui/blob/main/docs/content/references/ika-api.mdx) topic
-for instructions about how to start a local network and local RPC server.
-
-## Building Locally
-
-To get started you need to install [pnpm](https://pnpm.io/), then run the following command:
+Or from `sdk/typescript`:
 
 ```bash
-# Install all dependencies
-$ pnpm install
-
-# Run `build` for the TypeScript SDK if you're in the `sdk/typescript` project
-$ pnpm run build
-
-# Run `sdk build` for the TypeScript SDK if you're in the root of `ika` repo
-$ pnpm sdk build
+pnpm install
+pnpm run build
 ```
 
-> All `pnpm` commands below are intended to be run in the root of the Ika repo.
+### Network configuration
 
-## Type Doc
+Use `getNetworkConfig(network)` to obtain package/object IDs for `localnet`, `testnet`, or
+`mainnet`.
 
-You can view the generated [Type Doc](https://typedoc.org/) for the
-[current release of the SDK](https://www.npmjs.com/package/@ika-io/ika) at
-http://typescript-sdk-docs.s3-website-us-east-1.amazonaws.com/.
+_For `localnet`, the SDK automatically searches for `ika_config.json` in multiple locations
+including the current directory, parent directories, and can be configured via the `IKA_CONFIG_PATH`
+environment variable._
 
-For the latest docs for the `main` branch, run `pnpm doc` and open the
-[doc/index.html](doc/index.html) in your browser.
+```ts
+import { getNetworkConfig } from '@ika.xyz/sdk';
 
-## Testing
-
-To run unit tests
-
-```
-pnpm --filter @ika-io/ika test:unit
+const config = getNetworkConfig('testnet');
 ```
 
-To run E2E tests against local network
+### Creating a client
 
-```
-pnpm --filter @ika-io/ika prepare:e2e
+`IkaClient` wraps a `SuiClient` and provides caching plus helpers for fetching network objects and
+protocol parameters.
 
-// This will run all e2e tests
-pnpm --filter @ika-io/ika test:e2e
+```ts
+import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
+import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
-// Alternatively you can choose to run only one test file
-npx vitest txn-builder.test.ts
-```
-
-Troubleshooting:
-
-If you see errors like `ECONNRESET or "socket hang up"`, run `node -v` to make sure your node
-version is `v18.x.x`. Refer to this
-[guide](https://blog.logrocket.com/how-switch-node-js-versions-nvm/) to switch node version.
-
-Some more follow up here is if you used homebrew to install node, there could be multiple paths to
-node on your machine.
-https://stackoverflow.com/questions/52676244/node-version-not-updating-after-nvm-use-on-mac
-
-To run E2E tests against Devnet
-
-```
-VITE_FAUCET_URL='https://faucet.devnet.ika.io:443/gas' VITE_FULLNODE_URL='https://fullnode.devnet.ika.io' pnpm --filter @ika-io/ika exec vitest e2e
-```
-
-## Connecting to Ika Network
-
-The `IkaClient` class provides a connection to the JSON-RPC Server and should be used for all
-read-only operations. The default URLs to connect with the RPC server are:
-
-- local: http://127.0.0.1:9000
-- Devnet: https://fullnode.devnet.ika.io
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-
-// create a client connected to devnet
-const client = new IkaClient({ url: getFullnodeUrl('devnet') });
-
-// get coins owned by an address
-await client.getCoins({
-	owner: '0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231',
-});
-```
-
-For local development, you can run `cargo run --bin --with-faucet --force-regenesis` to spin up a
-local network with a local validator, a fullnode, and a faucet server. Refer to
-[this guide](https://docs.ika.io/build/ika-local-network) for more information.
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-
-// create a client connected to devnet
-const client = new IkaClient({ url: getFullnodeUrl('localnet') });
-
-// get coins owned by an address
-await client.getCoins({
-	owner: '0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231',
-});
-```
-
-You can also construct your own in custom connections, with the URL for your own fullnode
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-
-// create a client connected to devnet
-const client = new IkaClient({
-	url: 'https://fullnode.devnet.ika.io',
+const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
+const ikaClient = new IkaClient({
+	suiClient,
+	config: getNetworkConfig('testnet'),
+	network: 'testnet',
+	cache: true,
 });
 
-// get coins owned by an address
-await client.getCoins({
-	owner: '0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231',
-});
+await ikaClient.initialize();
 ```
 
-## Getting coins from the faucet
+Selected queries:
 
-You can request ika from the faucet when running against devnet, testnet, or localnet
+```ts
+// DWallet by id
+const dWallet = await ikaClient.getDWallet('0x...');
 
-```typescript
-import { getFaucetHost, requestIkaFromFaucetV0 } from '@ika-io/ika/faucet';
+// Presign by id
+const presign = await ikaClient.getPresign('0x...');
 
-await requestIkaFromFaucetV0({
-	host: getFaucetHost('testnet'),
-	recipient: '0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231',
-});
+// Active encryption key for address
+const encKey = await ikaClient.getActiveEncryptionKey('0x...');
+
+// Protocol public parameters (bytes)
+const pp = await ikaClient.getProtocolPublicParameters();
 ```
 
-## Writing APIs
+### Transactions helper
 
-For a primer for building transactions, refer to
-[this guide](https://docs.ika.io/build/prog-trans-ts-sdk).
+`IkaTransaction` wraps a Sui `Transaction` and adds typed methods for dWallet flows.
 
-### Transfer Object
+```ts
+import { getNetworkConfig, IkaClient, IkaTransaction } from '@ika.xyz/sdk';
+import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import { Transaction } from '@mysten/sui/transactions';
 
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-import { Ed25519Keypair } from '@ika-io/ika/keypairs/ed25519';
-import { Transaction } from '@ika-io/ika/transactions';
-
-// Generate a new Ed25519 Keypair
-const keypair = new Ed25519Keypair();
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
+const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
+const ikaClient = new IkaClient({
+	suiClient,
+	config: getNetworkConfig('testnet'),
+	network: 'testnet',
 });
+await ikaClient.initialize();
 
 const tx = new Transaction();
-tx.transferObjects(
-	['0xe19739da1a701eadc21683c5b127e62b553e833e8a15a4f292f4f48b4afea3f2'],
-	'0x1d20dcdb2bca4f508ea9613994683eb4e76e9c4ed371169677c1be02aaf0b12a',
-);
-const result = await client.signAndExecuteTransaction({
-	signer: keypair,
-	transaction: tx,
-});
-console.log({ result });
+const ikaTx = new IkaTransaction({ ikaClient, transaction: tx });
+
+// Call inner functions to mutate the transaction.
+const sessionIdentifier = ikaTx.createSessionIdentifier();
+
+tx.transferObjects([sessionIdentifier], '0x...');
 ```
 
-### Transfer Ika
+### Cryptography helpers
 
-To transfer `1000` INKU to another address:
+Exposed utilities under `client/cryptography`:
 
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-import { Ed25519Keypair } from '@ika-io/ika/keypairs/ed25519';
-import { Transaction } from '@ika-io/ika/transactions';
+- `createClassGroupsKeypair(seed)`
+- `createDKGUserOutput(pp, firstRound, sessionId)`
+- `prepareDKGSecondRound(pp, dWallet, sessionId, encKey)` and
+  `prepareDKGSecondRoundAsync(ikaClient, ...)`
+- `prepareImportDWalletVerification(ikaClient, sessionId, userKeys, keypair)`
+- `encryptSecretShare(...)`, `decryptUserShare(...)`
+- `verifyUserShare(...)`, `verifySecpSignature(...)`
 
-// Generate a new Ed25519 Keypair
-const keypair = new Ed25519Keypair();
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
+### System and Coordinator transaction builders
 
-const tx = new Transaction();
-const [coin] = tx.splitCoins(tx.gas, [1000]);
-tx.transferObjects([coin], keypair.getPublicKey().toIkaAddress());
-const result = await client.signAndExecuteTransaction({
-	signer: keypair,
-	transaction: tx,
-});
-console.log({ result });
+Low-level Move-call builders are available at:
+
+- `coordinatorTransactions` (`src/tx/coordinator.ts`)
+- `systemTransactions` (`src/tx/system.ts`)
+
+These are used internally by `IkaTransaction` but can be called directly if needed.
+
+### Types
+
+Import enums and types from `client/types`:
+
+```ts
+import { Curve, Hash, SignatureAlgorithm, type DWallet, type Presign } from '@ika.xyz/sdk';
 ```
 
-### Merge coins
+### Testing
 
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-import { Ed25519Keypair } from '@ika-io/ika/keypairs/ed25519';
-import { Transaction } from '@ika-io/ika/transactions';
-
-// Generate a new Ed25519 Keypair
-const keypair = new Ed25519Keypair();
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
-
-const tx = new Transaction();
-tx.mergeCoins('0xe19739da1a701eadc21683c5b127e62b553e833e8a15a4f292f4f48b4afea3f2', [
-	'0x127a8975134a4824d9288722c4ee4fc824cd22502ab4ad9f6617f3ba19229c1b',
-]);
-const result = await client.signAndExecuteTransaction({
-	signer: keypair,
-	transaction: tx,
-});
-console.log({ result });
+```bash
+pnpm --filter @ika.xyz/sdk test
 ```
 
-### Move Call
+### License
 
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-import { Ed25519Keypair } from '@ika-io/ika/keypairs/ed25519';
-import { Transaction } from '@ika-io/ika/transactions';
-
-// Generate a new Ed25519 Keypair
-const keypair = new Ed25519Keypair();
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
-const packageObjectId = '0x...';
-const tx = new Transaction();
-tx.moveCall({
-	target: `${packageObjectId}::nft::mint`,
-	arguments: [tx.pure.string('Example NFT')],
-});
-const result = await client.signAndExecuteTransaction({
-	signer: keypair,
-	transaction: tx,
-});
-console.log({ result });
-```
-
-### Publish Modules
-
-To publish a package:
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-import { Ed25519Keypair } from '@ika-io/ika/keypairs/ed25519';
-import { Transaction } from '@ika-io/ika/transactions';
-
-const { execSync } = require('child_process');
-// Generate a new Ed25519 Keypair
-const keypair = new Ed25519Keypair();
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
-const { modules, dependencies } = JSON.parse(
-	execSync(`${cliPath} move build --dump-bytecode-as-base64 --path ${packagePath}`, {
-		encoding: 'utf-8',
-	}),
-);
-const tx = new Transaction();
-const [upgradeCap] = tx.publish({
-	modules,
-	dependencies,
-});
-tx.transferObjects([upgradeCap], keypair.toIkaAddress());
-const result = await client.signAndExecuteTransaction({
-	signer: keypair,
-	transaction: tx,
-});
-console.log({ result });
-```
-
-## Reading APIs
-
-### Get Owned Objects
-
-Fetch objects owned by the address
-`0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231`
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
-const objects = await client.getOwnedObjects({
-	owner: '0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231',
-});
-```
-
-### Get Object
-
-Fetch object details for the object with id
-`0xe19739da1a701eadc21683c5b127e62b553e833e8a15a4f292f4f48b4afea3f2`
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
-const txn = await client.getObject({
-	id: '0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231',
-	// fetch the object content field
-	options: { showContent: true },
-});
-// You can also fetch multiple objects in one batch request
-const txns = await client.multiGetObjects({
-	ids: [
-		'0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231',
-		'0x9ad3de788483877fe348aef7f6ba3e52b9cfee5f52de0694d36b16a6b50c1429',
-	],
-	// only fetch the object type
-	options: { showType: true },
-});
-```
-
-### Get Transaction
-
-Fetch transaction details from transaction digests:
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
-const txn = await client.getTransactionBlock({
-	digest: '9XFneskU8tW7UxQf7tE5qFRfcN4FadtC2Z3HAZkgeETd=',
-	// only fetch the effects field
-	options: {
-		showEffects: true,
-		showInput: false,
-		showEvents: false,
-		showObjectChanges: false,
-		showBalanceChanges: false,
-	},
-});
-
-// You can also fetch multiple transactions in one batch request
-const txns = await client.multiGetTransactionBlocks({
-	digests: [
-		'9XFneskU8tW7UxQf7tE5qFRfcN4FadtC2Z3HAZkgeETd=',
-		'17mn5W1CczLwitHCO9OIUbqirNrQ0cuKdyxaNe16SAME=',
-	],
-	// fetch both the input transaction data as well as effects
-	options: { showInput: true, showEffects: true },
-});
-```
-
-### Get Checkpoints
-
-Get latest 100 Checkpoints in descending order and print Transaction Digests for each one of them.
-
-```typescript
-client.getCheckpoints({ descendingOrder: true }).then(function (checkpointPage: CheckpointPage) {
-	console.log(checkpointPage);
-
-	checkpointPage.data.forEach((checkpoint) => {
-		console.log('---------------------------------------------------------------');
-		console.log(
-			' -----------   Transactions for Checkpoint:  ',
-			checkpoint.sequenceNumber,
-			' -------- ',
-		);
-		console.log('---------------------------------------------------------------');
-		checkpoint.transactions.forEach((tx) => {
-			console.log(tx);
-		});
-		console.log('***************************************************************');
-	});
-});
-```
-
-Get Checkpoint 1994010 and print details.
-
-```typescript
-client.getCheckpoint({ id: '1994010' }).then(function (checkpoint: Checkpoint) {
-	console.log('Checkpoint Sequence Num ', checkpoint.sequenceNumber);
-	console.log('Checkpoint timestampMs ', checkpoint.timestampMs);
-	console.log('Checkpoint # of Transactions ', checkpoint.transactions.length);
-});
-```
-
-### Get Coins
-
-Fetch coins of type `0x65b0553a591d7b13376e03a408e112c706dc0909a79080c810b93b06f922c458::usdc::USDC`
-owned by an address:
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
-const coins = await client.getCoins({
-	owner: '0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231',
-	coinType: '0x65b0553a591d7b13376e03a408e112c706dc0909a79080c810b93b06f922c458::usdc::USDC',
-});
-```
-
-Fetch all coin objects owned by an address:
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
-const allCoins = await client.getAllCoins({
-	owner: '0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231',
-});
-```
-
-Fetch the total coin balance for one coin type, owned by an address:
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
-// If coin type is not specified, it defaults to 0x2::ika::IKA
-const coinBalance = await client.getBalance({
-	owner: '0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231',
-	coinType: '0x65b0553a591d7b13376e03a408e112c706dc0909a79080c810b93b06f922c458::usdc::USDC',
-});
-```
-
-### Events API
-
-Querying events created by transactions sent by account
-`0xcc2bd176a478baea9a0de7a24cd927661cc6e860d5bacecb9a138ef20dbab231`
-
-```typescript
-import { getFullnodeUrl, IkaClient } from '@ika-io/ika/client';
-
-const client = new IkaClient({
-	url: getFullnodeUrl('testnet'),
-});
-const events = client.queryEvents({
-	query: { Sender: toolbox.address() },
-	limit: 2,
-});
-```
+BSD-3-Clause-Clear © dWallet Labs, Ltd.
