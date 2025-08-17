@@ -7,7 +7,7 @@ This test configures the network, deploys it, and performs all necessary steps t
 
 IMPORTANT: Set a relatively short EPOCH_DURATION_TIME_MS in the `.env` file so the test completes in a reasonable time.
 
-### Run an Ika network on k8s 
+### Run a custom Ika network on k8s 
 
 ### 1. Create Genesis files
 Run the following command from this directory to create the genesis files:
@@ -24,5 +24,5 @@ First, run the following command from this directory
 ```bash
 cp ./ika-dns-service.ika.svc.cluster.local/publisher/ika_config.json ../../../../ika_config.json 
 ```
-Now you can run the standard TS tests against your new network. 
-You can run the dedicated tests to kill and start validator nodes from the `./chaos.test.ts` file.
+Now you can run the standard TS tests against your new network.  
+You can also run the dedicated tests to kill and start validator nodes from the `./chaos.test.ts` file.
