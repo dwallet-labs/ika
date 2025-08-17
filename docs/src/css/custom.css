@@ -90,3 +90,21 @@ th {
 	background-color: rgba(236, 72, 153, 0.1);
 	font-weight: 600;
 }
+
+/* Inline code styling - Custom pink color */
+code:not(pre code) {
+	background-color: rgba(238, 43, 91, 0.1) !important;
+	color: #ee2b5b !important;
+	border: 1px solid rgba(238, 43, 91, 0.2);
+	border-radius: 4px;
+	padding: 1px 5px;
+	margin: 0 2px;
+	font-weight: 500;
+}
+
+/* Dark mode inline code */
+[data-theme='dark'] code:not(pre code) {
+	background-color: rgba(238, 43, 91, 0.15) !important;
+	color: #ff4d7a !important;
+	border: 1px solid rgba(238, 43, 91, 0.3);
+}
