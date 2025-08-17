@@ -18,7 +18,6 @@ pub mod mpc_session;
 mod crytographic_computation;
 pub mod dwallet_mpc_metrics;
 mod mpc_event;
-pub mod submit_to_consensus;
 
 #[cfg(test)]
 mod integration_tests;
