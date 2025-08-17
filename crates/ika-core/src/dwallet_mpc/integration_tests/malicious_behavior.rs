@@ -79,7 +79,7 @@ async fn test_some_malicious_validators_flows_succeed() {
             .push(original_message);
     }
 
-    utils::send_advance_results_between_parties(
+    utils::send_advance_result_between_parties(
         &committee,
         &mut sent_consensus_messages_collectors,
         &mut epoch_stores,
@@ -102,7 +102,7 @@ async fn test_some_malicious_validators_flows_succeed() {
             break;
         }
         info!(?mpc_round, "Advanced MPC round");
-        utils::send_advance_results_between_parties(
+        utils::send_advance_result_between_parties(
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
@@ -184,7 +184,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
         );
     }
 
-    utils::send_advance_results_between_parties(
+    utils::send_advance_result_between_parties(
         &committee,
         &mut sent_consensus_messages_collectors,
         &mut epoch_stores,
@@ -207,7 +207,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
             break;
         }
         info!(?mpc_round, "Advanced MPC round");
-        utils::send_advance_results_between_parties(
+        utils::send_advance_result_between_parties(
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,

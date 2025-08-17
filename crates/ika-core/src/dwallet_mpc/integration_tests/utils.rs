@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
-use tracing::info;
+use tracing::{error, info};
 
 /// A testing implementation of the `AuthorityPerEpochStoreTrait`.
 /// Records all received data for testing purposes.
@@ -321,7 +321,7 @@ fn create_dwallet_mpc_service(
     )
 }
 
-pub(crate) fn send_advance_results_between_parties(
+pub(crate) fn send_advance_result_between_parties(
     committee: &Committee,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
     epoch_stores: &mut Vec<Arc<TestingAuthorityPerEpochStore>>,
@@ -422,6 +422,10 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
             let pending_checkpoints_store = testing_epoch_stores[i].pending_checkpoints.clone();
             let notify_service = notify_services[i].clone();
             if !consensus_messages_store.lock().unwrap().is_empty() {
+                info!(
+                    party_id=?i+1,
+                    "Received messages for party",
+                );
                 completed_parties.push(i);
                 continue;
             }
@@ -595,7 +599,7 @@ pub(crate) async fn advance_parties_and_send_result_messages(
         &mut test_state.sent_consensus_messages_collectors,
         test_state.crypto_round as u64,
     );
-    send_advance_results_between_parties(
+    send_advance_result_between_parties(
         &test_state.committee,
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
