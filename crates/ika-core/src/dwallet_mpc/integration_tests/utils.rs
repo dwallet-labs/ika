@@ -14,10 +14,7 @@ use ika_types::error::IkaResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
-use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
-    DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig, SessionIdentifier,
-};
+use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig, SessionIdentifier};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -532,6 +529,39 @@ pub(crate) fn send_configurable_start_network_dkg_event(
                     DWalletNetworkDKGEncryptionKeyRequestEvent {
                         dwallet_network_encryption_key_id: ObjectID::random(),
                         params_for_network: vec![],
+                    },
+                ))
+                .unwrap(),
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
+}
+
+pub(crate) fn send_start_dwallet_dkg_first_round_event(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: &mut Vec<SuiDataSenders>,
+    session_identifier_preimage: [u8; 32],
+    session_sequence_number: u64,
+    dwallet_network_encryption_key_id: ObjectID
+) {
+    sui_data_senders.iter().for_each(|mut sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DBSuiEvent {
+                type_: DWalletSessionEvent::<DWalletDKGFirstRoundRequestEvent>::type_(
+                    &ika_network_config,
+                ),
+                contents: bcs::to_bytes(&new_dwallet_session_event(
+                    true,
+                    session_sequence_number,
+                    session_identifier_preimage.to_vec().clone(),
+                    DWalletDKGFirstRoundRequestEvent {
+                        dwallet_id: ObjectID::random(),
+                        dwallet_cap_id: ObjectID::random(),
+                        dwallet_network_encryption_key_id,
+                        curve: 0,
                     },
                 ))
                 .unwrap(),
