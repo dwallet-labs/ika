@@ -37,12 +37,14 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         mut epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
+    let network_key_id = ObjectID::random();
 
     send_start_network_dkg_event_to_some_parties(
         &ika_network_config,
         epoch_id,
         &mut sui_data_senders,
         &parties_that_receive_session_message_after_start_event,
+        network_key_id,
     );
     let mut consensus_round = 1;
     utils::advance_some_parties_and_wait_for_completions(
@@ -69,6 +71,7 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         epoch_id,
         &mut sui_data_senders,
         &parties_that_receive_session_message_before_start_event,
+        network_key_id,
     );
     utils::advance_some_parties_and_wait_for_completions(
         &committee,

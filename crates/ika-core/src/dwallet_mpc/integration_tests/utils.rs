@@ -513,6 +513,7 @@ pub(crate) fn send_start_network_dkg_event_to_all_parties(
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
 ) {
+    let key_id = ObjectID::random();
     send_configurable_start_network_dkg_event(
         ika_network_config,
         epoch_id,
@@ -520,6 +521,7 @@ pub(crate) fn send_start_network_dkg_event_to_all_parties(
         [1u8; 32],
         1,
         &(0..sui_data_senders.len()).collect::<Vec<_>>(),
+        key_id,
     );
 }
 
@@ -528,6 +530,7 @@ pub(crate) fn send_start_network_dkg_event_to_some_parties(
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
     parties: &[usize],
+    key_id: ObjectID,
 ) {
     send_configurable_start_network_dkg_event(
         ika_network_config,
@@ -536,22 +539,7 @@ pub(crate) fn send_start_network_dkg_event_to_some_parties(
         [1u8; 32],
         1,
         parties,
-    );
-}
-
-pub(crate) fn send_start_network_dkg_event(
-    ika_network_config: &IkaNetworkConfig,
-    epoch_id: EpochId,
-    sui_data_senders: &mut Vec<SuiDataSenders>,
-    parties: &[usize],
-) {
-    send_configurable_start_network_dkg_event(
-        ika_network_config,
-        epoch_id,
-        sui_data_senders,
-        [1u8; 32],
-        1,
-        parties,
+        key_id,
     );
 }
 
@@ -562,8 +550,8 @@ pub(crate) fn send_configurable_start_network_dkg_event(
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
     parties: &[usize],
+    key_id: ObjectID,
 ) {
-    let key_id = ObjectID::random();
     let start_network_dkg_event = DBSuiEvent {
         type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
             &ika_network_config,
