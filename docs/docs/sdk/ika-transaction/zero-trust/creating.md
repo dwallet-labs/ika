@@ -6,7 +6,7 @@ sidebar_position: 1
 sidebar_label: Creating a DWallet
 ---
 
-import { Info, Warning, Construction } from '../../../src/components/InfoBox';
+import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
 # Creating a DWallet
 
