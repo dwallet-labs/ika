@@ -387,8 +387,9 @@ impl ProtocolSpecificData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, strum_macros::Display)]
 pub(crate) enum AdvanceSpecificData {
+    #[strum(to_string = "ImportedKeyVerification")]
     ImportedKeyVerification {
         curve: DWalletMPCNetworkKeyScheme,
         public_input: <DWalletImportedKeyVerificationParty as mpc::Party>::PublicInput,
@@ -397,6 +398,7 @@ pub(crate) enum AdvanceSpecificData {
         advance_request: AdvanceRequest<()>,
     },
 
+    #[strum(to_string = "MakeDWalletUserSecretKeySharesPublic")]
     MakeDWalletUserSecretKeySharesPublic {
         curve: DWalletMPCNetworkKeyScheme,
         protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
@@ -404,12 +406,14 @@ pub(crate) enum AdvanceSpecificData {
         dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
     },
 
+    #[strum(to_string = "DKGFirst")]
     DKGFirst {
         curve: DWalletMPCNetworkKeyScheme,
         public_input: <DWalletDKGFirstParty as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<DWalletDKGFirstParty as mpc::Party>::Message>,
     },
 
+    #[strum(to_string = "DKGSecond")]
     DKGSecond {
         curve: DWalletMPCNetworkKeyScheme,
         public_input: <DWalletDKGSecondParty as mpc::Party>::PublicInput,
@@ -418,6 +422,7 @@ pub(crate) enum AdvanceSpecificData {
         advance_request: AdvanceRequest<<DWalletDKGSecondParty as mpc::Party>::Message>,
     },
 
+    #[strum(to_string = "Presign")]
     Presign {
         curve: DWalletMPCNetworkKeyScheme,
         signature_algorithm: SignatureAlgorithm,
@@ -425,6 +430,7 @@ pub(crate) enum AdvanceSpecificData {
         advance_request: AdvanceRequest<<PresignParty as mpc::Party>::Message>,
     },
 
+    #[strum(to_string = "Sign")]
     Sign {
         curve: DWalletMPCNetworkKeyScheme,
         hash_scheme: Hash,
@@ -434,6 +440,7 @@ pub(crate) enum AdvanceSpecificData {
         decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
 
+    #[strum(to_string = "NetworkEncryptionKeyDkg")]
     NetworkEncryptionKeyDkg {
         key_scheme: DWalletMPCNetworkKeyScheme,
         public_input: <Secp256k1Party as mpc::Party>::PublicInput,
@@ -441,12 +448,14 @@ pub(crate) enum AdvanceSpecificData {
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
 
+    #[strum(to_string = "NetworkEncryptionKeyReconfiguration")]
     NetworkEncryptionKeyReconfiguration {
         public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
 
+    #[strum(to_string = "EncryptedShareVerification")]
     EncryptedShareVerification {
         curve: DWalletMPCNetworkKeyScheme,
         encrypted_centralized_secret_share_and_proof: Vec<u8>,
@@ -455,6 +464,7 @@ pub(crate) enum AdvanceSpecificData {
         protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
     },
 
+    #[strum(to_string = "PartialSignatureVerification")]
     PartialSignatureVerification {
         curve: DWalletMPCNetworkKeyScheme,
         message: Vec<u8>,
@@ -769,7 +779,7 @@ impl AdvanceSpecificData {
         Ok(Some(res))
     }
 
-    pub fn curve_name(&self) -> String {
+    pub fn curve(&self) -> String {
         match self {
             AdvanceSpecificData::DKGFirst { curve, .. }
             | AdvanceSpecificData::DKGSecond { curve, .. }
@@ -786,7 +796,7 @@ impl AdvanceSpecificData {
         }
     }
 
-    pub fn hash_scheme_name(&self) -> String {
+    pub fn hash_scheme(&self) -> String {
         match self {
             AdvanceSpecificData::Sign { hash_scheme, .. }
             | AdvanceSpecificData::PartialSignatureVerification {
@@ -804,7 +814,7 @@ impl AdvanceSpecificData {
         }
     }
 
-    pub fn signature_algorithm_name(&self) -> String {
+    pub fn signature_algorithm(&self) -> String {
         match self {
             AdvanceSpecificData::Presign {
                 signature_algorithm,

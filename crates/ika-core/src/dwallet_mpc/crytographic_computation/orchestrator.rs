@@ -154,7 +154,7 @@ impl CryptographicComputationsOrchestrator {
                 );
 
                 // dwallet_mpc_metrics.add_advance_completion(
-                //     &request_input,
+                //     &computation_update,
                 //     &mpc_round.to_string(),
                 //     elapsed_ms as i64,
                 // );
@@ -222,10 +222,10 @@ impl CryptographicComputationsOrchestrator {
 
         let handle = Handle::current();
 
-        // dwallet_mpc_metrics.add_advance_call(
-        //     &computation_request.protocol_name,
-        //     &computation_id.mpc_round.to_string(),
-        // );
+        dwallet_mpc_metrics.add_advance_call(
+            &computation_request.advance_specific_data,
+            &computation_id.mpc_round.to_string(),
+        );
 
         let party_id = computation_request.party_id;
         let protocol_name = computation_request.protocol_name.clone();

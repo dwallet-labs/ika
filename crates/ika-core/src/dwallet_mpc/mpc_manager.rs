@@ -361,7 +361,7 @@ impl DWalletMPCManager {
             "Received start MPC flow request for session identifier {:?}",
             session_identifier,
         );
-        let with_mpc_event_data = request.is_some();
+        let with_request_data = request.is_some();
 
         let new_session = DWalletMPCSession::new(
             self.validator_name,
@@ -374,7 +374,7 @@ impl DWalletMPCManager {
         info!(
             party_id=self.party_id,
             authority=?self.validator_name,
-            with_mpc_event_data,
+            with_request_data,
             ?session_identifier,
             last_session_to_complete_in_current_epoch=?self.last_session_to_complete_in_current_epoch,
             "Adding a new MPC session to the active sessions map",
@@ -386,7 +386,7 @@ impl DWalletMPCManager {
     /// Spawns all ready MPC cryptographic computations on separate threads using Rayon.
     /// If no local CPUs are available, computations will execute as CPUs are freed.
     ///
-    /// A session must have its `mpc_event_data` set in order to be advanced.
+    /// A session must have its `request_data` set in order to be advanced.
     ///
     /// System sessions are always advanced if a CPU is free, user sessions are only advanced
     /// if they come before the last session to complete in the current epoch (at the current time).
@@ -410,19 +410,19 @@ impl DWalletMPCManager {
                 }
 
                 // Only sessions with MPC event data should be advanced
-                session.request_data.clone().and_then(|mpc_event_data| {
+                session.request_data.clone().and_then(|request_data| {
                     // Always advance system sessions, and only advance user session
                     // if they come before the last session to complete in the current epoch (at the current time).
-                    let should_advance = match mpc_event_data.session_type {
+                    let should_advance = match request_data.session_type {
                         SessionType::User => {
-                            mpc_event_data.session_sequence_number
+                            request_data.session_sequence_number
                                 <= self.last_session_to_complete_in_current_epoch
                         }
                         SessionType::System => true,
                     };
 
                     if should_advance {
-                        Some((session, mpc_event_data))
+                        Some((session, request_data))
                     } else {
                         None
                     }
@@ -435,7 +435,7 @@ impl DWalletMPCManager {
 
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
-            .flat_map(|(session, mpc_event_data)| {
+            .flat_map(|(session, request_data)| {
                 // Safe to `unwrap()`, as the session is ready to advance so `request_data` must be `Some()`.
                 let request_data = session.request_data.clone().unwrap();
 
@@ -728,9 +728,9 @@ impl DWalletMPCManager {
     // pub(crate) fn consensus_rounds_delay_for_mpc_round(
     //     &self,
     //     current_mpc_round: u64,
-    //     mpc_event_data: &MPCEventData,
+    //     request_data: &MPCEventData,
     // ) -> u64 {
-    //     match mpc_event_data.request_input {
+    //     match request_data.request_input {
     //         MPCRequestInput::NetworkEncryptionKeyDkg(_, _) if current_mpc_round == 3 => {
     //             self.network_dkg_third_round_delay
     //         }
@@ -800,9 +800,9 @@ impl DWalletMPCManager {
     pub(crate) fn complete_mpc_session(&mut self, session_identifier: &SessionIdentifier) {
         if let Some(session) = self.mpc_sessions.get_mut(session_identifier) {
             session.mark_mpc_session_as_completed();
-            if let Some(mpc_event_data) = session.request_data() {
-                // self.dwallet_mpc_metrics
-                //     .add_completion(&mpc_event_data.request_input);
+            if let Some(request_data) = session.request_data() {
+                self.dwallet_mpc_metrics
+                    .add_completion(&request_data.protocol_specific_data);
             }
             session.clear_data();
         }

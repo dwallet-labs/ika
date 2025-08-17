@@ -716,7 +716,7 @@ impl DWalletMPCService {
                             ?session_identifier,
                             validator=?validator_name,
                             ?mpc_round,
-                            "no mpc_event_data for a session for which a computation update was received"
+                            "no session_request for a session for which a computation update was received"
                         );
                     }
                 } else {

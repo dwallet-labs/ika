@@ -19,7 +19,7 @@
 //! - **signature_algorithm**: The signature algorithm (e.g., "ECDSA")
 //! - **mpc_round**: The specific round number within a protocol session
 
-use crate::dwallet_mpc::session_request::ProtocolSpecificData;
+use crate::dwallet_mpc::session_request::{AdvanceSpecificData, ProtocolSpecificData};
 use ika_types::messages_dwallet_mpc::MPCRequestInput;
 use prometheus::{
     GaugeVec, IntGauge, IntGaugeVec, Registry, register_gauge_vec_with_registry,
@@ -208,14 +208,14 @@ impl DWalletMPCMetrics {
     /// provided MPC event data.
     ///
     /// # Arguments
-    /// * `mpc_event_data` - The MPC protocol initialization data containing context.
-    pub fn add_completion(&self, mpc_event_data: &MPCRequestInput) {
+    /// * `protocol_data` - The MPC protocol initialization data containing context.
+    pub fn add_completion(&self, protocol_data: &ProtocolSpecificData) {
         self.completions_count
             .with_label_values(&[
-                &mpc_event_data.to_string(),
-                &mpc_event_data.get_curve(),
-                &mpc_event_data.get_hash_scheme(),
-                &mpc_event_data.get_signature_algorithm(),
+                &protocol_data.to_string(),
+                &protocol_data.curve(),
+                &protocol_data.hash_scheme(),
+                &protocol_data.signature_algorithm(),
             ])
             .inc();
     }
@@ -226,7 +226,7 @@ impl DWalletMPCMetrics {
     /// from the provided MPC event data.
     ///
     /// # Arguments
-    /// * `mpc_event_data` - The MPC protocol initialization data containing context.
+    /// * `protocol_data` - The MPC protocol initialization data containing context.
     pub fn add_received_request_start(&self, protocol_data: &ProtocolSpecificData) {
         self.received_requests_start_count
             .with_label_values(&[
@@ -244,26 +244,26 @@ impl DWalletMPCMetrics {
     /// provided MPC event data and round information.
     ///
     /// # Arguments
-    /// * `mpc_event_data` - The MPC protocol initialization data containing context
+    /// * `protocol_data` - The MPC protocol initialization data containing context
     /// * `mpc_round` — String identifier for the specific MPC round.
-    pub fn add_advance_call(&self, request_input: &MPCRequestInput, mpc_round: &str) {
+    pub fn add_advance_call(&self, protocol_data: &AdvanceSpecificData, mpc_round: &str) {
         if mpc_round == "1" {
             self.session_start_count
                 .with_label_values(&[
-                    &request_input.to_string(),
-                    &request_input.get_curve(),
-                    &request_input.get_hash_scheme(),
-                    &request_input.get_signature_algorithm(),
+                    &protocol_data.to_string(),
+                    &protocol_data.curve(),
+                    &protocol_data.hash_scheme(),
+                    &protocol_data.signature_algorithm(),
                 ])
                 .inc();
         }
         self.advance_calls
             .with_label_values(&[
-                &request_input.to_string(),
-                &request_input.get_curve(),
+                &protocol_data.to_string(),
+                &protocol_data.curve(),
                 mpc_round,
-                &request_input.get_hash_scheme(),
-                &request_input.get_signature_algorithm(),
+                &protocol_data.hash_scheme(),
+                &protocol_data.signature_algorithm(),
             ])
             .inc();
     }
