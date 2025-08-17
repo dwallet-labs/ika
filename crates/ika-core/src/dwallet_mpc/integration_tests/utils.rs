@@ -16,7 +16,8 @@ use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKi
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletMPCMessage, DWalletMPCOutput,
-    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
+    DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,
     IkaNetworkConfig, SessionIdentifier,
 };
 use std::collections::HashMap;
@@ -654,4 +655,30 @@ pub(crate) fn replace_party_message_with_other_party_message(
         .lock()
         .unwrap()
         .push(other_party_message)
+}
+
+pub(crate) fn send_network_key_to_parties(
+    parties_to_send_network_key_to: Vec<usize>,
+    sui_data_senders: &mut Vec<SuiDataSenders>,
+    network_key_bytes: Vec<u8>,
+    key_id: Option<ObjectID>,
+) {
+    sui_data_senders
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| parties_to_send_network_key_to.contains(i))
+        .for_each(|(i, mut sui_data_sender)| {
+            let _ = sui_data_sender
+                .network_keys_sender
+                .send(Arc::new(HashMap::from([(
+                    key_id.clone().unwrap(),
+                    DWalletNetworkEncryptionKeyData {
+                        id: key_id.clone().unwrap(),
+                        current_epoch: 1,
+                        current_reconfiguration_public_output: vec![],
+                        network_dkg_public_output: network_key_bytes.clone(),
+                        state: DWalletNetworkEncryptionKeyState::NetworkDKGCompleted,
+                    },
+                )])));
+        });
 }
