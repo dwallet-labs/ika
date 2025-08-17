@@ -44,6 +44,8 @@ const ikaTx = new IkaTransaction({
 await ikaTx.registerEncryptionKey({
 	curve: Curve.SECP256K1,
 });
+
+await signAndExecuteTransaction(tx);
 ```
 
 ## Step 2: DKG First Round
@@ -73,24 +75,8 @@ tx.moveCall({
 	function: 'deposit_dwallet_for_user',
 	arguments: [dwalletCap],
 });
-```
 
-### Transfer DWallet Capability
-
-```typescript
-const tx = new Transaction();
-const ikaTx = new IkaTransaction({
-	ikaClient,
-	transaction: tx,
-	userShareEncryptionKeys,
-});
-
-await ikaTx.requestDWalletDKGFirstRoundAndTransferCapAsync({
-	curve: Curve.SECP256K1,
-	ikaCoin: userIkaCoin, // You can use your own IKA coin or create a new one
-	suiCoin: tx.splitCoins(tx.gas, [1000000]),
-	receiver,
-});
+await signAndExecuteTransaction(tx);
 ```
 
 ## Step 3: DKG Second Round
@@ -120,6 +106,8 @@ ikaTx.requestDWalletDKGSecondRound({
 	ikaCoin: userIkaCoin, // You can use your own IKA coin or create a new one
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
+
+await signAndExecuteTransaction(tx);
 ```
 
 ## Step 4: Accept User Share
@@ -139,6 +127,8 @@ await ikaTx.acceptEncryptedUserShare({
 	userPublicOutput,
 	encryptedUserSecretKeyShareId: encryptedUserShareId,
 });
+
+await signAndExecuteTransaction(tx);
 ```
 
 ## Complete Example

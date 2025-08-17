@@ -69,10 +69,7 @@ ikaTx.makeDWalletUserSecretKeySharesPublic({
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
-await suiClient.signAndExecuteTransaction({
-	transaction: tx,
-	signer: signerKeypair,
-});
+await signAndExecuteTransaction(tx);
 ```
 
 ## Security Considerations

@@ -3,7 +3,7 @@ id: signing-with-public-dwallet
 title: Signing with a Public DWallet
 description: Sign messages using public DWallet shares
 sidebar_position: 2
-sidebar_label: Signing with a Public DWallet
+sidebar_label: Signing
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
@@ -53,6 +53,8 @@ tx.moveCall({
 	typeArguments: ['0x...'],
 	arguments: [unverifiedPresignCap],
 });
+
+await signAndExecuteTransaction(tx);
 ```
 
 ## Step 2: Sign with Public Shares
@@ -93,16 +95,13 @@ await ikaTx.signPublic({
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
-await suiClient.signAndExecuteTransaction({
-	transaction: tx,
-	signer: yourKeypair,
-});
+await signAndExecuteTransaction(tx);
 ```
 
 ## Working Example
 
 For a complete working example of public DWallet signing, see:
 
-**📄 [Public DWallet Signing Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/shared-dwallet/dwallet-sharing-sign.ts)**
+**[Public DWallet Signing Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/shared-dwallet/dwallet-sharing-sign.ts)**
 
 This example demonstrates the complete flow from creating a public DWallet through signing with proper state management.

@@ -3,7 +3,7 @@ id: signing-with-a-dwallet
 title: Signing with a DWallet
 description: Sign messages and transactions using your DWallet
 sidebar_position: 4
-sidebar_label: Signing with a DWallet
+sidebar_label: Signing
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
@@ -55,6 +55,8 @@ tx.moveCall({
 	typeArguments: ['0x...'],
 	arguments: [unverifiedPresignCap],
 });
+
+await signAndExecuteTransaction(tx);
 ```
 
 ## Step 2: Sign the Message
@@ -96,12 +98,14 @@ await ikaTx.sign({
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
+
+await signAndExecuteTransaction(tx);
 ```
 
 ## Working Example
 
 For a complete working example of the signing process, see:
 
-**📄 [DWallet Sign Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/zero-trust-dwallet/dwallet-sign.ts)**
+**[DWallet Sign Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/zero-trust-dwallet/dwallet-sign.ts)**
 
 This example demonstrates the complete flow from DWallet creation through presigning and signing with proper error handling and state management.

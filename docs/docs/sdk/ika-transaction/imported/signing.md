@@ -3,7 +3,7 @@ id: signing-with-imported-dwallet
 title: Signing with an Imported DWallet
 description: Sign messages using imported DWallet keys
 sidebar_position: 2
-sidebar_label: Signing with an Imported DWallet
+sidebar_label: Signing
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
@@ -51,6 +51,8 @@ tx.moveCall({
 	typeArguments: ['0x...'],
 	arguments: [unverifiedPresignCap],
 });
+
+await signAndExecuteTransaction(tx);
 ```
 
 ## Step 2: Sign with Imported DWallet
@@ -93,16 +95,13 @@ await ikaTx.signWithImportedDWallet({
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
-await suiClient.signAndExecuteTransaction({
-	transaction: tx,
-	signer: yourKeypair,
-});
+await signAndExecuteTransaction(tx);
 ```
 
 ## Working Example
 
 For a complete working example of imported DWallet signing, see:
 
-**📄 [Imported DWallet Signing Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/imported-dwallet/sign-with-imported.ts)**
+**[Imported DWallet Signing Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/imported-dwallet/sign-with-imported.ts)**
 
 This example demonstrates the complete flow from importing existing keys through signing with proper error handling and state management.

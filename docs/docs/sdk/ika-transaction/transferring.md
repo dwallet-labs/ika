@@ -49,6 +49,8 @@ await ikaTx.transferUserShare({
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
+
+await signAndExecuteTransaction(tx);
 ```
 
 ### Method 2: Transfer with Pre-decrypted Share
@@ -64,30 +66,14 @@ await ikaTx.transferUserShareWithSecretShare({
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
+
+await signAndExecuteTransaction(tx);
 ```
-
-## After Transfer
-
-After successful transfer:
-
-1. **You retain access** - Your original encrypted share remains functional
-2. **Recipient gets access** - They can accept the transferred share on their end
-3. **Both can sign** - The DWallet becomes accessible to both parties
-
-## Next Steps
-
-Share the following information with the recipient:
-
-- The DWallet object ID
-- The transferred encrypted share ID (from transfer event)
-- Your encryption key details (they'll need this to accept the share)
-
-The recipient can then follow the [Receiving a DWallet](./receiving) guide to complete the process.
 
 ## Complete Example
 
 For a complete working example of the transfer process, see:
 
-**📄 [Transfer Secret Share Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/zero-trust-dwallet/transfer-secret-share.ts)**
+**[Transfer Secret Share Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/zero-trust-dwallet/transfer-secret-share.ts)**
 
 This example demonstrates the complete transfer flow including proper error handling and state management.

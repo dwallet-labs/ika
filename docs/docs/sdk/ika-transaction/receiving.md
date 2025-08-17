@@ -45,10 +45,7 @@ await ikaTx.registerEncryptionKey({
 	curve: Curve.SECP256K1,
 });
 
-await suiClient.signAndExecuteTransaction({
-	transaction: tx,
-	signer: yourKeypair,
-});
+await signAndExecuteTransaction(tx);
 ```
 
 ## Step 2: Get Sender's Encryption Key
@@ -79,16 +76,13 @@ await ikaTx.acceptEncryptedUserShareForTransferredDWallet({
 	encryptedUserSecretKeyShareId: transferredEncryptedShareId,
 });
 
-await suiClient.signAndExecuteTransaction({
-	transaction: tx,
-	signer: yourKeypair,
-});
+await signAndExecuteTransaction(tx);
 ```
 
 ## Complete Example
 
 For a complete working example of the receiving process, see:
 
-**📄 [Transfer Secret Share Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/zero-trust-dwallet/transfer-secret-share.ts)**
+**[Transfer Secret Share Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/zero-trust-dwallet/transfer-secret-share.ts)**
 
 This example demonstrates both the transfer and receiving sides of the process with proper error handling and state management.

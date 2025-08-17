@@ -43,6 +43,8 @@ const ikaTx = new IkaTransaction({
 
 const sessionIdentifier = ikaTx.createSessionIdentifier();
 tx.transferObjects([sessionIdentifier], signerAddress);
+
+await signAndExecuteTransaction(tx);
 ```
 
 ## Step 2: Register Encryption Key
@@ -60,6 +62,8 @@ const ikaTx = new IkaTransaction({
 await ikaTx.registerEncryptionKey({
 	curve: Curve.SECP256K1,
 });
+
+await signAndExecuteTransaction(tx);
 ```
 
 ## Step 3: Prepare Import Verification
@@ -107,27 +111,8 @@ tx.moveCall({
 	function: 'deposit_dwallet_for_user',
 	arguments: [ImportedKeyDWalletCap],
 });
-```
 
-### Transfer DWallet Capability
-
-```typescript
-const tx = new Transaction();
-const ikaTx = new IkaTransaction({
-	ikaClient,
-	transaction: tx,
-	userShareEncryptionKeys,
-});
-
-await ikaTx.requestImportedDWalletVerificationAndTransferCap({
-	importDWalletVerificationRequestInput,
-	curve: Curve.SECP256K1,
-	signerPublicKey: signerPublicKeyBytes,
-	sessionIdentifier: sessionIdentifierObjectId,
-	ikaCoin: userIkaCoin,
-	suiCoin: tx.splitCoins(tx.gas, [1000000]),
-	receiver: receiverAddress, // Address or contract to receive capability
-});
+await signAndExecuteTransaction(tx);
 ```
 
 ## Step 5: Accept User Share
@@ -147,6 +132,8 @@ await ikaTx.acceptEncryptedUserShare({
 	userPublicOutput: importDWalletVerificationRequestInput.userPublicOutput,
 	encryptedUserSecretKeyShareId: encryptedUserShareId,
 });
+
+await signAndExecuteTransaction(tx);
 ```
 
 ## Complete Example
