@@ -1,5 +1,5 @@
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::send_start_network_dkg_event;
+use crate::dwallet_mpc::integration_tests::utils::{send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event};
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
@@ -14,7 +14,7 @@ use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]
-async fn test_network_dkg_full_flow() {
+async fn test_network_dkg_and_dwallet_creation_full_flow() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let ika_network_config = IkaNetworkConfig::new_for_testing();
@@ -81,4 +81,30 @@ async fn test_network_dkg_full_flow() {
                 },
             )])));
     });
+    send_start_dwallet_dkg_first_round_event(
+        &ika_network_config, epoch_id, &mut sui_data_senders, [2; 32], 2, key_id.unwrap(),
+    );
+    loop {
+        if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
+            &committee,
+            &mut dwallet_mpc_services,
+            &mut sent_consensus_messages_collectors,
+            &epoch_stores,
+            &notify_services,
+        )
+            .await
+        {
+            assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
+            info!(?pending_checkpoint, "MPC flow completed successfully");
+            break;
+        }
+
+        utils::send_advance_results_between_parties(
+            &committee,
+            &mut sent_consensus_messages_collectors,
+            &mut epoch_stores,
+            mpc_round,
+        );
+        mpc_round += 1;
+    }
 }
