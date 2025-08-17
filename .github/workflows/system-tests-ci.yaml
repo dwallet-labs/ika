@@ -1,0 +1,53 @@
+name: TS System Tests CI
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_PRIVATE_REPO_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
+  PROFILE: dev
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure git with personal access token
+        if: env.GH_PRIVATE_REPO_TOKEN
+        run: |
+          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # Version of pnpm to install, must match `package.json` "packageManager" field.
+          version: 9.1.1
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 21.x
+          cache: 'pnpm'
+
+      - name: Install wasm pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: 'latest'
+
+      - name: Install dependencies
+        run: pnpm install
+        working-directory: ./sdk/typescript
+
+      - name: Run test
+        run: npx vitest run -t "should create a DWallet and sign a message"
+        working-directory: ./sdk/typescript
+
