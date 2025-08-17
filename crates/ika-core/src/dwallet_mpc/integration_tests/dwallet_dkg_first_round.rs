@@ -17,7 +17,8 @@ use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]
-async fn test_network_dkg_and_dwallet_creation_full_flow() {
+/// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
+async fn dwallet_dkg_first_round() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let ika_network_config = IkaNetworkConfig::new_for_testing();
