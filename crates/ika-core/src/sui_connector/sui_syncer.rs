@@ -182,6 +182,8 @@ where
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             };
+
+            // yael : change the client contain IkaNetworkConfig
             let config = IkaNetworkConfig {
                 packages: IkaPackageConfig {
                     ika_package_id: sui_client.ika_package_id,
