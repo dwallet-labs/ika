@@ -19,7 +19,8 @@ use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]
-async fn message_before_event() {
+/// Make some parties receive session's MPC messages before its start event
+async fn some_parties_receive_mpc_message_before_session_start_event() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let ika_network_config = IkaNetworkConfig::new_for_testing();
