@@ -507,7 +507,7 @@ pub(crate) fn send_start_network_dkg_event(
         ika_network_config,
         epoch_id,
         sui_data_senders,
-        vec![1u8; 32],
+        [1u8; 32],
         1,
     );
 }
@@ -516,7 +516,7 @@ pub(crate) fn send_configurable_start_network_dkg_event(
     ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
-    session_identifier_preimage: Vec<u8>,
+    session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
 ) {
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
@@ -528,7 +528,7 @@ pub(crate) fn send_configurable_start_network_dkg_event(
                 contents: bcs::to_bytes(&new_dwallet_session_event(
                     true,
                     session_sequence_number,
-                    session_identifier_preimage.clone(),
+                    session_identifier_preimage.to_vec().clone(),
                     DWalletNetworkDKGEncryptionKeyRequestEvent {
                         dwallet_network_encryption_key_id: ObjectID::random(),
                         params_for_network: vec![],

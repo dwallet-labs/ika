@@ -1,16 +1,22 @@
-use std::collections::HashMap;
-use itertools::Itertools;
-use tracing::info;
-use ika_types::committee::Committee;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig};
 use crate::dwallet_mpc::integration_tests::utils;
+use ika_types::committee::Committee;
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent,
+    DWalletSessionEventTrait, IkaNetworkConfig,
+};
+use itertools::Itertools;
+use std::collections::HashMap;
+use tracing::info;
 
-fn create_test_state(
-    committee_size: usize,
-) -> utils::IntegrationTestState {
+fn create_test_state(committee_size: usize) -> utils::IntegrationTestState {
     let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
-    let (dwallet_mpc_services, sui_data_senders, sent_consensus_messages_collectors, epoch_stores, notify_services) =
-        utils::create_dwallet_mpc_services(committee_size);
+    let (
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+    ) = utils::create_dwallet_mpc_services(committee_size);
     utils::IntegrationTestState {
         dwallet_mpc_services,
         sent_consensus_messages_collectors,
@@ -37,7 +43,8 @@ async fn test_malicious_parties_detected_in_correct_time() {
         .collect_vec();
     let all_flow_malicious_parties_len = all_malicious_parties.len();
     assert!(
-        committee_size - all_flow_malicious_parties_len >= test_state.committee.quorum_threshold as usize,
+        committee_size - all_flow_malicious_parties_len
+            >= test_state.committee.quorum_threshold as usize,
         "There should be a quorum of honest parties for the flow to succeed"
     );
     assert_eq!(
@@ -47,10 +54,22 @@ async fn test_malicious_parties_detected_in_correct_time() {
     );
     let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
-    utils::send_start_network_dkg_event(&ika_network_config, epoch_id, &mut test_state.sui_data_senders);
+    utils::send_configurable_start_network_dkg_event(
+        &ika_network_config,
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        [1; 32],
+        1,
+    );
+    utils::send_configurable_start_network_dkg_event(
+        &ika_network_config,
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        [2; 32],
+        2,
+    );
     loop {
-        let active_parties = (0..committee_size)
-            .collect_vec();
+        let active_parties = (0..committee_size).collect_vec();
         let round_malicious_parties = crypto_round_to_malicious_parties
             .get(&test_state.crypto_round)
             .cloned()
@@ -60,7 +79,7 @@ async fn test_malicious_parties_detected_in_correct_time() {
             &active_parties,
             &round_malicious_parties,
         )
-            .await
+        .await
         {
             info!("MPC flow completed successfully");
             break;
