@@ -27,7 +27,7 @@ async fn test_network_dkg_and_dwallet_creation_full_flow() {
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
     send_start_network_dkg_event(&ika_network_config, epoch_id, &mut sui_data_senders);
-    let mut mpc_round = 1;
+    let mut consensus_round = 1;
     let mut network_key_checkpoint = None;
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
@@ -39,7 +39,7 @@ async fn test_network_dkg_and_dwallet_creation_full_flow() {
         )
         .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
+            assert_eq!(consensus_round, 5, "Network DKG should complete after 4 rounds");
             info!(?pending_checkpoint, "MPC flow completed successfully");
             network_key_checkpoint = Some(pending_checkpoint);
             break;
@@ -49,13 +49,14 @@ async fn test_network_dkg_and_dwallet_creation_full_flow() {
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
-            mpc_round,
+            consensus_round,
         );
-        mpc_round += 1;
+        consensus_round += 1;
     }
     let Some(network_key_checkpoint) = network_key_checkpoint else {
         panic!("Network key checkpoint should not be None");
     };
+    info!(?network_key_checkpoint, "Network key checkpoint received");
     let mut network_key_bytes = vec![];
     let mut key_id = None;
     for message in network_key_checkpoint.messages() {
@@ -84,6 +85,7 @@ async fn test_network_dkg_and_dwallet_creation_full_flow() {
     send_start_dwallet_dkg_first_round_event(
         &ika_network_config, epoch_id, &mut sui_data_senders, [2; 32], 2, key_id.unwrap(),
     );
+    info!("Starting DWallet DKG first round");
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
@@ -94,7 +96,6 @@ async fn test_network_dkg_and_dwallet_creation_full_flow() {
         )
             .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
@@ -103,8 +104,9 @@ async fn test_network_dkg_and_dwallet_creation_full_flow() {
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
-            mpc_round,
+            consensus_round,
         );
-        mpc_round += 1;
+        consensus_round += 1;
     }
+    info!("DWallet DKG first round completed");
 }

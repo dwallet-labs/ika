@@ -213,7 +213,7 @@ impl DWalletMPCSession {
                 "Received our output from consensus, marking MPC session as computation completed",
             );
 
-            self.mark_mpc_session_as_computation_completed()
+            self.mark_mpc_session_as_computation_completed();
         }
 
         let consensus_round_output_map = self
