@@ -343,7 +343,7 @@ impl DWalletMPCManager {
             }
         };
 
-        if let MPCSessionStatus::Active{..} = session.status {
+        if let MPCSessionStatus::Active { .. } = session.status {
             session.add_message(consensus_round, mpc_round_number, sender_party_id, message);
         }
     }
@@ -457,8 +457,7 @@ impl DWalletMPCManager {
                     &request_data.protocol_specific_data,
                     self.party_id,
                     &self.access_structure,
-                    consensus_round
-                        .unwrap_or_default(),
+                    consensus_round.unwrap_or_default(),
                     session.messages_by_consensus_round.clone(),
                     public_input.clone(),
                     self.network_dkg_third_round_delay,
@@ -467,7 +466,12 @@ impl DWalletMPCManager {
                         .validator_private_dec_key_data
                         .class_groups_decryption_key
                         .clone(),
-                ).ok()?
+                    &self
+                        .network_keys
+                        .validator_private_dec_key_data
+                        .validator_decryption_key_shares,
+                )
+                .ok()?
                 .map(|advance_specific_data| {
                     let attempt_number = session.get_attempt_number();
 

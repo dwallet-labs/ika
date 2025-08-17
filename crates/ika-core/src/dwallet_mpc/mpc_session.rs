@@ -56,7 +56,7 @@ pub(crate) struct DWalletMPCSession {
 
     /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
     /// Used to build the input of messages to advance each round of the session.
-    pub(super) messages_by_consensus_round: HashMap<u64, MPCRoundToMessagesHashMap>,
+    pub(super) messages_by_consensus_round: HashMap<u64, HashMap<PartyID, MPCMessage>>,
 
     outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
 }
@@ -143,11 +143,11 @@ impl DWalletMPCSession {
             .entry(consensus_round)
             .or_default();
 
-        let mpc_round_messages_map = consensus_round_messages_map
-            .entry(mpc_round_number)
-            .or_default();
+        // let mpc_round_messages_map = consensus_round_messages_map
+        //     .entry(mpc_round_number)
+        //     .or_default();
 
-        if let Vacant(e) = mpc_round_messages_map.entry(sender_party_id) {
+        if let Vacant(e) = consensus_round_messages_map.entry(sender_party_id) {
             e.insert(message.message);
         }
     }
@@ -169,7 +169,12 @@ impl DWalletMPCSession {
     /// Records a threshold not reached error that we got when advancing
     /// this session with messages up to `consensus_round`.
     pub(crate) fn record_threshold_not_reached(&mut self, consensus_round: u64) {
-        let request_input = &self.request_data.as_ref().unwrap().protocol_specific_data.to_string();
+        let request_input = &self
+            .request_data
+            .as_ref()
+            .unwrap()
+            .protocol_specific_data
+            .to_string();
 
         error!(
             mpc_protocol=?request_input,
@@ -388,9 +393,8 @@ impl DWalletMPCManager {
         }
 
         if request.requires_network_key_data {
-            if let Some(network_encryption_key_id) = request
-                .protocol_specific_data
-                .network_encryption_key_id()
+            if let Some(network_encryption_key_id) =
+                request.protocol_specific_data.network_encryption_key_id()
             {
                 if !self
                     .network_keys

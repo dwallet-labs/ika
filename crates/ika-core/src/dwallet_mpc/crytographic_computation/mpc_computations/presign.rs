@@ -38,19 +38,19 @@ pub(crate) fn presign_public_input(
 pub(crate) fn presign_party_session_request(
     deserialized_event: DWalletSessionEvent<PresignRequestEvent>,
     pulled: bool,
-) -> DWalletSessionRequest {
-    DWalletSessionRequest {
+) -> DwalletMPCResult<DWalletSessionRequest> {
+    Ok(DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::new(MPCRequestInput::Presign(
+        protocol_specific_data: ProtocolSpecificData::try_new(MPCRequestInput::Presign(
             deserialized_event.clone(),
-        )),
+        ))?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
         pulled,
-    }
+    })
 }
 
 /// A trait for generating the public input for the Presign protocol.

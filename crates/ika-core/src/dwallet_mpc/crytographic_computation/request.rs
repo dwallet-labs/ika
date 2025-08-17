@@ -13,6 +13,7 @@ use crate::dwallet_mpc::mpc_session::{MPCEventData, MPCRoundToMessagesHashMap};
 use crate::dwallet_mpc::network_dkg::advance_network_dkg;
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
+use crate::dwallet_mpc::session_request::AdvanceSpecificData;
 use crate::dwallet_mpc::sign::{
     SignParty, update_expected_decrypters_metrics, verify_partial_signature,
 };
@@ -40,7 +41,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{error, info};
 use twopc_mpc::sign::Protocol;
-use crate::dwallet_mpc::session_request::AdvanceSpecificData;
 
 pub(crate) struct Request {
     pub(crate) party_id: PartyID,
@@ -315,8 +315,8 @@ impl Request {
                 &PublicInput::NetworkEncryptionKeyDkg(public_input),
                 self.party_id,
                 &key_scheme,
-                class_groups_decryption_key,
                 advance_request,
+                class_groups_decryption_key,
                 &mut rng,
             ),
             AdvanceSpecificData::EncryptedShareVerification {

@@ -22,6 +22,7 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{MPCEventData, MPCSessionStatus};
 use crate::dwallet_mpc::party_ids_to_authority_names;
+use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
@@ -63,7 +64,6 @@ use tokio::sync::watch;
 use tokio::sync::watch::error::RecvError;
 use tokio::sync::watch::{Receiver, Ref};
 use tracing::{debug, error, info, warn};
-use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 
 const DELAY_NO_ROUNDS_SEC: u64 = 2;
 const READ_INTERVAL_MS: u64 = 20;
@@ -575,7 +575,11 @@ impl DWalletMPCService {
                 .mpc_sessions
                 .get(&session_identifier)
             {
-                if let MPCSessionStatus::Active { public_input, private_input } = &session.status {
+                if let MPCSessionStatus::Active {
+                    public_input,
+                    private_input,
+                } = &session.status
+                {
                     if let Some(session_request) = session.request_data.clone() {
                         match computation_result {
                             Ok(GuaranteedOutputDeliveryRoundResult::Advance { message }) => {
@@ -793,7 +797,11 @@ impl DWalletMPCService {
                 );
                 vec![tx]
             }
-            ProtocolSpecificData::DKGSecond{  dwallet_id, encrypted_secret_share_id, .. } => {
+            ProtocolSpecificData::DKGSecond {
+                dwallet_id,
+                encrypted_secret_share_id,
+                ..
+            } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(
                     DKGSecondRoundOutput {
                         output,
@@ -819,7 +827,7 @@ impl DWalletMPCService {
                 });
                 vec![tx]
             }
-            ProtocolSpecificData::Sign{
+            ProtocolSpecificData::Sign {
                 dwallet_id,
                 sign_id,
                 is_future_sign,
@@ -835,7 +843,11 @@ impl DWalletMPCService {
                 });
                 vec![tx]
             }
-            ProtocolSpecificData::EncryptedShareVerification{ dwallet_id, encrypted_user_secret_key_share_id, ..} => {
+            ProtocolSpecificData::EncryptedShareVerification {
+                dwallet_id,
+                encrypted_user_secret_key_share_id,
+                ..
+            } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(
                     EncryptedUserShareOutput {
                         dwallet_id: dwallet_id.to_vec(),
@@ -847,20 +859,27 @@ impl DWalletMPCService {
                 );
                 vec![tx]
             }
-            ProtocolSpecificData::PartialSignatureVerification{  dwallet_id, partial_centralized_signed_message_id, .. } => {
+            ProtocolSpecificData::PartialSignatureVerification {
+                dwallet_id,
+                partial_centralized_signed_message_id,
+                ..
+            } => {
                 let tx =
                     DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(
                         PartialSignatureVerificationOutput {
                             dwallet_id: dwallet_id.to_vec(),
-                            partial_centralized_signed_message_id: partial_centralized_signed_message_id
-                                .to_vec(),
+                            partial_centralized_signed_message_id:
+                                partial_centralized_signed_message_id.to_vec(),
                             rejected,
                             session_sequence_number: session_request.session_sequence_number,
                         },
                     );
                 vec![tx]
             }
-            ProtocolSpecificData::NetworkEncryptionKeyDkg{ dwallet_network_encryption_key_id, .. } => {
+            ProtocolSpecificData::NetworkEncryptionKeyDkg {
+                dwallet_network_encryption_key_id,
+                ..
+            } => {
                 let slices = if rejected {
                     vec![MPCNetworkDKGOutput {
                         dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
@@ -892,7 +911,9 @@ impl DWalletMPCService {
                     .collect();
                 messages
             }
-            ProtocolSpecificData::NetworkEncryptionKeyReconfiguration{ dwallet_network_encryption_key_id } => {
+            ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
+                dwallet_network_encryption_key_id,
+            } => {
                 let slices = if rejected {
                     vec![MPCNetworkReconfigurationOutput {
                         dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
@@ -927,19 +948,30 @@ impl DWalletMPCService {
                     .collect();
                 messages
             }
-            ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic{ public_user_secret_key_shares, dwallet_id, .. } => {
+            ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
+                public_user_secret_key_shares,
+                dwallet_id,
+                ..
+            } => {
                 let tx = DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(
                     MakeDWalletUserSecretKeySharesPublicOutput {
                         dwallet_id: dwallet_id.to_vec(),
-                        public_user_secret_key_shares: public_user_secret_key_shares
-                            .clone(),
+                        public_user_secret_key_shares: public_user_secret_key_shares.clone(),
                         rejected,
                         session_sequence_number: session_request.session_sequence_number,
                     },
                 );
                 vec![tx]
             }
-            ProtocolSpecificData::ImportedKeyVerification{ curve, encrypted_centralized_secret_share_and_proof, encryption_key, dwallet_id, encrypted_user_secret_key_share_id, dwallet_network_encryption_key_id, centralized_party_message } => {
+            ProtocolSpecificData::ImportedKeyVerification {
+                curve,
+                encrypted_centralized_secret_share_and_proof,
+                encryption_key,
+                dwallet_id,
+                encrypted_user_secret_key_share_id,
+                dwallet_network_encryption_key_id,
+                centralized_party_message,
+            } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(
                     DWalletImportedKeyVerificationOutput {
                         dwallet_id: dwallet_id.to_vec().clone(),

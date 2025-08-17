@@ -89,13 +89,13 @@ macro_rules! retry_with_max_elapsed_time {
 pub struct SuiClient<P> {
     inner: P,
     sui_client_metrics: Arc<SuiClientMetrics>,
-    ika_package_id: ObjectID,
+    pub ika_package_id: ObjectID,
     #[allow(dead_code)]
-    ika_common_package_id: ObjectID,
-    ika_dwallet_2pc_mpc_package_id: ObjectID,
-    ika_system_package_id: ObjectID,
-    ika_system_object_id: ObjectID,
-    ika_dwallet_coordinator_object_id: ObjectID,
+    pub ika_common_package_id: ObjectID,
+    pub ika_dwallet_2pc_mpc_package_id: ObjectID,
+    pub ika_system_package_id: ObjectID,
+    pub ika_system_object_id: ObjectID,
+    pub ika_dwallet_coordinator_object_id: ObjectID,
 }
 
 pub type SuiConnectorClient = SuiClient<SuiSdkClient>;

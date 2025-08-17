@@ -105,19 +105,19 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationSecp256k1Party 
 
 pub(crate) fn network_decryption_key_reconfiguration_session_request_from_event(
     deserialized_event: DWalletSessionEvent<DWalletEncryptionKeyReconfigurationRequestEvent>,
-) -> DWalletSessionRequest {
-    DWalletSessionRequest {
+) -> DwalletMPCResult<DWalletSessionRequest> {
+    Ok(DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::new(
+        protocol_specific_data: ProtocolSpecificData::try_new(
             MPCRequestInput::NetworkEncryptionKeyReconfiguration(deserialized_event.clone()),
-        ),
+        )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: true,
         pulled: false,
-    }
+    })
 }
 
 fn extract_encryption_keys_from_committee(

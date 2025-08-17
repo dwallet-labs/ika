@@ -21,11 +21,11 @@ use crate::dwallet_mpc::crytographic_computation::{ComputationId, ComputationReq
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
+use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
-use group::PartyID;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, error, info};
@@ -243,11 +243,8 @@ impl CryptographicComputationsOrchestrator {
         rayon::spawn_fifo(move || {
             let advance_start_time = Instant::now();
 
-            let computation_result = computation_request.compute(
-                computation_id,
-                root_seed,
-                dwallet_mpc_metrics.clone(),
-            );
+            let computation_result =
+                computation_request.compute(computation_id, root_seed, dwallet_mpc_metrics.clone());
 
             let elapsed = advance_start_time.elapsed();
             let elapsed_ms = elapsed.as_millis();

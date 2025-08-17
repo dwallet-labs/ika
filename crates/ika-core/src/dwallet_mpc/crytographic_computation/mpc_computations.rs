@@ -6,7 +6,10 @@ use commitment::CommitmentSizedNumber;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use itertools::Itertools;
-use mpc::{AsynchronouslyAdvanceable, GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure};
+use mpc::{
+    AsynchronouslyAdvanceable, GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery,
+    WeightedThresholdAccessStructure,
+};
 use rand_chacha::ChaCha20Rng;
 use std::collections::hash_map::Entry::Vacant;
 use std::collections::{HashMap, HashSet};
@@ -142,44 +145,6 @@ pub(crate) fn build_messages_to_advance(
     // or we need to wait for more messages before retrying after a threshold not reached has occurred.
     // This session is not ready to advance.
     None
-}
-
-/// Advances the state of an MPC party and serializes the result into bytes.
-///
-/// This helper function wraps around a party `P`'s `advance()` method,
-/// converting its output into a serialized byte format.
-/// This abstraction allows the system's generic components to operate uniformly on byte arrays,
-/// rather than requiring generics to handle the different message and output types
-/// for each MPC protocol.
-///
-/// By maintaining a structured transition between instantiated types, and their
-/// serialized forms, this function ensures compatibility across various components.
-pub(crate) fn advance<P: AsynchronouslyAdvanceable + GuaranteesOutputDelivery>(
-    session_id: CommitmentSizedNumber,
-    party_id: PartyID,
-    access_structure: &WeightedThresholdAccessStructure,
-    serialized_messages: MPCRoundToMessagesHashMap,
-    public_input: &P::PublicInput,
-    private_input: P::PrivateInput,
-    mut rng: ChaCha20Rng,
-) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    // When a `ThresholdNotReached` error is received, the system now waits for additional messages
-    // (including those from previous rounds) and retries.
-    match advance_with_guaranteed_output::<P>(
-        session_id,
-        party_id,
-        access_structure,
-        serialized_messages.clone(),
-        Some(private_input),
-        public_input,
-        &mut rng,
-    ) {
-        Ok(res) => Ok(res),
-        Err(e) => match e.into() {
-            mpc::Error::ThresholdNotReached => Err(mpc::Error::ThresholdNotReached)?,
-            e => Err(e)?,
-        },
-    }
 }
 
 #[cfg(test)]

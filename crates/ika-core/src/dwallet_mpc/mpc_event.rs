@@ -28,7 +28,7 @@ use serde::de::DeserializeOwned;
 use sui_types::dynamic_field::Field;
 use sui_types::id::ID;
 
-pub(crate) fn parse_sui_event(
+pub fn parse_sui_event(
     packages_config: &IkaNetworkConfig,
     event_type: StructTag,
     contents: &[u8],
@@ -42,7 +42,7 @@ pub(crate) fn parse_sui_event(
                 &contents, pulled,
             )?,
             pulled,
-        )
+        )?
     } else if event_type
         == DWalletSessionEvent::<MakeDWalletUserSecretKeySharesPublicRequestEvent>::type_(
             packages_config,
@@ -53,43 +53,47 @@ pub(crate) fn parse_sui_event(
                 &contents, pulled,
             )?,
             pulled,
-        )
+        )?
     } else if event_type
         == DWalletSessionEvent::<DWalletDKGFirstRoundRequestEvent>::type_(packages_config)
     {
         dwallet_dkg_first_party_session_request(
             deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(&contents, pulled)?,
             pulled,
-        )
+        )?
     } else if event_type
         == DWalletSessionEvent::<DWalletDKGSecondRoundRequestEvent>::type_(packages_config)
     {
         dwallet_dkg_second_party_session_request(
             deserialize_event_contents::<DWalletDKGSecondRoundRequestEvent>(&contents, pulled)?,
             pulled,
-        )
+        )?
     } else if event_type == DWalletSessionEvent::<PresignRequestEvent>::type_(packages_config) {
         let deserialized_event: DWalletSessionEvent<PresignRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
-        presign_party_session_request(deserialized_event, pulled)
+        presign_party_session_request(deserialized_event, pulled)?
     } else if event_type == DWalletSessionEvent::<SignRequestEvent>::type_(packages_config) {
         let deserialized_event: DWalletSessionEvent<SignRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
-        sign_party_session_request(&deserialized_event, pulled)
+        sign_party_session_request(&deserialized_event, pulled)?
     } else if event_type == DWalletSessionEvent::<FutureSignRequestEvent>::type_(packages_config) {
         let deserialized_event: DWalletSessionEvent<FutureSignRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
-        get_verify_partial_signatures_session_request(&deserialized_event, pulled)
+        get_verify_partial_signatures_session_request(&deserialized_event, pulled)?
     } else if event_type
         == DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(packages_config)
     {
         let deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
-        network_dkg_session_request(deserialized_event, DWalletMPCNetworkKeyScheme::Secp256k1)?
+        network_dkg_session_request(
+            deserialized_event,
+            DWalletMPCNetworkKeyScheme::Secp256k1,
+            pulled,
+        )?
     } else if event_type
         == DWalletSessionEvent::<DWalletEncryptionKeyReconfigurationRequestEvent>::type_(
             packages_config,
@@ -99,14 +103,14 @@ pub(crate) fn parse_sui_event(
             DWalletEncryptionKeyReconfigurationRequestEvent,
         > = deserialize_event_contents(&contents, pulled)?;
 
-        network_decryption_key_reconfiguration_session_request_from_event(deserialized_event)
+        network_decryption_key_reconfiguration_session_request_from_event(deserialized_event)?
     } else if event_type
         == DWalletSessionEvent::<EncryptedShareVerificationRequestEvent>::type_(packages_config)
     {
         let deserialized_event: DWalletSessionEvent<EncryptedShareVerificationRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
-        start_encrypted_share_verification_session_request(deserialized_event, pulled)
+        start_encrypted_share_verification_session_request(deserialized_event, pulled)?
     } else {
         return Ok(None);
     };

@@ -439,14 +439,14 @@ impl IkaNode {
         let sui_connector_metrics = SuiConnectorMetrics::new(&registry_service.default_registry());
         let (next_epoch_committee_sender, next_epoch_committee_receiver) =
             watch::channel::<Committee>(committee);
-        let (new_events_sender, new_events_receiver) =
+        let (new_requests_sender, new_requests_receiver) =
             broadcast::channel(EVENTS_CHANNEL_BUFFER_SIZE);
         let (end_of_publish_sender, end_of_publish_receiver) = watch::channel::<Option<u64>>(None);
         let (
             last_session_to_complete_in_current_epoch_sender,
             last_session_to_complete_in_current_epoch_receiver,
         ) = watch::channel((0, 0));
-        let (uncompleted_events_sender, uncompleted_events_receiver) =
+        let (uncompleted_requests_sender, uncompleted_requests_receiver) =
             watch::channel((Vec::new(), 0));
         let (sui_connector_service, network_keys_receiver) = SuiConnectorService::new(
             dwallet_checkpoint_store.clone(),
@@ -456,10 +456,10 @@ impl IkaNode {
             sui_connector_metrics,
             state.is_validator(&epoch_store),
             next_epoch_committee_sender,
-            new_events_sender,
+            new_requests_sender,
             end_of_publish_sender.clone(),
             last_session_to_complete_in_current_epoch_sender,
-            uncompleted_events_sender,
+            uncompleted_requests_sender,
         )
         .await?;
 
@@ -499,11 +499,11 @@ impl IkaNode {
             .set(config.supported_protocol_versions.unwrap().max.as_u64() as i64);
         let sui_data_receivers = SuiDataReceivers {
             network_keys_receiver,
-            new_requests_receiver: new_events_receiver,
+            new_requests_receiver,
             next_epoch_committee_receiver,
             last_session_to_complete_in_current_epoch_receiver,
             end_of_publish_receiver,
-            uncompleted_requests_receiver: uncompleted_events_receiver,
+            uncompleted_requests_receiver,
         };
         let validator_components = if state.is_validator(&epoch_store) {
             let components = Self::construct_validator_components(

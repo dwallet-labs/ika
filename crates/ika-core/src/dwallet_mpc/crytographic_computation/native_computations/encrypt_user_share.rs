@@ -17,36 +17,38 @@ use twopc_mpc::secp256k1::class_groups::AsyncProtocol;
 pub(crate) fn start_encrypted_share_verification_session_request(
     deserialized_event: DWalletSessionEvent<EncryptedShareVerificationRequestEvent>,
     pulled: bool,
-) -> DWalletSessionRequest {
-    DWalletSessionRequest {
+) -> DwalletMPCResult<DWalletSessionRequest> {
+    Ok(DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::new(
+        protocol_specific_data: ProtocolSpecificData::try_new(
             MPCRequestInput::EncryptedShareVerification(deserialized_event.clone()),
-        ),
+        )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
         pulled,
-    }
+    })
 }
 
 /// Verifies that the given encrypted secret key share matches the encryption of the dWallet's
 /// secret share, validates the signature on the dWallet's public share,
 /// and ensures the signing public key matches the address that initiated this transaction.
 pub(crate) fn verify_encrypted_share(
-    verification_data: &EncryptedShareVerificationRequestEvent,
+    encrypted_centralized_secret_share_and_proof: &[u8],
+    decentralized_public_output: &SerializedWrappedMPCPublicOutput,
+    encryption_key: &[u8],
     protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
 ) -> DwalletMPCResult<()> {
     let encrypted_centralized_secret_share_and_proof =
-        match bcs::from_bytes(&verification_data.encrypted_centralized_secret_share_and_proof)? {
+        match bcs::from_bytes(encrypted_centralized_secret_share_and_proof)? {
             VersionedEncryptedUserShare::V1(output) => output.clone(),
         };
     verify_centralized_secret_key_share_proof(
         &encrypted_centralized_secret_share_and_proof,
-        &verification_data.decentralized_public_output,
-        &verification_data.encryption_key,
+        decentralized_public_output,
+        encryption_key,
         protocol_public_parameters,
     )
     .map_err(|_| DwalletMPCError::EncryptedUserShareVerificationFailed)

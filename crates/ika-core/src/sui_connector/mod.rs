@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_checkpoints::DWalletCheckpointStore;
+use crate::dwallet_mpc::session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::sui_executor::{StopReason, SuiExecutor};
 use crate::sui_connector::sui_syncer::SuiSyncer;
@@ -65,10 +66,10 @@ impl SuiConnectorService {
         sui_connector_metrics: Arc<SuiConnectorMetrics>,
         is_validator: bool,
         next_epoch_committee_sender: Sender<Committee>,
-        new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
+        new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
-        uncompleted_events_sender: Sender<(Vec<DBSuiEvent>, EpochId)>,
+        uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
     ) -> anyhow::Result<(
         Arc<Self>,
         watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -108,10 +109,10 @@ impl SuiConnectorService {
             system_object_receiver,
             dwallet_coordinator_receiver,
             network_keys_sender,
-            new_events_sender,
+            new_requests_sender,
             end_of_publish_sender,
             last_session_to_complete_in_current_epoch_sender,
-            uncompleted_events_sender,
+            uncompleted_requests_sender,
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;

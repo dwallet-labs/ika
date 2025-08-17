@@ -48,55 +48,55 @@ pub(crate) fn dwallet_dkg_second_public_input(
 pub(crate) fn dwallet_imported_key_verification_request_event_session_request(
     deserialized_event: DWalletSessionEvent<DWalletImportedKeyVerificationRequestEvent>,
     pulled: bool,
-) -> DWalletSessionRequest {
-    DWalletSessionRequest {
+) -> DwalletMPCResult<DWalletSessionRequest> {
+    Ok(DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::new(
+        protocol_specific_data: ProtocolSpecificData::try_new(
             MPCRequestInput::DWalletImportedKeyVerificationRequest(deserialized_event.clone()),
-        ),
+        )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
         pulled,
-    }
+    })
 }
 
 pub(crate) fn dwallet_dkg_first_party_session_request(
     deserialized_event: DWalletSessionEvent<DWalletDKGFirstRoundRequestEvent>,
     pulled: bool,
-) -> DWalletSessionRequest {
-    DWalletSessionRequest {
+) -> DwalletMPCResult<DWalletSessionRequest> {
+    Ok(DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::new(MPCRequestInput::DKGFirst(
+        protocol_specific_data: ProtocolSpecificData::try_new(MPCRequestInput::DKGFirst(
             deserialized_event.clone(),
-        )),
+        ))?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
         pulled,
-    }
+    })
 }
 
 pub(crate) fn dwallet_dkg_second_party_session_request(
     deserialized_event: DWalletSessionEvent<DWalletDKGSecondRoundRequestEvent>,
     pulled: bool,
-) -> DWalletSessionRequest {
-    DWalletSessionRequest {
+) -> DwalletMPCResult<DWalletSessionRequest> {
+    Ok(DWalletSessionRequest {
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::new(MPCRequestInput::DKGSecond(
+        protocol_specific_data: ProtocolSpecificData::try_new(MPCRequestInput::DKGSecond(
             deserialized_event.clone(),
-        )),
+        ))?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
         pulled,
-    }
+    })
 }
 
 /// A trait for generating the public input for the initial round of the DKG protocol.

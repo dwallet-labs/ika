@@ -342,17 +342,7 @@ pub trait DWalletSessionEventTrait {
 /// completed.
 /// System sessions are guaranteed to always get completed in the epoch they were created in.
 #[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    Copy,
-    JsonSchema,
-    Eq,
-    PartialEq,
-    Hash,
-    Ord,
-    PartialOrd
+    Debug, Serialize, Deserialize, Clone, Copy, JsonSchema, Eq, PartialEq, Hash, Ord, PartialOrd,
 )]
 pub enum SessionType {
     User,

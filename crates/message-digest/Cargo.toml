@@ -14,6 +14,7 @@ dwallet-mpc-types.workspace = true
 k256.workspace = true
 sha2 = "0.11.0-rc.0"
 sha3 = "0.11.0-rc.0"
+strum_macros = "0.27.1"
 
 [lints]
 workspace = true

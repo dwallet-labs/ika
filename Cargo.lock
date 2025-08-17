@@ -3652,6 +3652,7 @@ dependencies = [
  "enum_dispatch",
  "schemars",
  "serde",
+ "strum_macros 0.27.1",
  "thiserror 2.0.12",
  "twopc_mpc",
 ]
@@ -7373,6 +7374,7 @@ dependencies = [
  "serde",
  "sha2 0.11.0-rc.0",
  "sha3 0.11.0-rc.0",
+ "strum_macros 0.27.1",
 ]
 
 [[package]]

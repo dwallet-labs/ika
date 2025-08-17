@@ -51,15 +51,42 @@ pub struct NetworkEncryptionKeyPublicData {
 }
 
 #[repr(u32)]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash, Copy, Ord, PartialOrd)]
+#[derive(
+    strum_macros::Display,
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Eq,
+    Hash,
+    Copy,
+    Ord,
+    PartialOrd,
+)]
 pub enum DWalletMPCNetworkKeyScheme {
+    #[strum(to_string = "Secp256k1")]
     Secp256k1 = 0,
+    #[strum(to_string = "Ristretto")]
     Ristretto = 1,
 }
 
 #[repr(u32)]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash, Copy, Ord, PartialOrd)]
+#[derive(
+    strum_macros::Display,
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Eq,
+    Hash,
+    Copy,
+    Ord,
+    PartialOrd,
+)]
 pub enum SignatureAlgorithm {
+    #[strum(to_string = "ECDSA")]
     ECDSA,
 }
 
