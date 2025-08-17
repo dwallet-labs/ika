@@ -552,6 +552,8 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID
 ) {
+    let dwallet_id = ObjectID::random();
+    let dwallet_cap_id = ObjectID::random();
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DBSuiEvent {
@@ -563,8 +565,8 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
                     session_sequence_number,
                     session_identifier_preimage.to_vec().clone(),
                     DWalletDKGFirstRoundRequestEvent {
-                        dwallet_id: ObjectID::random(),
-                        dwallet_cap_id: ObjectID::random(),
+                        dwallet_id,
+                        dwallet_cap_id,
                         dwallet_network_encryption_key_id,
                         curve: 0,
                     },

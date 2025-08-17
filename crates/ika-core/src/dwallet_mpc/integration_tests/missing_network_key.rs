@@ -1,9 +1,15 @@
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::{send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event};
+use crate::dwallet_mpc::integration_tests::utils::{
+    send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event,
+};
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig};
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
+    DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,
+    IkaNetworkConfig,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
@@ -23,19 +29,7 @@ async fn test_network_dkg_and_dwallet_creation_full_flow() {
         mut epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
-        let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
-                    &ika_network_config,
-                ),
-                // The base64 encoding of an actual start network DKG event.
-                contents: base64::decode("Z7MmXd0I4lvGWLDA969YOVo7wrZlXr21RMvixIFabCqAU3voWC2pRFG3QwPYD+ta0sX5poLEkq77ovCi3BBQDgEAAAAAAAAAgFN76FgtqURRt0MD2A/rWtLF+aaCxJKu+6LwotwQUA4BAQAAAAAAAAAggZwXRQsb/ha4mk5xZZfqItaokplduZGMnsuEQzdm7UTt2Z+ktotfGXHn2YVaxxqVhDM8UaafXejIDXnaPLxaMAA=").unwrap(),
-                pulled: true,
-            }],
-            epoch_id,
-        ));
-    });
+    send_start_network_dkg_event(&ika_network_config, epoch_id, &mut sui_data_senders);
     let mut consensus_round = 1;
     let mut network_key_checkpoint = None;
     loop {
@@ -48,7 +42,10 @@ async fn test_network_dkg_and_dwallet_creation_full_flow() {
         )
         .await
         {
-            assert_eq!(consensus_round, 5, "Network DKG should complete after 4 rounds");
+            assert_eq!(
+                consensus_round, 5,
+                "Network DKG should complete after 4 rounds"
+            );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             network_key_checkpoint = Some(pending_checkpoint);
             break;
@@ -92,7 +89,12 @@ async fn test_network_dkg_and_dwallet_creation_full_flow() {
             )])));
     });
     send_start_dwallet_dkg_first_round_event(
-        &ika_network_config, epoch_id, &mut sui_data_senders, [2; 32], 2, key_id.unwrap(),
+        &ika_network_config,
+        epoch_id,
+        &mut sui_data_senders,
+        [2; 32],
+        2,
+        key_id.unwrap(),
     );
     info!("Starting DWallet DKG first round");
     loop {
@@ -103,7 +105,7 @@ async fn test_network_dkg_and_dwallet_creation_full_flow() {
             &epoch_stores,
             &notify_services,
         )
-            .await
+        .await
         {
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
