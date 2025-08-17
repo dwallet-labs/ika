@@ -6,7 +6,6 @@
 		"docusaurus": "docusaurus",
 		"start": "docusaurus start",
 		"build": "docusaurus build",
-		"build:docs-only": "cd .. && pnpm --workspace-file pnpm-workspace.docs.yaml install && cd docs && docusaurus build",
 		"swizzle": "docusaurus swizzle",
 		"deploy": "docusaurus deploy",
 		"clear": "docusaurus clear",

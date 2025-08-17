@@ -9,8 +9,6 @@
 		"wallet": "turbo --filter ./apps/wallet",
 		"sdk": "turbo --filter ./sdk/typescript",
 		"bcs": "turbo --filter ./sdk/bcs",
-		"docs:build": "pnpm --workspace-file pnpm-workspace.docs.yaml install && pnpm --filter ./docs build",
-		"docs:start": "pnpm --workspace-file pnpm-workspace.docs.yaml install && pnpm --filter ./docs start",
 		"changeset-version": "pnpm changeset version && pnpm --filter @ika-io/ika codegen:version",
 		"prettier:check": "prettier -c --ignore-unknown .",
 		"prettier:fix": "prettier -w --ignore-unknown .",

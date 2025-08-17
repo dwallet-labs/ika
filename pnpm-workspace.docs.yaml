@@ -1,6 +1,0 @@
-packages:
-  - 'docs'
-  - 'sdk/typescript'
-  - 'sdk/build-scripts'
-  - '!**/dist/**'
-  - '!**/.next/**'
