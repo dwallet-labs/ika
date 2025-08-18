@@ -214,7 +214,7 @@ async fn create_dwallet() {
         centralized_dwallet_dkg_result.public_output,
     );
     let (consensus_round, dwallet_second_round_checkpoint) =
-        utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
+        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
     info!("DWallet DKG second round completed");
 }
 
