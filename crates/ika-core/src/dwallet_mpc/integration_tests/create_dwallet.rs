@@ -128,6 +128,12 @@ async fn create_dwallet() {
         committee,
         sui_data_senders,
     };
+    for mut service in test_state.dwallet_mpc_services {
+        service
+            .dwallet_mpc_manager()
+            .last_session_to_complete_in_current_epoch = 4;
+    }
+
     send_start_network_dkg_event_to_all_parties(
         &ika_network_config,
         epoch_id,
