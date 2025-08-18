@@ -827,12 +827,10 @@ pub(crate) fn send_start_presign_event(
                         signature_algorithm: 0,
                     },
                 ))
-                    .unwrap(),
+                .unwrap(),
                 pulled: false,
             }],
             epoch_id,
         ));
     });
 }
-
-
