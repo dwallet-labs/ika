@@ -130,7 +130,7 @@ async fn create_dwallet() {
     };
     for service in &mut test_state.dwallet_mpc_services {
         service
-            .dwallet_mpc_manager()
+            .dwallet_mpc_manager_mut()
             .last_session_to_complete_in_current_epoch = 4;
     }
 
