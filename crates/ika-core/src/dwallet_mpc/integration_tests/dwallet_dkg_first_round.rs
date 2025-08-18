@@ -92,7 +92,7 @@ async fn dwallet_dkg_first_round() {
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
     let DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
         dwallet_dkg_first_round_output,
-    ) = dkg_first_round_checkpoint.messages().pop().unwrap()
+    ) = dkg_first_round_checkpoint.messages().clone().pop().unwrap()
     else {
         panic!("Expected DWallet DKG first round output message");
     };
