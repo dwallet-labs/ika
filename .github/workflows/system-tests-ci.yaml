@@ -55,6 +55,16 @@ jobs:
         with:
           version: 'latest'
 
+      - name: Install Homebrew
+        run: |
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+
+      - name: Install Sui using Homebrew
+        run: brew install sui
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+
       - name: Install dependencies
         run: pnpm install
         working-directory: ./sdk/typescript
