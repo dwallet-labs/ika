@@ -556,8 +556,7 @@ impl DWalletMPCService {
                 .mpc_sessions
                 .get(&session_identifier)
             {
-                if let MPCSessionStatus::Active { .. } = &session.status
-                {
+                if let MPCSessionStatus::Active { .. } = &session.status {
                     if let Some(session_request) = session.request_data.clone() {
                         match computation_result {
                             Ok(GuaranteedOutputDeliveryRoundResult::Advance { message }) => {

@@ -13,8 +13,8 @@ use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData,
-    DWalletNetworkEncryptionKeyState, IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig,
+    DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
+    IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig,
 };
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,

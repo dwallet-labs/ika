@@ -8,8 +8,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    DWalletSessionEvent, MPCRequestInput,
-    MakeDWalletUserSecretKeySharesPublicRequestEvent,
+    DWalletSessionEvent, MPCRequestInput, MakeDWalletUserSecretKeySharesPublicRequestEvent,
 };
 use twopc_mpc::secp256k1::class_groups::AsyncProtocol;
 

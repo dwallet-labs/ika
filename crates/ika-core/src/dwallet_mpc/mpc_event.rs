@@ -18,10 +18,9 @@ use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
-    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent,
-    DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent, FutureSignRequestEvent,
-    IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
-    SignRequestEvent,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
+    EncryptedShareVerificationRequestEvent, FutureSignRequestEvent, IkaNetworkConfig,
+    MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent, SignRequestEvent,
 };
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;

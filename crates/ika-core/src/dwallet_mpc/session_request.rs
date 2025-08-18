@@ -488,7 +488,7 @@ impl AdvanceSpecificData {
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
-        decryption_key_shares: &Box<DwalletMPCNetworkKeys>
+        decryption_key_shares: &Box<DwalletMPCNetworkKeys>,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
             ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
@@ -651,7 +651,8 @@ impl AdvanceSpecificData {
                     return Ok(None);
                 };
 
-                let decryption_key_shares = decryption_key_shares.get_decryption_key_shares(dwallet_network_encryption_key_id)?;
+                let decryption_key_shares = decryption_key_shares
+                    .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                 AdvanceSpecificData::Sign {
                     curve: *curve,
@@ -709,7 +710,8 @@ impl AdvanceSpecificData {
                     return Ok(None);
                 };
 
-                let decryption_key_shares = decryption_key_shares.get_decryption_key_shares(dwallet_network_encryption_key_id)?;
+                let decryption_key_shares = decryption_key_shares
+                    .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                 AdvanceSpecificData::NetworkEncryptionKeyReconfiguration {
                     public_input: public_input.clone(),

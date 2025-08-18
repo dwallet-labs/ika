@@ -13,9 +13,7 @@ use crate::dwallet_mpc::network_dkg::advance_network_dkg;
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
 use crate::dwallet_mpc::session_request::AdvanceSpecificData;
-use crate::dwallet_mpc::sign::{
-    SignParty, verify_partial_signature,
-};
+use crate::dwallet_mpc::sign::{SignParty, verify_partial_signature};
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,

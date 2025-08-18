@@ -28,8 +28,8 @@ use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData,
-    SessionIdentifier, SessionType,
+    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, SessionIdentifier,
+    SessionType,
 };
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -427,7 +427,6 @@ impl DWalletMPCManager {
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
             .flat_map(|(session, request_data)| {
-
                 let MPCSessionStatus::Active {
                     public_input,
                     private_input: _,
