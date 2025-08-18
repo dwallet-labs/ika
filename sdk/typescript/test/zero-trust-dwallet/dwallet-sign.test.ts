@@ -8,7 +8,6 @@ import {
 	createTestIkaClient,
 	createTestMessage,
 	createTestSuiClient,
-	DEFAULT_TIMEOUT,
 	delay,
 	retryUntil,
 	runSignFullFlow,

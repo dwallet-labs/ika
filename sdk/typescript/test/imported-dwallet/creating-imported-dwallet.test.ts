@@ -14,7 +14,6 @@ import {
 import {
 	createTestIkaClient,
 	createTestSuiClient,
-	DEFAULT_TIMEOUT,
 	delay,
 	generateTestKeypairForImportedDWallet,
 	requestTestFaucetFunds,

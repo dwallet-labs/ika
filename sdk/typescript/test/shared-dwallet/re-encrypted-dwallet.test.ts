@@ -17,7 +17,6 @@ import {
 	createTestIkaClient,
 	createTestMessage,
 	createTestSuiClient,
-	DEFAULT_TIMEOUT,
 	delay,
 	generateTestKeypair,
 	retryUntil,

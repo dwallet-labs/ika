@@ -14,7 +14,6 @@ import {
 	createTestIkaClient,
 	createTestMessage,
 	createTestSuiClient,
-	DEFAULT_TIMEOUT,
 	delay,
 	retryUntil,
 } from '../helpers/test-utils';
