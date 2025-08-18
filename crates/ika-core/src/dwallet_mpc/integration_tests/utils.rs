@@ -682,7 +682,7 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
                     &ika_network_config,
                 ),
                 contents: bcs::to_bytes(&new_dwallet_session_event(
-                    true,
+                    false,
                     session_sequence_number,
                     session_identifier_preimage.to_vec().clone(),
                     DWalletDKGSecondRoundRequestEvent {
