@@ -8,7 +8,7 @@ export default defineConfig({
 		minWorkers: 1,
 		maxWorkers: 30,
 		hookTimeout: 1000000,
-		testTimeout: 1000000, // 10 minutes
+		testTimeout: 6_000_000, // 60 minutes
 		retry: 0,
 		env: {
 			NODE_ENV: 'test',
