@@ -19,7 +19,6 @@ mod crytographic_computation;
 pub mod dwallet_mpc_metrics;
 mod mpc_event;
 
-#[cfg(test)]
 mod integration_tests;
 
 pub(crate) use crytographic_computation::mpc_computations::{
