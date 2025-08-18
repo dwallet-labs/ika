@@ -151,6 +151,5 @@ describe('Imported DWallet Signing', () => {
 
 			expect(true).toBe(true);
 		},
-		DEFAULT_TIMEOUT,
 	);
 });

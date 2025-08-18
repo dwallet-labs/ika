@@ -125,6 +125,5 @@ describe('Imported DWallet Creation', () => {
 				importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
 			);
 		},
-		DEFAULT_TIMEOUT,
 	);
 });

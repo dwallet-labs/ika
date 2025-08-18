@@ -161,7 +161,6 @@ describe('DWallet Transfer', () => {
 			// Verify the signing process completed successfully
 			expect(true).toBe(true);
 		},
-		DEFAULT_TIMEOUT,
 	);
 
 	it(
@@ -254,7 +253,6 @@ describe('DWallet Transfer', () => {
 			// Step 4: Verify all transfers completed successfully
 			expect(destinations.length).toBe(3);
 		},
-		DEFAULT_TIMEOUT,
 	);
 
 	it(
@@ -413,6 +411,5 @@ describe('DWallet Transfer', () => {
 			// Both users can successfully sign with the same DWallet
 			expect(true).toBe(true);
 		},
-		DEFAULT_TIMEOUT,
 	);
 });

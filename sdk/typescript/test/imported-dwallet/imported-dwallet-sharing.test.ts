@@ -128,6 +128,5 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 
 			expect(true).toBe(true);
 		},
-		DEFAULT_TIMEOUT,
 	);
 });

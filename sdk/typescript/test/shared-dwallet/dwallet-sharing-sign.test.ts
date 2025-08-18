@@ -165,6 +165,5 @@ describe('Shared DWallet Signing (public user shares)', () => {
 
 			expect(true).toBe(true);
 		},
-		DEFAULT_TIMEOUT,
 	);
 });

@@ -174,6 +174,5 @@ describe('Shared Imported DWallet Signing (public user shares)', () => {
 
 			expect(true).toBe(true);
 		},
-		DEFAULT_TIMEOUT,
 	);
 });

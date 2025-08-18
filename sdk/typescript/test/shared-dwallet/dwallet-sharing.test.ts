@@ -121,6 +121,5 @@ describe('Shared DWallet (make shares public)', () => {
 
 			expect(true).toBe(true);
 		},
-		DEFAULT_TIMEOUT,
 	);
 });

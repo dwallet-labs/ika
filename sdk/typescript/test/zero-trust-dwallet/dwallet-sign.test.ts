@@ -26,7 +26,6 @@ describe('DWallet Signing', () => {
 			// Step 1: Create complete DWallet
 			await runSignFullFlow(ikaClient, suiClient, testName);
 		},
-		DEFAULT_TIMEOUT,
 	);
 
 	it(
@@ -94,7 +93,6 @@ describe('DWallet Signing', () => {
 			// All signatures completed successfully
 			expect(messages.length).toBe(3);
 		},
-		DEFAULT_TIMEOUT,
 	);
 
 	it(
@@ -159,6 +157,5 @@ describe('DWallet Signing', () => {
 			// All hash schemes worked
 			expect(hashSchemes.length).toBe(2);
 		},
-		DEFAULT_TIMEOUT,
 	);
 });

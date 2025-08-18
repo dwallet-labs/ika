@@ -113,7 +113,6 @@ describe('DWallet Future Signing', () => {
 			// Verify the future signing process completed successfully
 			expect(true).toBe(true);
 		},
-		DEFAULT_TIMEOUT,
 	);
 
 	it(
@@ -216,7 +215,6 @@ describe('DWallet Future Signing', () => {
 			expect(futureSignRequests.length).toBe(2);
 			expect(presignObjects.length).toBe(2);
 		},
-		DEFAULT_TIMEOUT,
 	);
 
 	it(
@@ -305,6 +303,5 @@ describe('DWallet Future Signing', () => {
 			// All hash schemes worked for future signing
 			expect(hashSchemes.length).toBe(2);
 		},
-		DEFAULT_TIMEOUT,
 	);
 });

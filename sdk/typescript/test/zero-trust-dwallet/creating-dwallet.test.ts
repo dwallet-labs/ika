@@ -152,7 +152,6 @@ describe('DWallet Creation', () => {
 			expect(finalDWallet.state.$kind).toBe('Active');
 			expect(finalDWallet.id.id).toBe(dwalletID);
 		},
-		DEFAULT_TIMEOUT,
 	);
 
 	it(
@@ -197,6 +196,5 @@ describe('DWallet Creation', () => {
 			expect(dwalletID1).toBeDefined();
 			expect(dwalletID2).toBeDefined();
 		},
-		DEFAULT_TIMEOUT,
 	);
 });
