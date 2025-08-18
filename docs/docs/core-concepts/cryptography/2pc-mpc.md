@@ -11,7 +11,7 @@ sidebar_label: 2PC-MPC
 ## Overview
 
 2PC-MPC, as described in the ["2PC-MPC: Emulating Two Party ECDSA in Large-Scale MPC"](https://eprint.iacr.org/2024/253)
-paper by the dWallet
+paper (2PC-MPC V1) and the ["Practical Zero-Trust Threshold Signatures in Large-Scale Dynamic Asynchronous Networks"](https://eprint.iacr.org/2025/297) paper (2PC-MPC V2) by the dWallet
 Labs research team, is a novel [MPC](mpc.md) protocol designed specifically for [dWallets](../dwallets.md), and Ika.
 
 ## Advantage
