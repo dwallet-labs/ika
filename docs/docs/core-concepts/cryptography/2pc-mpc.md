@@ -38,6 +38,8 @@ aggregation & amortization techniques, an amortized cost per-party that remains 
 practically `O(1)` in computation for the network, whilst being asymptotically `O(1)` for the user: meaning the size of
 the network doesn't have any impact on the user as its computation and communication is constant.
 
+With the release of 2PC-MPC V2, the protocol has been significantly enhanced to address real-world blockchain conditions. It now supports not only threshold ECDSA but also Schnorr and EdDSA signatures, and operates efficiently in asynchronous broadcast networks. V2 introduces dynamic participant quorums so that signers can change between rounds, aligning with permissionless validator sets. Client interaction has been streamlined: presign generation is now non-interactive and fully `O(1)` for the user, reducing overhead and enabling reuse across signers. Security has been strengthened with improved unforgeability assumptions and proactive abort handling, while efficiency has been boosted with reduced round complexity for DKG and presign. Additional upgrades include reconfiguration support for participants joining or leaving without resharding, weighted threshold structures optimized for PoS systems, and compatibility with HD wallets (`BIP32`) and secure wallet transfer. Collectively, these advances make 2PC-MPC V2 more scalable, flexible, and secure—positioning it as a practical backbone for Ika and dWallets.
+
 The goal of Ika is to support millions of users, and tens of thousands of signatures per second, with thousands of
 validators.
 2PC-MPC, and its future improvements and optimizations planned, are how that ambitious goal will be achieved.
