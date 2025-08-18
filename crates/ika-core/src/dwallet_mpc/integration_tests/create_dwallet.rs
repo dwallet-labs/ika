@@ -223,6 +223,3 @@ async fn create_dwallet() {
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
     info!("DWallet DKG second round completed");
 }
-
-// ts Preparing DKG second round with protocolPublicParameters length: 19129658, networkFirstRoundOutput length: 1136, sessionDigest length: 32
-// rust paramters to next call length network_key_bytes_length=12891 dwalllet_dkg_first_round_output_length=1136 dwallet_dkg_session_identifier_length=32
