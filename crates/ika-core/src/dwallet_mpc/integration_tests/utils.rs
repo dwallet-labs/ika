@@ -14,7 +14,12 @@ use ika_types::error::IkaResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
+    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
+    DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent,
+    DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SessionIdentifier,
+};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -671,7 +676,9 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<DWalletDKGSecondRoundRequestEvent>::type_(&ika_network_config),
+                type_: DWalletSessionEvent::<DWalletDKGSecondRoundRequestEvent>::type_(
+                    &ika_network_config,
+                ),
                 contents: bcs::to_bytes(&new_dwallet_session_event(
                     true,
                     session_sequence_number,
@@ -680,9 +687,11 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
                         encrypted_user_secret_key_share_id: ObjectID::random(),
                         dwallet_id,
                         first_round_output: first_round_output.clone(),
-                        centralized_public_key_share_and_proof: centralized_public_key_share_and_proof.clone(),
+                        centralized_public_key_share_and_proof:
+                            centralized_public_key_share_and_proof.clone(),
                         dwallet_cap_id: ObjectID::random(),
-                        encrypted_centralized_secret_share_and_proof: encrypted_centralized_secret_share_and_proof.clone(),
+                        encrypted_centralized_secret_share_and_proof:
+                            encrypted_centralized_secret_share_and_proof.clone(),
                         encryption_key: encryption_key.clone(),
                         encryption_key_id: ObjectID::random(),
                         encryption_key_address: Default::default(),

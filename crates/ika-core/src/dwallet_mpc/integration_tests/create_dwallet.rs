@@ -100,6 +100,88 @@ async fn dwallet_dkg_first_round() {
     else {
         panic!("Expected DWallet DKG first round output message");
     };
+    info!("DWallet DKG first round completed");
+}
+
+#[tokio::test]
+#[cfg(test)]
+/// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
+async fn create_dwallet() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (committee, _) = Committee::new_simple_test_committee();
+    let ika_network_config = IkaNetworkConfig::new_for_testing();
+    let epoch_id = 1;
+    let (
+        mut dwallet_mpc_services,
+        mut sui_data_senders,
+        mut sent_consensus_messages_collectors,
+        mut epoch_stores,
+        notify_services,
+    ) = utils::create_dwallet_mpc_services(4);
+    let mut test_state = utils::IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee,
+        sui_data_senders,
+    };
+    send_start_network_dkg_event_to_all_parties(
+        &ika_network_config,
+        epoch_id,
+        &mut test_state.sui_data_senders,
+    );
+    let (consensus_round, network_key_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
+    info!(?network_key_checkpoint, "Network key checkpoint received");
+    let mut network_key_bytes = vec![];
+    let mut key_id = None;
+    for message in network_key_checkpoint.messages() {
+        let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(message) = message
+        else {
+            continue;
+        };
+        key_id =
+            Some(ObjectID::from_bytes(message.dwallet_network_encryption_key_id.clone()).unwrap());
+        network_key_bytes.extend(message.public_output.clone())
+    }
+    test_state
+        .sui_data_senders
+        .iter()
+        .for_each(|mut sui_data_sender| {
+            let _ = sui_data_sender
+                .network_keys_sender
+                .send(Arc::new(HashMap::from([(
+                    key_id.clone().unwrap(),
+                    DWalletNetworkEncryptionKeyData {
+                        id: key_id.clone().unwrap(),
+                        current_epoch: 1,
+                        current_reconfiguration_public_output: vec![],
+                        network_dkg_public_output: network_key_bytes.clone(),
+                        state: DWalletNetworkEncryptionKeyState::NetworkDKGCompleted,
+                    },
+                )])));
+        });
+    let dwallet_dkg_session_identifier = [2; 32];
+    send_start_dwallet_dkg_first_round_event(
+        &ika_network_config,
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        dwallet_dkg_session_identifier,
+        2,
+        key_id.unwrap(),
+    );
+    info!("Starting DWallet DKG first round");
+    let (consensus_round, mut dkg_first_round_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
+    let DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
+        dwallet_dkg_first_round_output,
+    ) = dkg_first_round_checkpoint.messages().clone().pop().unwrap()
+    else {
+        panic!("Expected DWallet DKG first round output message");
+    };
 
     // log the length of the parameters passed to the next function call copilot
     info!(
@@ -137,6 +219,8 @@ async fn dwallet_dkg_first_round() {
         encryption_key,
         centralized_dwallet_dkg_result.public_output,
     );
+    let (consensus_round, dwallet_second_round_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
     info!("DWallet DKG first round completed");
 }
 
