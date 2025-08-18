@@ -182,14 +182,8 @@ async fn create_dwallet() {
     else {
         panic!("Expected DWallet DKG first round output message");
     };
+    info!("DWallet DKG first round completed");
 
-    // log the length of the parameters passed to the next function call copilot
-    info!(
-        network_key_bytes_length =? network_key_bytes.len(),
-        dwalllet_dkg_first_round_output_length =? dwallet_dkg_first_round_output.output.len(),
-        dwallet_dkg_session_identifier_length =? dwallet_dkg_session_identifier.len(),
-        "paramters to next call length",
-    );
     let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
     let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output(
         protocol_pp.clone(),
@@ -221,7 +215,7 @@ async fn create_dwallet() {
     );
     let (consensus_round, dwallet_second_round_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
-    info!("DWallet DKG first round completed");
+    info!("DWallet DKG second round completed");
 }
 
 // ts Preparing DKG second round with protocolPublicParameters length: 19129658, networkFirstRoundOutput length: 1136, sessionDigest length: 32
