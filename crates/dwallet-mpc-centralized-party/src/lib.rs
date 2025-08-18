@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 //! This crate contains the cryptographic logic for the centralized 2PC-MPC party.
 
 // Allowed to improve code readability.
@@ -32,7 +35,7 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
 use message_digest::message_digest::message_digest;
-use serde::{Deserialize, Serialize};
+use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGDecentralizedPartyOutput};
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 use twopc_mpc::sign::verify_signature;
@@ -41,13 +44,6 @@ type AsyncProtocol = twopc_mpc::secp256k1::class_groups::AsyncProtocol;
 type DKGCentralizedParty = <AsyncProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
 pub type SignCentralizedParty = <AsyncProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
-/// Contains the public keys of the DWallet.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
-pub struct DWalletPublicKeys {
-    pub centralized_public_share: Vec<u8>,
-    pub decentralized_public_share: Vec<u8>,
-    pub public_key: Vec<u8>,
-}
 pub type DKGDecentralizedOutput =
     <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 
@@ -162,6 +158,46 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
             Ok(bcs::to_bytes(&public_key)?)
         }
     }
+}
+
+/// Check whether the centralized party (user)'s DKG output matches the decentralized party (network)'s DKG output.
+///
+/// Required usage: when accepting an encrypted user share after DKG before we sign on the network's public output.
+pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
+    centralized_dkg_output: &Vec<u8>,
+    decentralized_dkg_output: &Vec<u8>,
+) -> anyhow::Result<bool> {
+    let versioned_centralized_dkg_output =
+        bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(centralized_dkg_output)?;
+    let VersionedCentralizedDKGPublicOutput::V1(centralized_dkg_output) =
+        versioned_centralized_dkg_output;
+
+    let centralized_dkg_output = bcs::from_bytes::<
+        DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
+    >(centralized_dkg_output.as_slice())?;
+
+    let versioned_decentralized_dkg_output =
+        bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(decentralized_dkg_output)?;
+    let VersionedCentralizedDKGPublicOutput::V1(decentralized_dkg_output) =
+        versioned_decentralized_dkg_output;
+
+    let decentralized_dkg_output = bcs::from_bytes::<
+        DKGDecentralizedPartyOutput<
+            SCALAR_LIMBS,
+            SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+            SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+            group::secp256k1::GroupElement,
+        >,
+    >(decentralized_dkg_output.as_slice())?;
+
+    let does_centralized_and_decentralized_parties_dkg_output_match = centralized_dkg_output
+        .public_key_share
+        == decentralized_dkg_output.centralized_party_public_key_share
+        && centralized_dkg_output.decentralized_party_public_key_share
+            == decentralized_dkg_output.public_key_share
+        && centralized_dkg_output.public_key == decentralized_dkg_output.public_key;
+
+    Ok(does_centralized_and_decentralized_parties_dkg_output_match)
 }
 
 /// Executes the centralized phase of the Sign protocol,
@@ -385,7 +421,7 @@ pub fn encrypt_secret_key_share_and_prove(
 /// Verifies the given secret share matches the given dWallets`
 /// DKG output centralized_party_public_key_share.
 pub fn verify_secret_share(
-    secret_share: Vec<u8>,
+    secret_share: SerializedWrappedMPCPublicOutput,
     dkg_output: SerializedWrappedMPCPublicOutput,
     protocol_pp: Vec<u8>,
 ) -> anyhow::Result<bool> {
@@ -394,11 +430,13 @@ pub fn verify_secret_share(
     match dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
             let dkg_output = bcs::from_bytes(&dkg_output)?;
-            let secret_share = bcs::from_bytes(&secret_share)?;
+            let secret_share: VersionedDwalletUserSecretShare = bcs::from_bytes(&secret_share)?;
             Ok(<twopc_mpc::secp256k1::class_groups::AsyncProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
                 &protocol_public_params,
                 dkg_output,
-                secret_share,
+                match secret_share {
+                    VersionedDwalletUserSecretShare::V1(secret_share) =>  bcs::from_bytes(&secret_share)?
+                },
             )
                 .is_ok())
         }
@@ -453,6 +491,8 @@ pub fn decrypt_user_share_inner(
         .decrypt(&ciphertext, &public_parameters).into() else {
         return Err(anyhow!("Decryption failed"));
     };
-    let secret_share_bytes = bcs::to_bytes(&plaintext.value())?;
+    let secret_share_bytes =
+        VersionedDwalletUserSecretShare::V1(bcs::to_bytes(&plaintext.value())?);
+    let secret_share_bytes = bcs::to_bytes(&secret_share_bytes)?;
     Ok(secret_share_bytes)
 }

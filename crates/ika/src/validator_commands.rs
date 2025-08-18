@@ -1069,7 +1069,8 @@ impl IkaValidatorCommand {
                     config.objects.ika_dwallet_coordinator_object_id,
                 )
                 .await?;
-                let current_pricing_info = client.get_pricing_info().await;
+                let (_, coordinator_inner) = client.must_get_dwallet_coordinator_inner().await;
+                let current_pricing_info = client.get_pricing_info(coordinator_inner).await;
                 let path = "current_pricing.yaml";
                 let file = BufWriter::new(File::create(path)?);
                 serde_yaml::to_writer(file, &current_pricing_info)?;

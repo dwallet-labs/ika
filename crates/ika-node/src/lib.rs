@@ -23,7 +23,7 @@ use ika_core::consensus_adapter::ConsensusClient;
 use ika_core::consensus_manager::UpdatableConsensusClient;
 
 use ika_types::digests::ChainIdentifier;
-use ika_types::sui::SystemInner;
+use ika_types::sui::{DWalletCoordinatorInner, SystemInner};
 use sui_types::base_types::{ConciseableName, ObjectID};
 use tap::tap::TapFallible;
 use tokio::runtime::Handle;
@@ -285,14 +285,15 @@ impl IkaNode {
             .await?,
         );
 
-        let latest_system_state = sui_client.must_get_system_inner_object().await;
+        let (_, latest_system_inner) = sui_client.must_get_system_inner_object().await;
         let previous_epoch_last_system_checkpoint_sequence_number =
-            latest_system_state.previous_epoch_last_checkpoint_sequence_number();
+            latest_system_inner.previous_epoch_last_checkpoint_sequence_number();
         let epoch_start_system_state = sui_client
-            .must_get_epoch_start_system(&latest_system_state)
+            .must_get_epoch_start_system(&latest_system_inner)
             .await;
 
-        let dwallet_coordinator_inner = sui_client.must_get_dwallet_coordinator_inner_v1().await;
+        let (_, dwallet_coordinator_inner) = sui_client.must_get_dwallet_coordinator_inner().await;
+        let DWalletCoordinatorInner::V1(dwallet_coordinator_inner) = dwallet_coordinator_inner;
         let previous_epoch_last_dwallet_checkpoint_sequence_number =
             dwallet_coordinator_inner.previous_epoch_last_checkpoint_sequence_number;
 
@@ -1243,12 +1244,13 @@ impl IkaNode {
                     );
                 }
             }
-            let dwallet_coordinator_inner =
-                sui_client.must_get_dwallet_coordinator_inner_v1().await;
+            let (_, dwallet_coordinator_inner) =
+                sui_client.must_get_dwallet_coordinator_inner().await;
+            let DWalletCoordinatorInner::V1(dwallet_coordinator_inner) = dwallet_coordinator_inner;
             let previous_epoch_last_checkpoint_sequence_number =
                 dwallet_coordinator_inner.previous_epoch_last_checkpoint_sequence_number;
 
-            let system_inner = sui_client.must_get_system_inner_object().await;
+            let (_, system_inner) = sui_client.must_get_system_inner_object().await;
             let previous_epoch_last_system_checkpoint_sequence_number =
                 system_inner.previous_epoch_last_checkpoint_sequence_number();
 
