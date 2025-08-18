@@ -391,6 +391,7 @@ impl DWalletMPCManager {
     /// Returns the completed computation results.
     pub(crate) async fn perform_cryptographic_computation(
         &mut self,
+        last_read_consensus_round: u64,
     ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
         let mut ready_to_advance_sessions: Vec<_> = self
             .mpc_sessions
@@ -439,13 +440,14 @@ impl DWalletMPCManager {
                     );
                     return None;
                 };
+
                 let consensus_round = session.messages_by_consensus_round.keys().max().copied();
 
                 AdvanceSpecificData::try_new(
                     &request_data.protocol_specific_data,
                     self.party_id,
                     &self.access_structure,
-                    consensus_round.unwrap_or_default(),
+                    consensus_round.unwrap_or_else(|| last_read_consensus_round),
                     session.messages_by_consensus_round.clone(),
                     public_input.clone(),
                     self.network_dkg_third_round_delay,
@@ -460,7 +462,6 @@ impl DWalletMPCManager {
                 .map(|advance_specific_data| {
                     let attempt_number = advance_specific_data.get_attempt_number();
 
-                    // Yael: When could the `consensus_round` be `None`?
                     let computation_id = ComputationId {
                         session_identifier: session.session_identifier,
                         consensus_round,

@@ -48,7 +48,6 @@ pub(crate) struct DWalletMPCSession {
     /// computed by summing the number of failed attempts.
     pub(crate) mpc_round_to_threshold_not_reached_consensus_rounds: HashMap<u64, HashSet<u64>>,
 
-    // Yael: check if this could be party of the status
     pub(crate) request_data: Option<DWalletSessionRequest>,
 
     /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
@@ -438,7 +437,6 @@ impl DWalletMPCManager {
             return;
         }
 
-        // Yael: change this to work with the active status that contains the PublicInput enum
         if let Some(session) = self.mpc_sessions.get(&session_identifier) {
             if session.request_data.is_some() {
                 // The corresponding session already has its data set, nothing to do.
@@ -473,7 +471,6 @@ impl DWalletMPCManager {
             session.request_data = Some(request);
             session.status = status;
         } else {
-            // Yael: I first want to make the code work with the optional request data, later with the active status
             self.new_mpc_session(&session_identifier, Some(request), status);
         }
     }
