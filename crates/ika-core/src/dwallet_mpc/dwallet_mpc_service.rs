@@ -260,10 +260,13 @@ impl DWalletMPCService {
     }
 
     async fn process_cryptographic_computations(&mut self) {
+        let Some(last_read_consensus_round) = self.last_read_consensus_round else {
+            warn!("No last read consensus round, cannot perform cryptographic computation");
+            return;
+        };
         let completed_computation_results = self
             .dwallet_mpc_manager
-            // if `last_read_consensus_round` is None, it means we haven't read any rounds yet, so we set it to 0.
-            .perform_cryptographic_computation(self.last_read_consensus_round.unwrap_or_default())
+            .perform_cryptographic_computation(last_read_consensus_round)
             .await;
 
         self.handle_computation_results_and_submit_to_consensus(completed_computation_results)
