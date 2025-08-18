@@ -95,7 +95,7 @@ async fn dwallet_dkg_first_round() {
     info!("DWallet DKG first round completed");
 }
 
-async fn advance_mpc_flow_until_completion(
+pub(crate) async fn advance_mpc_flow_until_completion(
     mut test_state: &mut IntegrationTestState,
     start_consensus_round: Round,
 ) -> Round {
