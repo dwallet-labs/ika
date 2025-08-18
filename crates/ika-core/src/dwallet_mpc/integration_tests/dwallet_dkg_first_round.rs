@@ -16,6 +16,7 @@ use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
 use tracing::info;
+use dwallet_mpc_centralized_party::network_dkg_public_output_to_protocol_pp_inner;
 
 #[tokio::test]
 #[cfg(test)]
@@ -104,9 +105,9 @@ async fn dwallet_dkg_first_round() {
         dwallet_dkg_session_identifier_length =? dwallet_dkg_session_identifier.len(),
         "paramters to next call length",
     );
-
+    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
     let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output(
-        network_key_bytes.clone(),
+        protocol_pp,
         dwallet_dkg_first_round_output.output,
         dwallet_dkg_session_identifier.to_vec(),
     )
@@ -114,3 +115,6 @@ async fn dwallet_dkg_first_round() {
 
     info!("DWallet DKG first round completed");
 }
+
+// ts Preparing DKG second round with protocolPublicParameters length: 19129658, networkFirstRoundOutput length: 1136, sessionDigest length: 32
+// rust paramters to next call length network_key_bytes_length=12891 dwalllet_dkg_first_round_output_length=1136 dwallet_dkg_session_identifier_length=32
