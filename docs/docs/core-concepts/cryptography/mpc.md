@@ -15,7 +15,7 @@ secret information. A common example of MPC is calculating the average salary of
 employee revealing their salary to any other party.
 
 MPC is based on rounds of communication between the parties for the computation to be performed. Although technically
-generic MPC to perform any computation is possible, it is generally not efficient, and special MPC protocols are created
+generic MPC to perform any computation is possible, it is not efficient, and special MPC protocols are created
 for specific use cases.
 
 ## TSS - Threshold Signature Scheme
