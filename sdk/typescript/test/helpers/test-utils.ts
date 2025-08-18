@@ -99,9 +99,8 @@ export async function requestTestFaucetFunds(address: string): Promise<void> {
 
 	for (let attempt = 1; attempt <= maxRetries; attempt++) {
 		try {
-			let faucetUrl = process.env.SUI_FAUCET_URL || getFaucetHost('localnet');
 			await requestSuiFromFaucetV2({
-				host: faucetUrl,
+				host: process.env.SUI_FAUCET_URL || getFaucetHost('localnet'),
 				recipient: address,
 			});
 
