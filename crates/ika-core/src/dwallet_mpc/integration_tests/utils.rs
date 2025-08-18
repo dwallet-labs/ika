@@ -14,12 +14,7 @@ use ika_types::error::IkaResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
-use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
-    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
-    DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent,
-    DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SessionIdentifier,
-};
+use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SessionIdentifier, SignRequestEvent};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -825,6 +820,52 @@ pub(crate) fn send_start_presign_event(
                         dwallet_network_encryption_key_id,
                         curve: 0,
                         signature_algorithm: 0,
+                    },
+                ))
+                .unwrap(),
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
+}
+
+pub(crate) fn send_start_sign_event(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: &Vec<SuiDataSenders>,
+    session_identifier_preimage: [u8; 32],
+    session_sequence_number: u64,
+    dwallet_network_encryption_key_id: ObjectID,
+    dwallet_id: ObjectID,
+    dwallet_public_output: Vec<u8>,
+    presign: Vec<u8>,
+    message_centralized_signature: Vec<u8>,
+    message: Vec<u8>,
+) {
+    let presign_id = ObjectID::random();
+    let sign_id = ObjectID::random();
+    sui_data_senders.iter().for_each(|sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DBSuiEvent {
+                type_: DWalletSessionEvent::<SignRequestEvent>::type_(&ika_network_config),
+                contents: bcs::to_bytes(&new_dwallet_session_event(
+                    true,
+                    session_sequence_number,
+                    session_identifier_preimage.to_vec().clone(),
+                    SignRequestEvent {
+                        sign_id,
+                        dwallet_id,
+                        presign_id,
+                        presign: presign.clone(),
+                        message_centralized_signature: message_centralized_signature.clone(),
+                        dwallet_network_encryption_key_id,
+                        curve: 0,
+                        signature_algorithm: 0,
+                        hash_scheme: 0,
+                        dwallet_decentralized_public_output: dwallet_public_output.clone(),
+                        message: message.clone(),
+                        is_future_sign: false,
                     },
                 ))
                 .unwrap(),

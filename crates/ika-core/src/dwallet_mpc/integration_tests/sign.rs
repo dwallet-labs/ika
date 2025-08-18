@@ -2,7 +2,7 @@ use crate::dwallet_mpc::integration_tests::create_dwallet::create_dwallet_test;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    IntegrationTestState, send_start_presign_event,
+    IntegrationTestState, send_start_presign_event, send_start_sign_event,
 };
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
@@ -59,7 +59,7 @@ async fn sign() {
         4,
         network_key_id,
         Some(ObjectID::from_bytes(&dwallet_dkg_second_round_output.dwallet_id).unwrap()),
-        Some(dwallet_dkg_second_round_output.output),
+        Some(dwallet_dkg_second_round_output.output.clone()),
     );
     let (consensus_round, presign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
@@ -68,4 +68,17 @@ async fn sign() {
     else {
         panic!("Expected DWallet presign output message");
     };
+    send_start_sign_event(
+        &ika_network_config,
+        epoch_id,
+        &test_state.sui_data_senders,
+        [5; 32],
+        5,
+        network_key_id,
+        ObjectID::from_bytes(dwallet_dkg_second_round_output.dwallet_id).unwrap(),
+        dwallet_dkg_second_round_output.output,
+        presign_output.presign,
+        todo!(),
+        bcs::to_bytes("Hello World!").unwrap(),
+    );
 }
