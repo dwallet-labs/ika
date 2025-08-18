@@ -12,11 +12,11 @@ import { Info, Warning, Construction } from '../../src/components/InfoBox';
 
 <Construction />
 
-The `UserShareEncryptionKeys` class is a core component for managing cryptographic keys in the dWallet network. It handles the creation and management of encryption/decryption keys and signing keypairs needed for secure user share operations. You pass it to `IkaTransaction` to perform user share operations.
+The `UserShareEncryptionKeys` class is a core component for managing cryptographic keys in the Ika network. It handles the creation and management of encryption/decryption keys and signing keypairs needed for secure user share operations. You pass it to `IkaTransaction` to perform user share operations.
 
 ## Overview
 
-In the dWallet network, users need to securely manage their secret shares while maintaining the ability to prove ownership and authorization. The `UserShareEncryptionKeys` class provides a unified interface for:
+In the Ika network, users need to securely manage their secret shares while maintaining the ability to prove ownership and authorization. The `UserShareEncryptionKeys` class provides a unified interface for:
 
 1. **Encrypting secret shares** - Protecting sensitive cryptographic material
 2. **Proving ownership** - Creating signatures to demonstrate control over keys
@@ -111,7 +111,7 @@ const publicKeyBytes = userShareKeys.getSigningPublicKeyBytes();
 Verify signatures over messages using the public key:
 
 ```typescript
-const message = new TextEncoder().encode('Hello, dWallet!');
+const message = new TextEncoder().encode('Hello, Ika!');
 const signature: Uint8Array = getSignatureFromSomewhere(); // Your signature source
 
 const isValid = await userShareKeys.verifySignature(message, signature);

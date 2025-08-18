@@ -2,7 +2,7 @@
 id: zero-trust-and-decentralization
 title: Zero Trust Security and Decentralization
 description: Understanding the role of zero trust and decentralization in Ika's composable modular signature network.
-sidebar_position: 4
+sidebar_position: 3
 sidebar_label: Zero Trust Security and Decentralization
 ---
 
