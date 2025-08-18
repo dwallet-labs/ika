@@ -41,43 +41,44 @@ import {
 	signWithImportedDWallet,
 	verifySignWithPartialUserSignatures,
 } from '../../src/dwallet-mpc/sign';
-import { runFullFlowTestWithNetworkKey, waitForEpochSwitch } from './utils/utils';
+
+// import { waitForEpochSwitch } from './utils/utils';
 
 // const SUI_FULLNODE_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
 // const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
-const SUI_FULLNODE_URL = getFullnodeUrl('localnet');
-const SUI_FAUCET_HOST = getFaucetHost('localnet');
+const SUI_FULLNODE_URL = 'http://127.0.0.1:9000';
+const SUI_FAUCET_HOST = 'http://127.0.0.1::9123/gas';
 
-export async function createConf(): Promise<Config> {
-	const keypair = Ed25519Keypair.generate();
-	const dWalletSeed = crypto.getRandomValues(new Uint8Array(32));
-	const encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
-		Buffer.from(dWalletSeed).toString('hex'),
-	);
-	const address = keypair.getPublicKey().toSuiAddress();
-	console.log(`Address: ${address}`);
-	const suiClient = new SuiClient({ url: SUI_FULLNODE_URL });
-	await requestSuiFromFaucetV2({
-		host: SUI_FAUCET_HOST,
-		recipient: address,
-	});
+// export async function createConf(): Promise<Config> {
+// 	const keypair = Ed25519Keypair.generate();
+// 	const dWalletSeed = crypto.getRandomValues(new Uint8Array(32));
+// 	const encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+// 		Buffer.from(dWalletSeed).toString('hex'),
+// 	);
+// 	const address = keypair.getPublicKey().toSuiAddress();
+// 	console.log(`Address: ${address}`);
+// 	const suiClient = new SuiClient({ url: SUI_FULLNODE_URL });
+// 	await requestSuiFromFaucetV2({
+// 		host: SUI_FAUCET_HOST,
+// 		recipient: address,
+// 	});
+//
+// 	return {
+// 		suiClientKeypair: keypair,
+// 		client: suiClient,
+// 		timeout: fiveMinutes,
+// 		// todo(zeev): fix this, bad parsing, bad path, needs to be localized.
+// 		ikaConfig: require(path.resolve(process.cwd(), '../../ika_config.json')),
+// 		dWalletSeed,
+// 		encryptedSecretShareSigningKeypair,
+// 	};
+// }
 
-	return {
-		suiClientKeypair: keypair,
-		client: suiClient,
-		timeout: fiveMinutes,
-		// todo(zeev): fix this, bad parsing, bad path, needs to be localized.
-		ikaConfig: require(path.resolve(process.cwd(), '../../ika_config.json')),
-		dWalletSeed,
-		encryptedSecretShareSigningKeypair,
-	};
-}
-
-const SUI_FULLNODE_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
-const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
+// const SUI_FULLNODE_URL = 'https://fullnode.sui.beta.devnet.ika-network.net';
+// const SUI_FAUCET_HOST = 'https://faucet.sui.beta.devnet.ika-network.net';
 // const SUI_FULLNODE_URL = getFullnodeUrl('localnet');
 // const SUI_FAUCET_HOST = getFaucetHost('localnet');
-
+//
 export async function createConf(): Promise<Config> {
 	const keypair = Ed25519Keypair.generate();
 	const dWalletSeed = crypto.getRandomValues(new Uint8Array(32));
@@ -116,10 +117,10 @@ describe('Test dWallet MPC', () => {
 		const address = keypair.getPublicKey().toSuiAddress();
 		console.log(`Address: ${address}`);
 		const suiClient = new SuiClient({ url: SUI_FULLNODE_URL });
-		await requestSuiFromFaucetV2({
-			host: SUI_FAUCET_HOST,
-			recipient: address,
-		});
+		// await requestSuiFromFaucetV2({
+		// 	host: SUI_FAUCET_HOST,
+		// 	recipient: address,
+		// });
 
 		conf = {
 			suiClientKeypair: keypair,

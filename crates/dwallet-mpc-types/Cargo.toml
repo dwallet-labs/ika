@@ -10,7 +10,7 @@ schemars.workspace = true
 twopc_mpc.workspace = true
 class_groups.workspace = true
 enum_dispatch.workspace = true
-strum_macros = "0.27.1"
+strum_macros.workspace = true
 
 [lints]
 workspace = true

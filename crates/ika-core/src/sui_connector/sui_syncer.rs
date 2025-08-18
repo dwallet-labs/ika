@@ -213,7 +213,7 @@ where
                             &config,
                             event.type_.clone(),
                             &event.contents,
-                            false,
+                            true,
                         ) {
                             Ok(Some(event)) => {
                                 Some(event)

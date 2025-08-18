@@ -781,7 +781,7 @@ impl DWalletMPCService {
         rejected: bool,
     ) -> Vec<DWalletCheckpointMessageKind> {
         info!(
-            mpc_protocol=?session_request.protocol_specific_data,
+            mpc_protocol=?session_request.protocol_specific_data.to_string(),
             session_identifier=?session_identifier,
             "Creating session output message for checkpoint"
         );

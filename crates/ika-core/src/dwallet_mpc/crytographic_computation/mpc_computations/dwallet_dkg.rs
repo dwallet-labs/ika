@@ -13,7 +13,6 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     AsyncProtocol, DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletImportedKeyVerificationRequestEvent, DWalletSessionEvent, MPCRequestInput,
-    MPCSessionRequest,
 };
 use mpc::Party;
 use twopc_mpc::dkg::Protocol;

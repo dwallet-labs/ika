@@ -17,6 +17,7 @@ use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::session_request::DWalletSessionRequest;
 use ika_types::error::{IkaError, IkaResult};
 pub(crate) use input::{PublicInput, session_input_from_request};
+use std::fmt::{Debug, Formatter};
 use std::{fmt, mem};
 use tokio::sync::broadcast;
 
@@ -277,7 +278,7 @@ impl DWalletMPCSession {
 /// - `Failed`:
 ///   The session has failed due to an unrecoverable error.
 ///   This status indicates that the session cannot proceed further.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq)]
 pub enum MPCSessionStatus {
     Active {
         public_input: PublicInput,
@@ -298,6 +299,12 @@ impl fmt::Display for MPCSessionStatus {
             MPCSessionStatus::Completed => write!(f, "Completed"),
             MPCSessionStatus::Failed => write!(f, "Failed"),
         }
+    }
+}
+
+impl Debug for MPCSessionStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
 
