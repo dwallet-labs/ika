@@ -47,12 +47,8 @@ async fn dwallet_dkg_first_round() {
         epoch_id,
         &mut test_state.sui_data_senders,
     );
-    let mut consensus_round = 1;
-    let mut network_key_checkpoint = None;
-    consensus_round = advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
-    let Some(network_key_checkpoint) = network_key_checkpoint else {
-        panic!("Network key checkpoint should not be None");
-    };
+    let (consensus_round, network_key_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
     info!(?network_key_checkpoint, "Network key checkpoint received");
     let mut network_key_bytes = vec![];
     let mut key_id = None;
@@ -82,44 +78,30 @@ async fn dwallet_dkg_first_round() {
                     },
                 )])));
         });
+    let dwallet_dkg_session_identifier = [2; 32];
     send_start_dwallet_dkg_first_round_event(
         &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
-        [2; 32],
+        dwallet_dkg_session_identifier,
         2,
         key_id.unwrap(),
     );
     info!("Starting DWallet DKG first round");
-    consensus_round = advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
+    let (consensus_round, mut dkg_first_round_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
+    let DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
+        dwallet_dkg_first_round_output,
+    ) = dkg_first_round_checkpoint.messages().pop().unwrap()
+    else {
+        panic!("Expected DWallet DKG first round output message");
+    };
+    let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output(
+        network_key_bytes.clone(),
+        dwallet_dkg_first_round_output.output,
+        dwallet_dkg_session_identifier.to_vec(),
+    )
+    .unwrap();
+
     info!("DWallet DKG first round completed");
-}
-
-pub(crate) async fn advance_mpc_flow_until_completion(
-    mut test_state: &mut IntegrationTestState,
-    start_consensus_round: Round,
-) -> Round {
-    let mut consensus_round = start_consensus_round;
-    loop {
-        if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
-            &test_state.committee,
-            &mut test_state.dwallet_mpc_services,
-            &mut test_state.sent_consensus_messages_collectors,
-            &test_state.epoch_stores,
-            &test_state.notify_services,
-        )
-        .await
-        {
-            info!(?pending_checkpoint, "MPC flow completed successfully");
-            return consensus_round;
-        }
-
-        utils::send_advance_results_between_parties(
-            &test_state.committee,
-            &mut test_state.sent_consensus_messages_collectors,
-            &mut test_state.epoch_stores,
-            consensus_round,
-        );
-        consensus_round += 1;
-    }
 }

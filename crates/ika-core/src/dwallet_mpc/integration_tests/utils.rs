@@ -14,7 +14,12 @@ use ika_types::error::IkaResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletMPCMessage, DWalletMPCOutput,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
+    DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,
+    IkaNetworkConfig, PresignRequestEvent, SessionIdentifier,
+};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -632,9 +637,7 @@ pub(crate) fn send_start_presign_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<PresignRequestEvent>::type_(
-                    &ika_network_config,
-                ),
+                type_: DWalletSessionEvent::<PresignRequestEvent>::type_(&ika_network_config),
                 contents: bcs::to_bytes(&new_dwallet_session_event(
                     true,
                     session_sequence_number,
@@ -749,4 +752,33 @@ pub(crate) fn send_network_key_to_parties(
                     },
                 )])));
         });
+}
+
+pub(crate) async fn advance_mpc_flow_until_completion(
+    mut test_state: &mut IntegrationTestState,
+    start_consensus_round: Round,
+) -> (Round, PendingDWalletCheckpoint) {
+    let mut consensus_round = start_consensus_round;
+    loop {
+        if let Some(pending_checkpoint) = advance_all_parties_and_wait_for_completions(
+            &test_state.committee,
+            &mut test_state.dwallet_mpc_services,
+            &mut test_state.sent_consensus_messages_collectors,
+            &test_state.epoch_stores,
+            &test_state.notify_services,
+        )
+        .await
+        {
+            info!(?pending_checkpoint, "MPC flow completed successfully");
+            return (consensus_round, pending_checkpoint);
+        }
+
+        send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            consensus_round,
+        );
+        consensus_round += 1;
+    }
 }

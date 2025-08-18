@@ -5763,6 +5763,7 @@ dependencies = [
  "consensus-core",
  "dashmap",
  "dwallet-classgroups-types",
+ "dwallet-mpc-centralized-party",
  "dwallet-mpc-types",
  "dwallet-rng",
  "enum_dispatch",
