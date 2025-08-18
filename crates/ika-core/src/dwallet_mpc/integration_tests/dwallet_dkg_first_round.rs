@@ -96,6 +96,15 @@ async fn dwallet_dkg_first_round() {
     else {
         panic!("Expected DWallet DKG first round output message");
     };
+
+    // log the length of the parameters passed to the next function call copilot
+    info!(
+        network_key_bytes_length =? network_key_bytes.len(),
+        dwalllet_dkg_first_round_output_length =? dwallet_dkg_first_round_output.output.len(),
+        dwallet_dkg_session_identifier_length =? dwallet_dkg_session_identifier.len(),
+        "paramters to next call length",
+    );
+
     let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output(
         network_key_bytes.clone(),
         dwallet_dkg_first_round_output.output,

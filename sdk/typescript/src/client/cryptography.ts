@@ -154,10 +154,19 @@ export function prepareDKGSecondRound(
 		throw new Error('First round output is undefined');
 	}
 
+	let sessionDigest = sessionIdentifierDigest(sessionIdentifier);
+
+	// log the length of the parameters passed to the next function call copilot
+	console.log(
+		`Preparing DKG second round with protocolPublicParameters length: ${protocolPublicParameters.length}, ` +
+			`networkFirstRoundOutput length: ${networkFirstRoundOutput.length}, ` +
+			`sessionDigest length: ${sessionDigest.length}`,
+	);
+
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
-		sessionIdentifierDigest(sessionIdentifier),
+		sessionDigest,
 	);
 
 	const encryptedUserShareAndProof = encryptSecretShare(
