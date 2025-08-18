@@ -1,18 +1,18 @@
 ---
 id: importing-a-dwallet
-title: Importing a DWallet
-description: Import existing cryptographic keys as DWallets
+title: Importing a dWallet
+description: Import existing cryptographic keys as dWallets
 sidebar_position: 1
-sidebar_label: Importing a DWallet
+sidebar_label: Importing a dWallet
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Importing a DWallet
+# Importing a dWallet
 
 <Construction />
 
-Import existing cryptographic keys (generated outside the network) as DWallets. This process creates a DWallet from an existing SECP256K1 keypair.
+Import existing cryptographic keys (generated outside the network) as dWallets. This process creates a dWallet from an existing SECP256K1 keypair.
 
 <Info title="Prerequisites">
 - Initialized `IkaClient` instance
@@ -23,7 +23,7 @@ Import existing cryptographic keys (generated outside the network) as DWallets. 
 
 <Warning title="Important Notes">
 - Only SECP256K1 keypairs are currently supported
-- All 4 steps are required to create a functional imported DWallet
+- All 4 steps are required to create a functional imported dWallet
 - The original keypair should be securely stored/destroyed after import
 - Always verify the import process in production environments
 </Warning>
@@ -71,9 +71,9 @@ await signAndExecuteTransaction(tx);
 Prepare the cryptographic data needed to verify key ownership:
 
 ```typescript
-import { prepareImportDWalletVerification } from '@ika.xyz/sdk';
+import { prepareImportdWalletVerification } from '@ika.xyz/sdk';
 
-const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+const importdWalletVerificationRequestInput = await prepareImportdWalletVerification(
 	ikaClient,
 	sessionIdentifierPreimage,
 	userShareEncryptionKeys,
@@ -83,9 +83,9 @@ const importDWalletVerificationRequestInput = await prepareImportDWalletVerifica
 
 ## Step 4: Request Import Verification
 
-Choose one approach based on whether you want to keep or transfer the DWallet capability:
+Choose one approach based on whether you want to keep or transfer the dWallet capability:
 
-### Keep DWallet Capability
+### Keep dWallet Capability
 
 ```typescript
 const tx = new Transaction();
@@ -95,8 +95,8 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys,
 });
 
-const { ImportedKeyDWalletCap } = await ikaTx.requestImportedDWalletVerification({
-	importDWalletVerificationRequestInput,
+const { ImportedKeydWalletCap } = await ikaTx.requestImporteddWalletVerification({
+	importdWalletVerificationRequestInput,
 	curve: Curve.SECP256K1,
 	signerPublicKey: signerPublicKeyBytes,
 	sessionIdentifier: sessionIdentifierObjectId,
@@ -109,7 +109,7 @@ tx.moveCall({
 	target: '0x...',
 	typeArguments: ['0x...'],
 	function: 'deposit_dwallet_for_user',
-	arguments: [ImportedKeyDWalletCap],
+	arguments: [ImportedKeydWalletCap],
 });
 
 await signAndExecuteTransaction(tx);
@@ -128,8 +128,8 @@ const ikaTx = new IkaTransaction({
 });
 
 await ikaTx.acceptEncryptedUserShare({
-	dWallet: awaitingSignatureDWallet,
-	userPublicOutput: importDWalletVerificationRequestInput.userPublicOutput,
+	dWallet: awaitingSignaturedWallet,
+	userPublicOutput: importdWalletVerificationRequestInput.userPublicOutput,
 	encryptedUserSecretKeyShareId: encryptedUserShareId,
 });
 
@@ -138,8 +138,8 @@ await signAndExecuteTransaction(tx);
 
 ## Complete Example
 
-For a complete working example of the DWallet import process, see the official example:
+For a complete working example of the dWallet import process, see the official example:
 
-**[Creating Imported DWallet](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/imported-dwallet/creating-imported-dwallet.ts)**
+**[Creating Imported dWallet](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/imported-dwallet/creating-imported-dwallet.ts)**
 
-This example demonstrates the complete flow including all steps with proper error handling, state transitions, and best practices for importing existing keys as DWallets.
+This example demonstrates the complete flow including all steps with proper error handling, state transitions, and best practices for importing existing keys as dWallets.

@@ -1,27 +1,27 @@
 ---
 id: signing-with-public-dwallet
-title: Signing with a Public DWallet
-description: Sign messages using public DWallet shares
+title: Signing with a Public dWallet
+description: Sign messages using public dWallet shares
 sidebar_position: 2
 sidebar_label: Signing
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Signing with a Public DWallet
+# Signing with a Public dWallet
 
 <Construction />
 
-Sign messages using a public DWallet where secret shares are publicly accessible on-chain. This process is simpler than zero-trust signing since shares are already decrypted.
+Sign messages using a public dWallet where secret shares are publicly accessible on-chain. This process is simpler than zero-trust signing since shares are already decrypted.
 
 <Info title="Prerequisites">
-- A public DWallet (created through [Making a DWallet Public](./public-dwallet.md))
+- A public dWallet (created through [Making a dWallet Public](./public-dwallet.md))
 - IKA and SUI tokens for transaction fees
 - No encryption keys needed (shares are public)
 </Info>
 
 <Warning title="Trust Model">
-**Public DWallet Security:** Anyone can sign with public DWallets since secret shares are on-chain. This requires trust in the IKA network infrastructure. Use only when shared signing access is specifically needed.
+**Public dWallet Security:** Anyone can sign with public dWallets since secret shares are on-chain. This requires trust in the IKA network infrastructure. Use only when shared signing access is specifically needed.
 </Warning>
 
 ## Step 1: Request Presign
@@ -38,7 +38,7 @@ const ikaTx = new IkaTransaction({
 });
 
 const { unverifiedPresignCap } = ikaTx.requestPresign({
-	dWallet: publicDWallet,
+	dWallet: publicdWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
@@ -59,7 +59,7 @@ await signAndExecuteTransaction(tx);
 
 ## Step 2: Sign with Public Shares
 
-Sign using the public DWallet's accessible secret shares:
+Sign using the public dWallet's accessible secret shares:
 
 ```typescript
 import { Hash } from '@ika.xyz/sdk';
@@ -72,7 +72,7 @@ const ikaTx = new IkaTransaction({
 
 // Approve the message you want to sign
 const { messageApproval } = ikaTx.approveMessage({
-	dWallet: publicDWallet,
+	dWallet: publicdWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes, // Your message as Uint8Array
@@ -85,7 +85,7 @@ const { verifiedPresignCap } = ikaTx.verifyPresignCap({
 
 // Sign with public shares (no encryption keys needed)
 await ikaTx.signPublic({
-	dWallet: publicDWallet,
+	dWallet: publicdWallet,
 	verifiedPresignCap,
 	messageApproval,
 	hashScheme: Hash.KECCAK256,
@@ -100,8 +100,8 @@ await signAndExecuteTransaction(tx);
 
 ## Working Example
 
-For a complete working example of public DWallet signing, see:
+For a complete working example of public dWallet signing, see:
 
-**[Public DWallet Signing Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/shared-dwallet/dwallet-sharing-sign.ts)**
+**[Public dWallet Signing Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/shared-dwallet/dwallet-sharing-sign.ts)**
 
-This example demonstrates the complete flow from creating a public DWallet through signing with proper state management.
+This example demonstrates the complete flow from creating a public dWallet through signing with proper state management.

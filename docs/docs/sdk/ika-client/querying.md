@@ -28,51 +28,51 @@ await ikaClient.initialize();
 
 ## Basic Object Queries
 
-### Get DWallet
+### Get dWallet
 
-Retrieve a single DWallet by its ID:
+Retrieve a single dWallet by its ID:
 
 ```typescript
 try {
-	const dWallet = await ikaClient.getDWallet(dWalletID);
-	console.log('DWallet state:', dWallet.state.$kind);
+	const dWallet = await ikaClient.getdWallet(dWalletID);
+	console.log('dWallet state:', dWallet.state.$kind);
 } catch (error) {
 	if (error instanceof ObjectNotFoundError) {
-		console.error('DWallet not found:', dWalletID);
+		console.error('dWallet not found:', dWalletID);
 	} else if (error instanceof NetworkError) {
 		console.error('Network error:', error.message);
 	}
 }
 ```
 
-### Get Multiple DWallets
+### Get Multiple dWallets
 
-Efficiently retrieve multiple DWallets in a single batch request:
+Efficiently retrieve multiple dWallets in a single batch request:
 
 ```typescript
 const dWalletIDs = ['0x123...', '0x456...', '0x789...'];
-const dWallets = await ikaClient.getMultipleDWallets(dWalletIDs);
+const dWallets = await ikaClient.getMultipledWallets(dWalletIDs);
 
-// Process each DWallet
+// Process each dWallet
 dWallets.forEach((dWallet, index) => {
-	console.log(`DWallet ${dWalletIDs[index]}: ${dWallet.state.$kind}`);
+	console.log(`dWallet ${dWalletIDs[index]}: ${dWallet.state.$kind}`);
 });
 ```
 
-### Get DWallet Capabilities
+### Get dWallet Capabilities
 
-Query DWallet capabilities owned by an address with pagination support:
+Query dWallet capabilities owned by an address with pagination support:
 
 ```typescript
 let cursor: string | null | undefined = undefined;
-const allCaps: DWalletCap[] = [];
+const allCaps: dWalletCap[] = [];
 
 do {
 	const {
 		dWalletCaps,
 		cursor: nextCursor,
 		hasNextPage,
-	} = await ikaClient.getOwnedDWalletCaps(
+	} = await ikaClient.getOwneddWalletCaps(
 		address,
 		cursor,
 		50, // limit per page
@@ -84,7 +84,7 @@ do {
 	if (!hasNextPage) break;
 } while (cursor);
 
-console.log(`Found ${allCaps.length} DWallet capabilities`);
+console.log(`Found ${allCaps.length} dWallet capabilities`);
 ```
 
 ### Get Presign
@@ -121,15 +121,15 @@ const partialUserSignature = await ikaClient.getPartialUserSignature(partialUser
 Query objects in specific states with customizable polling behavior:
 
 ```typescript
-// Wait for DWallet to become active with custom timeout and interval
+// Wait for dWallet to become active with custom timeout and interval
 try {
-	const dWallet = await ikaClient.getDWalletInParticularState(dWalletID, DWalletState.ACTIVE, {
+	const dWallet = await ikaClient.getdWalletInParticularState(dWalletID, dWalletState.ACTIVE, {
 		timeout: 60000, // 60 seconds
 		interval: 2000, // poll every 2 seconds
 	});
-	console.log('DWallet is now active!');
+	console.log('dWallet is now active!');
 } catch (error) {
-	console.error('Timeout waiting for DWallet to become active');
+	console.error('Timeout waiting for dWallet to become active');
 }
 ```
 
@@ -209,13 +209,13 @@ try {
 }
 ```
 
-### Get DWallet's Network Encryption Key
+### Get dWallet's Network Encryption Key
 
-Automatically detect which encryption key a DWallet uses:
+Automatically detect which encryption key a dWallet uses:
 
 ```typescript
-const dwalletEncryptionKey = await ikaClient.getDWalletNetworkEncryptionKey(dWalletID);
-console.log('DWallet uses encryption key:', dwalletEncryptionKey.id);
+const dwalletEncryptionKey = await ikaClient.getdWalletNetworkEncryptionKey(dWalletID);
+console.log('dWallet uses encryption key:', dwalletEncryptionKey.id);
 ```
 
 ## Protocol Parameters and Configuration
@@ -225,8 +225,8 @@ console.log('DWallet uses encryption key:', dwalletEncryptionKey.id);
 Retrieve cryptographic parameters for the network:
 
 ```typescript
-// Get parameters for a specific DWallet
-const dWallet = await ikaClient.getDWallet(dWalletID);
+// Get parameters for a specific dWallet
+const dWallet = await ikaClient.getdWallet(dWalletID);
 const parameters = await ikaClient.getProtocolPublicParameters(dWallet);
 
 // Or get parameters using client's configured encryption key

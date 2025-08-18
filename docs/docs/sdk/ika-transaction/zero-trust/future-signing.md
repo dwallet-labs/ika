@@ -1,22 +1,22 @@
 ---
 id: future-signing-zero-trust
-title: Future Signing with Zero-Trust DWallets
-description: Pre-sign messages for later completion with zero-trust DWallets
+title: Future Signing with Zero-Trust dWallets
+description: Pre-sign messages for later completion with zero-trust dWallets
 sidebar_position: 5
 sidebar_label: Future Signing
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Future Signing with Zero-Trust DWallets
+# Future Signing with Zero-Trust dWallets
 
 <Construction />
 
 Future signing allows you to create partial signatures that can be completed later without requiring immediate user interaction. This maintains zero-trust security through encryption.
 
 <Info title="Prerequisites">
-- An active zero-trust DWallet
-- Your encrypted user share from DWallet creation
+- An active zero-trust dWallet
+- Your encrypted user share from dWallet creation
 - `UserShareEncryptionKeys` for cryptographic operations
 - A completed presign (same as regular signing)
 - IKA and SUI tokens for transaction fees
@@ -43,7 +43,7 @@ const ikaTx = new IkaTransaction({
 });
 
 const { unverifiedPresignCap } = ikaTx.requestPresign({
-	dWallet: activeDWallet,
+	dWallet: activedWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
@@ -76,7 +76,7 @@ const { verifiedPresignCap } = ikaTx.verifyPresignCap({
 
 // Request future sign (creates partial signature)
 const { unverifiedPartialUserSignatureCap } = await ikaTx.requestFutureSign({
-	dWallet: activeDWallet,
+	dWallet: activedWallet,
 	verifiedPresignCap,
 	presign: completedPresign,
 	encryptedUserSecretKeyShare: yourEncryptedUserShare,
@@ -113,7 +113,7 @@ const ikaTx = new IkaTransaction({
 
 // Approve the same message
 const { messageApproval } = ikaTx.approveMessage({
-	dWallet: activeDWallet,
+	dWallet: activedWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes, // Must be the same message

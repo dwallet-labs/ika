@@ -1,28 +1,28 @@
 ---
 id: signing-with-a-dwallet
-title: Signing with a DWallet
-description: Sign messages and transactions using your DWallet
+title: Signing with a dWallet
+description: Sign messages and transactions using your dWallet
 sidebar_position: 4
 sidebar_label: Signing
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Signing with a DWallet
+# Signing with a dWallet
 
 <Construction />
 
-Sign messages and transactions using your DWallet through a two-step process: presigning for faster performance, then signing with your encrypted user share.
+Sign messages and transactions using your dWallet through a two-step process: presigning for faster performance, then signing with your encrypted user share.
 
 <Info title="Prerequisites">
-- An active DWallet (created through DKG process)
-- Your encrypted user share from DWallet creation
+- An active dWallet (created through DKG process)
+- Your encrypted user share from dWallet creation
 - `UserShareEncryptionKeys` for cryptographic operations
 - IKA and SUI tokens for transaction fees
 </Info>
 
 <Warning title="Two-Step Process">
-**Presign First:** Create a presign request and wait for completion before signing. This optimizes performance by pre-computing cryptographic operations. **You can create unlimited amount of presigns to sign transactions with your DWallet.**
+**Presign First:** Create a presign request and wait for completion before signing. This optimizes performance by pre-computing cryptographic operations. **You can create unlimited amount of presigns to sign transactions with your dWallet.**
 </Warning>
 
 ## Step 1: Request Presign
@@ -40,7 +40,7 @@ const ikaTx = new IkaTransaction({
 });
 
 const { unverifiedPresignCap } = ikaTx.requestPresign({
-	dWallet: activeDWallet,
+	dWallet: activedWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
@@ -75,7 +75,7 @@ const ikaTx = new IkaTransaction({
 
 // Approve the message you want to sign
 const { messageApproval } = ikaTx.approveMessage({
-	dWallet: activeDWallet,
+	dWallet: activedWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes, // Your message as Uint8Array
@@ -88,7 +88,7 @@ const { verifiedPresignCap } = ikaTx.verifyPresignCap({
 
 // Sign the message
 await ikaTx.sign({
-	dWallet: activeDWallet,
+	dWallet: activedWallet,
 	messageApproval,
 	verifiedPresignCap,
 	hashScheme: Hash.KECCAK256,
@@ -106,6 +106,6 @@ await signAndExecuteTransaction(tx);
 
 For a complete working example of the signing process, see:
 
-**[DWallet Sign Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/zero-trust-dwallet/dwallet-sign.ts)**
+**[dWallet Sign Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/zero-trust-dwallet/dwallet-sign.ts)**
 
-This example demonstrates the complete flow from DWallet creation through presigning and signing with proper error handling and state management.
+This example demonstrates the complete flow from dWallet creation through presigning and signing with proper error handling and state management.

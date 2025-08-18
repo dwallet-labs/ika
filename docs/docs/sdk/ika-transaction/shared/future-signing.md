@@ -1,33 +1,33 @@
 ---
 id: future-signing-public
-title: Future Signing with Public DWallets
-description: Pre-sign messages for later completion with public DWallets
+title: Future Signing with Public dWallets
+description: Pre-sign messages for later completion with public dWallets
 sidebar_position: 3
 sidebar_label: Future Signing
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Future Signing with Public DWallets
+# Future Signing with Public dWallets
 
 <Construction />
 
-Future signing with public DWallets allows anyone to create partial signatures for later completion since the secret shares are publicly accessible on-chain.
+Future signing with public dWallets allows anyone to create partial signatures for later completion since the secret shares are publicly accessible on-chain.
 
 <Info title="Prerequisites">
-- A public DWallet (created through [Making a DWallet Public](./public-dwallet.md))
+- A public dWallet (created through [Making a dWallet Public](./public-dwallet.md))
 - A completed presign (same as regular signing)
 - IKA and SUI tokens for transaction fees
 - No encryption keys needed (shares are public)
 </Info>
 
 <Warning title="Trust Model">
-**Public DWallet Security:** Anyone can create and complete future signatures since secret shares are on-chain. This requires trust in the IKA network infrastructure. Use only when shared signing access is specifically needed.
+**Public dWallet Security:** Anyone can create and complete future signatures since secret shares are on-chain. This requires trust in the IKA network infrastructure. Use only when shared signing access is specifically needed.
 </Warning>
 
 ## Step 1: Create Presign
 
-First, create a presign for the public DWallet:
+First, create a presign for the public dWallet:
 
 ```typescript
 import { IkaTransaction, SignatureAlgorithm } from '@ika.xyz/sdk';
@@ -36,11 +36,11 @@ const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,
 	transaction: tx,
-	// No userShareEncryptionKeys needed for public DWallets
+	// No userShareEncryptionKeys needed for public dWallets
 });
 
 const { unverifiedPresignCap } = ikaTx.requestPresign({
-	dWallet: publicDWallet,
+	dWallet: publicdWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
@@ -73,11 +73,11 @@ const { verifiedPresignCap } = ikaTx.verifyPresignCap({
 
 // Request future sign using public secret shares
 const { unverifiedPartialUserSignatureCap } = await ikaTx.requestFutureSignWithSecretShare({
-	dWallet: publicDWallet,
+	dWallet: publicdWallet,
 	verifiedPresignCap,
 	presign: completedPresign,
-	secretShare: Uint8Array.from(publicDWallet.public_user_secret_key_share), // Public share
-	publicOutput: Uint8Array.from(publicDWallet.state.Active?.public_output), // Public output
+	secretShare: Uint8Array.from(publicdWallet.public_user_secret_key_share), // Public share
+	publicOutput: Uint8Array.from(publicdWallet.state.Active?.public_output), // Public output
 	message: messageBytes, // Your message as Uint8Array
 	hashScheme: Hash.KECCAK256,
 	ikaCoin: userIkaCoin,
@@ -99,19 +99,19 @@ await signAndExecuteTransaction(tx);
 
 ## Step 3: Complete Future Sign
 
-Complete the signature using public DWallet methods:
+Complete the signature using public dWallet methods:
 
 ```typescript
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,
 	transaction: tx,
-	// No encryption keys needed for public DWallets
+	// No encryption keys needed for public dWallets
 });
 
 // Approve message using standard method (not specialized like imported)
 const { messageApproval } = ikaTx.approveMessage({
-	dWallet: publicDWallet,
+	dWallet: publicdWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes, // Must be the same message

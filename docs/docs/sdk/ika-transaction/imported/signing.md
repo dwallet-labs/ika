@@ -1,21 +1,21 @@
 ---
 id: signing-with-imported-dwallet
-title: Signing with an Imported DWallet
-description: Sign messages using imported DWallet keys
+title: Signing with an Imported dWallet
+description: Sign messages using imported dWallet keys
 sidebar_position: 2
 sidebar_label: Signing
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Signing with an Imported DWallet
+# Signing with an Imported dWallet
 
 <Construction />
 
-Sign messages using an imported DWallet that was created from existing cryptographic keys. The process is similar to zero-trust DWallet signing but uses imported key credentials.
+Sign messages using an imported dWallet that was created from existing cryptographic keys. The process is similar to zero-trust dWallet signing but uses imported key credentials.
 
 <Info title="Prerequisites">
-- An active imported DWallet (created through [Importing a DWallet](./importing.md))
+- An active imported dWallet (created through [Importing a dWallet](./importing.md))
 - Your encrypted user share from the import process
 - `UserShareEncryptionKeys` used during import
 - IKA and SUI tokens for transaction fees
@@ -36,7 +36,7 @@ const ikaTx = new IkaTransaction({
 });
 
 const { unverifiedPresignCap } = ikaTx.requestPresign({
-	dWallet: importedDWallet,
+	dWallet: importeddWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
@@ -55,9 +55,9 @@ tx.moveCall({
 await signAndExecuteTransaction(tx);
 ```
 
-## Step 2: Sign with Imported DWallet
+## Step 2: Sign with Imported dWallet
 
-Sign using your imported DWallet's encrypted user share:
+Sign using your imported dWallet's encrypted user share:
 
 ```typescript
 import { Hash } from '@ika.xyz/sdk';
@@ -66,12 +66,12 @@ const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,
 	transaction: tx,
-	userShareEncryptionKeys, // Required for imported DWallet signing
+	userShareEncryptionKeys, // Required for imported dWallet signing
 });
 
-// Approve the message for imported DWallet (uses different approval method)
+// Approve the message for imported dWallet (uses different approval method)
 const { importedKeyMessageApproval } = ikaTx.approveImportedKeyMessage({
-	dWallet: importedDWallet,
+	dWallet: importeddWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes, // Your message as Uint8Array
@@ -82,9 +82,9 @@ const { verifiedPresignCap } = ikaTx.verifyPresignCap({
 	presign: completedPresign,
 });
 
-// Sign with imported DWallet (uses specialized method)
-await ikaTx.signWithImportedDWallet({
-	dWallet: importedDWallet,
+// Sign with imported dWallet (uses specialized method)
+await ikaTx.signWithImporteddWallet({
+	dWallet: importeddWallet,
 	encryptedUserSecretKeyShare: importedEncryptedUserShare,
 	presign: completedPresign,
 	hashScheme: Hash.KECCAK256,
@@ -100,8 +100,8 @@ await signAndExecuteTransaction(tx);
 
 ## Working Example
 
-For a complete working example of imported DWallet signing, see:
+For a complete working example of imported dWallet signing, see:
 
-**[Imported DWallet Signing Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/imported-dwallet/sign-with-imported.ts)**
+**[Imported dWallet Signing Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/imported-dwallet/sign-with-imported.ts)**
 
 This example demonstrates the complete flow from importing existing keys through signing with proper error handling and state management.

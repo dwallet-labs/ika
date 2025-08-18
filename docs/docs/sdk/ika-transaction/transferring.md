@@ -1,21 +1,21 @@
 ---
 id: transferring-a-dwallet-share
-title: Transferring a DWallet Share
-description: Transfer your DWallet user share to another person
+title: Transferring a dWallet Share
+description: Transfer your dWallet user share to another person
 sidebar_position: 4
-sidebar_label: Transferring a DWallet Share
+sidebar_label: Transferring a dWallet Share
 ---
 
 import { Info, Warning, Construction } from '../../../src/components/InfoBox';
 
-# Transferring a DWallet Share
+# Transferring a dWallet Share
 
 <Construction />
 
-Transfer your DWallet's encrypted user share to another person. This allows them to sign with your DWallet while maintaining zero-trust security through re-encryption.
+Transfer your dWallet's encrypted user share to another person. This allows them to sign with your dWallet while maintaining zero-trust security through re-encryption.
 
 <Info title="Prerequisites">
-- An active DWallet with your encrypted user share (created through normal DKG or imported)
+- An active dWallet with your encrypted user share (created through normal DKG or imported)
 - Recipient's Sui address
 - Recipient must have registered their encryption key
 - Your `UserShareEncryptionKeys`
@@ -43,7 +43,7 @@ const ikaTx = new IkaTransaction({
 });
 
 await ikaTx.transferUserShare({
-	dWallet: activeDWallet,
+	dWallet: activedWallet,
 	destinationEncryptionKeyAddress: recipientAddress,
 	sourceEncryptedUserSecretKeyShare: yourEncryptedUserShare,
 	ikaCoin: userIkaCoin,
@@ -59,7 +59,7 @@ If you already have access to your decrypted secret share:
 
 ```typescript
 await ikaTx.transferUserShareWithSecretShare({
-	dWallet: activeDWallet,
+	dWallet: activedWallet,
 	destinationEncryptionKeyAddress: recipientAddress,
 	sourceSecretShare: yourDecryptedSecretShare, // Already decrypted
 	sourceEncryptedUserSecretKeyShare: yourEncryptedUserShare,

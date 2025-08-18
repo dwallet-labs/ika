@@ -1,18 +1,18 @@
 ---
 id: creating-a-dwallet
-title: Creating a DWallet
-description: Complete DWallet creation process with DKG
+title: Creating a dWallet
+description: Complete dWallet creation process with DKG
 sidebar_position: 1
-sidebar_label: Creating a DWallet
+sidebar_label: Creating a dWallet
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Creating a DWallet
+# Creating a dWallet
 
 <Construction />
 
-Creating a DWallet requires completing the full Distributed Key Generation (DKG) process. Here are all the essential steps:
+Creating a dWallet requires completing the full Distributed Key Generation (DKG) process. Here are all the essential steps:
 
 <Info title="Prerequisites">
 - Initialized `IkaClient` instance
@@ -21,9 +21,9 @@ Creating a DWallet requires completing the full Distributed Key Generation (DKG)
 </Info>
 
 <Warning title="Important Notes">
-- All 4 steps are required to create a functional DWallet
+- All 4 steps are required to create a functional dWallet
 - State transitions require waiting/polling between steps
-- The capability determines who can use the DWallet for signing
+- The capability determines who can use the dWallet for signing
 - Always verify secret shares and public outputs in production
 </Warning>
 
@@ -50,9 +50,9 @@ await signAndExecuteTransaction(tx);
 
 ## Step 2: DKG First Round
 
-Choose one approach based on whether you want to keep or transfer the DWallet capability:
+Choose one approach based on whether you want to keep or transfer the dWallet capability:
 
-### Use DWallet Capability as you want
+### Use dWallet Capability as you want
 
 ```typescript
 const tx = new Transaction();
@@ -62,7 +62,7 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys,
 });
 
-const { dwalletCap } = await ikaTx.requestDWalletDKGFirstRoundAsync({
+const { dwalletCap } = await ikaTx.requestdWalletDKGFirstRoundAsync({
 	curve: Curve.SECP256K1,
 	ikaCoin: userIkaCoin, // You can use your own IKA coin
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
@@ -100,7 +100,7 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys,
 });
 
-ikaTx.requestDWalletDKGSecondRound({
+ikaTx.requestdWalletDKGSecondRound({
 	dWallet,
 	dkgSecondRoundRequestInput: dkgSecondRoundInput,
 	ikaCoin: userIkaCoin, // You can use your own IKA coin or create a new one
@@ -123,7 +123,7 @@ const ikaTx = new IkaTransaction({
 });
 
 await ikaTx.acceptEncryptedUserShare({
-	dWallet: awaitingSignatureDWallet,
+	dWallet: awaitingSignaturedWallet,
 	userPublicOutput,
 	encryptedUserSecretKeyShareId: encryptedUserShareId,
 });
@@ -133,8 +133,8 @@ await signAndExecuteTransaction(tx);
 
 ## Complete Example
 
-For a complete working example of the DWallet creation process, see the official zero-trust DWallet example:
+For a complete working example of the dWallet creation process, see the official zero-trust dWallet example:
 
-**[Creating DWallet Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/zero-trust-dwallet/creating-dwallet.ts)**
+**[Creating dWallet Example](https://github.com/dwallet-labs/ika/blob/main/sdk/typescript/examples/zero-trust-dwallet/creating-dwallet.ts)**
 
-This example demonstrates the complete flow including all 4 steps with proper error handling, state transitions, and best practices for creating DWallets in a production environment.
+This example demonstrates the complete flow including all 4 steps with proper error handling, state transitions, and best practices for creating dWallets in a production environment.

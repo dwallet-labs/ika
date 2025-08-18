@@ -1,24 +1,24 @@
 ---
 id: receiving-a-dwallet-share
-title: Receiving a DWallet Share
-description: Accept a transferred DWallet user share from another person
+title: Receiving a dWallet Share
+description: Accept a transferred dWallet user share from another person
 sidebar_position: 5
-sidebar_label: Receiving a DWallet Share
+sidebar_label: Receiving a dWallet Share
 ---
 
 import { Info, Warning, Construction } from '../../../src/components/InfoBox';
 
-# Receiving a DWallet Share
+# Receiving a dWallet Share
 
 <Construction />
 
-Accept a DWallet user share that has been transferred to you. This process allows you to gain signing access to someone else's DWallet while maintaining zero-trust security.
+Accept a dWallet user share that has been transferred to you. This process allows you to gain signing access to someone else's dWallet while maintaining zero-trust security.
 
 <Info title="Prerequisites">
-- The sender has transferred their DWallet share to your address
+- The sender has transferred their dWallet share to your address
 - Your registered encryption key with the network
 - Your `UserShareEncryptionKeys`  
-- DWallet object ID (provided by sender)
+- dWallet object ID (provided by sender)
 - Transferred encrypted share ID (provided by sender)
 - IKA and SUI tokens for transaction fees
 </Info>
@@ -69,8 +69,8 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys: yourUserShareEncryptionKeys,
 });
 
-await ikaTx.acceptEncryptedUserShareForTransferredDWallet({
-	dWallet: activeDWallet, // DWallet object provided by sender
+await ikaTx.acceptEncryptedUserShareForTransferreddWallet({
+	dWallet: activedWallet, // dWallet object provided by sender
 	sourceEncryptedUserSecretKeyShare: senderOriginalShare, // Sender's original share
 	sourceEncryptionKey: senderEncryptionKey,
 	encryptedUserSecretKeyShareId: transferredEncryptedShareId,

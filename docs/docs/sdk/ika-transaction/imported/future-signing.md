@@ -1,21 +1,21 @@
 ---
 id: future-signing-imported
-title: Future Signing with Imported DWallets
-description: Pre-sign messages for later completion with imported DWallets
+title: Future Signing with Imported dWallets
+description: Pre-sign messages for later completion with imported dWallets
 sidebar_position: 3
 sidebar_label: Future Signing
 ---
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Future Signing with Imported DWallets
+# Future Signing with Imported dWallets
 
 <Construction />
 
-Future signing with imported DWallets allows you to create partial signatures that can be completed later. This uses the same security model as imported DWallet signing with specialized approval methods.
+Future signing with imported dWallets allows you to create partial signatures that can be completed later. This uses the same security model as imported dWallet signing with specialized approval methods.
 
 <Info title="Prerequisites">
-- An active imported DWallet 
+- An active imported dWallet 
 - Your encrypted user share from the import process
 - `UserShareEncryptionKeys` used during import
 - A completed presign (same as regular signing)
@@ -25,12 +25,12 @@ Future signing with imported DWallets allows you to create partial signatures th
 <Warning title="Two-Phase Process">
 **Phase 1:** Create partial signature using your encrypted share
 
-**Phase 2:** Complete signature later with imported key message approval - uses specialized imported DWallet methods
+**Phase 2:** Complete signature later with imported key message approval - uses specialized imported dWallet methods
 </Warning>
 
 ## Step 1: Create Presign
 
-First, create a presign for your imported DWallet:
+First, create a presign for your imported dWallet:
 
 ```typescript
 import { IkaTransaction, SignatureAlgorithm } from '@ika.xyz/sdk';
@@ -43,7 +43,7 @@ const ikaTx = new IkaTransaction({
 });
 
 const { unverifiedPresignCap } = ikaTx.requestPresign({
-	dWallet: importedDWallet,
+	dWallet: importeddWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
@@ -66,7 +66,7 @@ const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,
 	transaction: tx,
-	userShareEncryptionKeys, // Required for imported DWallet operations
+	userShareEncryptionKeys, // Required for imported dWallet operations
 });
 
 // Verify the presign capability
@@ -76,7 +76,7 @@ const { verifiedPresignCap } = ikaTx.verifyPresignCap({
 
 // Request future sign (creates partial signature)
 const { unverifiedPartialUserSignatureCap } = await ikaTx.requestFutureSign({
-	dWallet: importedDWallet,
+	dWallet: importeddWallet,
 	verifiedPresignCap,
 	presign: completedPresign,
 	encryptedUserSecretKeyShare: importedEncryptedUserShare,
@@ -101,19 +101,19 @@ await signAndExecuteTransaction(tx);
 
 ## Step 3: Complete Future Sign with Imported Key
 
-Complete the signature using imported DWallet-specific methods:
+Complete the signature using imported dWallet-specific methods:
 
 ```typescript
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,
 	transaction: tx,
-	userShareEncryptionKeys, // Required for imported DWallet operations
+	userShareEncryptionKeys, // Required for imported dWallet operations
 });
 
 // Approve message using imported key method (different from zero-trust)
 const { importedKeyMessageApproval } = ikaTx.approveImportedKeyMessage({
-	dWallet: importedDWallet,
+	dWallet: importeddWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes, // Must be the same message
