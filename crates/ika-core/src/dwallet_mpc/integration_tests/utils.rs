@@ -23,7 +23,7 @@ use ika_types::messages_dwallet_mpc::{
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use sui_types::base_types::{EpochId, ObjectID};
+use sui_types::base_types::{EpochId, ObjectID, SuiAddress};
 use sui_types::messages_consensus::Round;
 use tracing::{error, info};
 
@@ -673,6 +673,8 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
     encryption_key: Vec<u8>,
     user_public_output: Vec<u8>,
 ) {
+    let encrypted_user_secret_key_share_id = ObjectID::random();
+    let encryption_key_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DBSuiEvent {
@@ -684,7 +686,7 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
                     session_sequence_number,
                     session_identifier_preimage.to_vec().clone(),
                     DWalletDKGSecondRoundRequestEvent {
-                        encrypted_user_secret_key_share_id: ObjectID::random(),
+                        encrypted_user_secret_key_share_id,
                         dwallet_id,
                         first_round_output: first_round_output.clone(),
                         centralized_public_key_share_and_proof:
@@ -693,8 +695,8 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
                         encrypted_centralized_secret_share_and_proof:
                             encrypted_centralized_secret_share_and_proof.clone(),
                         encryption_key: encryption_key.clone(),
-                        encryption_key_id: ObjectID::random(),
-                        encryption_key_address: Default::default(),
+                        encryption_key_id,
+                        encryption_key_address: SuiAddress::random_for_testing_only(),
                         user_public_output: user_public_output.clone(),
                         signer_public_key: vec![],
                         dwallet_network_encryption_key_id,

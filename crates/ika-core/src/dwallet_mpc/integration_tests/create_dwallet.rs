@@ -118,7 +118,7 @@ async fn create_dwallet() {
         mut epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = utils::IntegrationTestState {
+    let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
         sent_consensus_messages_collectors,
         epoch_stores,
