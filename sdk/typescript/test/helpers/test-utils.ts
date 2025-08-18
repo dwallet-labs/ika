@@ -86,7 +86,7 @@ export function clearAllTestSeeds(): void {
  */
 export function createTestSuiClient(): SuiClient {
 	return new SuiClient({
-		url: process.env.SUI_TESTNET_URL || getFullnodeUrl('testnet'),
+		url: process.env.SUI_TESTNET_URL || getFullnodeUrl('localnet'),
 	});
 }
 
