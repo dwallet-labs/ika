@@ -1,14 +1,14 @@
 ---
 id: ika-transaction
-title: Ika Transaction
-description: Build transactions for dWallet operations including DKG, presigning, and signing
-sidebar_position: 1
-sidebar_label: Ika Transaction
+title: IkaTransaction API Reference
+description: Complete API reference for IkaTransaction class methods and dWallet operations
+sidebar_position: 2
+sidebar_label: API Reference
 ---
 
 import { Info, Warning, Construction } from '../../../src/components/InfoBox';
 
-# IkaTransaction
+# IkaTransaction API Reference
 
 <Construction />
 
