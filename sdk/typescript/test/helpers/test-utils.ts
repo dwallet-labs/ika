@@ -294,8 +294,6 @@ export async function retryUntil<T>(
 	throw new Error(`Condition not met after ${maxAttempts} attempts`);
 }
 
-export const DEFAULT_TIMEOUT = 600_000; // 10 minutes
-
 export function delay(seconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
 }

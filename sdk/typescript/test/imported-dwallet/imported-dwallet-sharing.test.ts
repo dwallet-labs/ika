@@ -15,7 +15,6 @@ import {
 import {
 	createTestIkaClient,
 	createTestSuiClient,
-	DEFAULT_TIMEOUT,
 	delay,
 	generateTestKeypairForImportedDWallet,
 	requestTestFaucetFunds,
@@ -23,111 +22,105 @@ import {
 } from '../helpers/test-utils';
 
 describe('Imported DWallet Sharing (make shares public)', () => {
-	it(
-		'should make imported DWallet user secret key shares public',
-		async () => {
-			const testName = 'imported-dwallet-sharing-test';
-			const suiClient = createTestSuiClient();
-			const ikaClient = createTestIkaClient(suiClient);
-			await ikaClient.initialize();
+	it('should make imported DWallet user secret key shares public', async () => {
+		const testName = 'imported-dwallet-sharing-test';
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
 
-			const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-				generateTestKeypairForImportedDWallet(testName);
+		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
+			generateTestKeypairForImportedDWallet(testName);
 
-			await requestTestFaucetFunds(signerAddress);
+		await requestTestFaucetFunds(signerAddress);
 
-			const { sessionIdentifier, sessionIdentifierPreimage } = await createTestSessionIdentifier(
-				ikaClient,
-				suiClient,
-				signerAddress,
-				testName,
-			);
+		const { sessionIdentifier, sessionIdentifierPreimage } = await createTestSessionIdentifier(
+			ikaClient,
+			suiClient,
+			signerAddress,
+			testName,
+		);
 
-			await delay(3);
+		await delay(3);
 
-			await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
+		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
 
-			await delay(3);
+		await delay(3);
 
-			const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
-				ikaClient,
-				sessionIdentifierPreimage,
-				userShareEncryptionKeys,
-				dWalletKeypair,
-			);
+		const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+			ikaClient,
+			sessionIdentifierPreimage,
+			userShareEncryptionKeys,
+			dWalletKeypair,
+		);
 
-			const importedKeyDWalletVerificationRequestEvent =
-				await requestTestImportedDWalletVerification(
-					ikaClient,
-					suiClient,
-					importDWalletVerificationRequestInput,
-					Curve.SECP256K1,
-					signerPublicKey,
-					sessionIdentifier,
-					userShareEncryptionKeys,
-					signerAddress,
-					testName,
-				);
+		const importedKeyDWalletVerificationRequestEvent = await requestTestImportedDWalletVerification(
+			ikaClient,
+			suiClient,
+			importDWalletVerificationRequestInput,
+			Curve.SECP256K1,
+			signerPublicKey,
+			sessionIdentifier,
+			userShareEncryptionKeys,
+			signerAddress,
+			testName,
+		);
 
-			const awaitingKeyHolderSignatureDWallet = await retryUntil(
-				() =>
-					ikaClient.getDWalletInParticularState(
-						importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
-						'AwaitingKeyHolderSignature',
-					),
-				(wallet) => wallet !== null,
-				30,
-				2000,
-			);
+		const awaitingKeyHolderSignatureDWallet = await retryUntil(
+			() =>
+				ikaClient.getDWalletInParticularState(
+					importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+					'AwaitingKeyHolderSignature',
+				),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		);
 
-			await acceptTestEncryptedUserShare(
-				ikaClient,
-				suiClient,
-				awaitingKeyHolderSignatureDWallet,
-				importDWalletVerificationRequestInput.userPublicOutput,
-				importedKeyDWalletVerificationRequestEvent,
-				userShareEncryptionKeys,
-				testName,
-			);
+		await acceptTestEncryptedUserShare(
+			ikaClient,
+			suiClient,
+			awaitingKeyHolderSignatureDWallet,
+			importDWalletVerificationRequestInput.userPublicOutput,
+			importedKeyDWalletVerificationRequestEvent,
+			userShareEncryptionKeys,
+			testName,
+		);
 
-			const activeDWallet = await retryUntil(
-				() =>
-					ikaClient.getDWalletInParticularState(
-						importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
-						'Active',
-					),
-				(wallet) => wallet !== null,
-				30,
-				2000,
-			);
+		const activeDWallet = await retryUntil(
+			() =>
+				ikaClient.getDWalletInParticularState(
+					importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+					'Active',
+				),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		);
 
-			const encryptedUserSecretKeyShare = await retryUntil(
-				() =>
-					ikaClient.getEncryptedUserSecretKeyShare(
-						importedKeyDWalletVerificationRequestEvent.event_data
-							.encrypted_user_secret_key_share_id,
-					),
-				(share) => share !== null,
-				30,
-				2000,
-			);
+		const encryptedUserSecretKeyShare = await retryUntil(
+			() =>
+				ikaClient.getEncryptedUserSecretKeyShare(
+					importedKeyDWalletVerificationRequestEvent.event_data.encrypted_user_secret_key_share_id,
+				),
+			(share) => share !== null,
+			30,
+			2000,
+		);
 
-			const { secretShare } = await userShareEncryptionKeys.decryptUserShare(
-				activeDWallet,
-				encryptedUserSecretKeyShare,
-				await ikaClient.getProtocolPublicParameters(activeDWallet),
-			);
+		const { secretShare } = await userShareEncryptionKeys.decryptUserShare(
+			activeDWallet,
+			encryptedUserSecretKeyShare,
+			await ikaClient.getProtocolPublicParameters(activeDWallet),
+		);
 
-			await makeTestImportedDWalletUserSecretKeySharesPublic(
-				ikaClient,
-				suiClient,
-				activeDWallet,
-				secretShare,
-				testName,
-			);
+		await makeTestImportedDWalletUserSecretKeySharesPublic(
+			ikaClient,
+			suiClient,
+			activeDWallet,
+			secretShare,
+			testName,
+		);
 
-			expect(true).toBe(true);
-		},
-		DEFAULT_TIMEOUT,
-	);
+		expect(true).toBe(true);
+	});
 });
