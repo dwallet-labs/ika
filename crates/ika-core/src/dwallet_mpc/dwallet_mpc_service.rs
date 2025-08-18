@@ -264,6 +264,7 @@ impl DWalletMPCService {
             warn!("No last read consensus round, cannot perform cryptographic computation");
             return;
         };
+
         let completed_computation_results = self
             .dwallet_mpc_manager
             .perform_cryptographic_computation(last_read_consensus_round)
