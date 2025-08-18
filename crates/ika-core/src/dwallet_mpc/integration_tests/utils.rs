@@ -798,3 +798,41 @@ pub(crate) async fn advance_mpc_flow_until_completion(
         consensus_round += 1;
     }
 }
+
+pub(crate) fn send_start_presign_event(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: &Vec<SuiDataSenders>,
+    session_identifier_preimage: [u8; 32],
+    session_sequence_number: u64,
+    dwallet_network_encryption_key_id: ObjectID,
+    dwallet_id: Option<ObjectID>,
+    dwallet_public_output: Option<Vec<u8>>,
+) {
+    let presign_id = ObjectID::random();
+    sui_data_senders.iter().for_each(|sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DBSuiEvent {
+                type_: DWalletSessionEvent::<PresignRequestEvent>::type_(&ika_network_config),
+                contents: bcs::to_bytes(&new_dwallet_session_event(
+                    true,
+                    session_sequence_number,
+                    session_identifier_preimage.to_vec().clone(),
+                    PresignRequestEvent {
+                        dwallet_id,
+                        presign_id,
+                        dwallet_public_output: dwallet_public_output.clone(),
+                        dwallet_network_encryption_key_id,
+                        curve: 0,
+                        signature_algorithm: 0,
+                    },
+                ))
+                    .unwrap(),
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
+}
+
+
