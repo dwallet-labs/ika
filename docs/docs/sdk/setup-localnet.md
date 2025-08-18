@@ -7,6 +7,7 @@ sidebar_label: Setup Ika Localnet
 ---
 
 import { Construction } from '../../src/components/InfoBox';
+import Prerequisites from '../../src/components/Prerequisites';
 
 # Setup Ika Localnet
 
@@ -16,8 +17,44 @@ import { Construction } from '../../src/components/InfoBox';
 
 Before setting up the Ika localnet, ensure you have the following software installed on your system:
 
-- **Rust**: The programming language and toolchain required to build Ika
-- **Sui CLI**: The command-line interface for interacting with Sui blockchain
+<Prerequisites items={[
+{
+name: "🦀 Rust",
+description: "The programming language and toolchain required to build Ika",
+link: { url: "https://rustup.rs/", text: "Install Guide" },
+command: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+},
+{
+name: "🔧 Sui CLI",
+description: "The command-line interface for interacting with Sui blockchain",
+link: { url: "https://docs.sui.io/guides/developer/getting-started/sui-install", text: "Sui Documentation" },
+methods: [
+{
+name: "Homebrew",
+description: "Recommended for macOS and Linux users",
+command: "brew install sui"
+},
+{
+name: "Chocolatey",
+description: "Recommended for Windows users",
+command: "choco install sui"
+},
+{
+name: "Cargo",
+description: "Install from source (all platforms)",
+command: "cargo install --locked --git https://github.com/MystenLabs/sui.git --branch mainnet sui"
+},
+{
+name: "Download Binary",
+description: "Download pre-built binaries for your operating system",
+link: {
+url: "https://docs.sui.io/guides/developer/getting-started/sui-install#download-binaries-from-github",
+text: "View Installation Guide"
+}
+}
+]
+}
+]} />
 
 ## Clone the Ika Repository
 
@@ -52,6 +89,7 @@ cargo run --bin ika --release --no-default-features -- start
 
 **Parameters explained:**
 
-- `--release`: Builds the binary in release mode for better performance
-- `--no-default-features`: Disables default features to ensure clean compilation
-- `start`: The command to start the Ika node
+- `--bin ika`: Specifies which binary to run from the workspace (the main Ika node executable)
+- `--release`: Builds and runs the binary with optimizations enabled for better performance
+- `--no-default-features`: Disables default Cargo features to run only the core functionality needed for localnet, for example removes min 16 cpu cores requirement
+- `start`: Command passed to the Ika binary to initialize and start the local node
