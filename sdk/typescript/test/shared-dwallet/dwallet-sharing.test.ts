@@ -22,104 +22,101 @@ import {
 } from '../helpers/test-utils';
 
 describe('Shared DWallet (make shares public)', () => {
-	it(
-		'should make user secret key shares public after DWallet activation',
-		async () => {
-			const testName = 'dwallet-sharing-test';
-			const suiClient = createTestSuiClient();
-			const ikaClient = createTestIkaClient(suiClient);
-			await ikaClient.initialize();
+	it('should make user secret key shares public after DWallet activation', async () => {
+		const testName = 'dwallet-sharing-test';
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
 
-			const { userShareEncryptionKeys, signerAddress } = generateTestKeypair(testName);
+		const { userShareEncryptionKeys, signerAddress } = generateTestKeypair(testName);
 
-			await requestTestFaucetFunds(signerAddress);
+		await requestTestFaucetFunds(signerAddress);
 
-			const { dwalletID, sessionIdentifierPreimage } = await requestTestDKGFirstRound(
-				ikaClient,
-				suiClient,
-				signerAddress,
-				testName,
-			);
+		const { dwalletID, sessionIdentifierPreimage } = await requestTestDKGFirstRound(
+			ikaClient,
+			suiClient,
+			signerAddress,
+			testName,
+		);
 
-			await delay(5);
+		await delay(5);
 
-			await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
+		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
 
-			await delay(3);
+		await delay(3);
 
-			const dWallet = await retryUntil(
-				() =>
-					ikaClient.getDWalletInParticularState(dwalletID, 'AwaitingUserDKGVerificationInitiation'),
-				(wallet) => wallet !== null,
-				30,
-				2000,
-			);
+		const dWallet = await retryUntil(
+			() =>
+				ikaClient.getDWalletInParticularState(dwalletID, 'AwaitingUserDKGVerificationInitiation'),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		);
 
-			const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
-				ikaClient,
-				dWallet,
-				sessionIdentifierPreimage,
-				userShareEncryptionKeys,
-			);
+		const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
+			ikaClient,
+			dWallet,
+			sessionIdentifierPreimage,
+			userShareEncryptionKeys,
+		);
 
-			const secondRoundMoveResponse = await requestTestDkgSecondRound(
-				ikaClient,
-				suiClient,
-				dWallet,
-				dkgSecondRoundRequestInput,
-				userShareEncryptionKeys,
-				testName,
-			);
+		const secondRoundMoveResponse = await requestTestDkgSecondRound(
+			ikaClient,
+			suiClient,
+			dWallet,
+			dkgSecondRoundRequestInput,
+			userShareEncryptionKeys,
+			testName,
+		);
 
-			const awaitingKeyHolderSignatureDWallet = await retryUntil(
-				() => ikaClient.getDWalletInParticularState(dwalletID, 'AwaitingKeyHolderSignature'),
-				(wallet) => wallet !== null,
-				30,
-				2000,
-			);
+		const awaitingKeyHolderSignatureDWallet = await retryUntil(
+			() => ikaClient.getDWalletInParticularState(dwalletID, 'AwaitingKeyHolderSignature'),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		);
 
-			await acceptTestEncryptedUserShare(
-				ikaClient,
-				suiClient,
-				awaitingKeyHolderSignatureDWallet,
-				dkgSecondRoundRequestInput.userPublicOutput,
-				secondRoundMoveResponse,
-				userShareEncryptionKeys,
-				testName,
-			);
+		await acceptTestEncryptedUserShare(
+			ikaClient,
+			suiClient,
+			awaitingKeyHolderSignatureDWallet,
+			dkgSecondRoundRequestInput.userPublicOutput,
+			secondRoundMoveResponse,
+			userShareEncryptionKeys,
+			testName,
+		);
 
-			const activeDWallet = await retryUntil(
-				() => ikaClient.getDWalletInParticularState(dwalletID, 'Active'),
-				(wallet) => wallet !== null,
-				30,
-				2000,
-			);
+		const activeDWallet = await retryUntil(
+			() => ikaClient.getDWalletInParticularState(dwalletID, 'Active'),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		);
 
-			const encryptedUserSecretKeyShare = await retryUntil(
-				() =>
-					ikaClient.getEncryptedUserSecretKeyShare(
-						secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
-					),
-				(share) => share !== null,
-				30,
-				2000,
-			);
+		const encryptedUserSecretKeyShare = await retryUntil(
+			() =>
+				ikaClient.getEncryptedUserSecretKeyShare(
+					secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
+				),
+			(share) => share !== null,
+			30,
+			2000,
+		);
 
-			const { secretShare } = await userShareEncryptionKeys.decryptUserShare(
-				activeDWallet,
-				encryptedUserSecretKeyShare,
-				await ikaClient.getProtocolPublicParameters(activeDWallet),
-			);
+		const { secretShare } = await userShareEncryptionKeys.decryptUserShare(
+			activeDWallet,
+			encryptedUserSecretKeyShare,
+			await ikaClient.getProtocolPublicParameters(activeDWallet),
+		);
 
-			await makeTestDWalletUserSecretKeySharesPublic(
-				ikaClient,
-				suiClient,
-				activeDWallet,
-				secretShare,
-				testName,
-			);
+		await makeTestDWalletUserSecretKeySharesPublic(
+			ikaClient,
+			suiClient,
+			activeDWallet,
+			secretShare,
+			testName,
+		);
 
-			expect(true).toBe(true);
-		},
-	);
+		expect(true).toBe(true);
+	});
 });
