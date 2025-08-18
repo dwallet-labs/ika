@@ -22,7 +22,7 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('Imported DWallet Sharing (make shares public)', () => {
+describe.sequential('Imported DWallet Sharing (make shares public)', () => {
 	it(
 		'should make imported DWallet user secret key shares public',
 		async () => {

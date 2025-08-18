@@ -19,7 +19,7 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('DWallet Future Signing', () => {
+describe.sequential('DWallet Future Signing', () => {
 	it(
 		'should create a DWallet and perform future signing',
 		async () => {

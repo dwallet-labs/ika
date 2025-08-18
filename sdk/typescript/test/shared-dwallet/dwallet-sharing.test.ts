@@ -21,7 +21,7 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('Shared DWallet (make shares public)', () => {
+describe.sequential('Shared DWallet (make shares public)', () => {
 	it(
 		'should make user secret key shares public after DWallet activation',
 		async () => {

@@ -20,7 +20,7 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('DWallet Creation', () => {
+describe.sequential('DWallet Creation', () => {
 	it(
 		'should create a new DWallet through the complete DKG process',
 		async () => {

@@ -23,7 +23,7 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('DWallet Transfer', () => {
+describe.sequential('DWallet Transfer', () => {
 	it(
 		'should transfer DWallet and sign with transferred DWallet',
 		async () => {

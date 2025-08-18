@@ -26,7 +26,7 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('Shared Imported DWallet Signing (public user shares)', () => {
+describe.sequential('Shared Imported DWallet Signing (public user shares)', () => {
 	it(
 		'should sign a message using public shares of an imported DWallet',
 		async () => {

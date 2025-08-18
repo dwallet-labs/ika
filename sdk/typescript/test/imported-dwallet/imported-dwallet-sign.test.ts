@@ -24,7 +24,7 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('Imported DWallet Signing', () => {
+describe.sequential('Imported DWallet Signing', () => {
 	it(
 		'should create an imported DWallet and sign a message',
 		async () => {
