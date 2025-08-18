@@ -6,12 +6,32 @@ use std::path::Path;
 use tempfile::TempDir;
 
 static CONTRACTS_DIR: Dir<'_> = include_directory!("$CARGO_MANIFEST_DIR/../../contracts");
+static TESTNET_CONTRACTS_DIR: Dir<'_> =
+    include_directory!("$CARGO_MANIFEST_DIR/../../deployed_contracts/testnet");
+static MAINNET_CONTRACTS_DIR: Dir<'_> =
+    include_directory!("$CARGO_MANIFEST_DIR/../../deployed_contracts/mainnet");
 
 pub fn save_contracts_to_temp_dir() -> anyhow::Result<TempDir> {
     let temp_dir =
         tempfile::tempdir().map_err(|e| anyhow::anyhow!("Failed to create temp dir: {}", e))?;
     let path = temp_dir.path();
     save_dir_entries(path, CONTRACTS_DIR.entries())?;
+    Ok(temp_dir)
+}
+
+pub fn save_testnet_contracts_to_temp_dir() -> anyhow::Result<TempDir> {
+    let temp_dir =
+        tempfile::tempdir().map_err(|e| anyhow::anyhow!("Failed to create temp dir: {}", e))?;
+    let path = temp_dir.path();
+    save_dir_entries(path, TESTNET_CONTRACTS_DIR.entries())?;
+    Ok(temp_dir)
+}
+
+pub fn save_mainnet_contracts_to_temp_dir() -> anyhow::Result<TempDir> {
+    let temp_dir =
+        tempfile::tempdir().map_err(|e| anyhow::anyhow!("Failed to create temp dir: {}", e))?;
+    let path = temp_dir.path();
+    save_dir_entries(path, MAINNET_CONTRACTS_DIR.entries())?;
     Ok(temp_dir)
 }
 
