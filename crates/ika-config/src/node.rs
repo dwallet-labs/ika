@@ -33,8 +33,8 @@ use ika_types::crypto::{
 use sui_types::event::EventID;
 use sui_types::multiaddr::Multiaddr;
 
-pub const LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL: &str = "http://127.0.0.1:9000";
-pub const LOCAL_DEFAULT_SUI_FAUCET_URL: &str = "http://127.0.0.1:9123/gas";
+pub const LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL: &str = "https://fullnode.sui.beta.devnet.ika-network.net";
+pub const LOCAL_DEFAULT_SUI_FAUCET_URL: &str = "https://faucet.sui.beta.devnet.ika-network.net/gas";
 
 #[serde_as]
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
