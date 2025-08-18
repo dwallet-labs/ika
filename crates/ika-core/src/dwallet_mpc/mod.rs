@@ -138,6 +138,7 @@ pub(crate) fn party_ids_to_authority_names(
         .collect()
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use fastcrypto::traits::KeyPair;

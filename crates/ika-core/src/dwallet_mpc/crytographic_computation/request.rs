@@ -8,20 +8,16 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::dwallet_mpc::make_dwallet_user_secret_key_shares_public::verify_secret_share;
-use crate::dwallet_mpc::mpc_session::MPCRoundToMessagesHashMap;
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::network_dkg::advance_network_dkg;
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
 use crate::dwallet_mpc::session_request::AdvanceSpecificData;
 use crate::dwallet_mpc::sign::{
-    SignParty, update_expected_decrypters_metrics, verify_partial_signature,
+    SignParty, verify_partial_signature,
 };
-use class_groups::dkg::Secp256k1Party;
 use commitment::CommitmentSizedNumber;
-use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletMPCNetworkKeyScheme, MPCMessage, SerializedWrappedMPCPublicOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedSignOutput,
@@ -30,18 +26,14 @@ use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{AsyncProtocol, MPCRequestInput, SessionType};
-use itertools::Itertools;
-use message_digest::message_digest::{Hash, message_digest};
-use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResult};
+use message_digest::message_digest::message_digest;
+use mpc::guaranteed_output_delivery::Party;
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{error, info};
-use twopc_mpc::sign::Protocol;
 
 pub(crate) struct Request {
     pub(crate) party_id: PartyID,

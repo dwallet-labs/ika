@@ -6,10 +6,9 @@ extern crate core;
 
 use dwallet_mpc::session_request::DWalletSessionRequest;
 use ika_types::committee::Committee;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletNetworkEncryptionKeyData};
+use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
 use std::collections::HashMap;
 use std::sync::Arc;
-use sui_json_rpc_types::SuiEvent;
 use sui_types::base_types::{EpochId, ObjectID};
 use tokio::sync::broadcast;
 use tokio::sync::watch::Receiver;

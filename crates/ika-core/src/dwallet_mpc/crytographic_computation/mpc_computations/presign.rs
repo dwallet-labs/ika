@@ -11,7 +11,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    AsyncProtocol, DWalletSessionEvent, MPCRequestInput, MPCSessionRequest, PresignRequestEvent,
+    AsyncProtocol, DWalletSessionEvent, MPCRequestInput, PresignRequestEvent,
     SessionIdentifier,
 };
 

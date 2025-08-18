@@ -2,16 +2,16 @@ use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
 };
 use crate::dwallet_mpc::mpc_session::PublicInput;
+use crate::dwallet_mpc::network_dkg::DwalletMPCNetworkKeys;
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
 use crate::dwallet_mpc::sign::SignParty;
 use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletMPCNetworkKeyScheme, MPCMessage, SerializedWrappedMPCPublicOutput, SignatureAlgorithm,
+    DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput, SignatureAlgorithm,
 };
 use group::PartyID;
-use ika_types::committee::EpochId;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     AsyncProtocol, MPCRequestInput, SessionIdentifier, SessionType,
@@ -30,7 +30,7 @@ pub struct DWalletSessionRequest {
     /// Unique identifier for the MPC session.
     pub session_identifier: SessionIdentifier,
     pub session_sequence_number: u64,
-    pub protocol_specific_data: ProtocolSpecificData,
+    pub(crate) protocol_specific_data: ProtocolSpecificData,
     pub epoch: u64,
     pub requires_network_key_data: bool,
     pub requires_next_active_committee: bool,
@@ -488,10 +488,7 @@ impl AdvanceSpecificData {
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
-        decryption_key_shares: &HashMap<
-            ObjectID,
-            HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
-        >,
+        decryption_key_shares: &Box<DwalletMPCNetworkKeys>
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
             ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
@@ -654,12 +651,7 @@ impl AdvanceSpecificData {
                     return Ok(None);
                 };
 
-                let decryption_key_shares = decryption_key_shares
-                    .get(dwallet_network_encryption_key_id)
-                    .cloned()
-                    .ok_or(DwalletMPCError::MissingDwalletMPCDecryptionKeyShares(
-                        dwallet_network_encryption_key_id.to_string(),
-                    ))?;
+                let decryption_key_shares = decryption_key_shares.get_decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                 AdvanceSpecificData::Sign {
                     curve: *curve,
@@ -717,12 +709,7 @@ impl AdvanceSpecificData {
                     return Ok(None);
                 };
 
-                let decryption_key_shares = decryption_key_shares
-                    .get(dwallet_network_encryption_key_id)
-                    .cloned()
-                    .ok_or(DwalletMPCError::MissingDwalletMPCDecryptionKeyShares(
-                        dwallet_network_encryption_key_id.to_string(),
-                    ))?;
+                let decryption_key_shares = decryption_key_shares.get_decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                 AdvanceSpecificData::NetworkEncryptionKeyReconfiguration {
                     public_input: public_input.clone(),

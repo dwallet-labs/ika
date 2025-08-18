@@ -16,13 +16,13 @@ use ika_types::committee::{Committee, EpochId};
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
+    DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
 };
 use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use sui_json_rpc_types::{Coin, SuiEvent};
+use sui_json_rpc_types::Coin;
 use sui_sdk::SuiClient as SuiSdkClient;
 use sui_sdk::apis::CoinReadApi;
 use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress};

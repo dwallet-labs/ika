@@ -15,7 +15,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    AsyncProtocol, DWalletSessionEvent, FutureSignRequestEvent, MPCRequestInput, MPCSessionRequest,
+    AsyncProtocol, DWalletSessionEvent, FutureSignRequestEvent, MPCRequestInput,
     SessionIdentifier, SignRequestEvent,
 };
 use message_digest::message_digest::{Hash, message_digest};

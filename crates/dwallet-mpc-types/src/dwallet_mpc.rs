@@ -3,7 +3,6 @@
 
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use thiserror::Error;
 
 /// Alias for an MPC message.

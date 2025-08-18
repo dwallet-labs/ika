@@ -7,11 +7,8 @@
 //! and forward them to the [`DWalletMPCManager`].
 
 use crate::SuiDataReceivers;
-use crate::authority::authority_per_epoch_store::{
-    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
-};
+use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::authority::{AuthorityState, AuthorityStateTrait};
-use crate::consensus_adapter::SubmitToConsensus;
 use crate::consensus_manager::ReplayWaiter;
 use crate::dwallet_checkpoints::{
     DWalletCheckpointServiceNotify, PendingDWalletCheckpoint, PendingDWalletCheckpointInfo,
@@ -27,17 +24,12 @@ use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage};
-use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
-use ika_config::node::RootSeedWithPath;
-use ika_config::p2p::SeedPeer;
 use ika_protocol_config::ProtocolConfig;
-use ika_sui_client::SuiConnectorClient;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::error::IkaResult;
 use ika_types::message::{
     DKGFirstRoundOutput, DKGSecondRoundOutput, DWalletCheckpointMessageKind,
     DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput, MPCNetworkDKGOutput,
@@ -45,24 +37,16 @@ use ika_types::message::{
     PartialSignatureVerificationOutput, PresignOutput, SignOutput,
 };
 use ika_types::messages_consensus::ConsensusTransaction;
-use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkEncryptionKeyData, IkaNetworkConfig, MPCRequestInput,
-    SessionIdentifier,
-};
-use ika_types::sui::{DWalletCoordinatorInner, EpochStartSystem};
+use ika_types::messages_dwallet_mpc::SessionIdentifier;
+use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
 use mpc::GuaranteedOutputDeliveryRoundResult;
-use prometheus::Registry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use sui_json_rpc_types::SuiEvent;
-use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
-use tokio::sync::watch;
-use tokio::sync::watch::error::RecvError;
-use tokio::sync::watch::{Receiver, Ref};
+use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
 
 const DELAY_NO_ROUNDS_SEC: u64 = 2;
@@ -98,7 +82,6 @@ impl DWalletMPCService {
         sui_data_receivers: SuiDataReceivers,
         validator_name: AuthorityName,
         epoch_id: sui_types::base_types::EpochId,
-        packages_config: IkaNetworkConfig,
         committee: Arc<Committee>,
         protocol_config: ProtocolConfig,
     ) -> Self {
@@ -123,7 +106,6 @@ impl DWalletMPCService {
             validator_name,
             committee.clone(),
             epoch_id,
-            packages_config,
             root_seed,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
@@ -158,7 +140,6 @@ impl DWalletMPCService {
         checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
         authority_name: AuthorityName,
         committee: Committee,
-        ika_network_config: IkaNetworkConfig,
         sui_data_receivers: SuiDataReceivers,
     ) -> Self {
         DWalletMPCService {
@@ -171,7 +152,6 @@ impl DWalletMPCService {
                 authority_name.clone(),
                 Arc::new(committee.clone()),
                 1,
-                ika_network_config,
                 seed,
                 0,
                 0,
@@ -189,6 +169,7 @@ impl DWalletMPCService {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn dwallet_mpc_manager(&self) -> &DWalletMPCManager {
         &self.dwallet_mpc_manager
     }
@@ -575,10 +556,7 @@ impl DWalletMPCService {
                 .mpc_sessions
                 .get(&session_identifier)
             {
-                if let MPCSessionStatus::Active {
-                    public_input,
-                    private_input,
-                } = &session.status
+                if let MPCSessionStatus::Active { .. } = &session.status
                 {
                     if let Some(session_request) = session.request_data.clone() {
                         match computation_result {
@@ -964,13 +942,9 @@ impl DWalletMPCService {
                 vec![tx]
             }
             ProtocolSpecificData::ImportedKeyVerification {
-                curve,
-                encrypted_centralized_secret_share_and_proof,
-                encryption_key,
                 dwallet_id,
                 encrypted_user_secret_key_share_id,
-                dwallet_network_encryption_key_id,
-                centralized_party_message,
+                ..
             } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(
                     DWalletImportedKeyVerificationOutput {

@@ -10,7 +10,7 @@ use crate::dwallet_mpc::make_dwallet_user_secret_key_shares_public::make_dwallet
 use crate::dwallet_mpc::network_dkg::network_dkg_session_request;
 use crate::dwallet_mpc::presign::presign_party_session_request;
 use crate::dwallet_mpc::reconfiguration::network_decryption_key_reconfiguration_session_request_from_event;
-use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
+use crate::dwallet_mpc::session_request::DWalletSessionRequest;
 use crate::dwallet_mpc::sign::{
     get_verify_partial_signatures_session_request, sign_party_session_request,
 };
@@ -18,7 +18,7 @@ use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
-    DWalletMPCEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent,
     DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent, FutureSignRequestEvent,
     IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
     SignRequestEvent,

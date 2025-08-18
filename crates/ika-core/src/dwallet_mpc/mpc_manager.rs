@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::SuiDataReceivers;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::build_messages_to_advance;
 use crate::dwallet_mpc::crytographic_computation::{
     ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
 };
@@ -22,16 +21,15 @@ use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
-use ika_config::NodeConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
-    DWalletMPCEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData,
-    IkaNetworkConfig, MPCRequestInput, SessionIdentifier, SessionType,
+    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData,
+    SessionIdentifier, SessionType,
 };
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -39,8 +37,6 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
-use tokio::sync::watch;
-use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
@@ -59,7 +55,6 @@ pub(crate) struct DWalletMPCManager {
     /// mapping until the epoch advances.
     pub(crate) mpc_sessions: HashMap<SessionIdentifier, DWalletMPCSession>,
     pub(crate) epoch_id: EpochId,
-    pub(crate) packages_config: IkaNetworkConfig,
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
@@ -95,7 +90,6 @@ impl DWalletMPCManager {
         validator_name: AuthorityPublicKeyBytes,
         committee: Arc<Committee>,
         epoch_id: EpochId,
-        packages_config: IkaNetworkConfig,
         root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
@@ -106,7 +100,6 @@ impl DWalletMPCManager {
             validator_name,
             committee,
             epoch_id,
-            packages_config,
             root_seed,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
@@ -124,7 +117,6 @@ impl DWalletMPCManager {
         validator_name: AuthorityPublicKeyBytes,
         committee: Arc<Committee>,
         epoch_id: EpochId,
-        packages_config: IkaNetworkConfig,
         root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
@@ -152,7 +144,6 @@ impl DWalletMPCManager {
             mpc_sessions: HashMap::new(),
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
-            packages_config,
             access_structure,
             validators_class_groups_public_keys_and_proofs:
                 get_validators_class_groups_public_keys_and_proofs(&committee)?,
@@ -436,12 +427,10 @@ impl DWalletMPCManager {
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
             .flat_map(|(session, request_data)| {
-                // Safe to `unwrap()`, as the session is ready to advance so `request_data` must be `Some()`.
-                let request_data = session.request_data.clone().unwrap();
 
                 let MPCSessionStatus::Active {
                     public_input,
-                    private_input,
+                    private_input: _,
                 } = &session.status
                 else {
                     error!(
@@ -466,14 +455,11 @@ impl DWalletMPCManager {
                         .validator_private_dec_key_data
                         .class_groups_decryption_key
                         .clone(),
-                    &self
-                        .network_keys
-                        .validator_private_dec_key_data
-                        .validator_decryption_key_shares,
+                    &self.network_keys,
                 )
                 .ok()?
                 .map(|advance_specific_data| {
-                    let attempt_number = session.get_attempt_number();
+                    let attempt_number = advance_specific_data.get_attempt_number();
 
                     // Yael: When could the `consensus_round` be `None`?
                     let computation_id = ComputationId {

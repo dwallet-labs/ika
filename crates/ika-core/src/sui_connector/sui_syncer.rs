@@ -13,16 +13,14 @@ use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData,
+    DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData,
     DWalletNetworkEncryptionKeyState, IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig,
 };
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
 use mysten_metrics::spawn_logged_monitored_task;
-use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
-use sui_json_rpc_types::SuiEvent;
 use sui_types::base_types::ObjectID;
 use sui_types::{Identifier, event::EventID};
 use tokio::sync::watch::{Receiver, Sender};

@@ -7,7 +7,6 @@
 //! the network DKG protocol.
 
 use crate::dwallet_mpc::mpc_session::PublicInput;
-use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationSecp256k1Party,
     instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output,
@@ -31,7 +30,7 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
-    DWalletNetworkEncryptionKeyState, DWalletSessionEvent, MPCRequestInput, MPCSessionRequest,
+    DWalletNetworkEncryptionKeyState, DWalletSessionEvent, MPCRequestInput,
 };
 use mpc::guaranteed_output_delivery::{AdvanceRequest, Party};
 use mpc::{

@@ -21,8 +21,6 @@ use std::fmt::{Debug, Formatter};
 use std::{fmt, mem};
 use tokio::sync::broadcast;
 
-pub(crate) type MPCRoundToMessagesHashMap = HashMap<u64, HashMap<PartyID, MPCMessage>>;
-
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) struct DWalletMPCSessionOutput {
     pub(crate) output: Vec<DWalletCheckpointMessageKind>,
@@ -149,20 +147,6 @@ impl DWalletMPCSession {
         if let Vacant(e) = consensus_round_messages_map.entry(sender_party_id) {
             e.insert(message.message);
         }
-    }
-
-    /// Computes the current *total* attempt number, meaning the number of thresholds
-    /// not reached from any mpc round in this session, plus 1.
-    pub(crate) fn get_attempt_number(&self) -> u64 {
-        let threshold_not_reached_consensus_rounds = self
-            .mpc_round_to_threshold_not_reached_consensus_rounds
-            .values()
-            .flatten()
-            .collect::<Vec<_>>();
-        let threshold_not_reached_count = threshold_not_reached_consensus_rounds.len();
-
-        // Safe to cast here, as each threshold not reached must be unique for a consensus round, which is `u64` itself.
-        (threshold_not_reached_count + 1) as u64
     }
 
     /// Records a threshold not reached error that we got when advancing

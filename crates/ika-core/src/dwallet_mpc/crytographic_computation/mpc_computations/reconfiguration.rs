@@ -19,7 +19,6 @@ use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletSessionEvent, MPCRequestInput,
-    MPCSessionRequest,
 };
 use mpc::{Party, WeightedThresholdAccessStructure};
 use std::collections::HashMap;

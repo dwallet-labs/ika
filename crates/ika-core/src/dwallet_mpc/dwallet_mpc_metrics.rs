@@ -209,7 +209,7 @@ impl DWalletMPCMetrics {
     ///
     /// # Arguments
     /// * `protocol_data` - The MPC protocol initialization data containing context.
-    pub fn add_completion(&self, protocol_data: &ProtocolSpecificData) {
+    pub(crate) fn add_completion(&self, protocol_data: &ProtocolSpecificData) {
         self.completions_count
             .with_label_values(&[
                 &protocol_data.to_string(),
@@ -227,7 +227,7 @@ impl DWalletMPCMetrics {
     ///
     /// # Arguments
     /// * `protocol_data` - The MPC protocol initialization data containing context.
-    pub fn add_received_request_start(&self, protocol_data: &ProtocolSpecificData) {
+    pub(crate) fn add_received_request_start(&self, protocol_data: &ProtocolSpecificData) {
         self.received_requests_start_count
             .with_label_values(&[
                 &protocol_data.to_string(),
@@ -246,7 +246,7 @@ impl DWalletMPCMetrics {
     /// # Arguments
     /// * `protocol_data` - The MPC protocol initialization data containing context
     /// * `mpc_round` — String identifier for the specific MPC round.
-    pub fn add_advance_call(&self, protocol_data: &AdvanceSpecificData, mpc_round: &str) {
+    pub(crate) fn add_advance_call(&self, protocol_data: &AdvanceSpecificData, mpc_round: &str) {
         if mpc_round == "1" {
             self.session_start_count
                 .with_label_values(&[
