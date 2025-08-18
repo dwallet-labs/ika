@@ -188,7 +188,7 @@ impl DWalletMPCService {
         }
     }
 
-    #[feature = "test_helpers"]
+    #[feature("test_helpers")]
     pub(crate) fn dwallet_mpc_manager(&mut self) -> &mut DWalletMPCManager {
         &mut self.dwallet_mpc_manager
     }
