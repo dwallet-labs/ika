@@ -12,7 +12,7 @@ import { Construction, Info, Note } from '../../src/components/InfoBox';
 
 <Construction />
 
-The Ika TypeScript SDK is available in the dwallet-labs/ika repository and as a package on npm.
+The Ika TypeScript SDK is available in the [dwallet-labs/ika](https://github.com/dwallet-labs/ika) repository and as a package on npm.
 
 ## Install from npm
 
