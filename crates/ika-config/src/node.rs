@@ -33,8 +33,17 @@ use ika_types::crypto::{
 use sui_types::event::EventID;
 use sui_types::multiaddr::Multiaddr;
 
-pub const LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL: &str = "https://fullnode.sui.beta.devnet.ika-network.net";
-pub const LOCAL_DEFAULT_SUI_FAUCET_URL: &str = "https://faucet.sui.beta.devnet.ika-network.net/gas";
+pub fn get_testing_sui_fullnode_rpc_url() -> String {
+    std::env::var("SUI_TESTNET_URL")
+        .unwrap_or_else(|_| LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL.to_string())
+}
+
+pub fn get_testing_sui_faucet_url() -> String {
+    std::env::var("SUI_FAUCET_URL").unwrap_or_else(|_| LOCAL_DEFAULT_SUI_FAUCET_URL.to_string())
+}
+
+pub const LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL: &str = "http://127.0.0.1:9000";
+pub const LOCAL_DEFAULT_SUI_FAUCET_URL: &str = "http://127.0.0.1:9123/gas";
 
 #[serde_as]
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
