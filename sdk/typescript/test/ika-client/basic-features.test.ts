@@ -42,7 +42,7 @@ function validateNetworkKey(key: any, keyName: string = 'key') {
 function validateNetworkKeyArray(keys: any[], arrayName: string = 'keys') {
 	expect(keys, `${arrayName} should be array`).toBeInstanceOf(Array);
 	expect(keys.length, `${arrayName} should not be empty`).toBeGreaterThan(0);
-	
+
 	keys.forEach((key, index) => {
 		validateNetworkKey(key, `${arrayName}[${index}]`);
 	});
@@ -52,25 +52,29 @@ function validateDWalletCapsResult(capsResult: any, testName: string = 'caps') {
 	expect(capsResult, `${testName} result should be defined`).toBeDefined();
 	expect(typeof capsResult, `${testName} result should be object`).toBe('object');
 	expect(capsResult.dWalletCaps, `${testName}.dWalletCaps should be array`).toBeInstanceOf(Array);
-	expect(typeof capsResult.hasNextPage, `${testName}.hasNextPage should be boolean`).toBe('boolean');
-	
+	expect(typeof capsResult.hasNextPage, `${testName}.hasNextPage should be boolean`).toBe(
+		'boolean',
+	);
+
 	// cursor should be null or string
 	const isValidCursor = capsResult.cursor === null || typeof capsResult.cursor === 'string';
 	expect(isValidCursor, `${testName}.cursor should be null or string`).toBe(true);
-	
+
 	// If there are no dWallet caps (new address), hasNextPage should be false
 	if (capsResult.dWalletCaps.length === 0) {
-		expect(capsResult.hasNextPage, `${testName}.hasNextPage should be false when no caps`).toBe(false);
+		expect(capsResult.hasNextPage, `${testName}.hasNextPage should be false when no caps`).toBe(
+			false,
+		);
 		expect(capsResult.cursor, `${testName}.cursor should be null when no caps`).toBeNull();
 	}
-	
+
 	// Validate each dWallet cap structure if any exist
 	capsResult.dWalletCaps.forEach((cap: any, index: number) => {
 		expect(cap, `${testName}.dWalletCaps[${index}] should be defined`).toBeDefined();
 		expect(typeof cap, `${testName}.dWalletCaps[${index}] should be object`).toBe('object');
 		expect(cap, `${testName}.dWalletCaps[${index}] should have id property`).toHaveProperty('id');
 	});
-	
+
 	// Test pagination structure integrity
 	expect(capsResult, `${testName} should have dWalletCaps property`).toHaveProperty('dWalletCaps');
 	expect(capsResult, `${testName} should have hasNextPage property`).toHaveProperty('hasNextPage');
@@ -117,14 +121,14 @@ describe('IkaClient Basic Features', () => {
 		// Get all network encryption keys and validate structure
 		const allKeys = await ikaClient.getAllNetworkEncryptionKeys();
 		validateNetworkKeyArray(allKeys, 'allKeys');
-		
+
 		// Cache for later tests to avoid redundant network calls
 		sharedTestCache.networkKeys = allKeys;
 
 		// Get latest network encryption key and validate it's in the list
 		const latestKey = await ikaClient.getLatestNetworkEncryptionKey();
 		validateNetworkKey(latestKey, 'latestKey');
-		
+
 		// Cache for later tests
 		sharedTestCache.latestKey = latestKey;
 
@@ -145,7 +149,7 @@ describe('IkaClient Basic Features', () => {
 		// Get configured network encryption key
 		const configuredKey = await ikaClient.getConfiguredNetworkEncryptionKey();
 		validateNetworkKey(configuredKey, 'configuredKey');
-		
+
 		// Cache for later tests
 		sharedTestCache.configuredKey = configuredKey;
 	});
