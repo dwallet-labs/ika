@@ -1,5 +1,12 @@
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::{IntegrationTestState, send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event_to_all_parties, send_start_dwallet_dkg_second_round_event};
+use crate::dwallet_mpc::integration_tests::utils::{
+    IntegrationTestState, send_start_dwallet_dkg_first_round_event,
+    send_start_dwallet_dkg_second_round_event, send_start_network_dkg_event_to_all_parties,
+};
+use dwallet_mpc_centralized_party::{
+    encrypt_secret_key_share_and_prove, generate_secp256k1_cg_keypair_from_seed_internal,
+    network_dkg_public_output_to_protocol_pp_inner,
+};
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
@@ -13,7 +20,6 @@ use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
 use tracing::info;
-use dwallet_mpc_centralized_party::network_dkg_public_output_to_protocol_pp_inner;
 
 #[tokio::test]
 #[cfg(test)]
@@ -104,9 +110,17 @@ async fn dwallet_dkg_first_round() {
     );
     let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
     let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output(
-        protocol_pp,
+        protocol_pp.clone(),
         dwallet_dkg_first_round_output.output.clone(),
         dwallet_dkg_session_identifier.to_vec(),
+    )
+    .unwrap();
+    let (encryption_key, decryption_key) =
+        generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
+    let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove(
+        centralized_dwallet_dkg_result.centralized_secret_output,
+        encryption_key.clone(),
+        protocol_pp,
     )
     .unwrap();
     send_start_dwallet_dkg_second_round_event(
@@ -119,9 +133,9 @@ async fn dwallet_dkg_first_round() {
         ObjectID::from_bytes(&dwallet_dkg_first_round_output.dwallet_id).unwrap(),
         dwallet_dkg_first_round_output.output,
         centralized_dwallet_dkg_result.public_key_share_and_proof,
-        todo!(),
-        todo!(),
-        centralized_dwallet_dkg_result.public_output
+        encrypted_secret_key_share_and_proof,
+        encryption_key,
+        centralized_dwallet_dkg_result.public_output,
     );
     info!("DWallet DKG first round completed");
 }
