@@ -21,7 +21,7 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe.sequential('Imported DWallet Creation', () => {
+describe('Imported DWallet Creation', () => {
 	it(
 		'should create an imported DWallet and activate it',
 		async () => {

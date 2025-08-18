@@ -14,7 +14,7 @@ import {
 	runSignFullFlow,
 } from '../helpers/test-utils';
 
-describe.sequential('DWallet Signing', () => {
+describe('DWallet Signing', () => {
 	it(
 		'should create a DWallet and sign a message',
 		async () => {
