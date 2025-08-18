@@ -19,7 +19,9 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
 use crate::dwallet_mpc::party_ids_to_authority_names;
-use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
+use crate::dwallet_mpc::session_request::{
+    DWalletSessionRequest, ProtocolData, ProtocolSpecificData,
+};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
@@ -758,7 +760,7 @@ impl DWalletMPCService {
         rejected: bool,
     ) -> Vec<DWalletCheckpointMessageKind> {
         info!(
-            mpc_protocol=?session_request.protocol_specific_data.to_string(),
+            mpc_protocol=? ProtocolData::from(&session_request.protocol_specific_data).to_string(),
             session_identifier=?session_identifier,
             "Creating session output message for checkpoint"
         );

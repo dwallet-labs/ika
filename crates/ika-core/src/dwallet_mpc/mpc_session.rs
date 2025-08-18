@@ -14,7 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::session_request::DWalletSessionRequest;
+use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolData};
 use ika_types::error::{IkaError, IkaResult};
 pub(crate) use input::{PublicInput, session_input_from_request};
 use std::fmt::{Debug, Formatter};
@@ -107,7 +107,9 @@ impl DWalletMPCSession {
         let mpc_protocol = self
             .request_data
             .as_ref()
-            .map(|event_data| event_data.protocol_specific_data.to_string())
+            .map(|request_data| {
+                ProtocolData::from(&request_data.protocol_specific_data).to_string()
+            })
             .unwrap_or_default();
         debug!(
             session_identifier=?message.session_identifier,
@@ -152,15 +154,12 @@ impl DWalletMPCSession {
     /// Records a threshold not reached error that we got when advancing
     /// this session with messages up to `consensus_round`.
     pub(crate) fn record_threshold_not_reached(&mut self, consensus_round: u64) {
-        let request_input = &self
-            .request_data
-            .as_ref()
-            .unwrap()
-            .protocol_specific_data
-            .to_string();
+        let protocol_name =
+            ProtocolData::from(&self.request_data.as_ref().unwrap().protocol_specific_data)
+                .to_string();
 
         error!(
-            mpc_protocol=?request_input,
+            mpc_protocol=?protocol_name,
             validator=?self.validator_name,
             session_identifier=?self.session_identifier,
             mpc_round=?self.current_mpc_round,
@@ -187,8 +186,9 @@ impl DWalletMPCSession {
         let mpc_protocol = self
             .request_data
             .as_ref()
-            .map(|event_data| event_data.protocol_specific_data.to_string())
+            .map(|request| ProtocolData::from(&request.protocol_specific_data).to_string())
             .unwrap_or_default();
+
         debug!(
             session_identifier=?output.session_identifier,
             from_authority=?output.authority,
@@ -372,7 +372,7 @@ impl DWalletMPCManager {
         if !request.pulled && request.epoch != self.epoch_id {
             warn!(
                 session_identifier=?session_identifier,
-                session_request=?request.protocol_specific_data.to_string(),
+                session_request=?ProtocolData::from(&request.protocol_specific_data).to_string(),
                 session_type=?request.session_type,
                 event_epoch=?request.epoch,
                 "received an event for a different epoch, skipping"
@@ -392,7 +392,7 @@ impl DWalletMPCManager {
                     // We don't yet have the data for this network encryption key,
                     // so we add it to the queue.
                     debug!(
-                        session_request=?request.protocol_specific_data.to_string(),
+                        session_request=?ProtocolData::from(&request.protocol_specific_data).to_string(),
                         session_type=?request.session_type,
                         network_encryption_key_id=?network_encryption_key_id,
                         "Adding request to pending for the network key"
@@ -420,7 +420,7 @@ impl DWalletMPCManager {
             // We don't have the next active committee yet,
             // so we have to add this request to the pending queue until it arrives.
             debug!(
-                session_request=?request.protocol_specific_data.to_string(),
+                session_request=?ProtocolData::from(&request.protocol_specific_data).to_string(),
                 session_type=?request.session_type,
                 "Adding request to pending for the next epoch active committee"
             );
@@ -467,7 +467,7 @@ impl DWalletMPCManager {
         };
 
         self.dwallet_mpc_metrics
-            .add_received_request_start(&request.protocol_specific_data);
+            .add_received_request_start(&(&request.protocol_specific_data).into());
 
         if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
             session.request_data = Some(request);
@@ -519,7 +519,7 @@ impl DWalletMPCService {
             Ok(requests) => {
                 for request in &requests {
                     debug!(
-                        request_type=?request.protocol_specific_data.to_string(),
+                        request_type=?ProtocolData::from(&request.protocol_specific_data).to_string(),
                         session_identifier=?request.session_identifier,
                         current_epoch=?self.epoch,
                         "Received a request from Sui"

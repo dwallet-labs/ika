@@ -39,9 +39,54 @@ pub struct DWalletSessionRequest {
     pub pulled: bool,
 }
 
-#[derive(strum_macros::Display, Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ProtocolSpecificData {
+#[derive(Debug, Clone, Eq, PartialEq, strum_macros::Display)]
+pub enum ProtocolData {
     #[strum(to_string = "ImportedKeyVerification")]
+    ImportedKeyVerification { curve: DWalletMPCNetworkKeyScheme },
+
+    #[strum(to_string = "MakeDWalletUserSecretKeySharesPublic")]
+    MakeDWalletUserSecretKeySharesPublic { curve: DWalletMPCNetworkKeyScheme },
+
+    #[strum(to_string = "DKGFirst")]
+    DKGFirst { curve: DWalletMPCNetworkKeyScheme },
+
+    #[strum(to_string = "DKGSecond")]
+    DKGSecond { curve: DWalletMPCNetworkKeyScheme },
+
+    #[strum(to_string = "Presign")]
+    Presign {
+        curve: DWalletMPCNetworkKeyScheme,
+        signature_algorithm: SignatureAlgorithm,
+    },
+
+    #[strum(to_string = "Sign")]
+    Sign {
+        curve: DWalletMPCNetworkKeyScheme,
+        hash_scheme: Hash,
+        signature_algorithm: SignatureAlgorithm,
+    },
+
+    #[strum(to_string = "NetworkEncryptionKeyDkg")]
+    NetworkEncryptionKeyDkg {
+        key_scheme: DWalletMPCNetworkKeyScheme,
+    },
+
+    #[strum(to_string = "NetworkEncryptionKeyReconfiguration")]
+    NetworkEncryptionKeyReconfiguration,
+
+    #[strum(to_string = "EncryptedShareVerification")]
+    EncryptedShareVerification { curve: DWalletMPCNetworkKeyScheme },
+
+    #[strum(to_string = "PartialSignatureVerification")]
+    PartialSignatureVerification {
+        curve: DWalletMPCNetworkKeyScheme,
+        hash_type: Hash,
+        signature_algorithm: SignatureAlgorithm,
+    },
+}
+
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ProtocolSpecificData {
     ImportedKeyVerification {
         curve: DWalletMPCNetworkKeyScheme,
         encrypted_centralized_secret_share_and_proof: Vec<u8>,
@@ -52,7 +97,6 @@ pub(crate) enum ProtocolSpecificData {
         centralized_party_message: Vec<u8>,
     },
 
-    #[strum(to_string = "MakeDWalletUserSecretKeySharesPublic")]
     MakeDWalletUserSecretKeySharesPublic {
         curve: DWalletMPCNetworkKeyScheme,
         public_user_secret_key_shares: Vec<u8>,
@@ -61,14 +105,12 @@ pub(crate) enum ProtocolSpecificData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
-    #[strum(to_string = "DKGFirst")]
     DKGFirst {
         curve: DWalletMPCNetworkKeyScheme,
         dwallet_id: ObjectID,
         dwallet_network_encryption_key_id: ObjectID,
     },
 
-    #[strum(to_string = "DKGSecond")]
     DKGSecond {
         curve: DWalletMPCNetworkKeyScheme,
         encrypted_centralized_secret_share_and_proof: Vec<u8>,
@@ -80,7 +122,6 @@ pub(crate) enum ProtocolSpecificData {
         centralized_public_key_share_and_proof: SerializedWrappedMPCPublicOutput,
     },
 
-    #[strum(to_string = "Presign")]
     Presign {
         curve: DWalletMPCNetworkKeyScheme,
         signature_algorithm: SignatureAlgorithm,
@@ -90,7 +131,6 @@ pub(crate) enum ProtocolSpecificData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
-    #[strum(to_string = "Sign")]
     Sign {
         curve: DWalletMPCNetworkKeyScheme,
         hash_scheme: Hash,
@@ -105,18 +145,15 @@ pub(crate) enum ProtocolSpecificData {
         message_centralized_signature: SerializedWrappedMPCPublicOutput,
     },
 
-    #[strum(to_string = "NetworkEncryptionKeyDkg")]
     NetworkEncryptionKeyDkg {
         key_scheme: DWalletMPCNetworkKeyScheme,
         dwallet_network_encryption_key_id: ObjectID,
     },
 
-    #[strum(to_string = "NetworkEncryptionKeyReconfiguration")]
     NetworkEncryptionKeyReconfiguration {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
-    #[strum(to_string = "EncryptedShareVerification")]
     EncryptedShareVerification {
         curve: DWalletMPCNetworkKeyScheme,
         encrypted_centralized_secret_share_and_proof: Vec<u8>,
@@ -127,7 +164,6 @@ pub(crate) enum ProtocolSpecificData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
-    #[strum(to_string = "PartialSignatureVerification")]
     PartialSignatureVerification {
         curve: DWalletMPCNetworkKeyScheme,
         message: Vec<u8>,
@@ -140,6 +176,295 @@ pub(crate) enum ProtocolSpecificData {
         partial_centralized_signed_message_id: ObjectID,
         dwallet_network_encryption_key_id: ObjectID,
     },
+}
+
+pub(crate) enum AdvanceSpecificData {
+    ImportedKeyVerification {
+        curve: DWalletMPCNetworkKeyScheme,
+        public_input: <DWalletImportedKeyVerificationParty as mpc::Party>::PublicInput,
+        encrypted_centralized_secret_share_and_proof: Vec<u8>,
+        encryption_key: Vec<u8>,
+        advance_request: AdvanceRequest<()>,
+    },
+
+    MakeDWalletUserSecretKeySharesPublic {
+        curve: DWalletMPCNetworkKeyScheme,
+        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+        public_user_secret_key_shares: Vec<u8>,
+        dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
+    },
+
+    DKGFirst {
+        curve: DWalletMPCNetworkKeyScheme,
+        public_input: <DWalletDKGFirstParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<DWalletDKGFirstParty as mpc::Party>::Message>,
+    },
+
+    DKGSecond {
+        curve: DWalletMPCNetworkKeyScheme,
+        public_input: <DWalletDKGSecondParty as mpc::Party>::PublicInput,
+        encrypted_centralized_secret_share_and_proof: Vec<u8>,
+        encryption_key: Vec<u8>,
+        advance_request: AdvanceRequest<<DWalletDKGSecondParty as mpc::Party>::Message>,
+    },
+
+    Presign {
+        curve: DWalletMPCNetworkKeyScheme,
+        signature_algorithm: SignatureAlgorithm,
+        public_input: <PresignParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<PresignParty as mpc::Party>::Message>,
+    },
+
+    Sign {
+        curve: DWalletMPCNetworkKeyScheme,
+        hash_scheme: Hash,
+        signature_algorithm: SignatureAlgorithm,
+        public_input: <SignParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<SignParty as mpc::Party>::Message>,
+        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+    },
+
+    NetworkEncryptionKeyDkg {
+        key_scheme: DWalletMPCNetworkKeyScheme,
+        public_input: <Secp256k1Party as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
+        class_groups_decryption_key: ClassGroupsDecryptionKey,
+    },
+
+    NetworkEncryptionKeyReconfiguration {
+        public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
+        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+    },
+
+    EncryptedShareVerification {
+        curve: DWalletMPCNetworkKeyScheme,
+        encrypted_centralized_secret_share_and_proof: Vec<u8>,
+        decentralized_public_output: SerializedWrappedMPCPublicOutput,
+        encryption_key: Vec<u8>,
+        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    },
+
+    PartialSignatureVerification {
+        curve: DWalletMPCNetworkKeyScheme,
+        message: Vec<u8>,
+        hash_type: Hash,
+        signature_algorithm: SignatureAlgorithm,
+        dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
+        presign: SerializedWrappedMPCPublicOutput,
+        partially_signed_message: SerializedWrappedMPCPublicOutput,
+        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    },
+}
+
+impl PartialOrd<Self> for DWalletSessionRequest {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DWalletSessionRequest {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // System sessions have a higher priority than user session and therefore come first (are smaller).
+        // Both system and user sessions are sorted by their sequence number between themselves.
+        match (self.session_type, other.session_type) {
+            (SessionType::User, SessionType::User) => self
+                .session_sequence_number
+                .cmp(&other.session_sequence_number),
+            (SessionType::System, SessionType::User) => Ordering::Less,
+            (SessionType::System, SessionType::System) => self
+                .session_sequence_number
+                .cmp(&other.session_sequence_number),
+            (SessionType::User, SessionType::System) => Ordering::Greater,
+        }
+    }
+}
+
+impl ProtocolData {
+    pub fn curve(&self) -> String {
+        match self {
+            ProtocolData::DKGFirst { curve, .. }
+            | ProtocolData::DKGSecond { curve, .. }
+            | ProtocolData::Presign { curve, .. }
+            | ProtocolData::Sign { curve, .. }
+            | ProtocolData::EncryptedShareVerification { curve, .. }
+            | ProtocolData::PartialSignatureVerification { curve, .. }
+            | ProtocolData::MakeDWalletUserSecretKeySharesPublic { curve, .. }
+            | ProtocolData::ImportedKeyVerification { curve, .. } => curve.to_string(),
+            ProtocolData::NetworkEncryptionKeyDkg { .. }
+            | ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => "Unknown".to_string(),
+        }
+    }
+
+    pub fn hash_scheme(&self) -> String {
+        match self {
+            ProtocolData::Sign { hash_scheme, .. }
+            | ProtocolData::PartialSignatureVerification {
+                hash_type: hash_scheme,
+                ..
+            } => hash_scheme.to_string(),
+            ProtocolData::DKGFirst { .. }
+            | ProtocolData::DKGSecond { .. }
+            | ProtocolData::Presign { .. }
+            | ProtocolData::NetworkEncryptionKeyDkg { .. }
+            | ProtocolData::EncryptedShareVerification { .. }
+            | ProtocolData::NetworkEncryptionKeyReconfiguration { .. }
+            | ProtocolData::MakeDWalletUserSecretKeySharesPublic { .. }
+            | ProtocolData::ImportedKeyVerification { .. } => "Unknown".to_string(),
+        }
+    }
+
+    pub fn signature_algorithm(&self) -> String {
+        match self {
+            ProtocolData::Presign {
+                signature_algorithm,
+                ..
+            }
+            | ProtocolData::Sign {
+                signature_algorithm,
+                ..
+            }
+            | ProtocolData::PartialSignatureVerification {
+                signature_algorithm,
+                ..
+            } => signature_algorithm.to_string(),
+            ProtocolData::DKGFirst { .. }
+            | ProtocolData::DKGSecond { .. }
+            | ProtocolData::NetworkEncryptionKeyDkg { .. }
+            | ProtocolData::EncryptedShareVerification { .. }
+            | ProtocolData::NetworkEncryptionKeyReconfiguration { .. }
+            | ProtocolData::MakeDWalletUserSecretKeySharesPublic { .. }
+            | ProtocolData::ImportedKeyVerification { .. } => "Unknown".to_string(),
+        }
+    }
+}
+
+impl From<&ProtocolSpecificData> for ProtocolData {
+    fn from(protocol_specific_data: &ProtocolSpecificData) -> Self {
+        match protocol_specific_data {
+            ProtocolSpecificData::ImportedKeyVerification { curve, .. } => {
+                ProtocolData::ImportedKeyVerification {
+                    curve: curve.clone(),
+                }
+            }
+            ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic { curve, .. } => {
+                ProtocolData::MakeDWalletUserSecretKeySharesPublic {
+                    curve: curve.clone(),
+                }
+            }
+            ProtocolSpecificData::DKGFirst { curve, .. } => ProtocolData::DKGFirst {
+                curve: curve.clone(),
+            },
+            ProtocolSpecificData::DKGSecond { curve, .. } => ProtocolData::DKGSecond {
+                curve: curve.clone(),
+            },
+            ProtocolSpecificData::Presign {
+                curve,
+                signature_algorithm,
+                ..
+            } => ProtocolData::Presign {
+                curve: curve.clone(),
+                signature_algorithm: *signature_algorithm,
+            },
+            ProtocolSpecificData::Sign {
+                curve,
+                hash_scheme,
+                signature_algorithm,
+                ..
+            } => ProtocolData::Sign {
+                curve: curve.clone(),
+                hash_scheme: hash_scheme.clone(),
+                signature_algorithm: *signature_algorithm,
+            },
+            ProtocolSpecificData::NetworkEncryptionKeyDkg { key_scheme, .. } => {
+                ProtocolData::NetworkEncryptionKeyDkg {
+                    key_scheme: key_scheme.clone(),
+                }
+            }
+            ProtocolSpecificData::NetworkEncryptionKeyReconfiguration { .. } => {
+                ProtocolData::NetworkEncryptionKeyReconfiguration
+            }
+            ProtocolSpecificData::EncryptedShareVerification { curve, .. } => {
+                ProtocolData::EncryptedShareVerification {
+                    curve: curve.clone(),
+                }
+            }
+            ProtocolSpecificData::PartialSignatureVerification {
+                curve,
+                hash_type,
+                signature_algorithm,
+                ..
+            } => ProtocolData::PartialSignatureVerification {
+                curve: curve.clone(),
+                hash_type: hash_type.clone(),
+                signature_algorithm: *signature_algorithm,
+            },
+        }
+    }
+}
+
+impl From<&AdvanceSpecificData> for ProtocolData {
+    fn from(advance_specific_data: &AdvanceSpecificData) -> Self {
+        match advance_specific_data {
+            AdvanceSpecificData::ImportedKeyVerification { curve, .. } => {
+                ProtocolData::ImportedKeyVerification {
+                    curve: curve.clone(),
+                }
+            }
+            AdvanceSpecificData::MakeDWalletUserSecretKeySharesPublic { curve, .. } => {
+                ProtocolData::MakeDWalletUserSecretKeySharesPublic {
+                    curve: curve.clone(),
+                }
+            }
+            AdvanceSpecificData::DKGFirst { curve, .. } => ProtocolData::DKGFirst {
+                curve: curve.clone(),
+            },
+            AdvanceSpecificData::DKGSecond { curve, .. } => ProtocolData::DKGSecond {
+                curve: curve.clone(),
+            },
+            AdvanceSpecificData::Presign {
+                curve,
+                signature_algorithm,
+                ..
+            } => ProtocolData::Presign {
+                curve: curve.clone(),
+                signature_algorithm: *signature_algorithm,
+            },
+            AdvanceSpecificData::Sign {
+                curve,
+                hash_scheme,
+                signature_algorithm,
+                ..
+            } => ProtocolData::Sign {
+                curve: curve.clone(),
+                hash_scheme: hash_scheme.clone(),
+                signature_algorithm: *signature_algorithm,
+            },
+            AdvanceSpecificData::NetworkEncryptionKeyDkg { key_scheme, .. } => {
+                ProtocolData::NetworkEncryptionKeyDkg {
+                    key_scheme: key_scheme.clone(),
+                }
+            }
+            AdvanceSpecificData::NetworkEncryptionKeyReconfiguration { .. } => {
+                ProtocolData::NetworkEncryptionKeyReconfiguration
+            }
+            AdvanceSpecificData::EncryptedShareVerification { curve, .. } => {
+                ProtocolData::EncryptedShareVerification {
+                    curve: curve.clone(),
+                }
+            }
+            AdvanceSpecificData::PartialSignatureVerification {
+                curve,
+                hash_type,
+                signature_algorithm,
+                ..
+            } => ProtocolData::PartialSignatureVerification {
+                curve: curve.clone(),
+                hash_type: hash_type.clone(),
+                signature_algorithm: *signature_algorithm,
+            },
+        }
+    }
 }
 
 impl ProtocolSpecificData {
@@ -282,65 +607,6 @@ impl ProtocolSpecificData {
         Ok(protocol_data)
     }
 
-    pub fn curve(&self) -> String {
-        match self {
-            ProtocolSpecificData::DKGFirst { curve, .. }
-            | ProtocolSpecificData::DKGSecond { curve, .. }
-            | ProtocolSpecificData::Presign { curve, .. }
-            | ProtocolSpecificData::Sign { curve, .. }
-            | ProtocolSpecificData::EncryptedShareVerification { curve, .. }
-            | ProtocolSpecificData::PartialSignatureVerification { curve, .. }
-            | ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic { curve, .. }
-            | ProtocolSpecificData::ImportedKeyVerification { curve, .. } => curve.to_string(),
-            ProtocolSpecificData::NetworkEncryptionKeyDkg { .. }
-            | ProtocolSpecificData::NetworkEncryptionKeyReconfiguration { .. } => {
-                "Unknown".to_string()
-            }
-        }
-    }
-
-    pub fn hash_scheme(&self) -> String {
-        match self {
-            ProtocolSpecificData::Sign { hash_scheme, .. }
-            | ProtocolSpecificData::PartialSignatureVerification {
-                hash_type: hash_scheme,
-                ..
-            } => hash_scheme.to_string(),
-            ProtocolSpecificData::DKGFirst { .. }
-            | ProtocolSpecificData::DKGSecond { .. }
-            | ProtocolSpecificData::Presign { .. }
-            | ProtocolSpecificData::NetworkEncryptionKeyDkg { .. }
-            | ProtocolSpecificData::EncryptedShareVerification { .. }
-            | ProtocolSpecificData::NetworkEncryptionKeyReconfiguration { .. }
-            | ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic { .. }
-            | ProtocolSpecificData::ImportedKeyVerification { .. } => "Unknown".to_string(),
-        }
-    }
-
-    pub fn signature_algorithm(&self) -> String {
-        match self {
-            ProtocolSpecificData::Presign {
-                signature_algorithm,
-                ..
-            }
-            | ProtocolSpecificData::Sign {
-                signature_algorithm,
-                ..
-            }
-            | ProtocolSpecificData::PartialSignatureVerification {
-                signature_algorithm,
-                ..
-            } => signature_algorithm.to_string(),
-            ProtocolSpecificData::DKGFirst { .. }
-            | ProtocolSpecificData::DKGSecond { .. }
-            | ProtocolSpecificData::NetworkEncryptionKeyDkg { .. }
-            | ProtocolSpecificData::EncryptedShareVerification { .. }
-            | ProtocolSpecificData::NetworkEncryptionKeyReconfiguration { .. }
-            | ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic { .. }
-            | ProtocolSpecificData::ImportedKeyVerification { .. } => "Unknown".to_string(),
-        }
-    }
-
     pub fn network_encryption_key_id(&self) -> Option<ObjectID> {
         match self {
             ProtocolSpecificData::DKGFirst {
@@ -385,96 +651,6 @@ impl ProtocolSpecificData {
             } => Some(*dwallet_network_encryption_key_id),
         }
     }
-}
-
-#[derive(Debug, strum_macros::Display)]
-pub(crate) enum AdvanceSpecificData {
-    #[strum(to_string = "ImportedKeyVerification")]
-    ImportedKeyVerification {
-        curve: DWalletMPCNetworkKeyScheme,
-        public_input: <DWalletImportedKeyVerificationParty as mpc::Party>::PublicInput,
-        encrypted_centralized_secret_share_and_proof: Vec<u8>,
-        encryption_key: Vec<u8>,
-        advance_request: AdvanceRequest<()>,
-    },
-
-    #[strum(to_string = "MakeDWalletUserSecretKeySharesPublic")]
-    MakeDWalletUserSecretKeySharesPublic {
-        curve: DWalletMPCNetworkKeyScheme,
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-        public_user_secret_key_shares: Vec<u8>,
-        dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
-    },
-
-    #[strum(to_string = "DKGFirst")]
-    DKGFirst {
-        curve: DWalletMPCNetworkKeyScheme,
-        public_input: <DWalletDKGFirstParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<DWalletDKGFirstParty as mpc::Party>::Message>,
-    },
-
-    #[strum(to_string = "DKGSecond")]
-    DKGSecond {
-        curve: DWalletMPCNetworkKeyScheme,
-        public_input: <DWalletDKGSecondParty as mpc::Party>::PublicInput,
-        encrypted_centralized_secret_share_and_proof: Vec<u8>,
-        encryption_key: Vec<u8>,
-        advance_request: AdvanceRequest<<DWalletDKGSecondParty as mpc::Party>::Message>,
-    },
-
-    #[strum(to_string = "Presign")]
-    Presign {
-        curve: DWalletMPCNetworkKeyScheme,
-        signature_algorithm: SignatureAlgorithm,
-        public_input: <PresignParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<PresignParty as mpc::Party>::Message>,
-    },
-
-    #[strum(to_string = "Sign")]
-    Sign {
-        curve: DWalletMPCNetworkKeyScheme,
-        hash_scheme: Hash,
-        signature_algorithm: SignatureAlgorithm,
-        public_input: <SignParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<SignParty as mpc::Party>::Message>,
-        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
-    },
-
-    #[strum(to_string = "NetworkEncryptionKeyDkg")]
-    NetworkEncryptionKeyDkg {
-        key_scheme: DWalletMPCNetworkKeyScheme,
-        public_input: <Secp256k1Party as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
-        class_groups_decryption_key: ClassGroupsDecryptionKey,
-    },
-
-    #[strum(to_string = "NetworkEncryptionKeyReconfiguration")]
-    NetworkEncryptionKeyReconfiguration {
-        public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
-        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
-    },
-
-    #[strum(to_string = "EncryptedShareVerification")]
-    EncryptedShareVerification {
-        curve: DWalletMPCNetworkKeyScheme,
-        encrypted_centralized_secret_share_and_proof: Vec<u8>,
-        decentralized_public_output: SerializedWrappedMPCPublicOutput,
-        encryption_key: Vec<u8>,
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    },
-
-    #[strum(to_string = "PartialSignatureVerification")]
-    PartialSignatureVerification {
-        curve: DWalletMPCNetworkKeyScheme,
-        message: Vec<u8>,
-        hash_type: Hash,
-        signature_algorithm: SignatureAlgorithm,
-        dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
-        presign: SerializedWrappedMPCPublicOutput,
-        partially_signed_message: SerializedWrappedMPCPublicOutput,
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    },
 }
 
 impl AdvanceSpecificData {
@@ -768,65 +944,6 @@ impl AdvanceSpecificData {
         Ok(Some(res))
     }
 
-    pub fn curve(&self) -> String {
-        match self {
-            AdvanceSpecificData::DKGFirst { curve, .. }
-            | AdvanceSpecificData::DKGSecond { curve, .. }
-            | AdvanceSpecificData::Presign { curve, .. }
-            | AdvanceSpecificData::Sign { curve, .. }
-            | AdvanceSpecificData::EncryptedShareVerification { curve, .. }
-            | AdvanceSpecificData::PartialSignatureVerification { curve, .. }
-            | AdvanceSpecificData::MakeDWalletUserSecretKeySharesPublic { curve, .. }
-            | AdvanceSpecificData::ImportedKeyVerification { curve, .. } => curve.to_string(),
-            AdvanceSpecificData::NetworkEncryptionKeyDkg { .. }
-            | AdvanceSpecificData::NetworkEncryptionKeyReconfiguration { .. } => {
-                "Unknown".to_string()
-            }
-        }
-    }
-
-    pub fn hash_scheme(&self) -> String {
-        match self {
-            AdvanceSpecificData::Sign { hash_scheme, .. }
-            | AdvanceSpecificData::PartialSignatureVerification {
-                hash_type: hash_scheme,
-                ..
-            } => hash_scheme.to_string(),
-            AdvanceSpecificData::DKGFirst { .. }
-            | AdvanceSpecificData::DKGSecond { .. }
-            | AdvanceSpecificData::Presign { .. }
-            | AdvanceSpecificData::NetworkEncryptionKeyDkg { .. }
-            | AdvanceSpecificData::EncryptedShareVerification { .. }
-            | AdvanceSpecificData::NetworkEncryptionKeyReconfiguration { .. }
-            | AdvanceSpecificData::MakeDWalletUserSecretKeySharesPublic { .. }
-            | AdvanceSpecificData::ImportedKeyVerification { .. } => "Unknown".to_string(),
-        }
-    }
-
-    pub fn signature_algorithm(&self) -> String {
-        match self {
-            AdvanceSpecificData::Presign {
-                signature_algorithm,
-                ..
-            }
-            | AdvanceSpecificData::Sign {
-                signature_algorithm,
-                ..
-            }
-            | AdvanceSpecificData::PartialSignatureVerification {
-                signature_algorithm,
-                ..
-            } => signature_algorithm.to_string(),
-            AdvanceSpecificData::DKGFirst { .. }
-            | AdvanceSpecificData::DKGSecond { .. }
-            | AdvanceSpecificData::NetworkEncryptionKeyDkg { .. }
-            | AdvanceSpecificData::EncryptedShareVerification { .. }
-            | AdvanceSpecificData::NetworkEncryptionKeyReconfiguration { .. }
-            | AdvanceSpecificData::MakeDWalletUserSecretKeySharesPublic { .. }
-            | AdvanceSpecificData::ImportedKeyVerification { .. } => "Unknown".to_string(),
-        }
-    }
-
     pub fn get_attempt_number(&self) -> u64 {
         match self {
             AdvanceSpecificData::DKGFirst {
@@ -853,29 +970,6 @@ impl AdvanceSpecificData {
             AdvanceSpecificData::ImportedKeyVerification {
                 advance_request, ..
             } => advance_request.attempt_number,
-        }
-    }
-}
-
-impl PartialOrd<Self> for DWalletSessionRequest {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for DWalletSessionRequest {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // System sessions have a higher priority than user session and therefore come first (are smaller).
-        // Both system and user sessions are sorted by their sequence number between themselves.
-        match (self.session_type, other.session_type) {
-            (SessionType::User, SessionType::User) => self
-                .session_sequence_number
-                .cmp(&other.session_sequence_number),
-            (SessionType::System, SessionType::User) => Ordering::Less,
-            (SessionType::System, SessionType::System) => self
-                .session_sequence_number
-                .cmp(&other.session_sequence_number),
-            (SessionType::User, SessionType::System) => Ordering::Greater,
         }
     }
 }

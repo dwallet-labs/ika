@@ -470,7 +470,7 @@ impl DWalletMPCManager {
 
                     let computation_request = ComputationRequest {
                         party_id: self.party_id,
-                        protocol_name: request_data.protocol_specific_data.to_string(),
+                        protocol_data: (&request_data.protocol_specific_data).into(),
                         validator_name: self.validator_name,
                         access_structure: self.access_structure.clone(),
                         advance_specific_data,
@@ -787,7 +787,7 @@ impl DWalletMPCManager {
             session.mark_mpc_session_as_completed();
             if let Some(request_data) = session.request_data() {
                 self.dwallet_mpc_metrics
-                    .add_completion(&request_data.protocol_specific_data);
+                    .add_completion(&(&request_data.protocol_specific_data).into());
             }
             session.clear_data();
         }

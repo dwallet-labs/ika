@@ -12,7 +12,7 @@ use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::network_dkg::advance_network_dkg;
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
-use crate::dwallet_mpc::session_request::AdvanceSpecificData;
+use crate::dwallet_mpc::session_request::{AdvanceSpecificData, ProtocolData};
 use crate::dwallet_mpc::sign::{SignParty, verify_partial_signature};
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -35,7 +35,7 @@ use tracing::{error, info};
 
 pub(crate) struct Request {
     pub(crate) party_id: PartyID,
-    pub(crate) protocol_name: String,
+    pub(crate) protocol_data: ProtocolData,
     pub(crate) validator_name: AuthorityPublicKeyBytes,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
     pub(crate) advance_specific_data: AdvanceSpecificData,
@@ -51,7 +51,7 @@ impl Request {
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         info!(
-            mpc_protocol=?self.protocol_name,
+            mpc_protocol=?self.protocol_data.to_string(),
             validator=?self.validator_name,
             session_identifier=?computation_id.session_identifier,
             mpc_round=?computation_id.mpc_round,

@@ -288,14 +288,6 @@ pub struct DBSuiEvent {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct DWalletMPCEvent {
-    pub session_request: MPCSessionRequest,
-    // True when the event was pulled from the state of the object,
-    // and False when it was pushed as an event.
-    pub pulled: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DWalletMPCOutput {
     /// The authority that sent the output.
     pub authority: AuthorityName,
@@ -314,23 +306,6 @@ pub struct DWalletMPCMessage {
     /// The authority (Validator) that sent the message.
     pub authority: AuthorityName,
     pub session_identifier: SessionIdentifier,
-}
-
-/// Holds information about the current MPC session.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct MPCSessionRequest {
-    pub session_type: SessionType,
-    /// Unique identifier for the MPC session.
-    pub session_identifier: SessionIdentifier,
-    pub session_sequence_number: u64,
-    /// The input to the request MPC session.
-    pub request_input: MPCRequestInput,
-    pub epoch: u64,
-    pub requires_network_key_data: bool,
-    pub requires_next_active_committee: bool,
-    // True when the event was pulled from the state of the object,
-    // and False when it was pushed as an event.
-    pub pulled: bool,
 }
 
 pub trait DWalletSessionEventTrait {
