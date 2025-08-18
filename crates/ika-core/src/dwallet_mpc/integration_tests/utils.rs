@@ -834,4 +834,3 @@ pub(crate) fn send_start_presign_event(
         ));
     });
 }
-

@@ -5,10 +5,10 @@ use crate::dwallet_mpc::integration_tests::utils::{
     IntegrationTestState, send_start_presign_event,
 };
 use ika_types::committee::Committee;
+use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use sui_types::base_types::ObjectID;
 use tracing::info;
-use ika_types::message::DWalletCheckpointMessageKind;
 
 #[tokio::test]
 #[cfg(test)]

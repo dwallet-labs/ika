@@ -136,12 +136,8 @@ async fn create_dwallet() {
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
-    let (consensus_round, dwallet_dkg_second_round_output) = create_dwallet_test(
-        &mut test_state,
-        consensus_round,
-        key_id,
-        network_key_bytes,
-    ).await;
+    let (consensus_round, dwallet_dkg_second_round_output) =
+        create_dwallet_test(&mut test_state, consensus_round, key_id, network_key_bytes).await;
     info!("DWallet DKG second round completed");
 }
 
