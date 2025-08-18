@@ -1,8 +1,5 @@
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::{
-    IntegrationTestState, send_start_dwallet_dkg_first_round_event,
-    send_start_network_dkg_event_to_all_parties,
-};
+use crate::dwallet_mpc::integration_tests::utils::{IntegrationTestState, send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event_to_all_parties, send_start_dwallet_dkg_second_round_event};
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
@@ -108,11 +105,24 @@ async fn dwallet_dkg_first_round() {
     let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
     let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output(
         protocol_pp,
-        dwallet_dkg_first_round_output.output,
+        dwallet_dkg_first_round_output.output.clone(),
         dwallet_dkg_session_identifier.to_vec(),
     )
     .unwrap();
-
+    send_start_dwallet_dkg_second_round_event(
+        &ika_network_config,
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        dwallet_dkg_session_identifier,
+        3,
+        key_id.unwrap(),
+        ObjectID::from_bytes(&dwallet_dkg_first_round_output.dwallet_id).unwrap(),
+        dwallet_dkg_first_round_output.output,
+        centralized_dwallet_dkg_result.public_key_share_and_proof,
+        todo!(),
+        todo!(),
+        centralized_dwallet_dkg_result.public_output
+    );
     info!("DWallet DKG first round completed");
 }
 
