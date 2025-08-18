@@ -653,7 +653,7 @@ impl DWalletMPCService {
                                     "MPC session failed"
                                 );
 
-                                let consensus_round = computation_id.consensus_round.expect("consensus round must be set for the computation ID of a computation that got a threshold not reached error");
+                                let consensus_round = computation_id.consensus_round;
                                 self.dwallet_mpc_manager.record_threshold_not_reached(
                                     consensus_round,
                                     computation_id.session_identifier,

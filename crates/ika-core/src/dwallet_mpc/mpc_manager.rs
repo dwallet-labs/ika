@@ -441,13 +441,11 @@ impl DWalletMPCManager {
                     return None;
                 };
 
-                let consensus_round = session.messages_by_consensus_round.keys().max().copied();
-
                 AdvanceSpecificData::try_new(
                     &request_data.protocol_specific_data,
                     self.party_id,
                     &self.access_structure,
-                    consensus_round.unwrap_or_else(|| last_read_consensus_round),
+                    last_read_consensus_round,
                     session.messages_by_consensus_round.clone(),
                     public_input.clone(),
                     self.network_dkg_third_round_delay,
@@ -464,7 +462,7 @@ impl DWalletMPCManager {
 
                     let computation_id = ComputationId {
                         session_identifier: session.session_identifier,
-                        consensus_round,
+                        consensus_round: last_read_consensus_round,
                         mpc_round: session.current_mpc_round,
                         attempt_number,
                     };

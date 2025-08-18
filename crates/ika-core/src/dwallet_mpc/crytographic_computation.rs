@@ -21,7 +21,7 @@ pub(crate) struct ComputationId {
     /// event is received from Sui.
     /// All other MPC rounds will set this to `Some()` with the value being the last consensus
     /// round from which we gathered messages to advance.
-    pub(crate) consensus_round: Option<u64>,
+    pub(crate) consensus_round: u64,
     pub(crate) mpc_round: u64,
     pub(crate) attempt_number: u64,
 }

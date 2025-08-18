@@ -70,7 +70,7 @@ impl Request {
         let mut rng = root_seed.mpc_round_rng(
             session_id,
             computation_id.mpc_round,
-            computation_id.consensus_round.unwrap_or_default(),
+            computation_id.consensus_round,
         );
 
         match self.advance_specific_data {
