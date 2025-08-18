@@ -74,7 +74,7 @@ jobs:
           echo '${{ github.event.inputs.ika_config_json }}' > ika_config.json
 
       - name: Run test
-        run: npx vitest run -t "should create a DWallet and sign a message"
+        run: npx vitest run --no-file-parallelism -t "DWallet Signing|DWallet Future Signing|DWallet Creation|Shared DWallet Signing (public user shares)|Shared DWallet (make shares public)|DWallet Transfer|Shared Imported DWallet Signing (public user shares)|Imported DWallet Creation|Imported DWallet Sharing (make shares public)|Imported DWallet Signing"
         working-directory: ./sdk/typescript
         env:
           SUI_TESTNET_URL: ${{ github.event.inputs.SUI_FULLNODE_URL }}
