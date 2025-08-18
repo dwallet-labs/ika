@@ -209,7 +209,7 @@ async fn create_dwallet() {
         &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
-        dwallet_dkg_session_identifier,
+        [3; 32],
         3,
         key_id.unwrap(),
         ObjectID::from_bytes(&dwallet_dkg_first_round_output.dwallet_id).unwrap(),
