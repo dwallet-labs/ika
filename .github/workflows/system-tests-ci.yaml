@@ -1,8 +1,20 @@
 name: TS System Tests CI
 
 on:
-  push:
   workflow_dispatch:
+    inputs:
+      SUI_FULLNODE_URL:
+        description: "Sui Fullnode URL"
+        required: false
+        type: string
+      SUI_FAUCET_URL:
+        description: "Sui Faucet URL"
+        required: false
+        type: string
+      ika_config_json:
+        description: "IKA Config JSON"
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -47,7 +59,14 @@ jobs:
         run: pnpm install
         working-directory: ./sdk/typescript
 
+      - name: Write ika_config.json to file
+        run: |
+          echo '${{ github.event.inputs.ika_config_json }}' > ika_config.json
+
       - name: Run test
         run: npx vitest run -t "should create a DWallet and sign a message"
         working-directory: ./sdk/typescript
+        env:
+          SUI_TESTNET_URL: ${{ github.event.inputs.SUI_FULLNODE_URL }}
+          SUI_FAUCET_URL: ${{ github.event.inputs.SUI_FAUCET_URL }}
 
