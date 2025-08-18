@@ -136,67 +136,12 @@ async fn create_dwallet() {
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
-    let dwallet_dkg_session_identifier = [2; 32];
-    send_start_dwallet_dkg_first_round_event(
-        &ika_network_config,
-        epoch_id,
-        &mut test_state.sui_data_senders,
-        dwallet_dkg_session_identifier,
-        2,
+    let (consensus_round, dwallet_dkg_second_round_output) = create_dwallet_test(
+        &mut test_state,
+        consensus_round,
         key_id,
-    );
-    info!("Starting DWallet DKG first round");
-    let (consensus_round, mut dkg_first_round_checkpoint) =
-        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
-    let DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
-        dwallet_dkg_first_round_output,
-    ) = dkg_first_round_checkpoint.messages().clone().pop().unwrap()
-    else {
-        panic!("Expected DWallet DKG first round output message");
-    };
-    info!("DWallet DKG first round completed");
-
-    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
-    let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output(
-        protocol_pp.clone(),
-        dwallet_dkg_first_round_output.output.clone(),
-        dwallet_dkg_session_identifier.to_vec(),
-    )
-    .unwrap();
-    let (encryption_key, decryption_key) =
-        generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
-    let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove(
-        centralized_dwallet_dkg_result.centralized_secret_output,
-        encryption_key.clone(),
-        protocol_pp,
-    )
-    .unwrap();
-    send_start_dwallet_dkg_second_round_event(
-        &ika_network_config,
-        epoch_id,
-        &mut test_state.sui_data_senders,
-        [3; 32],
-        3,
-        key_id,
-        ObjectID::from_bytes(&dwallet_dkg_first_round_output.dwallet_id).unwrap(),
-        dwallet_dkg_first_round_output.output,
-        centralized_dwallet_dkg_result.public_key_share_and_proof,
-        encrypted_secret_key_share_and_proof,
-        encryption_key,
-        centralized_dwallet_dkg_result.public_output,
-    );
-    let (consensus_round, dwallet_second_round_checkpoint) =
-        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
-    let DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(
-        dwallet_dkg_second_round_output,
-    ) = dwallet_second_round_checkpoint
-        .messages()
-        .clone()
-        .pop()
-        .unwrap()
-    else {
-        panic!("Expected DWallet DKG second round output message");
-    };
+        network_key_bytes,
+    ).await;
     info!("DWallet DKG second round completed");
 }
 
