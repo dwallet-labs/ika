@@ -155,8 +155,8 @@ impl Default for ChainIdentifier {
     }
 }
 
-pub const MAINNET_CHAIN_IDENTIFIER_BASE58: &str = "to be set";
-pub const TESTNET_CHAIN_IDENTIFIER_BASE58: &str = "to be set";
+pub const MAINNET_CHAIN_IDENTIFIER_BASE58: &str = "3FFWaJu1SeurUdyLuWbhc7xE7ThvVqfHkjopBge3vLVu";
+pub const TESTNET_CHAIN_IDENTIFIER_BASE58: &str = "3FZxkWnWSKp64iY6h6GrBuW3CKxxpBDcnfEVyTZ8EZnV";
 
 pub static MAINNET_CHAIN_IDENTIFIER: OnceCell<ChainIdentifier> = OnceCell::new();
 pub static TESTNET_CHAIN_IDENTIFIER: OnceCell<ChainIdentifier> = OnceCell::new();
@@ -199,15 +199,12 @@ impl ChainIdentifier {
     }
 
     pub fn chain(&self) -> Chain {
-        // TODO: undo comments once we have a real chain identifier for mainnet and testnet
-        // let mainnet_id = get_mainnet_chain_identifier();
-        // let testnet_id = get_testnet_chain_identifier();
+        let mainnet_id = get_mainnet_chain_identifier();
+        let testnet_id = get_testnet_chain_identifier();
 
-        // todo(zeev): fix this
-        #[allow(clippy::match_single_binding)]
         let chain = match self {
-            // id if *id == mainnet_id => Chain::Mainnet,
-            // id if *id == testnet_id => Chain::Testnet,
+            id if *id == mainnet_id => Chain::Mainnet,
+            id if *id == testnet_id => Chain::Testnet,
             _ => Chain::Unknown,
         };
         if let Some(override_chain) = *IKA_PROTOCOL_CONFIG_CHAIN_OVERRIDE {
