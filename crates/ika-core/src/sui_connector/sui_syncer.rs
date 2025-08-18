@@ -14,7 +14,6 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
-    IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig,
 };
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
@@ -181,19 +180,6 @@ where
                 continue;
             };
 
-            // yael : change the client contain IkaNetworkConfig
-            let config = IkaNetworkConfig {
-                packages: IkaPackageConfig {
-                    ika_package_id: sui_client.ika_package_id,
-                    ika_common_package_id: sui_client.ika_common_package_id,
-                    ika_dwallet_2pc_mpc_package_id: sui_client.ika_dwallet_2pc_mpc_package_id,
-                    ika_system_package_id: sui_client.ika_system_package_id,
-                },
-                objects: IkaObjectsConfig {
-                    ika_system_object_id: sui_client.ika_system_object_id,
-                    ika_dwallet_coordinator_object_id: sui_client.ika_dwallet_coordinator_object_id,
-                },
-            };
             match sui_client
                 .pull_dwallet_mpc_uncompleted_events(&coordinator_inner)
                 .await
@@ -208,7 +194,7 @@ where
                         );
 
                         match parse_sui_event(
-                            &config,
+                            &sui_client.ika_network_config,
                             event.type_.clone(),
                             &event.contents,
                             true,
@@ -567,18 +553,6 @@ where
                 warn!("sui client failed to query events from the sui network — retrying");
                 continue;
             };
-            let config = IkaNetworkConfig {
-                packages: IkaPackageConfig {
-                    ika_package_id: sui_client.ika_package_id,
-                    ika_common_package_id: sui_client.ika_common_package_id,
-                    ika_dwallet_2pc_mpc_package_id: sui_client.ika_dwallet_2pc_mpc_package_id,
-                    ika_system_package_id: sui_client.ika_system_package_id,
-                },
-                objects: IkaObjectsConfig {
-                    ika_system_object_id: sui_client.ika_system_object_id,
-                    ika_dwallet_coordinator_object_id: sui_client.ika_dwallet_coordinator_object_id,
-                },
-            };
 
             let len = events.data.len();
             if len != 0 {
@@ -594,7 +568,7 @@ where
                     .iter()
                     .filter_map(|event| {
                         match parse_sui_event(
-                            &config,
+                            &sui_client.ika_network_config,
                             event.type_.clone(),
                             &event.bcs.bytes(),
                             false,

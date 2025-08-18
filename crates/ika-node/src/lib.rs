@@ -177,7 +177,7 @@ use ika_core::system_checkpoints::{
 };
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_sui_client::{SuiClient, SuiConnectorClient};
-use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig};
 #[cfg(msim)]
 pub use simulator::set_jwk_injector;
 #[cfg(msim)]
@@ -265,18 +265,28 @@ impl IkaNode {
 
         let sui_client_metrics = SuiClientMetrics::new(&registry_service.default_registry());
 
+        let ika_network_config = IkaNetworkConfig {
+            packages: IkaPackageConfig {
+                ika_package_id: config.sui_connector_config.ika_package_id,
+                ika_common_package_id: config.sui_connector_config.ika_common_package_id,
+                ika_dwallet_2pc_mpc_package_id: config
+                    .sui_connector_config
+                    .ika_dwallet_2pc_mpc_package_id,
+                ika_system_package_id: config.sui_connector_config.ika_system_package_id,
+            },
+            objects: IkaObjectsConfig {
+                ika_system_object_id: config.sui_connector_config.ika_system_object_id,
+                ika_dwallet_coordinator_object_id: config
+                    .sui_connector_config
+                    .ika_dwallet_coordinator_object_id,
+            },
+        };
+
         let sui_client = Arc::new(
             SuiClient::new(
                 &config.sui_connector_config.sui_rpc_url,
                 sui_client_metrics,
-                config.sui_connector_config.ika_package_id,
-                config.sui_connector_config.ika_common_package_id,
-                config.sui_connector_config.ika_dwallet_2pc_mpc_package_id,
-                config.sui_connector_config.ika_system_package_id,
-                config.sui_connector_config.ika_system_object_id,
-                config
-                    .sui_connector_config
-                    .ika_dwallet_coordinator_object_id,
+                ika_network_config,
             )
             .await?,
         );
