@@ -1,3 +1,4 @@
+use crate::SuiDataSenders;
 use crate::dwallet_mpc::integration_tests::create_dwallet::create_dwallet_test;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
@@ -7,11 +8,13 @@ use dwallet_mpc_centralized_party::{
 };
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent, IkaNetworkConfig};
+use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletSessionEvent, DWalletSessionEventTrait,
+    EncryptedShareVerificationRequestEvent, IkaNetworkConfig,
+};
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::info;
-use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
-use crate::SuiDataSenders;
 
 #[tokio::test]
 #[cfg(test)]
@@ -77,7 +80,11 @@ async fn encrypt_secret_share() {
         dwallet_test_result.class_groups_encryption_key.clone(),
     );
     let (consensus_round, encrypted_secret_share_checkpoint) =
-        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
+        utils::advance_mpc_flow_until_completion(
+            &mut test_state,
+            dwallet_test_result.flow_completion_consensus_round,
+        )
+        .await;
     let DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(
         encrypted_secret_share_output,
     ) = encrypted_secret_share_checkpoint
@@ -111,13 +118,16 @@ pub(crate) fn send_start_encrypt_secret_share_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<EncryptedShareVerificationRequestEvent>::type_(&ika_network_config),
+                type_: DWalletSessionEvent::<EncryptedShareVerificationRequestEvent>::type_(
+                    &ika_network_config,
+                ),
                 contents: bcs::to_bytes(&new_dwallet_session_event(
                     false,
                     session_sequence_number,
                     session_identifier_preimage.to_vec().clone(),
                     EncryptedShareVerificationRequestEvent {
-                        encrypted_centralized_secret_share_and_proof: encrypted_centralized_secret_share_and_proof.clone(),
+                        encrypted_centralized_secret_share_and_proof:
+                            encrypted_centralized_secret_share_and_proof.clone(),
                         decentralized_public_output: decentralized_public_output.clone(),
                         dwallet_id,
                         encryption_key: encryption_key.clone(),
