@@ -17,8 +17,8 @@ import type {
 	DWallet,
 	DWalletCap,
 	DWalletInternal,
+	DWalletKind,
 	DWalletState,
-	DWalletType,
 	EncryptedUserSecretKeyShare,
 	EncryptedUserSecretKeyShareState,
 	EncryptionKey,
@@ -284,7 +284,7 @@ export class IkaClient {
 
 				return {
 					...dWallet,
-					kind: this.#getDWalletType(dWallet),
+					kind: this.#getDWalletKind(dWallet),
 				};
 			});
 	}
@@ -520,7 +520,7 @@ export class IkaClient {
 
 					return {
 						...dWallet,
-						kind: this.#getDWalletType(dWallet),
+						kind: this.#getDWalletKind(dWallet),
 					};
 				});
 			});
@@ -1086,7 +1086,7 @@ export class IkaClient {
 		}
 	}
 
-	#getDWalletType(dWallet: DWalletInternal): DWalletType {
+	#getDWalletKind(dWallet: DWalletInternal): DWalletKind {
 		if (dWallet.is_imported_key_dwallet && dWallet.public_user_secret_key_share) {
 			return 'imported-shared';
 		}

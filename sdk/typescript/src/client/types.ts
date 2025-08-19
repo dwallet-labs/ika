@@ -73,14 +73,14 @@ export interface IkaClientOptions {
 export type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorInner.$inferType;
 export type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
 
-export const DWalletType = {
+export const DWalletKind = {
 	ZeroTrust: 'zero-trust',
 	Imported: 'imported',
 	ImportedShared: 'imported-shared',
 	Shared: 'shared',
 } as const;
 
-export type DWalletType = (typeof DWalletType)[keyof typeof DWalletType];
+export type DWalletKind = (typeof DWalletKind)[keyof typeof DWalletKind];
 
 export type DWalletInternal = typeof CoordinatorInnerModule.DWallet.$inferType;
 
