@@ -22,7 +22,6 @@ import type {
 	EncryptedUserSecretKeyShare,
 	EncryptionKey,
 	Hash,
-	PartialUserSignature,
 	Presign,
 	SignatureAlgorithm,
 	UserSignatureInputs,
@@ -219,7 +218,7 @@ export class IkaTransaction {
 	 * This finalizes the distributed key generation process started in the first round.
 	 *
 	 * @param params - The parameters for the DKG second round
-	 * @param params.dWallet - The DWallet object from the first round
+	 * @param params.dWalletCap - The dWalletCap object from the first round, created for dWallet
 	 * @param params.dkgSecondRoundRequestInput - Cryptographic data prepared for the second round
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
@@ -227,12 +226,12 @@ export class IkaTransaction {
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	requestDWalletDKGSecondRound({
-		dWallet,
+		dWalletCap,
 		dkgSecondRoundRequestInput,
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
+		dWalletCap: TransactionObjectArgument | string;
 		dkgSecondRoundRequestInput: DKGSecondRoundRequestInput;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -244,7 +243,7 @@ export class IkaTransaction {
 		coordinatorTx.requestDWalletDKGSecondRound(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			this.#transaction.object(dWallet.dwallet_cap_id),
+			this.#transaction.object(dWalletCap),
 			dkgSecondRoundRequestInput.userDKGMessage,
 			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
 			this.#userShareEncryptionKeys.getSuiAddress(),
@@ -485,19 +484,19 @@ export class IkaTransaction {
 	 * This creates an approval object that can be used in subsequent signing operations.
 	 *
 	 * @param params - The parameters for message approval
-	 * @param params.dWallet - The DWallet to approve the message for
+	 * @param params.dWalletCap - The dWalletCap object, that owns the dWallet
 	 * @param params.signatureAlgorithm - The signature algorithm to use
 	 * @param params.hashScheme - The hash scheme to apply to the message
 	 * @param params.message - The message bytes to approve for signing
 	 * @returns Object containing the message approval and updated transaction
 	 */
 	approveMessage({
-		dWallet,
+		dWalletCap,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	}: {
-		dWallet: DWallet;
+		dWalletCap: TransactionObjectArgument | string;
 		signatureAlgorithm: SignatureAlgorithm;
 		hashScheme: Hash;
 		message: Uint8Array;
@@ -508,7 +507,7 @@ export class IkaTransaction {
 		const messageApproval = coordinatorTx.approveMessage(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			dWallet.dwallet_cap_id,
+			this.#transaction.object(dWalletCap),
 			signatureAlgorithm,
 			hashScheme,
 			message,
@@ -551,19 +550,19 @@ export class IkaTransaction {
 	 * This is similar to approveMessage but specifically for DWallets created with imported keys.
 	 *
 	 * @param params - The parameters for imported key message approval
-	 * @param params.dWallet - The imported key DWallet to approve the message for
+	 * @param params.dWalletCap - The dWalletCap object, that owns the dWallet
 	 * @param params.signatureAlgorithm - The signature algorithm to use
 	 * @param params.hashScheme - The hash scheme to apply to the message
 	 * @param params.message - The message bytes to approve for signing
 	 * @returns Object containing the imported key message approval and updated transaction
 	 */
 	approveImportedKeyMessage({
-		dWallet,
+		dWalletCap,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	}: {
-		dWallet: DWallet;
+		dWalletCap: TransactionObjectArgument | string;
 		signatureAlgorithm: SignatureAlgorithm;
 		hashScheme: Hash;
 		message: Uint8Array;
@@ -574,7 +573,7 @@ export class IkaTransaction {
 		const importedKeyMessageApproval = coordinatorTx.approveImportedKeyMessage(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			dWallet.dwallet_cap_id,
+			this.#transaction.object(dWalletCap),
 			signatureAlgorithm,
 			hashScheme,
 			message,
@@ -1012,19 +1011,19 @@ export class IkaTransaction {
 	 * This method takes a partial signature created earlier and combines it with message approval to create a full signature.
 	 *
 	 * @param params - The parameters for completing the future sign
-	 * @param params.partialUserSignature - The partial user signature created by requestFutureSign
+	 * @param params.partialUserSignatureCap - The partial user signature capability created by requestFutureSign
 	 * @param params.messageApproval - The message approval from approveMessage
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns The updated IkaTransaction instance
 	 */
 	futureSign({
-		partialUserSignature,
+		partialUserSignatureCap,
 		messageApproval,
 		ikaCoin,
 		suiCoin,
 	}: {
-		partialUserSignature: PartialUserSignature;
+		partialUserSignatureCap: TransactionObjectArgument | string;
 		messageApproval: TransactionObjectArgument;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -1035,7 +1034,7 @@ export class IkaTransaction {
 			coordinatorTx.verifyPartialUserSignatureCap(
 				this.#ikaClient.ikaConfig,
 				this.#getCoordinatorObjectRef(),
-				this.#transaction.object(partialUserSignature.cap_id),
+				this.#transaction.object(partialUserSignatureCap),
 				this.#transaction,
 			),
 			messageApproval,

@@ -6,7 +6,6 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::crytographic_computation::advance;
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationSecp256k1Party,
@@ -29,10 +28,12 @@ use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
-    DWalletNetworkEncryptionKeyState, DWalletSessionEvent, MPCRequestInput, MPCSessionRequest,
+    DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
-use mpc::{GuaranteedOutputDeliveryRoundResult, WeightedThresholdAccessStructure};
+use mpc::guaranteed_output_delivery::{AdvanceRequest, Party};
+use mpc::{
+    GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
+};
 use rand_chacha::ChaCha20Rng;
 use std::collections::HashMap;
 use sui_types::base_types::ObjectID;
@@ -263,22 +264,22 @@ pub(crate) fn advance_network_dkg(
     public_input: &PublicInput,
     party_id: PartyID,
     key_scheme: &DWalletMPCNetworkKeyScheme,
-    messages: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
+    advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
     class_groups_decryption_key: ClassGroupsDecryptionKey,
-    rng: ChaCha20Rng,
+    rng: &mut ChaCha20Rng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let res = match key_scheme {
         DWalletMPCNetworkKeyScheme::Secp256k1 => {
             let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
                 unreachable!();
             };
-            let result = advance::<Secp256k1Party>(
+            let result = Party::<Secp256k1Party>::advance_with_guaranteed_output(
                 session_id,
                 party_id,
                 access_structure,
-                messages,
-                public_input,
-                class_groups_decryption_key,
+                advance_request,
+                Some(class_groups_decryption_key),
+                &public_input,
                 rng,
             );
             match result.clone() {
@@ -314,54 +315,6 @@ pub(crate) fn network_dkg_public_input(
             generate_secp256k1_dkg_party_public_input(access_structure, encryption_keys_and_proofs)
         }
         DWalletMPCNetworkKeyScheme::Ristretto => todo!(),
-    }
-}
-
-pub(crate) fn network_dkg_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
-    key_scheme: DWalletMPCNetworkKeyScheme,
-) -> DwalletMPCResult<MPCSessionRequest> {
-    match key_scheme {
-        DWalletMPCNetworkKeyScheme::Secp256k1 => {
-            Ok(network_dkg_secp256k1_session_request(deserialized_event))
-        }
-        DWalletMPCNetworkKeyScheme::Ristretto => {
-            Ok(network_dkg_ristretto_session_request(deserialized_event))
-        }
-    }
-}
-
-fn network_dkg_secp256k1_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::NetworkEncryptionKeyDkg(
-            DWalletMPCNetworkKeyScheme::Secp256k1,
-            deserialized_event,
-        ),
-        requires_network_key_data: false,
-        requires_next_active_committee: false,
-    }
-}
-
-fn network_dkg_ristretto_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::NetworkEncryptionKeyDkg(
-            DWalletMPCNetworkKeyScheme::Ristretto,
-            deserialized_event,
-        ),
-        requires_network_key_data: false,
-        requires_next_active_committee: false,
     }
 }
 

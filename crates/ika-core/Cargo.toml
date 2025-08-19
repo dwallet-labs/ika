@@ -71,6 +71,8 @@ sui-json-rpc-types.workspace = true
 sui-sdk.workspace = true
 sui-types.workspace = true
 backoff.workspace = true
+strum_macros.workspace = true
+derive_more.workspace = true
 
 [dev-dependencies]
 ika-types = {workspace = true, features = ["test_helpers"]}
