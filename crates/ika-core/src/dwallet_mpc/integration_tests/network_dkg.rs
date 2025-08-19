@@ -72,10 +72,10 @@ async fn test_network_key_reconfiguration() {
     let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
-        mut dwallet_mpc_services,
-        mut sui_data_senders,
-        mut sent_consensus_messages_collectors,
-        mut epoch_stores,
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
@@ -94,8 +94,8 @@ async fn test_network_key_reconfiguration() {
         &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
-        [2u8; 32],
-        2,
+        [3u8; 32],
+        3,
         key_id,
     );
     let (consensus_round, reconfiguration_checkpoint) =
@@ -175,6 +175,9 @@ pub(crate) async fn create_network_key_test(
                     },
                 )])));
         });
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration().await;
+    }
     (consensus_round, network_key_bytes, key_id.unwrap())
 }
 
@@ -187,6 +190,10 @@ pub(crate) fn send_start_network_key_reconfiguration_event(
     dwallet_network_encryption_key_id: ObjectID,
 ) {
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
+        info!(
+            "Sending DWalletEncryptionKeyReconfigurationRequestEvent to epoch {}",
+            epoch_id
+        );
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DBSuiEvent {
                 type_:

@@ -134,7 +134,7 @@ impl DWalletMPCManager {
                 {
                     // We don't yet have the data for this network encryption key,
                     // so we add it to the queue.
-                    debug!(
+                    warn!(
                         session_request=?event.session_request,
                         session_type=?event.session_request.session_type,
                         network_encryption_key_id=?network_encryption_key_id,
@@ -410,7 +410,7 @@ impl DWalletMPCService {
         let pending_events = match self.sui_data_receivers.new_events_receiver.try_recv() {
             Ok(events) => {
                 for event in &events {
-                    debug!(
+                    info!(
                         event_type=?event.type_,
                         id=?event.id,
                         contents=?event.bcs.clone().into_bytes(),
