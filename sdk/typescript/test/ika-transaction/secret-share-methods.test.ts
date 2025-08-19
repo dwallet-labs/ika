@@ -4,7 +4,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { Hash, SignatureAlgorithm } from '../../src/client/types';
+import { Hash, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
 import {
 	createCompleteDWallet,
 	registerTestEncryptionKey,
@@ -164,9 +164,8 @@ describe('IkaTransaction Secret Share Methods', () => {
 		expect(secretShare).toBeInstanceOf(Uint8Array);
 		expect(secretShare.length).toBeGreaterThan(0);
 
-		// Use signWithSecretShare method
 		await ikaTransaction.sign({
-			dWallet: activeDWallet,
+			dWallet: activeDWallet as ZeroTrustDWallet,
 			messageApproval,
 			hashScheme: Hash.KECCAK256,
 			verifiedPresignCap,
@@ -268,7 +267,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		// Use requestFutureSignWithSecretShare instead of regular requestFutureSign
 		const { unverifiedPartialUserSignatureCap } = await ikaTransaction.requestFutureSign({
-			dWallet: activeDWallet,
+			dWallet: activeDWallet as ZeroTrustDWallet,
 			verifiedPresignCap,
 			presign: presignObject,
 			secretShare,
@@ -350,18 +349,19 @@ describe('IkaTransaction Secret Share Methods', () => {
 		expect(activeDWallet.state.Active?.public_output).toBeDefined();
 
 		// Use requestFutureSign
-		await ikaTransaction.requestFutureSign({
-			dWallet: activeDWallet,
+		const { unverifiedPartialUserSignatureCap } = await ikaTransaction.requestFutureSign({
+			dWallet: activeDWallet as ZeroTrustDWallet,
 			verifiedPresignCap,
 			presign: presignObject,
 			secretShare,
 			publicOutput: new Uint8Array(activeDWallet.state.Active?.public_output ?? []),
 			message,
 			hashScheme: Hash.KECCAK256,
-			receiver: signerAddress,
 			ikaCoin: emptyIKACoin,
 			suiCoin: tx.gas,
 		});
+
+		tx.transferObjects([unverifiedPartialUserSignatureCap], signerAddress);
 
 		destroyEmptyTestIkaToken(tx, ikaClient.ikaConfig, emptyIKACoin);
 
@@ -414,7 +414,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		// Use transferUserShare
 		await ikaTransaction.transferUserShare({
-			dWallet: activeDWallet,
+			dWallet: activeDWallet as ZeroTrustDWallet,
 			destinationEncryptionKeyAddress,
 			sourceSecretShare: secretShare,
 			sourceEncryptedUserSecretKeyShare: encryptedUserSecretKeyShare,
@@ -479,7 +479,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 		// Should throw error with invalid secret share
 		await expect(
 			ikaTransaction.sign({
-				dWallet: activeDWallet,
+				dWallet: activeDWallet as ZeroTrustDWallet,
 				messageApproval,
 				hashScheme: Hash.KECCAK256,
 				verifiedPresignCap,

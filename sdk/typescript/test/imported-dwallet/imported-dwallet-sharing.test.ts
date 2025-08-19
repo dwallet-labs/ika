@@ -4,19 +4,19 @@
 import { describe, expect, it } from 'vitest';
 
 import { prepareImportDWalletVerification } from '../../src/client/cryptography';
-import { Curve, ImportedDWallet } from '../../src/client/types';
+import { Curve, ImportedKeyDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
 	createTestSessionIdentifier,
-	makeTestImportedDWalletUserSecretKeySharesPublic,
+	makeTestImportedKeyDWalletUserSecretKeySharesPublic,
 	registerTestEncryptionKey,
-	requestTestImportedDWalletVerification,
+	requestTestImportedKeyDWalletVerification,
 } from '../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
 	delay,
-	generateTestKeypairForImportedDWallet,
+	generateTestKeypairForImportedKeyDWallet,
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
@@ -29,7 +29,7 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedDWallet(testName);
+			generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -53,17 +53,18 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 			dWalletKeypair,
 		);
 
-		const importedKeyDWalletVerificationRequestEvent = await requestTestImportedDWalletVerification(
-			ikaClient,
-			suiClient,
-			importDWalletVerificationRequestInput,
-			Curve.SECP256K1,
-			signerPublicKey,
-			sessionIdentifier,
-			userShareEncryptionKeys,
-			signerAddress,
-			testName,
-		);
+		const importedKeyDWalletVerificationRequestEvent =
+			await requestTestImportedKeyDWalletVerification(
+				ikaClient,
+				suiClient,
+				importDWalletVerificationRequestInput,
+				Curve.SECP256K1,
+				signerPublicKey,
+				sessionIdentifier,
+				userShareEncryptionKeys,
+				signerAddress,
+				testName,
+			);
 
 		const awaitingKeyHolderSignatureDWallet = await retryUntil(
 			() =>
@@ -79,7 +80,7 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 		await acceptTestEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			awaitingKeyHolderSignatureDWallet as ImportedDWallet,
+			awaitingKeyHolderSignatureDWallet as ImportedKeyDWallet,
 			importDWalletVerificationRequestInput.userPublicOutput,
 			importedKeyDWalletVerificationRequestEvent,
 			userShareEncryptionKeys,
@@ -113,10 +114,10 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 			await ikaClient.getProtocolPublicParameters(activeDWallet),
 		);
 
-		await makeTestImportedDWalletUserSecretKeySharesPublic(
+		await makeTestImportedKeyDWalletUserSecretKeySharesPublic(
 			ikaClient,
 			suiClient,
-			activeDWallet as ImportedDWallet,
+			activeDWallet as ImportedKeyDWallet,
 			secretShare,
 			testName,
 		);

@@ -88,7 +88,7 @@ export type ZeroTrustDWallet = DWalletInternal & {
 	kind: 'zero-trust';
 };
 
-export type ImportedDWallet = DWalletInternal & {
+export type ImportedKeyDWallet = DWalletInternal & {
 	kind: 'imported';
 };
 
@@ -100,7 +100,7 @@ export type SharedDWallet = DWalletInternal & {
 	kind: 'shared';
 };
 
-export type DWallet = ZeroTrustDWallet | ImportedDWallet | ImportedSharedDWallet | SharedDWallet;
+export type DWallet = ZeroTrustDWallet | ImportedKeyDWallet | ImportedSharedDWallet | SharedDWallet;
 
 export type DWalletCap = typeof CoordinatorInnerModule.DWalletCap.$inferType;
 export type Presign = typeof CoordinatorInnerModule.PresignSession.$inferType;

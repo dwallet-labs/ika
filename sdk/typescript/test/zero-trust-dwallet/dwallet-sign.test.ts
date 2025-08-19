@@ -3,7 +3,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { Hash, SignatureAlgorithm } from '../../src/client/types';
+import { Hash, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
 import { createCompleteDWallet, testPresign } from '../helpers/dwallet-test-helpers';
 import { createIndividualTestSetup, getSharedTestSetup } from '../helpers/shared-test-setup';
 import {
@@ -384,7 +384,7 @@ describe('DWallet Signing', () => {
 
 			// Try to sign with null presign (this should fail)
 			await ikaTransaction.sign({
-				dWallet: activeDWallet,
+				dWallet: activeDWallet as ZeroTrustDWallet,
 				messageApproval,
 				verifiedPresignCap: null as any,
 				hashScheme: Hash.KECCAK256,

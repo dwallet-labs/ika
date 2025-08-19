@@ -5,7 +5,7 @@ import { prepareImportDWalletVerification } from '../../src/client/cryptography.
 import {
 	Curve,
 	Hash,
-	ImportedDWallet,
+	ImportedKeyDWallet,
 	ImportedSharedDWallet,
 	SignatureAlgorithm,
 } from '../../src/client/types.js';
@@ -14,11 +14,11 @@ import {
 	createIkaClient,
 	createSessionIdentifier,
 	createSuiClient,
-	generateKeypairForImportedDWallet,
-	makeImportedDWalletUserSecretKeySharesPublic,
+	generateKeypairForImportedKeyDWallet,
+	makeImportedKeyDWalletUserSecretKeySharesPublic,
 	presign,
-	requestImportedDWalletVerification,
-	signWithImportedDWalletPublic,
+	requestImportedKeyDWalletVerification,
+	signWithImportedKeyDWalletPublic,
 } from '../common.js';
 
 const suiClient = createSuiClient();
@@ -28,7 +28,7 @@ async function main() {
 	await ikaClient.initialize();
 
 	const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-		generateKeypairForImportedDWallet();
+		generateKeypairForImportedKeyDWallet();
 
 	const { sessionIdentifier, sessionIdentifierPreimage } = await createSessionIdentifier(
 		ikaClient,
@@ -43,7 +43,7 @@ async function main() {
 		dWalletKeypair,
 	);
 
-	const importedKeyDWalletVerificationRequestEvent = await requestImportedDWalletVerification(
+	const importedKeyDWalletVerificationRequestEvent = await requestImportedKeyDWalletVerification(
 		ikaClient,
 		suiClient,
 		importDWalletVerificationRequestInput,
@@ -61,7 +61,7 @@ async function main() {
 	await acceptEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		awaitingKeyHolderSignatureDWallet as ImportedDWallet,
+		awaitingKeyHolderSignatureDWallet as ImportedKeyDWallet,
 		importDWalletVerificationRequestInput.userPublicOutput,
 		importedKeyDWalletVerificationRequestEvent,
 		userShareEncryptionKeys,
@@ -82,10 +82,10 @@ async function main() {
 		await ikaClient.getProtocolPublicParameters(activeDWallet),
 	);
 
-	await makeImportedDWalletUserSecretKeySharesPublic(
+	await makeImportedKeyDWalletUserSecretKeySharesPublic(
 		ikaClient,
 		suiClient,
-		activeDWallet as ImportedDWallet,
+		activeDWallet as ImportedKeyDWallet,
 		secretShare,
 	);
 
@@ -101,7 +101,7 @@ async function main() {
 		'Completed',
 	);
 
-	await signWithImportedDWalletPublic(
+	await signWithImportedKeyDWalletPublic(
 		ikaClient,
 		suiClient,
 		activeDWallet as ImportedSharedDWallet,
