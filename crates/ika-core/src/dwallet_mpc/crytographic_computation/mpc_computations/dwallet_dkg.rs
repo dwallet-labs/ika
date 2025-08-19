@@ -15,7 +15,6 @@ use ika_types::messages_dwallet_mpc::{
     MPCSessionRequest,
 };
 use mpc::Party;
-use tracing::info;
 use twopc_mpc::dkg::Protocol;
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = <AsyncProtocol as Protocol>::EncryptionOfSecretKeyShareRoundParty;
@@ -36,13 +35,6 @@ pub(crate) fn dwallet_dkg_second_public_input(
     deserialized_event: &DWalletDKGSecondRoundRequestEvent,
     protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
 ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
-    info!(
-        first_round_output_len=? deserialized_event.first_round_output.len(),
-        centralized_public_key_share_and_proof_len=? deserialized_event
-            .centralized_public_key_share_and_proof
-            .len(),
-    );
-
     <DWalletDKGSecondParty as DWalletDKGSecondPartyPublicInputGenerator>::generate_public_input(
         protocol_public_parameters,
         deserialized_event.first_round_output.clone(),
