@@ -16,9 +16,13 @@ import {
 	EncryptedUserSecretKeyShare,
 	EncryptionKey,
 	Hash,
+	ImportedDWallet,
+	ImportedSharedDWallet,
 	PartialUserSignature,
 	Presign,
+	SharedDWallet,
 	SignatureAlgorithm,
+	ZeroTrustDWallet,
 } from '../../src/client/types.js';
 import type { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
@@ -102,10 +106,11 @@ export async function createCompleteDWallet(
 	);
 
 	// Step 7: Accept encrypted user share
+	// Type assertion: DKG flow only creates ZeroTrust DWallets
 	await acceptTestEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		awaitingKeyHolderSignatureDWallet,
+		awaitingKeyHolderSignatureDWallet as ZeroTrustDWallet,
 		dkgSecondRoundRequestInput.userPublicOutput,
 		secondRoundMoveResponse,
 		userShareEncryptionKeys,
@@ -273,7 +278,7 @@ export async function requestTestDkgSecondRound(
 export async function acceptTestEncryptedUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	userPublicOutput: Uint8Array,
 	secondRoundMoveResponse: {
 		event_data: {
@@ -302,7 +307,7 @@ export async function acceptTestEncryptedUserShare(
 export async function acceptTestEncryptedUserShareForTransferredDWallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	destinationUserShareEncryptionKeys: UserShareEncryptionKeys,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	sourceEncryptionKey: EncryptionKey,
@@ -332,7 +337,7 @@ export async function acceptTestEncryptedUserShareForTransferredDWallet(
 export async function makeTestDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	secretShare: Uint8Array,
 	testName: string,
 ) {
@@ -359,7 +364,7 @@ export async function makeTestDWalletUserSecretKeySharesPublic(
 export async function makeTestImportedDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	secretShare: Uint8Array,
 	testName: string,
 ) {
@@ -427,7 +432,7 @@ export async function testPresign(
 export async function testSign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	presign: Presign,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
@@ -475,7 +480,7 @@ export async function testSign(
 export async function testSignPublicUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: SharedDWallet | ImportedSharedDWallet,
 	presign: Presign,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -520,7 +525,7 @@ export async function testSignPublicUserShare(
 export async function requestTestFutureSign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	presign: Presign,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
@@ -659,7 +664,7 @@ export async function requestTestImportedDWalletVerification(
 export async function testSignWithImportedDWallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ImportedDWallet,
 	presign: Presign,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -707,7 +712,7 @@ export async function testSignWithImportedDWallet(
 export async function testSignWithImportedDWalletPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ImportedSharedDWallet,
 	presign: Presign,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -752,7 +757,7 @@ export async function testSignWithImportedDWalletPublic(
 export async function testTransferEncryptedUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	destinationEncryptionKeyAddress: string,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	userShareEncryptionKeys: UserShareEncryptionKeys,

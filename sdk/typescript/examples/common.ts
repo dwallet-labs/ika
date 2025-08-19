@@ -22,9 +22,13 @@ import {
 	EncryptionKey,
 	Hash,
 	IkaConfig,
+	ImportedDWallet,
+	ImportedSharedDWallet,
 	PartialUserSignature,
 	Presign,
+	SharedDWallet,
 	SignatureAlgorithm,
+	ZeroTrustDWallet,
 } from '../src/client/types.js';
 import { UserShareEncryptionKeys } from '../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
@@ -201,7 +205,7 @@ export async function requestDkgSecondRound(
 export async function acceptEncryptedUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	userPublicOutput: Uint8Array,
 	secondRoundMoveResponse: {
 		event_data: {
@@ -231,7 +235,7 @@ export async function acceptEncryptedUserShare(
 export async function acceptEncryptedUserShareForTransferredDWallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	destinationUserShareEncryptionKeys: UserShareEncryptionKeys,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	sourceEncryptionKey: EncryptionKey,
@@ -258,7 +262,7 @@ export async function acceptEncryptedUserShareForTransferredDWallet(
 export async function makeDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	secretShare: Uint8Array,
 ) {
 	const transaction = new Transaction();
@@ -285,7 +289,7 @@ export async function makeDWalletUserSecretKeySharesPublic(
 export async function makeImportedDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ImportedDWallet,
 	secretShare: Uint8Array,
 ) {
 	const transaction = new Transaction();
@@ -348,7 +352,7 @@ export async function presign(
 export async function sign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	presign: Presign,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
@@ -397,7 +401,7 @@ export async function sign(
 export async function signPublicUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: SharedDWallet | ImportedSharedDWallet,
 	presign: Presign,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -442,7 +446,7 @@ export async function signPublicUserShare(
 export async function requestFutureSign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	presign: Presign,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
@@ -573,7 +577,7 @@ export async function requestImportedDWalletVerification(
 export async function signWithImportedDWallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ImportedDWallet,
 	presign: Presign,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -622,7 +626,7 @@ export async function signWithImportedDWallet(
 export async function signWithImportedDWalletPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ImportedSharedDWallet,
 	presign: Presign,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -667,7 +671,7 @@ export async function signWithImportedDWalletPublic(
 export async function transferEncryptedUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedDWallet,
 	destinationEncryptionKeyAddress: string,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	userShareEncryptionKeys: UserShareEncryptionKeys,

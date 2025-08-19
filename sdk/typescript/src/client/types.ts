@@ -72,7 +72,45 @@ export interface IkaClientOptions {
 
 export type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorInner.$inferType;
 export type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
-export type DWallet = typeof CoordinatorInnerModule.DWallet.$inferType;
+
+export const DWalletType = {
+	ZeroTrust: 0,
+	Imported: 1,
+	ImportedShared: 2,
+	Shared: 3,
+} as const;
+
+export const DWalletTypeMap = {
+	[DWalletType.ZeroTrust]: 'ZeroTrust',
+	[DWalletType.Imported]: 'Imported',
+	[DWalletType.ImportedShared]: 'ImportedShared',
+	[DWalletType.Shared]: 'Shared',
+} as const;
+
+export type DWalletType = (typeof DWalletType)[keyof typeof DWalletType];
+
+export type DWalletTypeString = (typeof DWalletTypeMap)[keyof typeof DWalletTypeMap];
+
+export type DWalletInternal = typeof CoordinatorInnerModule.DWallet.$inferType;
+
+export type ZeroTrustDWallet = DWalletInternal & {
+	type: 'ZeroTrust';
+};
+
+export type ImportedDWallet = DWalletInternal & {
+	type: 'Imported';
+};
+
+export type ImportedSharedDWallet = DWalletInternal & {
+	type: 'ImportedShared';
+};
+
+export type SharedDWallet = DWalletInternal & {
+	type: 'Shared';
+};
+
+export type DWallet = ZeroTrustDWallet | ImportedDWallet | ImportedSharedDWallet | SharedDWallet;
+
 export type DWalletCap = typeof CoordinatorInnerModule.DWalletCap.$inferType;
 export type Presign = typeof CoordinatorInnerModule.PresignSession.$inferType;
 export type EncryptedUserSecretKeyShare =

@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { prepareImportDWalletVerification } from '../../src/client/cryptography';
-import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types';
+import { Curve, Hash, ImportedDWallet, SignatureAlgorithm } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
 	createTestSessionIdentifier,
@@ -81,7 +81,7 @@ describe('Imported DWallet Signing', () => {
 		await acceptTestEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			awaitingKeyHolderSignatureDWallet,
+			awaitingKeyHolderSignatureDWallet as ImportedDWallet,
 			importDWalletVerificationRequestInput.userPublicOutput,
 			importedKeyDWalletVerificationRequestEvent,
 			userShareEncryptionKeys,
@@ -134,7 +134,7 @@ describe('Imported DWallet Signing', () => {
 		await testSignWithImportedDWallet(
 			ikaClient,
 			suiClient,
-			activeDWallet,
+			activeDWallet as ImportedDWallet,
 			presignObject,
 			message,
 			Hash.KECCAK256,

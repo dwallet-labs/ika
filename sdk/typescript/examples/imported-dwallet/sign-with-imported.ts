@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { prepareImportDWalletVerification } from '../../src/client/cryptography.js';
-import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types.js';
+import { Curve, Hash, ImportedDWallet, SignatureAlgorithm } from '../../src/client/types.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -54,7 +54,7 @@ async function main() {
 	await acceptEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		importedKeyDWallet,
+		importedKeyDWallet as ImportedDWallet,
 		importDWalletVerificationRequestInput.userPublicOutput,
 		importedKeyDWalletVerificationRequestEvent,
 		userShareEncryptionKeys,
@@ -84,7 +84,7 @@ async function main() {
 	await signWithImportedDWallet(
 		ikaClient,
 		suiClient,
-		activeDWallet,
+		activeDWallet as ImportedDWallet,
 		presignObject,
 		// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
 		new TextEncoder().encode('hello world'),

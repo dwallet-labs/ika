@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { prepareImportDWalletVerification } from '../../src/client/cryptography';
-import { Curve } from '../../src/client/types';
+import { Curve, ImportedDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
 	createTestSessionIdentifier,
@@ -79,7 +79,7 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 		await acceptTestEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			awaitingKeyHolderSignatureDWallet,
+			awaitingKeyHolderSignatureDWallet as ImportedDWallet,
 			importDWalletVerificationRequestInput.userPublicOutput,
 			importedKeyDWalletVerificationRequestEvent,
 			userShareEncryptionKeys,
@@ -116,7 +116,7 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 		await makeTestImportedDWalletUserSecretKeySharesPublic(
 			ikaClient,
 			suiClient,
-			activeDWallet,
+			activeDWallet as ImportedDWallet,
 			secretShare,
 			testName,
 		);
