@@ -13,12 +13,7 @@ use dwallet_mpc_centralized_party::{
 use ika_types::committee::Committee;
 use ika_types::message::{DKGSecondRoundOutput, DWalletCheckpointMessageKind};
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
-use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletImportedKeyVerificationRequestEvent,
-    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
-    DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,
-    EncryptedShareVerificationRequestEvent, IkaNetworkConfig, SessionIdentifier, SessionType,
-};
+use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent, SessionIdentifier, SessionType};
 use std::collections::HashMap;
 use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
@@ -149,6 +144,70 @@ async fn create_dwallet() {
         create_network_key_test(&mut test_state).await;
     let result =
         create_dwallet_test(&mut test_state, consensus_round, key_id, network_key_bytes).await;
+    info!("DWallet DKG second round completed");
+}
+
+#[tokio::test]
+#[cfg(test)]
+/// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
+async fn make_dwallet_public() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (committee, _) = Committee::new_simple_test_committee();
+    let ika_network_config = IkaNetworkConfig::new_for_testing();
+    let epoch_id = 1;
+    let (
+        mut dwallet_mpc_services,
+        mut sui_data_senders,
+        mut sent_consensus_messages_collectors,
+        mut epoch_stores,
+        notify_services,
+    ) = utils::create_dwallet_mpc_services(4);
+    let mut test_state = IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee,
+        sui_data_senders,
+    };
+    for service in &mut test_state.dwallet_mpc_services {
+        service
+            .dwallet_mpc_manager_mut()
+            .last_session_to_complete_in_current_epoch = 4;
+    }
+    let (consensus_round, network_key_bytes, key_id) =
+        create_network_key_test(&mut test_state).await;
+    let result =
+        create_dwallet_test(&mut test_state, consensus_round, key_id, network_key_bytes).await;
+    send_make_dwallet_public_event(
+        &ika_network_config,
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        [4; 32],
+        4,
+        key_id,
+        ObjectID::from_bytes(&result.dkg_second_round_output.dwallet_id).unwrap(),
+        result.dkg_second_round_output.output,
+        result.dwallet_secret_key_share,
+    );
+    let (consensus_round, verified_dwallet_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, result.flow_completion_consensus_round).await;
+    let DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(
+        make_dwallet_public_output,
+    ) = verified_dwallet_checkpoint
+        .messages()
+        .clone()
+        .pop()
+        .unwrap()
+    else {
+        panic!("Expected DWallet make public output message");
+    };
+    assert!(
+        !make_dwallet_public_output.rejected,
+        "Make DWallet public output should not be rejected"
+    );
     info!("DWallet DKG second round completed");
 }
 
@@ -362,6 +421,43 @@ pub(crate) fn send_start_imported_dwallet_verification_event(
                         curve: 0,
                         dwallet_cap_id: random_id,
                         signer_public_key: vec![],
+                    },
+                ))
+                .unwrap(),
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
+}
+
+pub(crate) fn send_make_dwallet_public_event(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: &Vec<SuiDataSenders>,
+    session_identifier_preimage: [u8; 32],
+    session_sequence_number: u64,
+    dwallet_network_encryption_key_id: ObjectID,
+    dwallet_id: ObjectID,
+    public_output: Vec<u8>,
+    public_user_secret_key_shares: Vec<u8>
+) {
+    sui_data_senders.iter().for_each(|sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DBSuiEvent {
+                type_: DWalletSessionEvent::<MakeDWalletUserSecretKeySharesPublicRequestEvent>::type_(
+                    &ika_network_config,
+                ),
+                contents: bcs::to_bytes(&new_dwallet_session_event(
+                    false,
+                    session_sequence_number,
+                    session_identifier_preimage.to_vec().clone(),
+                    MakeDWalletUserSecretKeySharesPublicRequestEvent {
+                        public_user_secret_key_shares: public_user_secret_key_shares.clone(),
+                        dwallet_id,
+                        dwallet_network_encryption_key_id,
+                        curve: 0,
+                        public_output: public_output.clone(),
                     },
                 ))
                 .unwrap(),
