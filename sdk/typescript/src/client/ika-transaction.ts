@@ -309,22 +309,7 @@ export class IkaTransaction {
 		dWallet: DWallet;
 		userPublicOutput: Uint8Array;
 		encryptedUserSecretKeyShareId: string;
-	}) {
-		if (!this.#userShareEncryptionKeys) {
-			throw new Error('User share encryption keys are not set');
-		}
-
-		coordinatorTx.acceptEncryptedUserShare(
-			this.#ikaClient.ikaConfig,
-			this.#getCoordinatorObjectRef(),
-			dWallet.id.id,
-			encryptedUserSecretKeyShareId,
-			await this.#userShareEncryptionKeys.getUserOutputSignature(dWallet, userPublicOutput),
-			this.#transaction,
-		);
-
-		return this;
-	}
+	}): Promise<IkaTransaction>;
 
 	/**
 	 * Accept an encrypted user share for a transferred DWallet.
@@ -334,7 +319,7 @@ export class IkaTransaction {
 	 * the public key of the sender (or its address) should be known to the receiver,
 	 * so that the verification here would be impactful.
 	 *
-	 * @param params - The parameters for accepting the encrypted user share
+	 * @param params - The parameters for accepting the encrypted user share for a transferred DWallet
 	 * @param params.dWallet - The DWallet object to accept the share for
 	 * @param params.sourceEncryptionKey - The encryption key used to encrypt the user's secret share.
 	 * @param params.sourceEncryptedUserSecretKeyShare - The encrypted user secret key share.
@@ -342,7 +327,7 @@ export class IkaTransaction {
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
-	async acceptEncryptedUserShareForTransferredDWallet({
+	async acceptEncryptedUserShare({
 		dWallet,
 		sourceEncryptionKey,
 		sourceEncryptedUserSecretKeyShare,
@@ -352,25 +337,66 @@ export class IkaTransaction {
 		sourceEncryptionKey: EncryptionKey;
 		sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		destinationEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+	}): Promise<IkaTransaction>;
+
+	async acceptEncryptedUserShare({
+		dWallet,
+		userPublicOutput,
+		encryptedUserSecretKeyShareId,
+		sourceEncryptionKey,
+		sourceEncryptedUserSecretKeyShare,
+		destinationEncryptedUserSecretKeyShare,
+	}: {
+		dWallet: DWallet;
+		userPublicOutput?: Uint8Array;
+		encryptedUserSecretKeyShareId?: string;
+		sourceEncryptionKey?: EncryptionKey;
+		sourceEncryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
+		destinationEncryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
 	}) {
 		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
 
-		coordinatorTx.acceptEncryptedUserShare(
-			this.#ikaClient.ikaConfig,
-			this.#getCoordinatorObjectRef(),
-			dWallet.id.id,
-			destinationEncryptedUserSecretKeyShare.id.id,
-			await this.#userShareEncryptionKeys.getUserOutputSignatureForTransferredDWallet(
-				dWallet,
-				sourceEncryptedUserSecretKeyShare,
-				sourceEncryptionKey,
-			),
-			this.#transaction,
-		);
+		// Regular DWallet encrypted user share acceptance
+		if (userPublicOutput && encryptedUserSecretKeyShareId) {
+			coordinatorTx.acceptEncryptedUserShare(
+				this.#ikaClient.ikaConfig,
+				this.#getCoordinatorObjectRef(),
+				dWallet.id.id,
+				encryptedUserSecretKeyShareId,
+				await this.#userShareEncryptionKeys.getUserOutputSignature(dWallet, userPublicOutput),
+				this.#transaction,
+			);
 
-		return this;
+			return this;
+		}
+
+		// Transferred DWallet encrypted user share acceptance
+		if (
+			sourceEncryptionKey &&
+			sourceEncryptedUserSecretKeyShare &&
+			destinationEncryptedUserSecretKeyShare
+		) {
+			coordinatorTx.acceptEncryptedUserShare(
+				this.#ikaClient.ikaConfig,
+				this.#getCoordinatorObjectRef(),
+				dWallet.id.id,
+				destinationEncryptedUserSecretKeyShare.id.id,
+				await this.#userShareEncryptionKeys.getUserOutputSignatureForTransferredDWallet(
+					dWallet,
+					sourceEncryptedUserSecretKeyShare,
+					sourceEncryptionKey,
+				),
+				this.#transaction,
+			);
+
+			return this;
+		}
+
+		throw new Error(
+			'Invalid parameters: must provide either (userPublicOutput, encryptedUserSecretKeyShareId) for regular DWallet or (sourceEncryptionKey, sourceEncryptedUserSecretKeyShare, destinationEncryptedUserSecretKeyShare) for transferred DWallet',
+		);
 	}
 
 	/**

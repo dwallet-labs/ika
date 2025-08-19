@@ -316,7 +316,7 @@ export async function acceptTestEncryptedUserShareForTransferredDWallet(
 		destinationUserShareEncryptionKeys,
 	);
 
-	await ikaTransaction.acceptEncryptedUserShareForTransferredDWallet({
+	await ikaTransaction.acceptEncryptedUserShare({
 		dWallet,
 		sourceEncryptedUserSecretKeyShare,
 		sourceEncryptionKey,
