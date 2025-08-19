@@ -59,8 +59,6 @@ async function main() {
 	);
 
 	const activeDWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
-
-	console.log('activeDWallet', activeDWallet);
 }
 
 export { main };

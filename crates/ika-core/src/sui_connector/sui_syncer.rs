@@ -3,7 +3,9 @@
 
 //! The SuiSyncer module handles synchronizing Events emitted
 //! on the Sui blockchain from concerned modules of `ika_system` package.
+use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
+use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId, StakeUnit};
@@ -11,15 +13,13 @@ use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData,
-    DWalletNetworkEncryptionKeyState,
+    DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
 use mysten_metrics::spawn_logged_monitored_task;
 use std::{collections::HashMap, sync::Arc};
-use sui_json_rpc_types::SuiEvent;
 use sui_types::base_types::ObjectID;
 use sui_types::{Identifier, event::EventID};
 use tokio::sync::watch::{Receiver, Sender};
@@ -64,10 +64,10 @@ where
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
+        new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
-        uncompleted_events_sender: Sender<(Vec<DBSuiEvent>, EpochId)>,
+        uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
         info!("Starting SuiSyncer");
         let mut task_handles = vec![];
@@ -102,14 +102,14 @@ where
             tokio::spawn(Self::sync_uncompleted_events(
                 sui_client_clone,
                 dwallet_coordinator_object_receiver.clone(),
-                uncompleted_events_sender,
+                uncompleted_requests_sender,
             ));
         }
 
         for module in self.modules {
             let metrics = self.metrics.clone();
             let sui_client_clone = self.sui_client.clone();
-            let new_events_sender_clone = new_events_sender.clone();
+            let new_requests_sender_clone = new_requests_sender.clone();
             let system_object_receiver_clone = system_object_receiver.clone();
             task_handles.push(spawn_logged_monitored_task!(
                 Self::run_event_listening_task(
@@ -118,7 +118,7 @@ where
                     sui_client_clone,
                     query_interval,
                     metrics,
-                    new_events_sender_clone,
+                    new_requests_sender_clone,
                 )
             ));
         }
@@ -166,7 +166,7 @@ where
         dwallet_coordinator_object_receiver: Receiver<
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
-        uncompleted_events_sender: Sender<(Vec<DBSuiEvent>, EpochId)>,
+        uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
     ) {
         tokio::time::sleep(Duration::from_secs(2)).await;
         loop {
@@ -179,20 +179,38 @@ where
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             };
+
             match sui_client
                 .pull_dwallet_mpc_uncompleted_events(&coordinator_inner)
                 .await
             {
                 Ok((events, epoch)) => {
-                    for event in &events {
+                    let requests = events.iter().filter_map(|event| {
                         debug!(
-                            event_type=?event.type_,
+                            event_type=?event.type_.clone(),
                             current_epoch=?epoch,
                             contents=?event.contents.clone(),
-                            "Successfully fetched an uncompleted event from Sui"
+                            "Processing an uncompleted event from Sui"
                         );
-                    }
-                    if let Err(err) = uncompleted_events_sender.send((events, epoch)) {
+
+                        match sui_event_into_session_request(
+                            &sui_client.ika_network_config,
+                            event.type_.clone(),
+                            &event.contents,
+                            true,
+                        ) {
+                            Ok(Some(event)) => {
+                                Some(event)
+                            }
+                            Ok(None) => None,
+                            Err(e) => {
+                                error!(error=?e, event_type =? event.type_, "failed to parse Sui event");
+                                None
+                            }
+                        }
+                    }).collect::<Vec<_>>();
+
+                    if let Err(err) = uncompleted_requests_sender.send((requests, epoch)) {
                         error!(
                             error=?err,
                             current_epoch=?epoch,
@@ -469,7 +487,7 @@ where
         sui_client: Arc<SuiClient<C>>,
         query_interval: Duration,
         metrics: Arc<SuiConnectorMetrics>,
-        new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
+        new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
     ) {
         info!(?module, "Starting sui events listening task");
         let mut interval = time::interval(query_interval);
@@ -544,7 +562,28 @@ where
                     // We can then update the latest checkpoint metric.
                     notify.notify_one();
                 }
-                if let Err(e) = new_events_sender.send(events.data) {
+
+                let requests = events
+                    .data
+                    .iter()
+                    .filter_map(|event| {
+                        match sui_event_into_session_request(
+                            &sui_client.ika_network_config,
+                            event.type_.clone(),
+                            &event.bcs.bytes(),
+                            false,
+                        ) {
+                            Ok(Some(request)) => Some(request),
+                            Ok(None) => None,
+                            Err(e) => {
+                                error!(error=?e, ?module, "failed to parse Sui event");
+                                None
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                if let Err(e) = new_requests_sender.send(requests) {
                     error!(error=?e, ?module, "failed to send new events to the channel");
                 }
 

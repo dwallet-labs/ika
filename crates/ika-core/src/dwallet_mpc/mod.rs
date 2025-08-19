@@ -17,7 +17,8 @@ pub mod mpc_session;
 
 mod crytographic_computation;
 pub mod dwallet_mpc_metrics;
-mod mpc_event;
+
+pub use crytographic_computation::protocol_cryptographic_data;
 
 #[cfg(test)]
 mod integration_tests;
@@ -137,6 +138,7 @@ pub(crate) fn party_ids_to_authority_names(
         .collect()
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use fastcrypto::traits::KeyPair;

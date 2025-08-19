@@ -54,7 +54,7 @@ export function getActiveEncryptionKey(
 export function approveMessage(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
-	dwalletCap: string,
+	dwalletCap: TransactionObjectArgument,
 	signatureAlgorithm: number,
 	hashScheme: number,
 	message: Uint8Array,
@@ -64,7 +64,7 @@ export function approveMessage(
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::approve_message`,
 		arguments: [
 			coordinatorObjectRef,
-			tx.object(dwalletCap),
+			dwalletCap,
 			tx.pure.u32(signatureAlgorithm),
 			tx.pure.u32(hashScheme),
 			tx.pure(bcs.vector(bcs.u8()).serialize(message)),
@@ -75,7 +75,7 @@ export function approveMessage(
 export function approveImportedKeyMessage(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
-	importedKeyDWalletCap: string,
+	importedKeyDWalletCap: TransactionObjectArgument,
 	signatureAlgorithm: number,
 	hashScheme: number,
 	message: Uint8Array,
@@ -85,7 +85,7 @@ export function approveImportedKeyMessage(
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::approve_imported_key_message`,
 		arguments: [
 			coordinatorObjectRef,
-			tx.object(importedKeyDWalletCap),
+			importedKeyDWalletCap,
 			tx.pure.u32(signatureAlgorithm),
 			tx.pure.u32(hashScheme),
 			tx.pure(bcs.vector(bcs.u8()).serialize(message)),

@@ -9,7 +9,8 @@ use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData,
+    DBSuiEvent, DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, IkaNetworkConfig,
+    IkaObjectsConfig, IkaPackageConfig,
 };
 use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartValidatorInfoV1};
 use ika_types::sui::staking::StakingPool;
@@ -89,13 +90,7 @@ macro_rules! retry_with_max_elapsed_time {
 pub struct SuiClient<P> {
     inner: P,
     sui_client_metrics: Arc<SuiClientMetrics>,
-    ika_package_id: ObjectID,
-    #[allow(dead_code)]
-    ika_common_package_id: ObjectID,
-    ika_dwallet_2pc_mpc_package_id: ObjectID,
-    ika_system_package_id: ObjectID,
-    ika_system_object_id: ObjectID,
-    ika_dwallet_coordinator_object_id: ObjectID,
+    pub ika_network_config: IkaNetworkConfig,
 }
 
 pub type SuiConnectorClient = SuiClient<SuiSdkClient>;
@@ -104,12 +99,7 @@ impl SuiConnectorClient {
     pub async fn new(
         rpc_url: &str,
         sui_client_metrics: Arc<SuiClientMetrics>,
-        ika_package_id: ObjectID,
-        ika_common_package_id: ObjectID,
-        ika_dwallet_2pc_mpc_package_id: ObjectID,
-        ika_system_package_id: ObjectID,
-        ika_system_object_id: ObjectID,
-        ika_dwallet_coordinator_object_id: ObjectID,
+        ika_network_config: IkaNetworkConfig,
     ) -> anyhow::Result<Self> {
         let inner = SuiClientBuilder::default()
             .build(rpc_url)
@@ -120,12 +110,7 @@ impl SuiConnectorClient {
         let self_ = Self {
             inner,
             sui_client_metrics,
-            ika_package_id,
-            ika_common_package_id,
-            ika_dwallet_2pc_mpc_package_id,
-            ika_system_package_id,
-            ika_system_object_id,
-            ika_dwallet_coordinator_object_id,
+            ika_network_config,
         };
         self_.describe().await?;
         Ok(self_)
@@ -219,16 +204,24 @@ where
     }
 
     pub fn new_for_testing(inner: P) -> Self {
+        // TODO(omersadika) fix that random
+        let ika_network_config = IkaNetworkConfig {
+            packages: IkaPackageConfig {
+                ika_package_id: ObjectID::random(),
+                ika_common_package_id: ObjectID::random(),
+                ika_dwallet_2pc_mpc_package_id: ObjectID::random(),
+                ika_system_package_id: ObjectID::random(),
+            },
+            objects: IkaObjectsConfig {
+                ika_system_object_id: ObjectID::random(),
+                ika_dwallet_coordinator_object_id: ObjectID::random(),
+            },
+        };
+
         Self {
             inner,
             sui_client_metrics: SuiClientMetrics::new_for_testing(),
-            // TODO(omersadika) fix that random
-            ika_package_id: ObjectID::random(),
-            ika_common_package_id: ObjectID::random(),
-            ika_dwallet_2pc_mpc_package_id: ObjectID::random(),
-            ika_system_package_id: ObjectID::random(),
-            ika_system_object_id: ObjectID::random(),
-            ika_dwallet_coordinator_object_id: ObjectID::random(),
+            ika_network_config,
         }
     }
 
@@ -247,7 +240,11 @@ where
     ) -> IkaResult<(DWalletCoordinator, DWalletCoordinatorInner)> {
         let result = self
             .inner
-            .get_dwallet_coordinator(self.ika_dwallet_coordinator_object_id)
+            .get_dwallet_coordinator(
+                self.ika_network_config
+                    .objects
+                    .ika_dwallet_coordinator_object_id,
+            )
             .await
             .map_err(|e| IkaError::SuiClientInternalError(format!("Can't get Coordinator: {e}")))?;
         let wrapper = bcs::from_bytes::<DWalletCoordinator>(&result).map_err(|e| {
@@ -259,7 +256,9 @@ where
                 let result = self
                     .inner
                     .get_dwallet_coordinator_inner(
-                        self.ika_dwallet_coordinator_object_id,
+                        self.ika_network_config
+                            .objects
+                            .ika_dwallet_coordinator_object_id,
                         wrapper.version,
                     )
                     .await
@@ -290,7 +289,7 @@ where
     pub async fn get_system_inner(&self) -> IkaResult<(System, SystemInner)> {
         let result = self
             .inner
-            .get_system(self.ika_system_object_id)
+            .get_system(self.ika_network_config.objects.ika_system_object_id)
             .await
             .map_err(|e| IkaError::SuiClientInternalError(format!("Can't get System: {e}")))?;
         let wrapper = bcs::from_bytes::<System>(&result).map_err(|e| {
@@ -301,7 +300,10 @@ where
             1 | 2 => {
                 let result = self
                     .inner
-                    .get_system_inner(self.ika_system_object_id, wrapper.version)
+                    .get_system_inner(
+                        self.ika_network_config.objects.ika_system_object_id,
+                        wrapper.version,
+                    )
                     .await
                     .map_err(|e| {
                         IkaError::SuiClientInternalError(format!("Can't get SystemInner v1: {e}"))
@@ -485,7 +487,8 @@ where
         static ARG: OnceCell<ObjectArg> = OnceCell::const_new();
         *ARG.get_or_init(|| async move {
             let Ok(Ok(system_arg)) = retry_with_max_elapsed_time!(
-                self.inner.get_mutable_shared_arg(self.ika_system_object_id),
+                self.inner
+                    .get_mutable_shared_arg(self.ika_network_config.objects.ika_system_object_id),
                 Duration::from_secs(30)
             ) else {
                 panic!("Failed to get system object arg after retries");
@@ -515,8 +518,11 @@ where
         static ARG: OnceCell<ObjectArg> = OnceCell::const_new();
         *ARG.get_or_init(|| async move {
             let Ok(Ok(system_arg)) = retry_with_max_elapsed_time!(
-                self.inner
-                    .get_mutable_shared_arg(self.ika_dwallet_coordinator_object_id),
+                self.inner.get_mutable_shared_arg(
+                    self.ika_network_config
+                        .objects
+                        .ika_dwallet_coordinator_object_id
+                ),
                 Duration::from_secs(30)
             ) else {
                 panic!("Failed to get dwallet_2pc_mpc_coordinator_id object arg after retries");
@@ -530,7 +536,10 @@ where
         &self,
     ) -> IkaResult<Vec<(ObjectID, MovePackageDigest)>> {
         self.inner
-            .get_available_move_packages(self.ika_package_id, self.ika_system_package_id)
+            .get_available_move_packages(
+                self.ika_network_config.packages.ika_package_id,
+                self.ika_network_config.packages.ika_system_package_id,
+            )
             .await
             .map_err(|e| {
                 IkaError::SuiClientInternalError(format!("Can't get_available_move_packages: {e}"))
@@ -545,7 +554,10 @@ where
         cursor: Option<EventID>,
     ) -> IkaResult<Page<SuiEvent, EventID>> {
         let filter = EventFilter::MoveEventModule {
-            package: self.ika_dwallet_2pc_mpc_package_id,
+            package: self
+                .ika_network_config
+                .packages
+                .ika_dwallet_2pc_mpc_package_id,
             module: module.clone(),
         };
         let events = self
@@ -555,9 +567,15 @@ where
             .map_err(|e| IkaError::SuiClientInternalError(format!("Can't query_events: {e}")))?;
 
         // Safeguard check that all events are emitted from requested package and module
-        assert!(events.data.iter().all(|event| event.type_.address.as_ref()
-            == self.ika_dwallet_2pc_mpc_package_id.as_ref()
-            && event.type_.module == module));
+        assert!(events.data.iter().all(|event| {
+            event.type_.address.as_ref()
+                == self
+                    .ika_network_config
+                    .packages
+                    .ika_dwallet_2pc_mpc_package_id
+                    .as_ref()
+                && event.type_.module == module
+        }));
         Ok(events)
     }
 
@@ -623,7 +641,7 @@ where
                         .inc();
                     warn!(
                         error=?err,
-                        system_object_id=%self.ika_system_object_id,
+                        system_object_id=%self.ika_network_config.objects.ika_system_object_id,
                         "failed to get ika system inner object",
                     );
                 }
@@ -685,7 +703,7 @@ where
                         .inc();
                     warn!(
                         error=?err,
-                        system_object_id=%self.ika_system_object_id,
+                        system_object_id=%self.ika_network_config.objects.ika_system_object_id,
                         "Failed to get dwallet coordinator inner object",
                     );
                 }
