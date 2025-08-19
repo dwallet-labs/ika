@@ -5,7 +5,6 @@
 //!
 //! It integrates both Presign parties (each representing a round in the Presign protocol).
 
-use tracing::info;
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
 };
@@ -15,6 +14,7 @@ use ika_types::messages_dwallet_mpc::{
     AsyncProtocol, DWalletSessionEvent, MPCRequestInput, MPCSessionRequest, PresignRequestEvent,
     SessionIdentifier,
 };
+use tracing::info;
 
 pub(crate) type PresignParty = <AsyncProtocol as twopc_mpc::presign::Protocol>::PresignParty;
 
