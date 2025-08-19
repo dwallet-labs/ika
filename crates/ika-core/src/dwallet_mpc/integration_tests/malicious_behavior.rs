@@ -1,12 +1,16 @@
 use crate::dwallet_mpc::integration_tests::utils;
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
+use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent,
-    DWalletSessionEventTrait, IkaNetworkConfig,
+    DWalletSessionEventTrait, IkaNetworkConfig, SessionIdentifier, SessionType,
 };
 use itertools::Itertools;
 use std::collections::HashMap;
+use sui_types::base_types::ObjectID;
 use tracing::info;
 
 #[tokio::test]
@@ -35,15 +39,23 @@ async fn test_some_malicious_validators_flows_succeed() {
         mut epoch_stores,
         mut notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
+    let network_key_id = ObjectID::random();
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
-                    &ika_network_config,
-                ),
-                // The base64 encoding of an actual start network DKG event.
-                contents: base64::decode("Z7MmXd0I4lvGWLDA969YOVo7wrZlXr21RMvixIFabCqAU3voWC2pRFG3QwPYD+ta0sX5poLEkq77ovCi3BBQDgEAAAAAAAAAgFN76FgtqURRt0MD2A/rWtLF+aaCxJKu+6LwotwQUA4BAQAAAAAAAAAggZwXRQsb/ha4mk5xZZfqItaokplduZGMnsuEQzdm7UTt2Z+ktotfGXHn2YVaxxqVhDM8UaafXejIDXnaPLxaMAA=").unwrap(),
-                pulled: true,
+            vec![DWalletSessionRequest {
+                session_type: SessionType::User,
+                session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
+                session_sequence_number: 1,
+                protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
+                    data: NetworkEncryptionKeyDkgData {
+                        key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
+                    },
+                    dwallet_network_encryption_key_id: network_key_id,
+                },
+                epoch: 1,
+                requires_network_key_data: false,
+                requires_next_active_committee: false,
+                pulled: false,
             }],
             epoch_id,
         ));
@@ -152,15 +164,23 @@ async fn test_party_copies_other_party_message_dkg_round() {
         mut epoch_stores,
         mut notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
+    let network_key_id = ObjectID::random();
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
-                    &ika_network_config,
-                ),
-                // The base64 encoding of an actual start network DKG event.
-                contents: base64::decode("Z7MmXd0I4lvGWLDA969YOVo7wrZlXr21RMvixIFabCqAU3voWC2pRFG3QwPYD+ta0sX5poLEkq77ovCi3BBQDgEAAAAAAAAAgFN76FgtqURRt0MD2A/rWtLF+aaCxJKu+6LwotwQUA4BAQAAAAAAAAAggZwXRQsb/ha4mk5xZZfqItaokplduZGMnsuEQzdm7UTt2Z+ktotfGXHn2YVaxxqVhDM8UaafXejIDXnaPLxaMAA=").unwrap(),
-                pulled: true,
+            vec![DWalletSessionRequest {
+                session_type: SessionType::User,
+                session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
+                session_sequence_number: 1,
+                protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
+                    data: NetworkEncryptionKeyDkgData {
+                        key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
+                    },
+                    dwallet_network_encryption_key_id: network_key_id,
+                },
+                epoch: 1,
+                requires_network_key_data: false,
+                requires_next_active_committee: false,
+                pulled: false,
             }],
             epoch_id,
         ));
