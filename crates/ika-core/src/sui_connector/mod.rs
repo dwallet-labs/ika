@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_checkpoints::DWalletCheckpointStore;
+use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::sui_executor::{StopReason, SuiExecutor};
 use crate::sui_connector::sui_syncer::SuiSyncer;
@@ -15,13 +16,13 @@ use ika_types::committee::{Committee, EpochId};
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
+    DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
 };
 use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use sui_json_rpc_types::{Coin, SuiEvent};
+use sui_json_rpc_types::Coin;
 use sui_sdk::SuiClient as SuiSdkClient;
 use sui_sdk::apis::CoinReadApi;
 use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress};
@@ -35,6 +36,7 @@ use tracing::info;
 
 pub mod end_of_publish_sender;
 pub mod metrics;
+mod sui_event_into_request;
 pub mod sui_executor;
 pub mod sui_syncer;
 
@@ -65,10 +67,10 @@ impl SuiConnectorService {
         sui_connector_metrics: Arc<SuiConnectorMetrics>,
         is_validator: bool,
         next_epoch_committee_sender: Sender<Committee>,
-        new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
+        new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
-        uncompleted_events_sender: Sender<(Vec<DBSuiEvent>, EpochId)>,
+        uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
     ) -> anyhow::Result<(
         Arc<Self>,
         watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -108,10 +110,10 @@ impl SuiConnectorService {
             system_object_receiver,
             dwallet_coordinator_receiver,
             network_keys_sender,
-            new_events_sender,
+            new_requests_sender,
             end_of_publish_sender,
             last_session_to_complete_in_current_epoch_sender,
-            uncompleted_events_sender,
+            uncompleted_requests_sender,
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;

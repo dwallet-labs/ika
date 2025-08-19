@@ -14,7 +14,6 @@ import {
 import {
 	createTestIkaClient,
 	createTestSuiClient,
-	DEFAULT_TIMEOUT,
 	delay,
 	generateTestKeypairForImportedDWallet,
 	requestTestFaucetFunds,
@@ -22,109 +21,272 @@ import {
 } from '../helpers/test-utils';
 
 describe('Imported DWallet Creation', () => {
-	it(
-		'should create an imported DWallet and activate it',
-		async () => {
-			const testName = 'imported-dwallet-creation-test';
-			const suiClient = createTestSuiClient();
-			const ikaClient = createTestIkaClient(suiClient);
-			await ikaClient.initialize();
+	it('should create an imported DWallet and activate it', async () => {
+		const testName = 'imported-dwallet-creation-test';
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
 
-			const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-				generateTestKeypairForImportedDWallet(testName);
+		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
+			generateTestKeypairForImportedDWallet(testName);
 
-			await requestTestFaucetFunds(signerAddress);
+		await requestTestFaucetFunds(signerAddress);
 
-			const { sessionIdentifier, sessionIdentifierPreimage } = await createTestSessionIdentifier(
-				ikaClient,
-				suiClient,
-				signerAddress,
-				testName,
-			);
+		const { sessionIdentifier, sessionIdentifierPreimage } = await createTestSessionIdentifier(
+			ikaClient,
+			suiClient,
+			signerAddress,
+			testName,
+		);
 
-			await delay(3);
+		await delay(3);
 
-			await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
+		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
 
-			await delay(3);
+		await delay(3);
 
-			const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+		const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+			ikaClient,
+			sessionIdentifierPreimage,
+			userShareEncryptionKeys,
+			dWalletKeypair,
+		);
+
+		const importedKeyDWalletVerificationRequestEvent = await requestTestImportedDWalletVerification(
+			ikaClient,
+			suiClient,
+			importDWalletVerificationRequestInput,
+			Curve.SECP256K1,
+			signerPublicKey,
+			sessionIdentifier,
+			userShareEncryptionKeys,
+			signerAddress,
+			testName,
+		);
+
+		expect(importedKeyDWalletVerificationRequestEvent).toBeDefined();
+		expect(importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id).toBeDefined();
+
+		const awaitingKeyHolderSignatureDWallet = await retryUntil(
+			() =>
+				ikaClient.getDWalletInParticularState(
+					importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+					'AwaitingKeyHolderSignature',
+				),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		);
+
+		expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
+		expect(awaitingKeyHolderSignatureDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
+
+		await acceptTestEncryptedUserShare(
+			ikaClient,
+			suiClient,
+			awaitingKeyHolderSignatureDWallet,
+			importDWalletVerificationRequestInput.userPublicOutput,
+			importedKeyDWalletVerificationRequestEvent,
+			userShareEncryptionKeys,
+			testName,
+		);
+
+		const activeDWallet = await retryUntil(
+			() =>
+				ikaClient.getDWalletInParticularState(
+					importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+					'Active',
+				),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		);
+
+		expect(activeDWallet).toBeDefined();
+		expect(activeDWallet.state.$kind).toBe('Active');
+
+		const encryptedUserSecretKeyShare = await retryUntil(
+			() =>
+				ikaClient.getEncryptedUserSecretKeyShare(
+					importedKeyDWalletVerificationRequestEvent.event_data.encrypted_user_secret_key_share_id,
+				),
+			(share) => share !== null,
+			30,
+			1000,
+		);
+
+		expect(encryptedUserSecretKeyShare).toBeDefined();
+		expect(encryptedUserSecretKeyShare.dwallet_id).toBe(
+			importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+		);
+
+		// Additional validations for successful creation
+		expect(activeDWallet.id).toBeDefined();
+		expect(activeDWallet.id.id).toBe(
+			importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+		);
+		expect(encryptedUserSecretKeyShare.id).toBeDefined();
+		expect(encryptedUserSecretKeyShare.encryption_key_address).toBeDefined();
+	});
+
+	it('should handle different session identifier inputs correctly', async () => {
+		const testName = 'session-identifier-edge-cases-test';
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+
+		const { userShareEncryptionKeys, dWalletKeypair, signerAddress } =
+			generateTestKeypairForImportedDWallet(testName);
+
+		await requestTestFaucetFunds(signerAddress);
+
+		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
+
+		// Test with all zeros session identifier - should work (as evidenced by test output)
+		const zeroSessionIdentifierPreimage = new Uint8Array(32).fill(0);
+		const verificationInput = await prepareImportDWalletVerification(
+			ikaClient,
+			zeroSessionIdentifierPreimage,
+			userShareEncryptionKeys,
+			dWalletKeypair,
+		);
+
+		// Validate that the function returns proper structure even with edge case input
+		expect(verificationInput).toBeDefined();
+		expect(verificationInput.userPublicOutput).toBeDefined();
+		expect(verificationInput.userPublicOutput).toBeInstanceOf(Uint8Array);
+		expect(verificationInput.userPublicOutput.length).toBeGreaterThan(0);
+
+		// Test with maximum values session identifier
+		const maxSessionIdentifierPreimage = new Uint8Array(32).fill(255);
+		const verificationInput2 = await prepareImportDWalletVerification(
+			ikaClient,
+			maxSessionIdentifierPreimage,
+			userShareEncryptionKeys,
+			dWalletKeypair,
+		);
+
+		expect(verificationInput2).toBeDefined();
+		expect(verificationInput2.userPublicOutput).toBeDefined();
+
+		// Different session identifiers should produce different outputs
+		expect(verificationInput.userPublicOutput).not.toEqual(verificationInput2.userPublicOutput);
+	});
+
+	it('should handle invalid keypair gracefully', async () => {
+		const testName = 'invalid-keypair-test';
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+
+		const { userShareEncryptionKeys, signerAddress } =
+			generateTestKeypairForImportedDWallet(testName);
+
+		await requestTestFaucetFunds(signerAddress);
+
+		const { sessionIdentifier, sessionIdentifierPreimage } = await createTestSessionIdentifier(
+			ikaClient,
+			suiClient,
+			signerAddress,
+			testName,
+		);
+
+		await delay(3);
+
+		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
+
+		// This should fail when trying to use uninitialized keypair
+		await expect(
+			prepareImportDWalletVerification(
 				ikaClient,
 				sessionIdentifierPreimage,
 				userShareEncryptionKeys,
-				dWalletKeypair,
-			);
+				null as any, // Invalid keypair
+			),
+		).rejects.toThrow();
+	});
 
-			const importedKeyDWalletVerificationRequestEvent =
-				await requestTestImportedDWalletVerification(
-					ikaClient,
-					suiClient,
-					importDWalletVerificationRequestInput,
-					Curve.SECP256K1,
-					signerPublicKey,
-					sessionIdentifier,
-					userShareEncryptionKeys,
-					signerAddress,
-					testName,
-				);
+	it('should validate DWallet state transitions correctly', async () => {
+		const testName = 'state-validation-test';
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
 
-			expect(importedKeyDWalletVerificationRequestEvent).toBeDefined();
-			expect(importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id).toBeDefined();
+		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
+			generateTestKeypairForImportedDWallet(testName);
 
-			const awaitingKeyHolderSignatureDWallet = await retryUntil(
-				() =>
-					ikaClient.getDWalletInParticularState(
-						importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
-						'AwaitingKeyHolderSignature',
-					),
-				(wallet) => wallet !== null,
-				30,
-				2000,
-			);
+		await requestTestFaucetFunds(signerAddress);
 
-			expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
-			expect(awaitingKeyHolderSignatureDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
+		const { sessionIdentifier, sessionIdentifierPreimage } = await createTestSessionIdentifier(
+			ikaClient,
+			suiClient,
+			signerAddress,
+			testName,
+		);
 
-			await acceptTestEncryptedUserShare(
-				ikaClient,
-				suiClient,
-				awaitingKeyHolderSignatureDWallet,
-				importDWalletVerificationRequestInput.userPublicOutput,
-				importedKeyDWalletVerificationRequestEvent,
-				userShareEncryptionKeys,
-				testName,
-			);
+		await delay(3);
 
-			const activeDWallet = await retryUntil(
-				() =>
-					ikaClient.getDWalletInParticularState(
-						importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
-						'Active',
-					),
-				(wallet) => wallet !== null,
-				30,
-				2000,
-			);
+		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
 
-			expect(activeDWallet).toBeDefined();
-			expect(activeDWallet.state.$kind).toBe('Active');
+		const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+			ikaClient,
+			sessionIdentifierPreimage,
+			userShareEncryptionKeys,
+			dWalletKeypair,
+		);
 
-			const encryptedUserSecretKeyShare = await retryUntil(
-				() =>
-					ikaClient.getEncryptedUserSecretKeyShare(
-						importedKeyDWalletVerificationRequestEvent.event_data
-							.encrypted_user_secret_key_share_id,
-					),
-				(share) => share !== null,
-				30,
-				1000,
-			);
+		// Validate verification request input structure
+		expect(importDWalletVerificationRequestInput).toBeDefined();
+		expect(importDWalletVerificationRequestInput.userPublicOutput).toBeDefined();
+		expect(typeof importDWalletVerificationRequestInput).toBe('object');
 
-			expect(encryptedUserSecretKeyShare).toBeDefined();
-			expect(encryptedUserSecretKeyShare.dwallet_id).toBe(
+		await delay(3);
+
+		const importedKeyDWalletVerificationRequestEvent = await requestTestImportedDWalletVerification(
+			ikaClient,
+			suiClient,
+			importDWalletVerificationRequestInput,
+			Curve.SECP256K1,
+			signerPublicKey,
+			sessionIdentifier,
+			userShareEncryptionKeys,
+			signerAddress,
+			testName,
+		);
+
+		// Validate event structure
+		expect(importedKeyDWalletVerificationRequestEvent.event_data).toBeDefined();
+		expect(importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id).toMatch(
+			/^0x[a-f0-9]+$/,
+		);
+		expect(
+			importedKeyDWalletVerificationRequestEvent.event_data.encrypted_user_secret_key_share_id,
+		).toMatch(/^0x[a-f0-9]+$/);
+
+		// Verify DWallet is in correct initial state
+		const awaitingKeyHolderSignatureDWallet = await retryUntil(
+			() =>
+				ikaClient.getDWalletInParticularState(
+					importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+					'AwaitingKeyHolderSignature',
+				),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		);
+
+		expect(awaitingKeyHolderSignatureDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
+		expect(awaitingKeyHolderSignatureDWallet.id.id).toBe(
+			importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+		);
+
+		// Test that DWallet cannot be retrieved in wrong state
+		const incorrectStateDWallet = await ikaClient
+			.getDWalletInParticularState(
 				importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
-			);
-		},
-		DEFAULT_TIMEOUT,
-	);
+				'Active',
+			)
+			.catch(() => null);
+		expect(incorrectStateDWallet).toBeNull(); // Should not be Active yet
+	});
 });
