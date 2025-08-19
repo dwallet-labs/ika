@@ -143,7 +143,5 @@ describe('Imported DWallet Signing', () => {
 			userShareEncryptionKeys,
 			testName,
 		);
-
-		expect(true).toBe(true);
 	});
 });

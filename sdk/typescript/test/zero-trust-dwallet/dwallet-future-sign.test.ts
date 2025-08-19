@@ -106,9 +106,6 @@ describe('DWallet Future Signing', () => {
 			SignatureAlgorithm.ECDSA,
 			testName,
 		);
-
-		// Verify the future signing process completed successfully
-		expect(true).toBe(true);
 	});
 
 	it('should handle multiple future sign requests', async () => {

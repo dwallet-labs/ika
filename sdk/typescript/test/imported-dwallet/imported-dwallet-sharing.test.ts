@@ -120,7 +120,5 @@ describe('Imported DWallet Sharing (make shares public)', () => {
 			secretShare,
 			testName,
 		);
-
-		expect(true).toBe(true);
 	});
 });

@@ -500,8 +500,5 @@ describe('DWallet Transfer', () => {
 			SignatureAlgorithm.ECDSA,
 			testName,
 		);
-
-		// Both users can successfully sign with the same DWallet
-		expect(true).toBe(true);
 	});
 });

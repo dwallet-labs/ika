@@ -349,10 +349,6 @@ export async function runSignFullFlow(
 		SignatureAlgorithm.ECDSA,
 		testName,
 	);
-
-	// Verify the signing process completed successfully
-	// The fact that testSign didn't throw an error indicates success
-	expect(true).toBe(true);
 }
 
 export async function waitForEpochSwitch(ikaClient: IkaClient) {
