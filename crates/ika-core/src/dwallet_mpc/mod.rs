@@ -17,7 +17,6 @@ pub mod mpc_session;
 
 mod crytographic_computation;
 pub mod dwallet_mpc_metrics;
-pub mod mpc_event;
 
 pub use crytographic_computation::protocol_cryptographic_data;
 

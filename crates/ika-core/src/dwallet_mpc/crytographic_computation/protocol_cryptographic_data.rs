@@ -10,7 +10,7 @@ use crate::request_protocol_data::{
     DKGFirstData, DKGSecondData, EncryptedShareVerificationData, ImportedKeyVerificationData,
     MakeDWalletUserSecretKeySharesPublicData, NetworkEncryptionKeyDkgData,
     NetworkEncryptionKeyReconfigurationData, PartialSignatureVerificationData, PresignData,
-    ProtocolSpecificData, SignData,
+    ProtocolData, SignData,
 };
 use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
@@ -86,7 +86,7 @@ pub enum ProtocolCryptographicData {
 
 impl ProtocolCryptographicData {
     pub fn try_new(
-        protocol_specific_data: &ProtocolSpecificData,
+        protocol_specific_data: &ProtocolData,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
         consensus_round: u64,
@@ -98,7 +98,7 @@ impl ProtocolCryptographicData {
         decryption_key_shares: &Box<DwalletMPCNetworkKeys>,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
-            ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
+            ProtocolData::MakeDWalletUserSecretKeySharesPublic {
                 data:
                     MakeDWalletUserSecretKeySharesPublicData {
                         curve,
@@ -120,7 +120,7 @@ impl ProtocolCryptographicData {
                     protocol_public_parameters: public_input.clone(),
                 }
             }
-            ProtocolSpecificData::ImportedKeyVerification {
+            ProtocolData::ImportedKeyVerification {
                 data:
                     ImportedKeyVerificationData {
                         curve,
@@ -159,7 +159,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                 }
             }
-            ProtocolSpecificData::DKGFirst {
+            ProtocolData::DKGFirst {
                 data: DKGFirstData { curve },
                 ..
             } => {
@@ -186,7 +186,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                 }
             }
-            ProtocolSpecificData::DKGSecond {
+            ProtocolData::DKGSecond {
                 data:
                     DKGSecondData {
                         curve,
@@ -223,7 +223,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                 }
             }
-            ProtocolSpecificData::Presign {
+            ProtocolData::Presign {
                 data:
                     PresignData {
                         curve,
@@ -257,7 +257,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                 }
             }
-            ProtocolSpecificData::Sign {
+            ProtocolData::Sign {
                 data:
                     SignData {
                         curve,
@@ -298,7 +298,7 @@ impl ProtocolCryptographicData {
                     decryption_key_shares: decryption_key_shares.clone(),
                 }
             }
-            ProtocolSpecificData::NetworkEncryptionKeyDkg {
+            ProtocolData::NetworkEncryptionKeyDkg {
                 data: NetworkEncryptionKeyDkgData { key_scheme },
                 ..
             } => {
@@ -328,7 +328,7 @@ impl ProtocolCryptographicData {
                     class_groups_decryption_key,
                 }
             }
-            ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
+            ProtocolData::NetworkEncryptionKeyReconfiguration {
                 data: NetworkEncryptionKeyReconfigurationData {},
                 dwallet_network_encryption_key_id,
             } => {
@@ -361,7 +361,7 @@ impl ProtocolCryptographicData {
                     decryption_key_shares: decryption_key_shares.clone(),
                 }
             }
-            ProtocolSpecificData::EncryptedShareVerification {
+            ProtocolData::EncryptedShareVerification {
                 data:
                     EncryptedShareVerificationData {
                         curve,
@@ -386,7 +386,7 @@ impl ProtocolCryptographicData {
                     protocol_public_parameters: public_input.clone(),
                 }
             }
-            ProtocolSpecificData::PartialSignatureVerification {
+            ProtocolData::PartialSignatureVerification {
                 data:
                     PartialSignatureVerificationData {
                         curve,

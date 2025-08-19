@@ -12,7 +12,7 @@ use crate::dwallet_mpc::reconfiguration::{
 };
 use crate::dwallet_mpc::sign::{SignParty, sign_session_public_input};
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::ProtocolSpecificData;
+use crate::request_protocol_data::ProtocolData;
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -62,8 +62,8 @@ pub(crate) fn session_input_from_request(
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
-    match &request.protocol_specific_data {
-        ProtocolSpecificData::ImportedKeyVerification {
+    match &request.protocol_data {
+        ProtocolData::ImportedKeyVerification {
             dwallet_network_encryption_key_id,
             centralized_party_message,
             ..
@@ -89,7 +89,7 @@ pub(crate) fn session_input_from_request(
                 None,
             ))
         }
-        ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
+        ProtocolData::MakeDWalletUserSecretKeySharesPublic {
             dwallet_network_encryption_key_id,
             ..
         } => {
@@ -101,7 +101,7 @@ pub(crate) fn session_input_from_request(
                 None,
             ))
         }
-        ProtocolSpecificData::NetworkEncryptionKeyDkg { .. } => {
+        ProtocolData::NetworkEncryptionKeyDkg { .. } => {
             let class_groups_decryption_key = network_keys
                 .validator_private_dec_key_data
                 .class_groups_decryption_key;
@@ -116,7 +116,7 @@ pub(crate) fn session_input_from_request(
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
             ))
         }
-        ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
+        ProtocolData::NetworkEncryptionKeyReconfiguration {
             dwallet_network_encryption_key_id,
             ..
         } => {
@@ -145,7 +145,7 @@ pub(crate) fn session_input_from_request(
                     )?),
                 ))
         }
-        ProtocolSpecificData::DKGFirst {
+        ProtocolData::DKGFirst {
             dwallet_network_encryption_key_id,
             ..
         } => {
@@ -160,7 +160,7 @@ pub(crate) fn session_input_from_request(
                 None,
             ))
         }
-        ProtocolSpecificData::DKGSecond {
+        ProtocolData::DKGSecond {
             dwallet_network_encryption_key_id,
             first_round_output,
             centralized_public_key_share_and_proof,
@@ -181,7 +181,7 @@ pub(crate) fn session_input_from_request(
                 None,
             ))
         }
-        ProtocolSpecificData::Presign {
+        ProtocolData::Presign {
             dwallet_network_encryption_key_id,
             dwallet_public_output,
             ..
@@ -201,7 +201,7 @@ pub(crate) fn session_input_from_request(
                 None,
             ))
         }
-        ProtocolSpecificData::Sign {
+        ProtocolData::Sign {
             data,
             dwallet_network_encryption_key_id,
             dwallet_decentralized_public_output,
@@ -232,7 +232,7 @@ pub(crate) fn session_input_from_request(
                 None,
             ))
         }
-        ProtocolSpecificData::EncryptedShareVerification {
+        ProtocolData::EncryptedShareVerification {
             dwallet_network_encryption_key_id,
             ..
         } => {
@@ -247,7 +247,7 @@ pub(crate) fn session_input_from_request(
                 None,
             ))
         }
-        ProtocolSpecificData::PartialSignatureVerification {
+        ProtocolData::PartialSignatureVerification {
             dwallet_network_encryption_key_id,
             ..
         } => {

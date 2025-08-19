@@ -8,7 +8,7 @@ use sui_types::base_types::ObjectID;
 // Common structs for shared data between ProtocolSpecificData and AdvanceSpecificData
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Imported Key Verification")]
-pub(crate) struct ImportedKeyVerificationData {
+pub struct ImportedKeyVerificationData {
     pub curve: DWalletMPCNetworkKeyScheme,
     pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
     pub encryption_key: Vec<u8>,
@@ -16,7 +16,7 @@ pub(crate) struct ImportedKeyVerificationData {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Make DWallet User Secret Key Shares Public")]
-pub(crate) struct MakeDWalletUserSecretKeySharesPublicData {
+pub struct MakeDWalletUserSecretKeySharesPublicData {
     pub curve: DWalletMPCNetworkKeyScheme,
     pub public_user_secret_key_shares: Vec<u8>,
     pub dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
@@ -24,13 +24,13 @@ pub(crate) struct MakeDWalletUserSecretKeySharesPublicData {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("dWallet DKG First Round")]
-pub(crate) struct DKGFirstData {
+pub struct DKGFirstData {
     pub curve: DWalletMPCNetworkKeyScheme,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("dWallet DKG Second Round")]
-pub(crate) struct DKGSecondData {
+pub struct DKGSecondData {
     pub curve: DWalletMPCNetworkKeyScheme,
     pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
     pub encryption_key: Vec<u8>,
@@ -38,14 +38,14 @@ pub(crate) struct DKGSecondData {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Presign")]
-pub(crate) struct PresignData {
+pub struct PresignData {
     pub curve: DWalletMPCNetworkKeyScheme,
     pub signature_algorithm: SignatureAlgorithm,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Sign")]
-pub(crate) struct SignData {
+pub struct SignData {
     pub curve: DWalletMPCNetworkKeyScheme,
     pub hash_scheme: Hash,
     pub signature_algorithm: SignatureAlgorithm,
@@ -53,17 +53,17 @@ pub(crate) struct SignData {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Network Encryption Key DKG")]
-pub(crate) struct NetworkEncryptionKeyDkgData {
+pub struct NetworkEncryptionKeyDkgData {
     pub key_scheme: DWalletMPCNetworkKeyScheme,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Network Encryption Key Reconfiguration")]
-pub(crate) struct NetworkEncryptionKeyReconfigurationData {}
+pub struct NetworkEncryptionKeyReconfigurationData {}
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Encrypted Share Verification")]
-pub(crate) struct EncryptedShareVerificationData {
+pub struct EncryptedShareVerificationData {
     pub curve: DWalletMPCNetworkKeyScheme,
     pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
     pub decentralized_public_output: SerializedWrappedMPCPublicOutput,
@@ -72,7 +72,7 @@ pub(crate) struct EncryptedShareVerificationData {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Partial Signature Verification")]
-pub(crate) struct PartialSignatureVerificationData {
+pub struct PartialSignatureVerificationData {
     pub curve: DWalletMPCNetworkKeyScheme,
     pub message: Vec<u8>,
     pub hash_type: Hash,
@@ -83,7 +83,7 @@ pub(crate) struct PartialSignatureVerificationData {
 }
 
 #[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ProtocolSpecificData {
+pub enum ProtocolData {
     ImportedKeyVerification {
         data: ImportedKeyVerificationData,
         dwallet_id: ObjectID,
@@ -158,11 +158,11 @@ pub(crate) enum ProtocolSpecificData {
     },
 }
 
-impl ProtocolSpecificData {
+impl ProtocolData {
     pub fn try_new(request_input: MPCRequestInput) -> DwalletMPCResult<Self> {
         let protocol_data = match request_input {
             MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(session_event) => {
-                ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
+                ProtocolData::MakeDWalletUserSecretKeySharesPublic {
                     data: MakeDWalletUserSecretKeySharesPublicData {
                         curve: session_event.event_data.curve.try_into()?,
                         public_user_secret_key_shares: session_event
@@ -177,7 +177,7 @@ impl ProtocolSpecificData {
                 }
             }
             MPCRequestInput::DWalletImportedKeyVerificationRequest(event_data) => {
-                ProtocolSpecificData::ImportedKeyVerification {
+                ProtocolData::ImportedKeyVerification {
                     data: ImportedKeyVerificationData {
                         curve: event_data.event_data.curve.try_into()?,
                         encrypted_centralized_secret_share_and_proof: event_data
@@ -195,7 +195,7 @@ impl ProtocolSpecificData {
                     centralized_party_message: event_data.event_data.centralized_party_message,
                 }
             }
-            MPCRequestInput::DKGFirst(event_data) => ProtocolSpecificData::DKGFirst {
+            MPCRequestInput::DKGFirst(event_data) => ProtocolData::DKGFirst {
                 data: DKGFirstData {
                     curve: event_data.event_data.curve.try_into()?,
                 },
@@ -204,7 +204,7 @@ impl ProtocolSpecificData {
                     .event_data
                     .dwallet_network_encryption_key_id,
             },
-            MPCRequestInput::DKGSecond(event_data) => ProtocolSpecificData::DKGSecond {
+            MPCRequestInput::DKGSecond(event_data) => ProtocolData::DKGSecond {
                 data: DKGSecondData {
                     curve: event_data.event_data.curve.try_into()?,
                     encrypted_centralized_secret_share_and_proof: event_data
@@ -222,7 +222,7 @@ impl ProtocolSpecificData {
                     .event_data
                     .centralized_public_key_share_and_proof,
             },
-            MPCRequestInput::Presign(session_event) => ProtocolSpecificData::Presign {
+            MPCRequestInput::Presign(session_event) => ProtocolData::Presign {
                 data: PresignData {
                     curve: session_event.event_data.curve.try_into()?,
                     signature_algorithm: session_event.event_data.signature_algorithm.try_into()?,
@@ -234,7 +234,7 @@ impl ProtocolSpecificData {
                     .event_data
                     .dwallet_network_encryption_key_id,
             },
-            MPCRequestInput::Sign(session_event) => ProtocolSpecificData::Sign {
+            MPCRequestInput::Sign(session_event) => ProtocolData::Sign {
                 data: SignData {
                     curve: session_event.event_data.curve.try_into()?,
                     hash_scheme: Hash::try_from(session_event.event_data.hash_scheme)
@@ -257,7 +257,7 @@ impl ProtocolSpecificData {
                     .message_centralized_signature,
             },
             MPCRequestInput::NetworkEncryptionKeyDkg(key_scheme, session_event) => {
-                ProtocolSpecificData::NetworkEncryptionKeyDkg {
+                ProtocolData::NetworkEncryptionKeyDkg {
                     data: NetworkEncryptionKeyDkgData {
                         key_scheme: key_scheme.clone(),
                     },
@@ -267,7 +267,7 @@ impl ProtocolSpecificData {
                 }
             }
             MPCRequestInput::EncryptedShareVerification(event_data) => {
-                ProtocolSpecificData::EncryptedShareVerification {
+                ProtocolData::EncryptedShareVerification {
                     data: EncryptedShareVerificationData {
                         curve: event_data.event_data.curve.try_into()?,
                         encrypted_centralized_secret_share_and_proof: event_data
@@ -288,7 +288,7 @@ impl ProtocolSpecificData {
                 }
             }
             MPCRequestInput::PartialSignatureVerification(event_data) => {
-                ProtocolSpecificData::PartialSignatureVerification {
+                ProtocolData::PartialSignatureVerification {
                     data: PartialSignatureVerificationData {
                         curve: event_data.event_data.curve.try_into()?,
                         message: event_data.event_data.message,
@@ -313,7 +313,7 @@ impl ProtocolSpecificData {
                 }
             }
             MPCRequestInput::NetworkEncryptionKeyReconfiguration(session_event) => {
-                ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
+                ProtocolData::NetworkEncryptionKeyReconfiguration {
                     data: NetworkEncryptionKeyReconfigurationData {},
                     dwallet_network_encryption_key_id: session_event
                         .event_data
@@ -326,43 +326,43 @@ impl ProtocolSpecificData {
 
     pub fn network_encryption_key_id(&self) -> Option<ObjectID> {
         match self {
-            ProtocolSpecificData::DKGFirst {
+            ProtocolData::DKGFirst {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolSpecificData::DKGSecond {
+            | ProtocolData::DKGSecond {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolSpecificData::Presign {
+            | ProtocolData::Presign {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolSpecificData::Sign {
+            | ProtocolData::Sign {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolSpecificData::NetworkEncryptionKeyDkg {
+            | ProtocolData::NetworkEncryptionKeyDkg {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
+            | ProtocolData::NetworkEncryptionKeyReconfiguration {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolSpecificData::EncryptedShareVerification {
+            | ProtocolData::EncryptedShareVerification {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolSpecificData::PartialSignatureVerification {
+            | ProtocolData::PartialSignatureVerification {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
+            | ProtocolData::MakeDWalletUserSecretKeySharesPublic {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolSpecificData::ImportedKeyVerification {
+            | ProtocolData::ImportedKeyVerification {
                 dwallet_network_encryption_key_id,
                 ..
             } => Some(*dwallet_network_encryption_key_id),

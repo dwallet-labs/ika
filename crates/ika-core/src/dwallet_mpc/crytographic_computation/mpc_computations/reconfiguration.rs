@@ -4,8 +4,6 @@
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
-use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::ProtocolSpecificData;
 use class_groups::reconfiguration::{PublicInput, Secp256k1Party};
 use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
@@ -18,9 +16,6 @@ use group::{PartyID, secp256k1};
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{
-    DWalletEncryptionKeyReconfigurationRequestEvent, DWalletSessionEvent, MPCRequestInput,
-};
 use mpc::{Party, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
 use twopc_mpc::ProtocolPublicParameters;
@@ -101,23 +96,6 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationSecp256k1Party 
 
         Ok(public_input)
     }
-}
-
-pub(crate) fn network_decryption_key_reconfiguration_session_request_from_event(
-    deserialized_event: DWalletSessionEvent<DWalletEncryptionKeyReconfigurationRequestEvent>,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::try_new(
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(deserialized_event.clone()),
-        )?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: true,
-        pulled: false,
-    })
 }
 
 fn extract_encryption_keys_from_committee(

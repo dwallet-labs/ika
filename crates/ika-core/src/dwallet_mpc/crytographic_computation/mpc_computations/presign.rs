@@ -4,16 +4,12 @@
 //! This module provides a wrapper around the Presign protocol from the 2PC-MPC library.
 //!
 //! It integrates both Presign parties (each representing a round in the Presign protocol).
-use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::ProtocolSpecificData;
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
 };
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
-use ika_types::messages_dwallet_mpc::{
-    AsyncProtocol, DWalletSessionEvent, MPCRequestInput, PresignRequestEvent, SessionIdentifier,
-};
+use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
 
 pub(crate) type PresignParty = <AsyncProtocol as twopc_mpc::presign::Protocol>::PresignParty;
 
@@ -33,24 +29,6 @@ pub(crate) fn presign_public_input(
                 error: "presign public input cannot be None as we only support ECDSA".to_string(),
             })?,
     )
-}
-
-pub(crate) fn presign_party_session_request(
-    deserialized_event: DWalletSessionEvent<PresignRequestEvent>,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::try_new(MPCRequestInput::Presign(
-            deserialized_event.clone(),
-        ))?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-        pulled,
-    })
 }
 
 /// A trait for generating the public input for the Presign protocol.

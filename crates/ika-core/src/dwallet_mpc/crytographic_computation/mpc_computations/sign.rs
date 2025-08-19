@@ -7,18 +7,13 @@
 
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::network_dkg::DwalletMPCNetworkKeys;
-use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::ProtocolSpecificData;
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedUserSignedMessage,
 };
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{
-    AsyncProtocol, DWalletSessionEvent, FutureSignRequestEvent, MPCRequestInput, SessionIdentifier,
-    SignRequestEvent,
-};
+use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
 use message_digest::message_digest::{Hash, message_digest};
 use mpc::{Party, Weight, WeightedThresholdAccessStructure};
 use rand_core::SeedableRng;
@@ -126,42 +121,6 @@ pub(crate) fn update_expected_decrypters_metrics(
     } else {
         dwallet_mpc_metrics.number_of_unexpected_sign_sessions.inc();
     }
-}
-
-pub(crate) fn sign_party_session_request(
-    deserialized_event: &DWalletSessionEvent<SignRequestEvent>,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::try_new(MPCRequestInput::Sign(
-            deserialized_event.clone(),
-        ))?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-        pulled,
-    })
-}
-
-pub(crate) fn get_verify_partial_signatures_session_request(
-    deserialized_event: &DWalletSessionEvent<FutureSignRequestEvent>,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::try_new(
-            MPCRequestInput::PartialSignatureVerification(deserialized_event.clone()),
-        )?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-        pulled,
-    })
 }
 
 /// A trait for generating the public input for decentralized `Sign` round in the MPC protocol.

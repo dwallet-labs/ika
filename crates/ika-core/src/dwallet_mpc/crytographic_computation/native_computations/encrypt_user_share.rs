@@ -1,37 +1,14 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::ProtocolSpecificData;
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedEncryptedUserShare,
 };
 use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{
-    DWalletSessionEvent, EncryptedShareVerificationRequestEvent, MPCRequestInput,
-};
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::AsyncProtocol;
-
-pub(crate) fn start_encrypted_share_verification_session_request(
-    deserialized_event: DWalletSessionEvent<EncryptedShareVerificationRequestEvent>,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::try_new(
-            MPCRequestInput::EncryptedShareVerification(deserialized_event.clone()),
-        )?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-        pulled,
-    })
-}
 
 /// Verifies that the given encrypted secret key share matches the encryption of the dWallet's
 /// secret share, validates the signature on the dWallet's public share,

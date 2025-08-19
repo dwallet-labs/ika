@@ -3,9 +3,9 @@
 
 //! The SuiSyncer module handles synchronizing Events emitted
 //! on the Sui blockchain from concerned modules of `ika_system` package.
-use crate::dwallet_mpc::mpc_event::parse_sui_event;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
+use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId, StakeUnit};
@@ -193,7 +193,7 @@ where
                             "Processing an uncompleted event from Sui"
                         );
 
-                        match parse_sui_event(
+                        match sui_event_into_session_request(
                             &sui_client.ika_network_config,
                             event.type_.clone(),
                             &event.contents,
@@ -567,7 +567,7 @@ where
                     .data
                     .iter()
                     .filter_map(|event| {
-                        match parse_sui_event(
+                        match sui_event_into_session_request(
                             &sui_client.ika_network_config,
                             event.type_.clone(),
                             &event.bcs.bytes(),

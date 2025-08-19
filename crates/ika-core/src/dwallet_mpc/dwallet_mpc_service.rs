@@ -21,7 +21,7 @@ use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
 use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
-use crate::request_protocol_data::ProtocolSpecificData;
+use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage};
@@ -764,12 +764,12 @@ impl DWalletMPCService {
         rejected: bool,
     ) -> Vec<DWalletCheckpointMessageKind> {
         info!(
-            mpc_protocol=? DWalletSessionRequestMetricData::from(&session_request.protocol_specific_data).to_string(),
+            mpc_protocol=? DWalletSessionRequestMetricData::from(&session_request.protocol_data).to_string(),
             session_identifier=?session_identifier,
             "Creating session output message for checkpoint"
         );
-        match &session_request.protocol_specific_data {
-            ProtocolSpecificData::DKGFirst { dwallet_id, .. } => {
+        match &session_request.protocol_data {
+            ProtocolData::DKGFirst { dwallet_id, .. } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
                     DKGFirstRoundOutput {
                         dwallet_id: dwallet_id.to_vec(),
@@ -780,7 +780,7 @@ impl DWalletMPCService {
                 );
                 vec![tx]
             }
-            ProtocolSpecificData::DKGSecond {
+            ProtocolData::DKGSecond {
                 dwallet_id,
                 encrypted_secret_share_id,
                 ..
@@ -796,7 +796,7 @@ impl DWalletMPCService {
                 );
                 vec![tx]
             }
-            ProtocolSpecificData::Presign {
+            ProtocolData::Presign {
                 dwallet_id,
                 presign_id,
                 ..
@@ -810,7 +810,7 @@ impl DWalletMPCService {
                 });
                 vec![tx]
             }
-            ProtocolSpecificData::Sign {
+            ProtocolData::Sign {
                 dwallet_id,
                 sign_id,
                 is_future_sign,
@@ -826,7 +826,7 @@ impl DWalletMPCService {
                 });
                 vec![tx]
             }
-            ProtocolSpecificData::EncryptedShareVerification {
+            ProtocolData::EncryptedShareVerification {
                 dwallet_id,
                 encrypted_user_secret_key_share_id,
                 ..
@@ -842,7 +842,7 @@ impl DWalletMPCService {
                 );
                 vec![tx]
             }
-            ProtocolSpecificData::PartialSignatureVerification {
+            ProtocolData::PartialSignatureVerification {
                 dwallet_id,
                 partial_centralized_signed_message_id,
                 ..
@@ -859,7 +859,7 @@ impl DWalletMPCService {
                     );
                 vec![tx]
             }
-            ProtocolSpecificData::NetworkEncryptionKeyDkg {
+            ProtocolData::NetworkEncryptionKeyDkg {
                 dwallet_network_encryption_key_id,
                 ..
             } => {
@@ -894,7 +894,7 @@ impl DWalletMPCService {
                     .collect();
                 messages
             }
-            ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
+            ProtocolData::NetworkEncryptionKeyReconfiguration {
                 dwallet_network_encryption_key_id,
                 ..
             } => {
@@ -932,7 +932,7 @@ impl DWalletMPCService {
                     .collect();
                 messages
             }
-            ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
+            ProtocolData::MakeDWalletUserSecretKeySharesPublic {
                 data, dwallet_id, ..
             } => {
                 let tx = DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(
@@ -945,7 +945,7 @@ impl DWalletMPCService {
                 );
                 vec![tx]
             }
-            ProtocolSpecificData::ImportedKeyVerification {
+            ProtocolData::ImportedKeyVerification {
                 dwallet_id,
                 encrypted_user_secret_key_share_id,
                 ..

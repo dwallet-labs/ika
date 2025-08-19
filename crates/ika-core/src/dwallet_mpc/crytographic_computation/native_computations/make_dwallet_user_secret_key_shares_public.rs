@@ -1,37 +1,11 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::ProtocolSpecificData;
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedImportedSecretShare,
 };
-use ika_types::dwallet_mpc_error::DwalletMPCResult;
-use ika_types::messages_dwallet_mpc::{
-    DWalletSessionEvent, MPCRequestInput, MakeDWalletUserSecretKeySharesPublicRequestEvent,
-};
 use twopc_mpc::secp256k1::class_groups::AsyncProtocol;
-
-pub(crate) fn make_dwallet_user_secret_key_shares_public_request_event_session_request(
-    deserialized_event: DWalletSessionEvent<MakeDWalletUserSecretKeySharesPublicRequestEvent>,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_specific_data: ProtocolSpecificData::try_new(
-            MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(
-                deserialized_event.clone(),
-            ),
-        )?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-        pulled,
-    })
-}
 
 /// Verifies the given secret share matches the given dWallets`
 /// DKG output centralized_party_public_key_share.

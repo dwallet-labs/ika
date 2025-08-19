@@ -107,8 +107,7 @@ impl DWalletMPCSession {
             .request_data
             .as_ref()
             .map(|request_data| {
-                DWalletSessionRequestMetricData::from(&request_data.protocol_specific_data)
-                    .to_string()
+                DWalletSessionRequestMetricData::from(&request_data.protocol_data).to_string()
             })
             .unwrap_or_default();
         debug!(
@@ -155,7 +154,7 @@ impl DWalletMPCSession {
     /// this session with messages up to `consensus_round`.
     pub(crate) fn record_threshold_not_reached(&mut self, consensus_round: u64) {
         let protocol_name = DWalletSessionRequestMetricData::from(
-            &self.request_data.as_ref().unwrap().protocol_specific_data,
+            &self.request_data.as_ref().unwrap().protocol_data,
         )
         .to_string();
 
@@ -188,7 +187,7 @@ impl DWalletMPCSession {
             .request_data
             .as_ref()
             .map(|request| {
-                DWalletSessionRequestMetricData::from(&request.protocol_specific_data).to_string()
+                DWalletSessionRequestMetricData::from(&request.protocol_data).to_string()
             })
             .unwrap_or_default();
 
@@ -375,7 +374,7 @@ impl DWalletMPCManager {
         if !request.pulled && request.epoch != self.epoch_id {
             warn!(
                 session_identifier=?session_identifier,
-                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_specific_data).to_string(),
+                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
                 session_type=?request.session_type,
                 event_epoch=?request.epoch,
                 "received an event for a different epoch, skipping"
@@ -386,7 +385,7 @@ impl DWalletMPCManager {
 
         if request.requires_network_key_data {
             if let Some(network_encryption_key_id) =
-                request.protocol_specific_data.network_encryption_key_id()
+                request.protocol_data.network_encryption_key_id()
             {
                 if !self
                     .network_keys
@@ -395,7 +394,7 @@ impl DWalletMPCManager {
                     // We don't yet have the data for this network encryption key,
                     // so we add it to the queue.
                     debug!(
-                        session_request=?DWalletSessionRequestMetricData::from(&request.protocol_specific_data).to_string(),
+                        session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
                         session_type=?request.session_type,
                         network_encryption_key_id=?network_encryption_key_id,
                         "Adding request to pending for the network key"
@@ -423,7 +422,7 @@ impl DWalletMPCManager {
             // We don't have the next active committee yet,
             // so we have to add this request to the pending queue until it arrives.
             debug!(
-                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_specific_data).to_string(),
+                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
                 session_type=?request.session_type,
                 "Adding request to pending for the next epoch active committee"
             );
@@ -469,7 +468,7 @@ impl DWalletMPCManager {
         };
 
         self.dwallet_mpc_metrics
-            .add_received_request_start(&(&request.protocol_specific_data).into());
+            .add_received_request_start(&(&request.protocol_data).into());
 
         if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
             session.request_data = Some(request);
@@ -520,7 +519,7 @@ impl DWalletMPCService {
             Ok(requests) => {
                 for request in &requests {
                     debug!(
-                        request_type=?DWalletSessionRequestMetricData::from(&request.protocol_specific_data).to_string(),
+                        request_type=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
                         session_identifier=?request.session_identifier,
                         current_epoch=?self.epoch,
                         "Received a request from Sui"

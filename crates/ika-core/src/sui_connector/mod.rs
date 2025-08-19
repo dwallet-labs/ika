@@ -36,6 +36,7 @@ use tracing::info;
 
 pub mod end_of_publish_sender;
 pub mod metrics;
+mod sui_event_into_request;
 pub mod sui_executor;
 pub mod sui_syncer;
 
