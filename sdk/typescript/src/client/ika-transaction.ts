@@ -70,6 +70,33 @@ export class IkaTransaction {
 	/**
 	 * Request the DKG (Distributed Key Generation) first round with automatic decryption key ID fetching.
 	 * This initiates the creation of a new DWallet through a distributed key generation process.
+	 * When receiver is provided, the DWallet capability is transferred to them.
+	 *
+	 * @param params - The parameters for the DKG first round
+	 * @param params.curve - The elliptic curve identifier to use for key generation
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @param params.receiver - The address that will receive the DWallet capability
+	 * @returns Promise resolving to an object containing only the updated transaction (DWallet capability transferred to receiver)
+	 * @throws {Error} If the decryption key ID cannot be fetched
+	 */
+	async requestDWalletDKGFirstRoundAsync({
+		curve,
+		ikaCoin,
+		suiCoin,
+		receiver,
+	}: {
+		curve: Curve;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+		receiver: string;
+	}): Promise<{
+		transaction: IkaTransaction;
+	}>;
+
+	/**
+	 * Request the DKG (Distributed Key Generation) first round with automatic decryption key ID fetching.
+	 * This initiates the creation of a new DWallet through a distributed key generation process.
 	 *
 	 * @param params - The parameters for the DKG first round
 	 * @param params.curve - The elliptic curve identifier to use for key generation
@@ -89,6 +116,21 @@ export class IkaTransaction {
 	}): Promise<{
 		dwalletCap: TransactionObjectArgument;
 		transaction: IkaTransaction;
+	}>;
+
+	async requestDWalletDKGFirstRoundAsync({
+		curve,
+		ikaCoin,
+		suiCoin,
+		receiver,
+	}: {
+		curve: Curve;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+		receiver?: string;
+	}): Promise<{
+		dwalletCap?: TransactionObjectArgument;
+		transaction: IkaTransaction;
 	}> {
 		const dwalletCap = this.#requestDWalletDKGFirstRound({
 			curve,
@@ -97,11 +139,48 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
+		if (receiver) {
+			this.#transaction.transferObjects([dwalletCap], receiver);
+
+			return {
+				transaction: this,
+			};
+		}
+
 		return {
 			dwalletCap,
 			transaction: this,
 		};
 	}
+
+	/**
+	 * Request the DKG (Distributed Key Generation) first round with explicit decryption key ID.
+	 * This initiates the creation of a new DWallet through a distributed key generation process.
+	 * When receiver is provided, the DWallet capability is transferred to them.
+	 *
+	 * @param params - The parameters for the DKG first round
+	 * @param params.curve - The elliptic curve identifier to use for key generation
+	 * @param params.networkEncryptionKeyID - The specific network encryption key ID to use
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @param params.receiver - The address that will receive the DWallet capability
+	 * @returns Object containing only the updated transaction (DWallet capability transferred to receiver)
+	 */
+	requestDWalletDKGFirstRound({
+		curve,
+		networkEncryptionKeyID,
+		ikaCoin,
+		suiCoin,
+		receiver,
+	}: {
+		curve: Curve;
+		networkEncryptionKeyID: string;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+		receiver: string;
+	}): {
+		transaction: IkaTransaction;
+	};
 
 	/**
 	 * Request the DKG (Distributed Key Generation) first round with explicit decryption key ID.
@@ -127,68 +206,9 @@ export class IkaTransaction {
 	}): {
 		dwalletCap: TransactionObjectArgument;
 		transaction: IkaTransaction;
-	} {
-		const dwalletCap = this.#requestDWalletDKGFirstRound({
-			curve,
-			networkEncryptionKeyID,
-			ikaCoin,
-			suiCoin,
-		});
+	};
 
-		return {
-			dwalletCap,
-			transaction: this,
-		};
-	}
-
-	/**
-	 * Request the DKG first round and transfer the DWalletCap to a specified receiver.
-	 * This method fetches the decryption key ID automatically from the IKA client.
-	 *
-	 * @param params - The parameters for the DKG first round
-	 * @param params.curve - The elliptic curve identifier to use for key generation
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @param params.receiver - The address that will receive the DWalletCap
-	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If the decryption key ID cannot be fetched
-	 */
-	async requestDWalletDKGFirstRoundAndTransferCapAsync({
-		curve,
-		ikaCoin,
-		suiCoin,
-		receiver,
-	}: {
-		curve: Curve;
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-		receiver: string;
-	}) {
-		const cap = this.#requestDWalletDKGFirstRound({
-			curve,
-			networkEncryptionKeyID: (await this.#ikaClient.getConfiguredNetworkEncryptionKey()).id,
-			ikaCoin,
-			suiCoin,
-		});
-
-		this.#transaction.transferObjects([cap], receiver);
-
-		return this;
-	}
-
-	/**
-	 * Request the DKG first round and transfer the DWalletCap to a specified receiver.
-	 * This method requires an explicit decryption key ID.
-	 *
-	 * @param params - The parameters for the DKG first round
-	 * @param params.curve - The elliptic curve identifier to use for key generation
-	 * @param params.networkEncryptionKeyID - The specific network encryption key ID to use
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @param params.receiver - The address that will receive the DWalletCap
-	 * @returns The updated IkaTransaction instance
-	 */
-	requestDWalletDKGFirstRoundAndTransferCap({
+	requestDWalletDKGFirstRound({
 		curve,
 		networkEncryptionKeyID,
 		ikaCoin,
@@ -199,18 +219,30 @@ export class IkaTransaction {
 		networkEncryptionKeyID: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-		receiver: string;
-	}) {
-		const cap = this.#requestDWalletDKGFirstRound({
+		receiver?: string;
+	}): {
+		dwalletCap?: TransactionObjectArgument;
+		transaction: IkaTransaction;
+	} {
+		const dwalletCap = this.#requestDWalletDKGFirstRound({
 			curve,
 			networkEncryptionKeyID,
 			ikaCoin,
 			suiCoin,
 		});
 
-		this.#transaction.transferObjects([cap], receiver);
+		if (receiver) {
+			this.#transaction.transferObjects([dwalletCap], receiver);
 
-		return this;
+			return {
+				transaction: this,
+			};
+		}
+
+		return {
+			dwalletCap,
+			transaction: this,
+		};
 	}
 
 	/**

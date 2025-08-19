@@ -156,7 +156,7 @@ export async function requestTestDKGFirstRound(
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.requestDWalletDKGFirstRoundAndTransferCapAsync({
+	await ikaTransaction.requestDWalletDKGFirstRoundAsync({
 		curve: Curve.SECP256K1,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
