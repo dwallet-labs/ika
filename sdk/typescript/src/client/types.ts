@@ -74,22 +74,13 @@ export type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorI
 export type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
 
 export const DWalletType = {
-	ZeroTrust: 0,
-	Imported: 1,
-	ImportedShared: 2,
-	Shared: 3,
-} as const;
-
-export const DWalletTypeMap = {
-	[DWalletType.ZeroTrust]: 'ZeroTrust',
-	[DWalletType.Imported]: 'Imported',
-	[DWalletType.ImportedShared]: 'ImportedShared',
-	[DWalletType.Shared]: 'Shared',
+	ZeroTrust: 'ZeroTrust',
+	Imported: 'Imported',
+	ImportedShared: 'ImportedShared',
+	Shared: 'Shared',
 } as const;
 
 export type DWalletType = (typeof DWalletType)[keyof typeof DWalletType];
-
-export type DWalletTypeString = (typeof DWalletTypeMap)[keyof typeof DWalletTypeMap];
 
 export type DWalletInternal = typeof CoordinatorInnerModule.DWallet.$inferType;
 

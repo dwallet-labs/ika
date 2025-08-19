@@ -18,7 +18,7 @@ import type {
 	DWalletCap,
 	DWalletInternal,
 	DWalletState,
-	DWalletTypeString,
+	DWalletType,
 	EncryptedUserSecretKeyShare,
 	EncryptedUserSecretKeyShareState,
 	EncryptionKey,
@@ -1086,7 +1086,7 @@ export class IkaClient {
 		}
 	}
 
-	#getDWalletType(dWallet: DWalletInternal): DWalletTypeString {
+	#getDWalletType(dWallet: DWalletInternal): DWalletType {
 		if (dWallet.is_imported_key_dwallet && dWallet.public_user_secret_key_share) {
 			return 'ImportedShared';
 		}
