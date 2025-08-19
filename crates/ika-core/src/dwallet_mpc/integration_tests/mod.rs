@@ -6,3 +6,4 @@ mod network_dkg;
 mod sign;
 mod threshold_not_reached;
 mod utils;
+mod encrypt_secret_share;
