@@ -19,7 +19,8 @@ use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent,
-    DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SessionIdentifier, SessionType,
+    DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SessionIdentifier,
+    SessionType,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -507,7 +508,9 @@ pub(crate) fn override_legit_messages_with_false_messages(
     }
 }
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{DKGFirstData, NetworkEncryptionKeyDkgData, ProtocolData};
+use crate::request_protocol_data::{
+    DKGFirstData, DKGSecondData, NetworkEncryptionKeyDkgData, ProtocolData,
+};
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 
 pub(crate) fn send_start_network_dkg_event_to_all_parties(
@@ -630,36 +633,32 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
     user_public_output: Vec<u8>,
 ) {
     let encrypted_user_secret_key_share_id = ObjectID::random();
-    let encryption_key_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<DWalletDKGSecondRoundRequestEvent>::type_(
-                    &ika_network_config,
+            vec![DWalletSessionRequest {
+                session_type: SessionType::System,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::System,
+                    session_identifier_preimage,
                 ),
-                contents: bcs::to_bytes(&new_dwallet_session_event(
-                    false,
-                    session_sequence_number,
-                    session_identifier_preimage.to_vec().clone(),
-                    DWalletDKGSecondRoundRequestEvent {
-                        encrypted_user_secret_key_share_id,
-                        dwallet_id,
-                        first_round_output: first_round_output.clone(),
-                        centralized_public_key_share_and_proof:
-                            centralized_public_key_share_and_proof.clone(),
-                        dwallet_cap_id: ObjectID::random(),
+                session_sequence_number,
+                protocol_data: ProtocolData::DKGSecond {
+                    data: DKGSecondData {
+                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
                         encrypted_centralized_secret_share_and_proof:
                             encrypted_centralized_secret_share_and_proof.clone(),
                         encryption_key: encryption_key.clone(),
-                        encryption_key_id,
-                        encryption_key_address: SuiAddress::random_for_testing_only(),
-                        user_public_output: user_public_output.clone(),
-                        signer_public_key: vec![],
-                        dwallet_network_encryption_key_id,
-                        curve: 0,
                     },
-                ))
-                .unwrap(),
+                    dwallet_id,
+                    encrypted_secret_share_id: encrypted_user_secret_key_share_id,
+                    dwallet_network_encryption_key_id,
+                    first_round_output: first_round_output.clone(),
+                    centralized_public_key_share_and_proof: centralized_public_key_share_and_proof
+                        .clone(),
+                },
+                epoch: 1,
+                requires_network_key_data: true,
+                requires_next_active_committee: false,
                 pulled: false,
             }],
             epoch_id,
