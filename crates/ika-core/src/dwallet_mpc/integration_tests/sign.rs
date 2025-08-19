@@ -101,6 +101,6 @@ async fn sign() {
     let DWalletCheckpointMessageKind::RespondDWalletSign(sign_output) =
         presign_checkpoint.messages().clone().pop().unwrap()
     else {
-        panic!("Expected DWallet presign output message");
+        panic!("Expected DWallet sign output message");
     };
 }
