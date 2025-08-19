@@ -1,4 +1,5 @@
 use crate::dwallet_mpc::integration_tests::utils;
+use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_mpc::{
@@ -7,9 +8,8 @@ use ika_types::messages_dwallet_mpc::{
 };
 use itertools::Itertools;
 use std::collections::HashMap;
-use tracing::info;
 use std::sync::Arc;
-use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
+use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]

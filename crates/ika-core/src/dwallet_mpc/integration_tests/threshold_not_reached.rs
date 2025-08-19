@@ -1,7 +1,10 @@
 use crate::SuiDataSenders;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::{IntegrationTestState, TestingAuthorityPerEpochStore, TestingDWalletCheckpointNotify, TestingSubmitToConsensus};
+use crate::dwallet_mpc::integration_tests::utils::{
+    IntegrationTestState, TestingAuthorityPerEpochStore, TestingDWalletCheckpointNotify,
+    TestingSubmitToConsensus,
+};
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::ConsensusTransactionKind;
 use ika_types::messages_dwallet_mpc::{

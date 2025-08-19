@@ -1,5 +1,6 @@
+use crate::SuiDataSenders;
 use crate::dwallet_mpc::integration_tests::create_dwallet::{
-    create_dwallet_test, DWalletTestResult,
+    DWalletTestResult, create_dwallet_test,
 };
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
@@ -9,11 +10,13 @@ use dwallet_mpc_centralized_party::{
 };
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SignRequestEvent};
+use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig,
+    PresignRequestEvent, SignRequestEvent,
+};
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::info;
-use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
-use crate::SuiDataSenders;
 
 #[tokio::test]
 #[cfg(test)]
