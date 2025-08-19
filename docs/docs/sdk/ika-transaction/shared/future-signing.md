@@ -111,7 +111,7 @@ const ikaTx = new IkaTransaction({
 
 // Approve message using standard method (not specialized like imported)
 const { messageApproval } = ikaTx.approveMessage({
-	dWallet: publicdWallet,
+	dWalletCap: publicdWallet.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes, // Must be the same message
@@ -119,7 +119,7 @@ const { messageApproval } = ikaTx.approveMessage({
 
 // Complete the future sign
 ikaTx.futureSign({
-	partialUserSignature,
+	partialUserSignatureCap: partialUserSignature.cap_id,
 	messageApproval,
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),

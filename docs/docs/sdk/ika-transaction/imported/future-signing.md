@@ -113,7 +113,7 @@ const ikaTx = new IkaTransaction({
 
 // Approve message using imported key method (different from zero-trust)
 const { importedKeyMessageApproval } = ikaTx.approveImportedKeyMessage({
-	dWallet: importeddWallet,
+	dWalletCap: importeddWallet.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes, // Must be the same message
@@ -121,7 +121,7 @@ const { importedKeyMessageApproval } = ikaTx.approveImportedKeyMessage({
 
 // Complete the future sign
 ikaTx.futureSign({
-	partialUserSignature,
+	partialUserSignatureCap: partialUserSignature.cap_id,
 	messageApproval: importedKeyMessageApproval, // Uses imported key approval
 	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),

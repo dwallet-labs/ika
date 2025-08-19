@@ -75,7 +75,7 @@ const ikaTx = new IkaTransaction({
 
 // Approve the message you want to sign
 const { messageApproval } = ikaTx.approveMessage({
-	dWallet: activedWallet,
+	dWalletCap: activedWallet.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes, // Your message as Uint8Array

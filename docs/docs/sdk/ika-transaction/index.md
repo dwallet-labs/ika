@@ -124,7 +124,7 @@ Completes the DKG process with the second round.
 
 ```typescript
 ikaTx.requestdWalletDKGSecondRound({
-	dWallet: dwalletObject,
+	dWalletCap: dwalletObject.dwallet_cap_id,
 	dkgSecondRoundRequestInput: secondRoundInput,
 	ikaCoin: userIkaCoin, // User's IKA coin object
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
@@ -133,7 +133,7 @@ ikaTx.requestdWalletDKGSecondRound({
 
 **Parameters:**
 
-- `dWallet`: The dWallet object from the first round
+- `dWalletCap`: The dWalletCap object from the first round
 - `dkgSecondRoundRequestInput`: Cryptographic data for the second round
 - `ikaCoin`: User's IKA coin object
 - `suiCoin`: SUI coin object
@@ -200,7 +200,7 @@ Approves a message for signing with a dWallet.
 
 ```typescript
 const { messageApproval } = ikaTx.approveMessage({
-	dWallet: dwalletObject,
+	dWalletCap: dwalletObject.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes,
@@ -209,7 +209,7 @@ const { messageApproval } = ikaTx.approveMessage({
 
 **Parameters:**
 
-- `dWallet`: The dWallet to approve the message for
+- `dWalletCap`: The dWalletCap object, that owns the dWallet
 - `signatureAlgorithm`: The signature algorithm (`SignatureAlgorithm.ECDSA`)
 - `hashScheme`: Hash scheme (`Hash.KECCAK256` | `Hash.SHA256`)
 - `message`: The message bytes to approve
@@ -222,7 +222,7 @@ Approves a message for signing with an imported key dWallet.
 
 ```typescript
 const { importedKeyMessageApproval } = ikaTx.approveImportedKeyMessage({
-	dWallet: importeddWallet,
+	dWalletCap: importeddWallet.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes,
@@ -350,7 +350,7 @@ Completes a future sign operation using a partial signature.
 
 ```typescript
 ikaTx.futureSign({
-	partialUserSignature: partialSignatureObject,
+	partialUserSignatureCap: partialSignatureObject.cap_id,
 	messageApproval: messageApprovalObject,
 	ikaCoin: userIkaCoin, // User's IKA coin object
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),

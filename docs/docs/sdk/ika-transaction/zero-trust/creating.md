@@ -101,7 +101,7 @@ const ikaTx = new IkaTransaction({
 });
 
 ikaTx.requestdWalletDKGSecondRound({
-	dWallet,
+	dWalletCap: dWallet.dwallet_cap_id,
 	dkgSecondRoundRequestInput: dkgSecondRoundInput,
 	ikaCoin: userIkaCoin, // You can use your own IKA coin or create a new one
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),

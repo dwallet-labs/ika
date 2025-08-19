@@ -71,7 +71,7 @@ const ikaTx = new IkaTransaction({
 
 // Approve the message for imported dWallet (uses different approval method)
 const { importedKeyMessageApproval } = ikaTx.approveImportedKeyMessage({
-	dWallet: importeddWallet,
+	dWalletCap: importeddWallet.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes, // Your message as Uint8Array
