@@ -20,7 +20,7 @@ use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
 use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::dwallet_mpc::session_request::{
-    DWalletSessionRequest, ProtocolData, ProtocolSpecificData,
+    DWalletSessionRequest, DWalletSessionRequestMetricData, ProtocolSpecificData,
 };
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
@@ -765,7 +765,7 @@ impl DWalletMPCService {
         rejected: bool,
     ) -> Vec<DWalletCheckpointMessageKind> {
         info!(
-            mpc_protocol=? ProtocolData::from(&session_request.protocol_specific_data).to_string(),
+            mpc_protocol=? DWalletSessionRequestMetricData::from(&session_request.protocol_specific_data).to_string(),
             session_identifier=?session_identifier,
             "Creating session output message for checkpoint"
         );
@@ -897,6 +897,7 @@ impl DWalletMPCService {
             }
             ProtocolSpecificData::NetworkEncryptionKeyReconfiguration {
                 dwallet_network_encryption_key_id,
+                ..
             } => {
                 let slices = if rejected {
                     vec![MPCNetworkReconfigurationOutput {
@@ -933,14 +934,12 @@ impl DWalletMPCService {
                 messages
             }
             ProtocolSpecificData::MakeDWalletUserSecretKeySharesPublic {
-                public_user_secret_key_shares,
-                dwallet_id,
-                ..
+                data, dwallet_id, ..
             } => {
                 let tx = DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(
                     MakeDWalletUserSecretKeySharesPublicOutput {
                         dwallet_id: dwallet_id.to_vec(),
-                        public_user_secret_key_shares: public_user_secret_key_shares.clone(),
+                        public_user_secret_key_shares: data.public_user_secret_key_shares.clone(),
                         rejected,
                         session_sequence_number: session_request.session_sequence_number,
                     },

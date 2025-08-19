@@ -201,7 +201,7 @@ pub(crate) fn session_input_from_request(
             ))
         }
         ProtocolSpecificData::Sign {
-            hash_scheme,
+            data,
             dwallet_network_encryption_key_id,
             dwallet_decentralized_public_output,
             message,
@@ -223,7 +223,7 @@ pub(crate) fn session_input_from_request(
                     message.clone(),
                     presign,
                     message_centralized_signature,
-                    hash_scheme.clone(),
+                    data.hash_scheme.clone(),
                     access_structure,
                     network_keys,
                     protocol_public_parameters,

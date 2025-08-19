@@ -19,7 +19,7 @@
 //! - **signature_algorithm**: The signature algorithm (e.g., "ECDSA")
 //! - **mpc_round**: The specific round number within a protocol session
 
-use crate::dwallet_mpc::session_request::ProtocolData;
+use crate::dwallet_mpc::session_request::DWalletSessionRequestMetricData;
 use prometheus::{
     GaugeVec, IntGauge, IntGaugeVec, Registry, register_gauge_vec_with_registry,
     register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
@@ -208,7 +208,7 @@ impl DWalletMPCMetrics {
     ///
     /// # Arguments
     /// * `protocol_data` - The MPC protocol initialization data containing context.
-    pub(crate) fn add_completion(&self, protocol_data: &ProtocolData) {
+    pub(crate) fn add_completion(&self, protocol_data: &DWalletSessionRequestMetricData) {
         self.completions_count
             .with_label_values(&[
                 &protocol_data.to_string(),
@@ -226,7 +226,10 @@ impl DWalletMPCMetrics {
     ///
     /// # Arguments
     /// * `protocol_data` - The MPC protocol initialization data containing context.
-    pub(crate) fn add_received_request_start(&self, protocol_data: &ProtocolData) {
+    pub(crate) fn add_received_request_start(
+        &self,
+        protocol_data: &DWalletSessionRequestMetricData,
+    ) {
         self.received_requests_start_count
             .with_label_values(&[
                 &protocol_data.to_string(),
@@ -245,7 +248,11 @@ impl DWalletMPCMetrics {
     /// # Arguments
     /// * `protocol_data` - The MPC protocol initialization data containing context
     /// * `mpc_round` — String identifier for the specific MPC round.
-    pub(crate) fn add_advance_call(&self, protocol_data: &ProtocolData, mpc_round: &str) {
+    pub(crate) fn add_advance_call(
+        &self,
+        protocol_data: &DWalletSessionRequestMetricData,
+        mpc_round: &str,
+    ) {
         if mpc_round == "1" {
             self.session_start_count
                 .with_label_values(&[
@@ -277,7 +284,7 @@ impl DWalletMPCMetrics {
     /// * `mpc_round` — String identifier for the specific MPC round.
     pub fn add_advance_completion(
         &self,
-        protocol_data: &ProtocolData,
+        protocol_data: &DWalletSessionRequestMetricData,
         mpc_round: &str,
         duration_ms: i64,
     ) {
@@ -372,7 +379,7 @@ impl DWalletMPCMetrics {
     /// * `duration_ms` — Duration of the completion in milliseconds.
     pub fn set_last_completion_duration(
         &self,
-        protocol_data: &ProtocolData,
+        protocol_data: &DWalletSessionRequestMetricData,
         mpc_round: &str,
         duration_ms: i64,
     ) {

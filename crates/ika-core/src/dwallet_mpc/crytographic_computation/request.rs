@@ -12,7 +12,7 @@ use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::network_dkg::advance_network_dkg;
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
-use crate::dwallet_mpc::session_request::{AdvanceSpecificData, ProtocolData};
+use crate::dwallet_mpc::session_request::{AdvanceSpecificData, DWalletSessionRequestMetricData};
 use crate::dwallet_mpc::sign::{SignParty, verify_partial_signature};
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -35,7 +35,7 @@ use tracing::{error, info};
 
 pub(crate) struct Request {
     pub(crate) party_id: PartyID,
-    pub(crate) protocol_data: ProtocolData,
+    pub(crate) protocol_data: DWalletSessionRequestMetricData,
     pub(crate) validator_name: AuthorityPublicKeyBytes,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
     pub(crate) advance_specific_data: AdvanceSpecificData,
@@ -76,8 +76,7 @@ impl Request {
         match self.advance_specific_data {
             AdvanceSpecificData::ImportedKeyVerification {
                 public_input,
-                encrypted_centralized_secret_share_and_proof,
-                encryption_key,
+                data,
                 advance_request,
                 ..
             } => {
@@ -105,11 +104,11 @@ impl Request {
                         // computation of both that the key import was successful, and
                         // the encrypted user share is valid.
                         verify_encrypted_share(
-                            &encrypted_centralized_secret_share_and_proof,
+                            &data.encrypted_centralized_secret_share_and_proof,
                             &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
                                 public_output_value.clone(),
                             ))?,
-                            &encryption_key,
+                            &data.encryption_key,
                             public_input.protocol_public_parameters.clone(),
                         )?;
 
@@ -165,8 +164,7 @@ impl Request {
             }
             AdvanceSpecificData::DKGSecond {
                 public_input,
-                encrypted_centralized_secret_share_and_proof,
-                encryption_key,
+                data,
                 advance_request,
                 ..
             } => {
@@ -188,11 +186,11 @@ impl Request {
                     // Verify the encrypted share before finalizing, guaranteeing a two-for-one
                     // computation of both that the dkg was successful, and the encrypted user share is valid.
                     verify_encrypted_share(
-                        &encrypted_centralized_secret_share_and_proof,
+                        &data.encrypted_centralized_secret_share_and_proof,
                         &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
                             public_output_value.clone(),
                         ))?,
-                        &encryption_key,
+                        &data.encryption_key,
                         public_input.protocol_public_parameters.clone(),
                     )?;
                 }
@@ -295,7 +293,7 @@ impl Request {
                 }
             }
             AdvanceSpecificData::NetworkEncryptionKeyDkg {
-                key_scheme,
+                data,
                 public_input,
                 advance_request,
                 class_groups_decryption_key,
@@ -305,22 +303,20 @@ impl Request {
                 &self.access_structure,
                 &PublicInput::NetworkEncryptionKeyDkg(public_input),
                 self.party_id,
-                &key_scheme,
+                &data.key_scheme,
                 advance_request,
                 class_groups_decryption_key,
                 &mut rng,
             ),
             AdvanceSpecificData::EncryptedShareVerification {
-                encrypted_centralized_secret_share_and_proof,
-                decentralized_public_output,
-                encryption_key,
+                data,
                 protocol_public_parameters,
                 ..
             } => {
                 match verify_encrypted_share(
-                    &encrypted_centralized_secret_share_and_proof,
-                    &decentralized_public_output,
-                    &encryption_key,
+                    &data.encrypted_centralized_secret_share_and_proof,
+                    &data.decentralized_public_output,
+                    &data.encryption_key,
                     protocol_public_parameters.clone(),
                 ) {
                     Ok(_) => Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
@@ -332,24 +328,20 @@ impl Request {
                 }
             }
             AdvanceSpecificData::PartialSignatureVerification {
-                message,
-                hash_type,
-                dwallet_decentralized_output,
-                presign,
-                partially_signed_message,
+                data,
                 protocol_public_parameters,
                 ..
             } => {
                 let hashed_message = bcs::to_bytes(
-                    &message_digest(&message, &hash_type)
+                    &message_digest(&data.message, &data.hash_type)
                         .map_err(|err| DwalletMPCError::MessageDigest(err.to_string()))?,
                 )?;
 
                 verify_partial_signature(
                     &hashed_message,
-                    &dwallet_decentralized_output,
-                    &presign,
-                    &partially_signed_message,
+                    &data.dwallet_decentralized_output,
+                    &data.presign,
+                    &data.partially_signed_message,
                     &protocol_public_parameters,
                 )?;
 
@@ -405,17 +397,16 @@ impl Request {
             }
             AdvanceSpecificData::MakeDWalletUserSecretKeySharesPublic {
                 protocol_public_parameters,
-                public_user_secret_key_shares,
-                dwallet_decentralized_output,
+                data,
                 ..
             } => {
                 match verify_secret_share(
                     protocol_public_parameters.clone(),
-                    public_user_secret_key_shares.clone(),
-                    dwallet_decentralized_output.clone(),
+                    data.public_user_secret_key_shares.clone(),
+                    data.dwallet_decentralized_output.clone(),
                 ) {
                     Ok(..) => Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                        public_output_value: public_user_secret_key_shares.clone(),
+                        public_output_value: data.public_user_secret_key_shares.clone(),
                         private_output: vec![],
                         malicious_parties: vec![],
                     }),
