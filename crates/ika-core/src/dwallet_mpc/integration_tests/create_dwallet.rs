@@ -136,7 +136,7 @@ async fn create_dwallet() {
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
-    let (consensus_round, dwallet_dkg_second_round_output) =
+    let (consensus_round, dwallet_dkg_second_round_output, _) =
         create_dwallet_test(&mut test_state, consensus_round, key_id, network_key_bytes).await;
     info!("DWallet DKG second round completed");
 }
@@ -146,7 +146,7 @@ pub(crate) async fn create_dwallet_test(
     start_consensus_round: Round,
     network_key_id: ObjectID,
     network_key_bytes: Vec<u8>,
-) -> (Round, DKGSecondRoundOutput) {
+) -> (Round, DKGSecondRoundOutput, Vec<u8>) {
     let mut consensus_round = start_consensus_round;
     let dwallet_dkg_session_identifier = [2; 32];
     let epoch_id = test_state
@@ -190,7 +190,9 @@ pub(crate) async fn create_dwallet_test(
     let (encryption_key, decryption_key) =
         generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
     let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove(
-        centralized_dwallet_dkg_result.centralized_secret_output,
+        centralized_dwallet_dkg_result
+            .centralized_secret_output
+            .clone(),
         encryption_key.clone(),
         protocol_pp,
     )
@@ -222,5 +224,9 @@ pub(crate) async fn create_dwallet_test(
         panic!("Expected DWallet DKG second round output message");
     };
     info!("DWallet DKG second round completed");
-    (consensus_round, dwallet_dkg_second_round_output)
+    (
+        consensus_round,
+        dwallet_dkg_second_round_output,
+        centralized_dwallet_dkg_result.centralized_secret_output,
+    )
 }
