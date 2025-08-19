@@ -184,7 +184,7 @@ pub(crate) async fn create_dwallet_test(
     let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output(
         protocol_pp.clone(),
         dwallet_dkg_first_round_output.output.clone(),
-        dwallet_dkg_session_identifier.to_vec(),
+        dwallet_dkg_first_round_output.dwallet_id.clone(),
     )
     .unwrap();
     let (encryption_key, decryption_key) =
@@ -223,6 +223,7 @@ pub(crate) async fn create_dwallet_test(
     else {
         panic!("Expected DWallet DKG second round output message");
     };
+    info!(dwallet_dkg_second_round_output_len=?dwallet_dkg_second_round_output.output.len(), "DWallet DKG second round output received");
     info!("DWallet DKG second round completed");
     (
         consensus_round,
