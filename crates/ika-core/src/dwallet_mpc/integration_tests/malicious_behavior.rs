@@ -43,7 +43,7 @@ async fn test_some_malicious_validators_flows_succeed() {
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
-                session_type: SessionType::User,
+                session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
                 session_sequence_number: 1,
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
@@ -168,7 +168,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
-                session_type: SessionType::User,
+                session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
                 session_sequence_number: 1,
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
