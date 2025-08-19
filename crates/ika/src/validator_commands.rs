@@ -1061,12 +1061,7 @@ impl IkaValidatorCommand {
                 let client = SuiClient::new(
                     &context.get_active_env()?.rpc,
                     SuiClientMetrics::new_for_testing(),
-                    config.packages.ika_package_id,
-                    config.packages.ika_common_package_id,
-                    config.packages.ika_dwallet_2pc_mpc_package_id,
-                    config.packages.ika_system_package_id,
-                    config.objects.ika_system_object_id,
-                    config.objects.ika_dwallet_coordinator_object_id,
+                    config,
                 )
                 .await?;
                 let (_, coordinator_inner) = client.must_get_dwallet_coordinator_inner().await;

@@ -9,9 +9,11 @@ use sha3::Digest;
 use sha3::digest::FixedOutput;
 
 /// Supported hash functions for message digest.
-#[derive(Clone, Debug)]
+#[derive(strum_macros::Display, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Hash {
+    #[strum(to_string = "KECCAK256")]
     KECCAK256 = 0,
+    #[strum(to_string = "SHA256")]
     SHA256 = 1,
 }
 

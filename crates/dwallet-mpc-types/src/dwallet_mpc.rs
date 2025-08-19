@@ -3,7 +3,6 @@
 
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use thiserror::Error;
 
 /// Alias for an MPC message.
@@ -20,44 +19,6 @@ pub type MPCPublicInput = Vec<u8>;
 
 /// Alias for MPC private input.
 pub type MPCPrivateInput = Option<Vec<u8>>;
-
-/// Possible statuses of an MPC Session:
-///
-/// - `Pending`:
-///   The instance is queued because the maximum number of active MPC instances
-///   [`DWalletMPCManager::max_active_mpc_instances`] has been reached.
-///   It is waiting for active instances to complete before activation.
-///
-/// - `Active`:
-///   The session is currently running, and new messages are forwarded to it
-///   for processing.
-///
-/// - `Finished`:
-///   The session has been removed from the active instances.
-///   Incoming messages are no longer forwarded to the session,
-///   but they are not flagged as malicious.
-///
-/// - `Failed`:
-///   The session has failed due to an unrecoverable error.
-///   This status indicates that the session cannot proceed further.
-#[derive(Clone, PartialEq, Debug)]
-pub enum MPCSessionStatus {
-    Active,
-    ComputationCompleted,
-    Completed,
-    Failed,
-}
-
-impl fmt::Display for MPCSessionStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MPCSessionStatus::Active => write!(f, "Active"),
-            MPCSessionStatus::ComputationCompleted => write!(f, "Computation Completed"),
-            MPCSessionStatus::Completed => write!(f, "Completed"),
-            MPCSessionStatus::Failed => write!(f, "Failed"),
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum NetworkDecryptionKeyPublicOutputType {
@@ -89,10 +50,43 @@ pub struct NetworkEncryptionKeyPublicData {
 }
 
 #[repr(u32)]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash, Copy)]
+#[derive(
+    strum_macros::Display,
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Eq,
+    Hash,
+    Copy,
+    Ord,
+    PartialOrd,
+)]
 pub enum DWalletMPCNetworkKeyScheme {
+    #[strum(to_string = "Secp256k1")]
     Secp256k1 = 0,
+    #[strum(to_string = "Ristretto")]
     Ristretto = 1,
+}
+
+#[repr(u32)]
+#[derive(
+    strum_macros::Display,
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Eq,
+    Hash,
+    Copy,
+    Ord,
+    PartialOrd,
+)]
+pub enum SignatureAlgorithm {
+    #[strum(to_string = "ECDSA")]
+    ECDSA,
 }
 
 // We can't import ika-types here since we import this module in there.
@@ -101,6 +95,9 @@ pub enum DWalletMPCNetworkKeyScheme {
 pub enum DwalletNetworkMPCError {
     #[error("invalid DWalletMPCNetworkKey value: {0}")]
     InvalidDWalletMPCNetworkKey(u32),
+
+    #[error("invalid DWalletMPCSignatureAlgorithm value: {0}")]
+    InvalidDWalletMPCSignatureAlgorithm(u32),
 }
 
 impl TryFrom<u32> for DWalletMPCNetworkKeyScheme {
@@ -111,6 +108,19 @@ impl TryFrom<u32> for DWalletMPCNetworkKeyScheme {
             0 => Ok(DWalletMPCNetworkKeyScheme::Secp256k1),
             1 => Ok(DWalletMPCNetworkKeyScheme::Ristretto),
             v => Err(DwalletNetworkMPCError::InvalidDWalletMPCNetworkKey(v)),
+        }
+    }
+}
+
+impl TryFrom<u32> for SignatureAlgorithm {
+    type Error = DwalletNetworkMPCError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(SignatureAlgorithm::ECDSA),
+            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCSignatureAlgorithm(
+                v,
+            )),
         }
     }
 }
