@@ -176,7 +176,7 @@ export async function requestDkgSecondRound(
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
 	ikaTransaction.requestDWalletDKGSecondRound({
-		dWallet,
+		dWalletCap: dWallet.dwallet_cap_id,
 		dkgSecondRoundRequestInput,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
@@ -365,7 +365,7 @@ export async function sign(
 	});
 
 	const { messageApproval } = ikaTransaction.approveMessage({
-		dWallet,
+		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -411,7 +411,7 @@ export async function signPublicUserShare(
 	});
 
 	const { messageApproval } = ikaTransaction.approveMessage({
-		dWallet,
+		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -509,7 +509,7 @@ export async function futureSign(
 	});
 
 	const { messageApproval } = ikaTransaction.approveMessage({
-		dWallet,
+		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -519,7 +519,7 @@ export async function futureSign(
 
 	ikaTransaction.futureSign({
 		messageApproval,
-		partialUserSignature,
+		partialUserSignatureCap: partialUserSignature.cap_id,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
 	});
@@ -590,7 +590,7 @@ export async function signWithImportedDWallet(
 	});
 
 	const { importedKeyMessageApproval } = ikaTransaction.approveImportedKeyMessage({
-		dWallet,
+		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -636,7 +636,7 @@ export async function signWithImportedDWalletPublic(
 	});
 
 	const { importedKeyMessageApproval } = ikaTransaction.approveImportedKeyMessage({
-		dWallet,
+		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,

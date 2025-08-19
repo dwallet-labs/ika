@@ -78,7 +78,7 @@ checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
 [[package]]
 name = "class_groups"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=29d2bcf#29d2bcf8a8bd2c9576b65fa2c42a0dd777c88603"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=bc0464c#bc0464cac946f42477b4f6c7fde198452db0bca5"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -100,7 +100,7 @@ dependencies = [
 [[package]]
 name = "commitment"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=29d2bcf#29d2bcf8a8bd2c9576b65fa2c42a0dd777c88603"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=bc0464c#bc0464cac946f42477b4f6c7fde198452db0bca5"
 dependencies = [
  "crypto-bigint",
  "group 0.1.0",
@@ -241,6 +241,7 @@ dependencies = [
  "enum_dispatch",
  "schemars",
  "serde",
+ "strum_macros",
  "thiserror 2.0.12",
  "twopc_mpc",
 ]
@@ -367,7 +368,7 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=29d2bcf#29d2bcf8a8bd2c9576b65fa2c42a0dd777c88603"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=bc0464c#bc0464cac946f42477b4f6c7fde198452db0bca5"
 dependencies = [
  "crypto-bigint",
  "curve25519-dalek",
@@ -408,6 +409,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
 name = "hmac"
 version = "0.13.0-rc.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -419,7 +426,7 @@ dependencies = [
 [[package]]
 name = "homomorphic_encryption"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=29d2bcf#29d2bcf8a8bd2c9576b65fa2c42a0dd777c88603"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=bc0464c#bc0464cac946f42477b4f6c7fde198452db0bca5"
 dependencies = [
  "crypto-bigint",
  "group 0.1.0",
@@ -517,7 +524,7 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 [[package]]
 name = "maurer"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=29d2bcf#29d2bcf8a8bd2c9576b65fa2c42a0dd777c88603"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=bc0464c#bc0464cac946f42477b4f6c7fde198452db0bca5"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -563,12 +570,13 @@ dependencies = [
  "serde",
  "sha2",
  "sha3",
+ "strum_macros",
 ]
 
 [[package]]
 name = "mpc"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=29d2bcf#29d2bcf8a8bd2c9576b65fa2c42a0dd777c88603"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=bc0464c#bc0464cac946f42477b4f6c7fde198452db0bca5"
 dependencies = [
  "bcs",
  "commitment",
@@ -640,7 +648,7 @@ dependencies = [
 [[package]]
 name = "proof"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=29d2bcf#29d2bcf8a8bd2c9576b65fa2c42a0dd777c88603"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=bc0464c#bc0464cac946f42477b4f6c7fde198452db0bca5"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -883,6 +891,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -942,7 +962,7 @@ dependencies = [
 [[package]]
 name = "twopc_mpc"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=29d2bcf#29d2bcf8a8bd2c9576b65fa2c42a0dd777c88603"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=bc0464c#bc0464cac946f42477b4f6c7fde198452db0bca5"
 dependencies = [
  "class_groups",
  "commitment",
