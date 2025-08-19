@@ -1,3 +1,4 @@
+use crate::SuiDataSenders;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
@@ -5,20 +6,22 @@ use crate::dwallet_mpc::integration_tests::utils::{
     send_start_dwallet_dkg_second_round_event, send_start_network_dkg_event_to_all_parties,
 };
 use dwallet_mpc_centralized_party::{
-    encrypt_secret_key_share_and_prove, generate_secp256k1_cg_keypair_from_seed_internal,
-    network_dkg_public_output_to_protocol_pp_inner,
+    create_imported_dwallet_centralized_step_inner, encrypt_secret_key_share_and_prove,
+    generate_secp256k1_cg_keypair_from_seed_internal,
+    network_dkg_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
 };
 use ika_types::committee::Committee;
 use ika_types::message::{DKGSecondRoundOutput, DWalletCheckpointMessageKind};
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
+    DBSuiEvent, DWalletImportedKeyVerificationRequestEvent,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
     DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,
-    IkaNetworkConfig, SessionIdentifier, SessionType,
+    EncryptedShareVerificationRequestEvent, IkaNetworkConfig, SessionIdentifier, SessionType,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use sui_types::base_types::ObjectID;
+use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
 use tracing::info;
 
@@ -181,8 +184,52 @@ async fn create_imported_dwallet() {
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
-    let result =
-        create_dwallet_test(&mut test_state, consensus_round, key_id, network_key_bytes).await;
+    let protocol_pp =
+        network_dkg_public_output_to_protocol_pp_inner(network_key_bytes.clone()).unwrap();
+    let (dwallet_secret_key, dwallet_public_key) =
+        sample_dwallet_keypair_inner(protocol_pp.clone()).unwrap();
+    let import_dwallet_session_id = [2; 32];
+    let (user_secret_share, user_public_output, user_message) =
+        create_imported_dwallet_centralized_step_inner(
+            protocol_pp.clone(),
+            import_dwallet_session_id.to_vec(),
+            dwallet_secret_key.clone(),
+        )
+        .unwrap();
+    let (encryption_key, decryption_key) =
+        generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
+    let encrypted_secret_key_share_and_proof =
+        encrypt_secret_key_share_and_prove(user_secret_share, encryption_key.clone(), protocol_pp)
+            .unwrap();
+    send_start_imported_dwallet_verification_event(
+        &ika_network_config,
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        import_dwallet_session_id,
+        2,
+        key_id,
+        ObjectID::random(),
+        encrypted_secret_key_share_and_proof,
+        user_public_output,
+        user_message,
+        encryption_key,
+    );
+    let (consensus_round, verified_dwallet_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
+    let DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(
+        imported_key_verification_output,
+    ) = verified_dwallet_checkpoint
+        .messages()
+        .clone()
+        .pop()
+        .unwrap()
+    else {
+        panic!("Expected DWallet imported key verification output message");
+    };
+    assert!(
+        !imported_key_verification_output.rejected,
+        "Imported DWallet key verification should not be rejected"
+    );
     info!("DWallet DKG second round completed");
 }
 
@@ -275,4 +322,52 @@ pub(crate) async fn create_dwallet_test(
         class_groups_encryption_key: encryption_key,
         class_groups_decryption_key: decryption_key,
     }
+}
+
+pub(crate) fn send_start_imported_dwallet_verification_event(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: &Vec<SuiDataSenders>,
+    session_identifier_preimage: [u8; 32],
+    session_sequence_number: u64,
+    dwallet_network_encryption_key_id: ObjectID,
+    dwallet_id: ObjectID,
+    encrypted_centralized_secret_share_and_proof: Vec<u8>,
+    user_public_output: Vec<u8>,
+    centralized_party_message: Vec<u8>,
+    encryption_key: Vec<u8>,
+) {
+    let random_id = ObjectID::random();
+    sui_data_senders.iter().for_each(|sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DBSuiEvent {
+                type_: DWalletSessionEvent::<DWalletImportedKeyVerificationRequestEvent>::type_(
+                    &ika_network_config,
+                ),
+                contents: bcs::to_bytes(&new_dwallet_session_event(
+                    false,
+                    session_sequence_number,
+                    session_identifier_preimage.to_vec().clone(),
+                    DWalletImportedKeyVerificationRequestEvent {
+                        encrypted_centralized_secret_share_and_proof:
+                            encrypted_centralized_secret_share_and_proof.clone(),
+                        dwallet_id,
+                        encryption_key: encryption_key.clone(),
+                        encryption_key_id: random_id,
+                        encryption_key_address: Default::default(),
+                        user_public_output: user_public_output.clone(),
+                        encrypted_user_secret_key_share_id: random_id,
+                        centralized_party_message: centralized_party_message.clone(),
+                        dwallet_network_encryption_key_id,
+                        curve: 0,
+                        dwallet_cap_id: random_id,
+                        signer_public_key: vec![],
+                    },
+                ))
+                .unwrap(),
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
 }
