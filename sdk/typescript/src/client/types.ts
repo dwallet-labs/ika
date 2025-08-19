@@ -74,10 +74,10 @@ export type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorI
 export type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
 
 export const DWalletType = {
-	ZeroTrust: 'ZeroTrust',
-	Imported: 'Imported',
-	ImportedShared: 'ImportedShared',
-	Shared: 'Shared',
+	ZeroTrust: 'zero-trust',
+	Imported: 'imported',
+	ImportedShared: 'imported-shared',
+	Shared: 'shared',
 } as const;
 
 export type DWalletType = (typeof DWalletType)[keyof typeof DWalletType];
@@ -85,19 +85,19 @@ export type DWalletType = (typeof DWalletType)[keyof typeof DWalletType];
 export type DWalletInternal = typeof CoordinatorInnerModule.DWallet.$inferType;
 
 export type ZeroTrustDWallet = DWalletInternal & {
-	type: 'ZeroTrust';
+	kind: 'zero-trust';
 };
 
 export type ImportedDWallet = DWalletInternal & {
-	type: 'Imported';
+	kind: 'imported';
 };
 
 export type ImportedSharedDWallet = DWalletInternal & {
-	type: 'ImportedShared';
+	kind: 'imported-shared';
 };
 
 export type SharedDWallet = DWalletInternal & {
-	type: 'Shared';
+	kind: 'shared';
 };
 
 export type DWallet = ZeroTrustDWallet | ImportedDWallet | ImportedSharedDWallet | SharedDWallet;

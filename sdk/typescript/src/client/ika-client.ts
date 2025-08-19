@@ -284,7 +284,7 @@ export class IkaClient {
 
 				return {
 					...dWallet,
-					type: this.#getDWalletType(dWallet),
+					kind: this.#getDWalletType(dWallet),
 				};
 			});
 	}
@@ -520,7 +520,7 @@ export class IkaClient {
 
 					return {
 						...dWallet,
-						type: this.#getDWalletType(dWallet),
+						kind: this.#getDWalletType(dWallet),
 					};
 				});
 			});
@@ -1088,17 +1088,17 @@ export class IkaClient {
 
 	#getDWalletType(dWallet: DWalletInternal): DWalletType {
 		if (dWallet.is_imported_key_dwallet && dWallet.public_user_secret_key_share) {
-			return 'ImportedShared';
+			return 'imported-shared';
 		}
 
 		if (dWallet.is_imported_key_dwallet) {
-			return 'Imported';
+			return 'imported';
 		}
 
 		if (dWallet.public_user_secret_key_share) {
-			return 'Shared';
+			return 'shared';
 		}
 
-		return 'ZeroTrust';
+		return 'zero-trust';
 	}
 }
