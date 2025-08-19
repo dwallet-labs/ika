@@ -222,7 +222,6 @@ pub(crate) async fn create_dwallet_test(
     else {
         panic!("Expected DWallet DKG second round output message");
     };
-    info!(dwallet_dkg_second_round_output_len=?dwallet_dkg_second_round_output.output.len(), "DWallet DKG second round output received");
     info!("DWallet DKG second round completed");
     (
         consensus_round,
