@@ -1,19 +1,19 @@
 use crate::dwallet_mpc::integration_tests::create_dwallet::{
-    DWalletTestResult, create_dwallet_test,
+    create_dwallet_test, DWalletTestResult,
 };
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::{
-    IntegrationTestState, send_start_presign_event, send_start_sign_event,
-};
+use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
 use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, network_dkg_public_output_to_protocol_pp_inner,
 };
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
-use sui_types::base_types::ObjectID;
+use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletSessionEvent, DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SignRequestEvent};
+use sui_types::base_types::{EpochId, ObjectID};
 use tracing::info;
+use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
+use crate::SuiDataSenders;
 
 #[tokio::test]
 #[cfg(test)]
@@ -109,4 +109,86 @@ async fn sign() {
     else {
         panic!("Expected DWallet sign output message");
     };
+}
+
+pub(crate) fn send_start_sign_event(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: &Vec<SuiDataSenders>,
+    session_identifier_preimage: [u8; 32],
+    session_sequence_number: u64,
+    dwallet_network_encryption_key_id: ObjectID,
+    dwallet_id: ObjectID,
+    dwallet_public_output: Vec<u8>,
+    presign: Vec<u8>,
+    message_centralized_signature: Vec<u8>,
+    message: Vec<u8>,
+) {
+    let presign_id = ObjectID::random();
+    let sign_id = ObjectID::random();
+    sui_data_senders.iter().for_each(|sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DBSuiEvent {
+                type_: DWalletSessionEvent::<SignRequestEvent>::type_(&ika_network_config),
+                contents: bcs::to_bytes(&new_dwallet_session_event(
+                    true,
+                    session_sequence_number,
+                    session_identifier_preimage.to_vec().clone(),
+                    SignRequestEvent {
+                        sign_id,
+                        dwallet_id,
+                        presign_id,
+                        presign: presign.clone(),
+                        message_centralized_signature: message_centralized_signature.clone(),
+                        dwallet_network_encryption_key_id,
+                        curve: 0,
+                        signature_algorithm: 0,
+                        hash_scheme: 0,
+                        dwallet_decentralized_public_output: dwallet_public_output.clone(),
+                        message: message.clone(),
+                        is_future_sign: false,
+                    },
+                ))
+                .unwrap(),
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
+}
+
+pub(crate) fn send_start_presign_event(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: &Vec<SuiDataSenders>,
+    session_identifier_preimage: [u8; 32],
+    session_sequence_number: u64,
+    dwallet_network_encryption_key_id: ObjectID,
+    dwallet_id: Option<ObjectID>,
+    dwallet_public_output: Option<Vec<u8>>,
+) {
+    let presign_id = ObjectID::random();
+    sui_data_senders.iter().for_each(|sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DBSuiEvent {
+                type_: DWalletSessionEvent::<PresignRequestEvent>::type_(&ika_network_config),
+                contents: bcs::to_bytes(&new_dwallet_session_event(
+                    false,
+                    session_sequence_number,
+                    session_identifier_preimage.to_vec().clone(),
+                    PresignRequestEvent {
+                        dwallet_id,
+                        presign_id,
+                        dwallet_public_output: dwallet_public_output.clone(),
+                        dwallet_network_encryption_key_id,
+                        curve: 0,
+                        signature_algorithm: 0,
+                    },
+                ))
+                .unwrap(),
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
 }

@@ -1,9 +1,7 @@
 use crate::SuiDataSenders;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::{
-    TestingAuthorityPerEpochStore, TestingDWalletCheckpointNotify, TestingSubmitToConsensus,
-};
+use crate::dwallet_mpc::integration_tests::utils::{IntegrationTestState, TestingAuthorityPerEpochStore, TestingDWalletCheckpointNotify, TestingSubmitToConsensus};
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::ConsensusTransactionKind;
 use ika_types::messages_dwallet_mpc::{
@@ -91,7 +89,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             .get(&test_state.crypto_round)
             .cloned()
             .unwrap_or_default();
-        if utils::advance_parties_and_send_result_messages(
+        if advance_parties_and_send_result_messages(
             &mut test_state,
             &round_non_delayed_parties,
             &round_malicious_parties,
@@ -103,7 +101,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         }
         if !round_delayed_parties.is_empty() {
             test_state.consensus_round += 1;
-            if utils::advance_parties_and_send_result_messages(
+            if advance_parties_and_send_result_messages(
                 &mut test_state,
                 &round_delayed_parties,
                 &round_malicious_parties,
@@ -132,4 +130,36 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             malicious_actor_name
         );
     }
+}
+
+pub(crate) async fn advance_parties_and_send_result_messages(
+    mut test_state: &mut IntegrationTestState,
+    parties_to_advance: &[usize],
+    malicious_parties: &[usize],
+) -> bool {
+    if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
+        &test_state.committee,
+        &mut test_state.dwallet_mpc_services,
+        &mut test_state.sent_consensus_messages_collectors,
+        &test_state.epoch_stores,
+        &test_state.notify_services,
+        &parties_to_advance,
+    )
+    .await
+    {
+        info!(?pending_checkpoint, "MPC flow completed successfully");
+        return true;
+    }
+    utils::override_legit_messages_with_false_messages(
+        malicious_parties,
+        &mut test_state.sent_consensus_messages_collectors,
+        test_state.crypto_round as u64,
+    );
+    utils::send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        test_state.consensus_round as Round,
+    );
+    false
 }
