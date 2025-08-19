@@ -1,4 +1,6 @@
-use crate::dwallet_mpc::integration_tests::create_dwallet::create_dwallet_test;
+use crate::dwallet_mpc::integration_tests::create_dwallet::{
+    DWalletTestResult, create_dwallet_test,
+};
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
@@ -45,14 +47,18 @@ async fn sign() {
     }
     let (consensus_round, network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
-    let (consensus_round, dwallet_dkg_second_round_output, dwallet_secret_share) =
-        create_dwallet_test(
-            &mut test_state,
-            consensus_round,
-            network_key_id,
-            network_key_bytes.clone(),
-        )
-        .await;
+    let DWalletTestResult {
+        flow_completion_consensus_round: consensus_round,
+        dkg_second_round_output: dwallet_dkg_second_round_output,
+        dwallet_secret_key_share: dwallet_secret_share,
+        ..
+    } = create_dwallet_test(
+        &mut test_state,
+        consensus_round,
+        network_key_id,
+        network_key_bytes.clone(),
+    )
+    .await;
     info!("DWallet DKG second round completed");
     let presign_session_identifier = [4; 32];
     send_start_presign_event(

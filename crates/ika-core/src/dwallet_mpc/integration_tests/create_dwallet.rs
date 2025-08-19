@@ -136,17 +136,23 @@ async fn create_dwallet() {
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
-    let (consensus_round, dwallet_dkg_second_round_output, _) =
+    let result =
         create_dwallet_test(&mut test_state, consensus_round, key_id, network_key_bytes).await;
     info!("DWallet DKG second round completed");
 }
-
+pub(crate) struct DWalletTestResult {
+    pub(crate) flow_completion_consensus_round: Round,
+    pub(crate) dkg_second_round_output: DKGSecondRoundOutput,
+    pub(crate) dwallet_secret_key_share: Vec<u8>,
+    pub(crate) class_groups_encryption_key: Vec<u8>,
+    pub(crate) class_groups_decryption_key: Vec<u8>,
+}
 pub(crate) async fn create_dwallet_test(
     mut test_state: &mut IntegrationTestState,
     start_consensus_round: Round,
     network_key_id: ObjectID,
     network_key_bytes: Vec<u8>,
-) -> (Round, DKGSecondRoundOutput, Vec<u8>) {
+) -> DWalletTestResult {
     let mut consensus_round = start_consensus_round;
     let dwallet_dkg_session_identifier = [2; 32];
     let epoch_id = test_state
@@ -207,7 +213,7 @@ pub(crate) async fn create_dwallet_test(
         dwallet_dkg_first_round_output.output,
         centralized_dwallet_dkg_result.public_key_share_and_proof,
         encrypted_secret_key_share_and_proof,
-        encryption_key,
+        encryption_key.clone(),
         centralized_dwallet_dkg_result.public_output,
     );
     let (consensus_round, dwallet_second_round_checkpoint) =
@@ -223,9 +229,11 @@ pub(crate) async fn create_dwallet_test(
         panic!("Expected DWallet DKG second round output message");
     };
     info!("DWallet DKG second round completed");
-    (
-        consensus_round,
-        dwallet_dkg_second_round_output,
-        centralized_dwallet_dkg_result.centralized_secret_output,
-    )
+    DWalletTestResult {
+        flow_completion_consensus_round: consensus_round,
+        dkg_second_round_output: dwallet_dkg_second_round_output.clone(),
+        dwallet_secret_key_share: centralized_dwallet_dkg_result.centralized_secret_output,
+        class_groups_encryption_key: encryption_key,
+        class_groups_decryption_key: decryption_key,
+    }
 }

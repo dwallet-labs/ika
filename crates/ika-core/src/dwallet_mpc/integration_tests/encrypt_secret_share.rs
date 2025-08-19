@@ -1,10 +1,11 @@
+use sui_types::base_types::ObjectID;
 use tracing::info;
 use ika_types::committee::Committee;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use crate::dwallet_mpc::integration_tests::create_dwallet::create_dwallet_test;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
+use crate::dwallet_mpc::integration_tests::utils::{send_start_encrypt_secret_share_event, IntegrationTestState};
 
 #[tokio::test]
 #[cfg(test)]
@@ -39,6 +40,17 @@ async fn encrypt_secret_share() {
         create_network_key_test(&mut test_state).await;
     let (consensus_round, dwallet_dkg_second_round_output, secret_share) =
         create_dwallet_test(&mut test_state, consensus_round, key_id, network_key_bytes).await;
-    
+    send_start_encrypt_secret_share_event(
+        &ika_network_config,
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        [4; 32],
+        4,
+        key_id,
+        ObjectID::from_bytes(dwallet_dkg_second_round_output.dwallet_id.clone()).unwrap(),
+        todo!(),
+        dwallet_dkg_second_round_output.output,
+        
+    );
     info!("DWallet DKG second round completed");
 }
