@@ -90,6 +90,33 @@ async fn test_network_key_reconfiguration() {
     };
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
+    send_start_network_key_reconfiguration_event(
+        &ika_network_config,
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        [2u8; 32],
+        2,
+        key_id,
+    );
+    let (consensus_round, reconfiguration_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
+    info!(
+        ?reconfiguration_checkpoint,
+        "Network key reconfiguration checkpoint received"
+    );
+    let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(message) =
+        reconfiguration_checkpoint
+            .messages()
+            .first()
+            .expect("Expected a message")
+    else {
+        error!("Expected a RespondDWalletMPCNetworkDKGOutput message");
+        panic!("Test failed due to unexpected message type");
+    };
+    assert!(
+        !message.rejected,
+        "Network key reconfiguration should not be rejected"
+    );
 }
 
 pub(crate) async fn create_network_key_test(
@@ -167,7 +194,7 @@ pub(crate) fn send_start_network_key_reconfiguration_event(
                         &ika_network_config,
                     ),
                 contents: bcs::to_bytes(&new_dwallet_session_event(
-                    false,
+                    true,
                     session_sequence_number,
                     session_identifier_preimage.to_vec().clone(),
                     DWalletEncryptionKeyReconfigurationRequestEvent {
