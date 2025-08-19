@@ -19,9 +19,10 @@ mod crytographic_computation;
 pub mod dwallet_mpc_metrics;
 pub mod mpc_event;
 
+pub use crytographic_computation::protocol_cryptographic_data;
+
 #[cfg(test)]
 mod integration_tests;
-pub(crate) mod session_request;
 
 pub(crate) use crytographic_computation::mpc_computations::{
     dwallet_dkg, network_dkg, presign, reconfiguration, sign,

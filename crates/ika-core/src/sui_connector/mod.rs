@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_checkpoints::DWalletCheckpointStore;
-use crate::dwallet_mpc::session_request::DWalletSessionRequest;
+use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::sui_executor::{StopReason, SuiExecutor};
 use crate::sui_connector::sui_syncer::SuiSyncer;

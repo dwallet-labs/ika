@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::SuiDataReceivers;
+use crate::dwallet_mpc::crytographic_computation::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::crytographic_computation::{
     ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
 };
@@ -11,11 +12,11 @@ use crate::dwallet_mpc::mpc_session::{
 };
 use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
-use crate::dwallet_mpc::session_request::{AdvanceSpecificData, DWalletSessionRequest};
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
 };
+use crate::dwallet_session_request::DWalletSessionRequest;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use dwallet_rng::RootSeed;
@@ -441,7 +442,7 @@ impl DWalletMPCManager {
                     return None;
                 };
 
-                AdvanceSpecificData::try_new(
+                ProtocolCryptographicData::try_new(
                     &request_data.protocol_specific_data,
                     self.party_id,
                     &self.access_structure,
@@ -472,7 +473,7 @@ impl DWalletMPCManager {
                         protocol_data: (&request_data.protocol_specific_data).into(),
                         validator_name: self.validator_name,
                         access_structure: self.access_structure.clone(),
-                        advance_specific_data,
+                        protocol_cryptographic_data: advance_specific_data,
                     };
 
                     (computation_id, computation_request)

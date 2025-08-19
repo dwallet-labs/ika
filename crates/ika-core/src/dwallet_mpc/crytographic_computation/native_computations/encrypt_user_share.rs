@@ -1,7 +1,8 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::ProtocolSpecificData;
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedEncryptedUserShare,

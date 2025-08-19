@@ -19,10 +19,9 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
 use crate::dwallet_mpc::party_ids_to_authority_names;
-use crate::dwallet_mpc::session_request::{
-    DWalletSessionRequest, DWalletSessionRequestMetricData, ProtocolSpecificData,
-};
+use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
+use crate::request_protocol_data::ProtocolSpecificData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage};

@@ -19,7 +19,7 @@
 //! - **signature_algorithm**: The signature algorithm (e.g., "ECDSA")
 //! - **mpc_round**: The specific round number within a protocol session
 
-use crate::dwallet_mpc::session_request::DWalletSessionRequestMetricData;
+use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use prometheus::{
     GaugeVec, IntGauge, IntGaugeVec, Registry, register_gauge_vec_with_registry,
     register_int_gauge_vec_with_registry, register_int_gauge_with_registry,

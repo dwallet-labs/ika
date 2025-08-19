@@ -11,7 +11,8 @@ use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationSecp256k1Party,
     instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output,
 };
-use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::ProtocolSpecificData;
 use class_groups::dkg::{Secp256k1Party, Secp256k1PublicInput};
 use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,

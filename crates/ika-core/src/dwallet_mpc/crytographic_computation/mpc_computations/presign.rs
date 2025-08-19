@@ -4,7 +4,8 @@
 //! This module provides a wrapper around the Presign protocol from the 2PC-MPC library.
 //!
 //! It integrates both Presign parties (each representing a round in the Presign protocol).
-use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::ProtocolSpecificData;
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
 };

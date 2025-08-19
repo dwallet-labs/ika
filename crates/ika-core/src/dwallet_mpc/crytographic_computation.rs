@@ -4,6 +4,7 @@
 pub(super) mod mpc_computations;
 pub(super) mod native_computations;
 mod orchestrator;
+pub mod protocol_cryptographic_data;
 mod request;
 
 use ika_types::messages_dwallet_mpc::SessionIdentifier;

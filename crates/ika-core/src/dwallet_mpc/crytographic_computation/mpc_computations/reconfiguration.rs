@@ -1,10 +1,11 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::ProtocolSpecificData;
 use class_groups::reconfiguration::{PublicInput, Secp256k1Party};
 use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,

@@ -19,7 +19,7 @@
 
 use crate::dwallet_mpc::crytographic_computation::{ComputationId, ComputationRequest};
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
-use crate::dwallet_mpc::session_request::DWalletSessionRequestMetricData;
+use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
 use group::PartyID;
@@ -225,7 +225,7 @@ impl CryptographicComputationsOrchestrator {
 
         let party_id = computation_request.party_id;
         let protocol_metadata: DWalletSessionRequestMetricData =
-            (&computation_request.advance_specific_data).into();
+            (&computation_request.protocol_cryptographic_data).into();
 
         dwallet_mpc_metrics
             .add_advance_call(&protocol_metadata, &computation_id.mpc_round.to_string());

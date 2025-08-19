@@ -4,7 +4,7 @@
 //! The SuiSyncer module handles synchronizing Events emitted
 //! on the Sui blockchain from concerned modules of `ika_system` package.
 use crate::dwallet_mpc::mpc_event::parse_sui_event;
-use crate::dwallet_mpc::session_request::DWalletSessionRequest;
+use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};

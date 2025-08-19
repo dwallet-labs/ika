@@ -10,8 +10,9 @@ use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationPartyPublicInputGenerator, ReconfigurationSecp256k1Party,
 };
-use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
 use crate::dwallet_mpc::sign::{SignParty, sign_session_public_input};
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::ProtocolSpecificData;
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{

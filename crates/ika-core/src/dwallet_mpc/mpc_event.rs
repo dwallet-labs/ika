@@ -10,22 +10,24 @@ use crate::dwallet_mpc::make_dwallet_user_secret_key_shares_public::make_dwallet
 use crate::dwallet_mpc::network_dkg::network_dkg_session_request;
 use crate::dwallet_mpc::presign::presign_party_session_request;
 use crate::dwallet_mpc::reconfiguration::network_decryption_key_reconfiguration_session_request_from_event;
-use crate::dwallet_mpc::session_request::DWalletSessionRequest;
 use crate::dwallet_mpc::sign::{
     get_verify_partial_signatures_session_request, sign_party_session_request,
 };
+use crate::dwallet_session_request::DWalletSessionRequest;
 use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
     DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
     EncryptedShareVerificationRequestEvent, FutureSignRequestEvent, IkaNetworkConfig,
-    MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent, SignRequestEvent,
+    MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
+    SESSIONS_MANAGER_MODULE_NAME, SignRequestEvent,
 };
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;
 use sui_types::dynamic_field::Field;
 use sui_types::id::ID;
+use tracing::error;
 
 pub fn parse_sui_event(
     packages_config: &IkaNetworkConfig,
@@ -33,6 +35,19 @@ pub fn parse_sui_event(
     contents: &[u8],
     pulled: bool,
 ) -> anyhow::Result<Option<DWalletSessionRequest>> {
+    if event_type.address != *packages_config.packages.ika_dwallet_2pc_mpc_package_id
+        || event_type.module != SESSIONS_MANAGER_MODULE_NAME.into()
+    {
+        error!(
+            module=?event_type.module,
+            address=?event_type.address,
+            "received an event from a wrong SUI module - rejecting!"
+        );
+        return Err(anyhow::anyhow!(
+            "received an event from a wrong SUI module - rejecting!"
+        ));
+    }
+
     let session_request = if event_type
         == DWalletSessionEvent::<DWalletImportedKeyVerificationRequestEvent>::type_(packages_config)
     {

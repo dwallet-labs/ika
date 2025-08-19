@@ -4,7 +4,7 @@
 
 extern crate core;
 
-use dwallet_mpc::session_request::DWalletSessionRequest;
+use dwallet_session_request::DWalletSessionRequest;
 use ika_types::committee::Committee;
 use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
 use std::collections::HashMap;
@@ -32,6 +32,8 @@ pub mod system_checkpoints;
 pub mod dwallet_mpc;
 pub mod sui_connector;
 
+mod dwallet_session_request;
+mod request_protocol_data;
 pub mod runtime;
 
 pub struct SuiDataReceivers {

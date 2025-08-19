@@ -14,13 +14,12 @@ use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
+use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use ika_types::error::{IkaError, IkaResult};
 pub(crate) use input::{PublicInput, session_input_from_request};
 use std::fmt::{Debug, Formatter};
 use std::{fmt, mem};
 use tokio::sync::broadcast;
-
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) struct DWalletMPCSessionOutput {
     pub(crate) output: Vec<DWalletCheckpointMessageKind>,
@@ -48,6 +47,7 @@ pub(crate) struct DWalletMPCSession {
     /// computed by summing the number of failed attempts.
     pub(crate) mpc_round_to_threshold_not_reached_consensus_rounds: HashMap<u64, HashSet<u64>>,
 
+    // Todo (#1442): Move this field into `MPCSessionStatus::Active` as non-optional.
     pub(crate) request_data: Option<DWalletSessionRequest>,
 
     /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.

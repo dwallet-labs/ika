@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::dwallet_mpc::crytographic_computation::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::crytographic_computation::{ComputationId, MPC_SIGN_SECOND_ROUND};
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
@@ -12,8 +13,8 @@ use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::network_dkg::advance_network_dkg;
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
-use crate::dwallet_mpc::session_request::{AdvanceSpecificData, DWalletSessionRequestMetricData};
 use crate::dwallet_mpc::sign::{SignParty, verify_partial_signature};
+use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
@@ -38,7 +39,7 @@ pub(crate) struct Request {
     pub(crate) protocol_data: DWalletSessionRequestMetricData,
     pub(crate) validator_name: AuthorityPublicKeyBytes,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
-    pub(crate) advance_specific_data: AdvanceSpecificData,
+    pub(crate) protocol_cryptographic_data: ProtocolCryptographicData,
 }
 
 impl Request {
@@ -73,8 +74,8 @@ impl Request {
             computation_id.consensus_round,
         );
 
-        match self.advance_specific_data {
-            AdvanceSpecificData::ImportedKeyVerification {
+        match self.protocol_cryptographic_data {
+            ProtocolCryptographicData::ImportedKeyVerification {
                 public_input,
                 data,
                 advance_request,
@@ -125,7 +126,7 @@ impl Request {
                     }
                 }
             }
-            AdvanceSpecificData::DKGFirst {
+            ProtocolCryptographicData::DKGFirst {
                 public_input,
                 advance_request,
                 ..
@@ -162,7 +163,7 @@ impl Request {
                     }
                 }
             }
-            AdvanceSpecificData::DKGSecond {
+            ProtocolCryptographicData::DKGSecond {
                 public_input,
                 data,
                 advance_request,
@@ -216,7 +217,7 @@ impl Request {
                     }
                 }
             }
-            AdvanceSpecificData::Presign {
+            ProtocolCryptographicData::Presign {
                 public_input,
                 advance_request,
                 ..
@@ -251,7 +252,7 @@ impl Request {
                     }
                 }
             }
-            AdvanceSpecificData::Sign {
+            ProtocolCryptographicData::Sign {
                 public_input,
                 advance_request,
                 decryption_key_shares,
@@ -292,7 +293,7 @@ impl Request {
                     }
                 }
             }
-            AdvanceSpecificData::NetworkEncryptionKeyDkg {
+            ProtocolCryptographicData::NetworkEncryptionKeyDkg {
                 data,
                 public_input,
                 advance_request,
@@ -308,7 +309,7 @@ impl Request {
                 class_groups_decryption_key,
                 &mut rng,
             ),
-            AdvanceSpecificData::EncryptedShareVerification {
+            ProtocolCryptographicData::EncryptedShareVerification {
                 data,
                 protocol_public_parameters,
                 ..
@@ -327,7 +328,7 @@ impl Request {
                     Err(err) => Err(err),
                 }
             }
-            AdvanceSpecificData::PartialSignatureVerification {
+            ProtocolCryptographicData::PartialSignatureVerification {
                 data,
                 protocol_public_parameters,
                 ..
@@ -351,7 +352,7 @@ impl Request {
                     malicious_parties: vec![],
                 })
             }
-            AdvanceSpecificData::NetworkEncryptionKeyReconfiguration {
+            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                 public_input,
                 advance_request,
                 decryption_key_shares,
@@ -395,7 +396,7 @@ impl Request {
                     }
                 }
             }
-            AdvanceSpecificData::MakeDWalletUserSecretKeySharesPublic {
+            ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic {
                 protocol_public_parameters,
                 data,
                 ..

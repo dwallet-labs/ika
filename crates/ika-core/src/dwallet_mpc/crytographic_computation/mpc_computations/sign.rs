@@ -7,7 +7,8 @@
 
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::network_dkg::DwalletMPCNetworkKeys;
-use crate::dwallet_mpc::session_request::{DWalletSessionRequest, ProtocolSpecificData};
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::ProtocolSpecificData;
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedUserSignedMessage,
