@@ -13,7 +13,13 @@ use dwallet_mpc_centralized_party::{
 use ika_types::committee::Committee;
 use ika_types::message::{DKGSecondRoundOutput, DWalletCheckpointMessageKind};
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent, SessionIdentifier, SessionType};
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletImportedKeyVerificationRequestEvent,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
+    DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,
+    EncryptedShareVerificationRequestEvent, IkaNetworkConfig,
+    MakeDWalletUserSecretKeySharesPublicRequestEvent, SessionIdentifier, SessionType,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
@@ -192,8 +198,11 @@ async fn make_dwallet_public() {
         result.dkg_second_round_output.output,
         result.dwallet_secret_key_share,
     );
-    let (consensus_round, verified_dwallet_checkpoint) =
-        utils::advance_mpc_flow_until_completion(&mut test_state, result.flow_completion_consensus_round).await;
+    let (consensus_round, verified_dwallet_checkpoint) = utils::advance_mpc_flow_until_completion(
+        &mut test_state,
+        result.flow_completion_consensus_round,
+    )
+    .await;
     let DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(
         make_dwallet_public_output,
     ) = verified_dwallet_checkpoint
@@ -440,14 +449,15 @@ pub(crate) fn send_make_dwallet_public_event(
     dwallet_network_encryption_key_id: ObjectID,
     dwallet_id: ObjectID,
     public_output: Vec<u8>,
-    public_user_secret_key_shares: Vec<u8>
+    public_user_secret_key_shares: Vec<u8>,
 ) {
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<MakeDWalletUserSecretKeySharesPublicRequestEvent>::type_(
-                    &ika_network_config,
-                ),
+                type_:
+                    DWalletSessionEvent::<MakeDWalletUserSecretKeySharesPublicRequestEvent>::type_(
+                        &ika_network_config,
+                    ),
                 contents: bcs::to_bytes(&new_dwallet_session_event(
                     false,
                     session_sequence_number,
