@@ -7,6 +7,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use dwallet_rng::RootSeed;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
@@ -18,7 +19,7 @@ use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent,
-    DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SessionIdentifier,
+    DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SessionIdentifier, SessionType,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -316,7 +317,6 @@ fn create_dwallet_mpc_service(
             checkpoint_notify.clone(),
             authority_name.clone(),
             committee.clone(),
-            ika_network_config.clone(),
             sui_data_receivers.clone(),
         ),
         sui_data_senders,
@@ -506,6 +506,8 @@ pub(crate) fn override_legit_messages_with_false_messages(
         });
     }
 }
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::{DKGFirstData, NetworkEncryptionKeyDkgData, ProtocolData};
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 
 pub(crate) fn send_start_network_dkg_event_to_all_parties(
@@ -544,7 +546,7 @@ pub(crate) fn send_start_network_dkg_event_to_some_parties(
 }
 
 pub(crate) fn send_configurable_start_network_dkg_event(
-    ika_network_config: &IkaNetworkConfig,
+    _ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -552,44 +554,34 @@ pub(crate) fn send_configurable_start_network_dkg_event(
     parties: &[usize],
     key_id: ObjectID,
 ) {
-    let start_network_dkg_event = DBSuiEvent {
-        type_: DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(
-            &ika_network_config,
-        ),
-        contents: bcs::to_bytes(&new_dwallet_session_event(
-            true,
-            session_sequence_number,
-            session_identifier_preimage.to_vec().clone(),
-            DWalletNetworkDKGEncryptionKeyRequestEvent {
-                dwallet_network_encryption_key_id: key_id,
-                params_for_network: vec![],
-            },
-        ))
-        .unwrap(),
-        pulled: false,
-    };
-    send_event_to_parties(epoch_id, sui_data_senders, start_network_dkg_event, parties);
-}
-
-pub(crate) fn send_event_to_parties(
-    epoch_id: EpochId,
-    sui_data_senders: &mut Vec<SuiDataSenders>,
-    event: DBSuiEvent,
-    parties: &[usize],
-) {
-    sui_data_senders
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| parties.contains(i))
-        .for_each(|(_, mut sui_data_sender)| {
-            let _ = sui_data_sender
-                .uncompleted_events_sender
-                .send((vec![event.clone()], epoch_id));
-        });
+    let network_key_id = ObjectID::random();
+    sui_data_senders.iter().for_each(|mut sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DWalletSessionRequest {
+                session_type: SessionType::System,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::System,
+                    session_identifier_preimage,
+                ),
+                session_sequence_number,
+                protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
+                    data: NetworkEncryptionKeyDkgData {
+                        key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
+                    },
+                    dwallet_network_encryption_key_id: network_key_id,
+                },
+                epoch: 1,
+                requires_network_key_data: false,
+                requires_next_active_committee: false,
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
 }
 
 pub(crate) fn send_start_dwallet_dkg_first_round_event(
-    ika_network_config: &IkaNetworkConfig,
+    _ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -597,25 +589,25 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
     dwallet_network_encryption_key_id: ObjectID,
 ) {
     let dwallet_id = ObjectID::random();
-    let dwallet_cap_id = ObjectID::random();
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<DWalletDKGFirstRoundRequestEvent>::type_(
-                    &ika_network_config,
+            vec![DWalletSessionRequest {
+                session_type: SessionType::System,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::System,
+                    session_identifier_preimage,
                 ),
-                contents: bcs::to_bytes(&new_dwallet_session_event(
-                    false,
-                    session_sequence_number,
-                    session_identifier_preimage.to_vec().clone(),
-                    DWalletDKGFirstRoundRequestEvent {
-                        dwallet_id,
-                        dwallet_cap_id,
-                        dwallet_network_encryption_key_id,
-                        curve: 0,
+                session_sequence_number,
+                protocol_data: ProtocolData::DKGFirst {
+                    data: DKGFirstData {
+                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
                     },
-                ))
-                .unwrap(),
+                    dwallet_id,
+                    dwallet_network_encryption_key_id,
+                },
+                epoch: 1,
+                requires_network_key_data: true,
+                requires_next_active_committee: false,
                 pulled: false,
             }],
             epoch_id,
