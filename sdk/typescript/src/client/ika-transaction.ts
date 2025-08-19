@@ -463,6 +463,34 @@ export class IkaTransaction {
 	}
 
 	/**
+	 * Request a presign operation for a DWallet and transfer the capability to a specified receiver.
+	 * This allows delegation of the presign capability to another address.
+	 *
+	 * @param params - The parameters for requesting the presign
+	 * @param params.dWallet - The DWallet to create the presign for
+	 * @param params.signatureAlgorithm - The signature algorithm identifier to use
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @param params.receiver - The address that will receive the unverified presign capability
+	 * @returns Object containing only the updated transaction (presign capability transferred to receiver)
+	 */
+	requestPresign({
+		dWallet,
+		signatureAlgorithm,
+		ikaCoin,
+		suiCoin,
+		receiver,
+	}: {
+		dWallet: DWallet;
+		signatureAlgorithm: SignatureAlgorithm;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+		receiver: string;
+	}): {
+		transaction: IkaTransaction;
+	};
+
+	/**
 	 * Request a presign operation for a DWallet.
 	 * Presigning allows for faster signature generation by pre-computing part of the signature.
 	 *
@@ -486,33 +514,9 @@ export class IkaTransaction {
 	}): {
 		unverifiedPresignCap: TransactionObjectArgument;
 		transaction: IkaTransaction;
-	} {
-		const unverifiedPresignCap = this.#requestPresign({
-			dWallet,
-			signatureAlgorithm,
-			ikaCoin,
-			suiCoin,
-		});
+	};
 
-		return {
-			unverifiedPresignCap,
-			transaction: this,
-		};
-	}
-
-	/**
-	 * Request a presign operation and transfer the capability to a specified receiver.
-	 * This allows delegation of the presign capability to another address.
-	 *
-	 * @param params - The parameters for requesting the presign
-	 * @param params.dWallet - The DWallet to create the presign for
-	 * @param params.signatureAlgorithm - The signature algorithm identifier to use
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @param params.receiver - The address that will receive the unverified presign capability
-	 * @returns The updated IkaTransaction instance
-	 */
-	requestPresignAndTransferCap({
+	requestPresign({
 		dWallet,
 		signatureAlgorithm,
 		ikaCoin,
@@ -523,8 +527,11 @@ export class IkaTransaction {
 		signatureAlgorithm: SignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-		receiver: string;
-	}) {
+		receiver?: string;
+	}): {
+		unverifiedPresignCap?: TransactionObjectArgument;
+		transaction: IkaTransaction;
+	} {
 		const unverifiedPresignCap = this.#requestPresign({
 			dWallet,
 			signatureAlgorithm,
@@ -532,9 +539,18 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		this.#transaction.transferObjects([unverifiedPresignCap], receiver);
+		if (receiver) {
+			this.#transaction.transferObjects([unverifiedPresignCap], receiver);
 
-		return this;
+			return {
+				transaction: this,
+			};
+		}
+
+		return {
+			unverifiedPresignCap,
+			transaction: this,
+		};
 	}
 
 	/**

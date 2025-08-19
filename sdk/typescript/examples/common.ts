@@ -324,7 +324,7 @@ export async function presign(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	ikaTransaction.requestPresignAndTransferCap({
+	ikaTransaction.requestPresign({
 		dWallet,
 		signatureAlgorithm,
 		ikaCoin: emptyIKACoin,
