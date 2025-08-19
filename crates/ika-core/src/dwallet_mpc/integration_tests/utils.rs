@@ -816,7 +816,7 @@ pub(crate) fn send_start_presign_event(
             vec![DBSuiEvent {
                 type_: DWalletSessionEvent::<PresignRequestEvent>::type_(&ika_network_config),
                 contents: bcs::to_bytes(&new_dwallet_session_event(
-                    true,
+                    false,
                     session_sequence_number,
                     session_identifier_preimage.to_vec().clone(),
                     PresignRequestEvent {
