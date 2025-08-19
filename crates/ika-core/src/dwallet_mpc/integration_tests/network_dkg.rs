@@ -85,11 +85,21 @@ async fn test_network_key_reconfiguration() {
         notify_services,
         crypto_round: 1,
         consensus_round: 1,
-        committee,
+        committee: committee.clone(),
         sui_data_senders,
     };
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
+    let mut next_committee = committee.clone();
+    next_committee.epoch = epoch_id + 1;
+    test_state
+        .sui_data_senders
+        .iter()
+        .for_each(|mut sui_data_sender| {
+            let _ = sui_data_sender
+                .next_epoch_committee_sender
+                .send(next_committee.clone());
+        });
     send_start_network_key_reconfiguration_event(
         &ika_network_config,
         epoch_id,
