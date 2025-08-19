@@ -1436,7 +1436,7 @@ export class IkaTransaction {
 		receiver?: string;
 	}): Promise<
 		| {
-				ImportedKeyDWalletCap?: TransactionObjectArgument;
+				importedKeyDWalletCap?: TransactionObjectArgument;
 				transaction: IkaTransaction;
 		  }
 		| IkaTransaction
@@ -1456,7 +1456,7 @@ export class IkaTransaction {
 		}
 
 		return {
-			ImportedKeyDWalletCap: importedKeyDWalletVerificationCap,
+			importedKeyDWalletCap: importedKeyDWalletVerificationCap,
 			transaction: this,
 		};
 	}
