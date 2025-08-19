@@ -1,5 +1,11 @@
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::ProtocolData;
+use crate::request_protocol_data::{
+    dwallet_dkg_first_protocol_data, dwallet_dkg_second_protocol_data,
+    encrypted_share_verification_protocol_data, imported_key_verification_protocol_data,
+    make_dwallet_user_secret_key_shares_public_protocol_data,
+    network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data,
+    partial_signature_verification_protocol_data, presign_protocol_data, sign_protocol_data,
+};
 use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
@@ -7,7 +13,7 @@ use ika_types::messages_dwallet_mpc::{
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
     DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
     EncryptedShareVerificationRequestEvent, FutureSignRequestEvent, IkaNetworkConfig,
-    MPCRequestInput, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
+    MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
     SESSIONS_MANAGER_MODULE_NAME, SignRequestEvent,
 };
 use move_core_types::language_storage::StructTag;
@@ -130,10 +136,8 @@ fn make_dwallet_user_secret_key_shares_public_request_event_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(
-            MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(
-                deserialized_event.clone(),
-            ),
+        protocol_data: make_dwallet_user_secret_key_shares_public_protocol_data(
+            deserialized_event.event_data.clone(),
         )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
@@ -150,8 +154,8 @@ fn dwallet_imported_key_verification_request_event_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(
-            MPCRequestInput::DWalletImportedKeyVerificationRequest(deserialized_event.clone()),
+        protocol_data: imported_key_verification_protocol_data(
+            deserialized_event.event_data.clone(),
         )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
@@ -168,9 +172,7 @@ fn dwallet_dkg_first_party_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(MPCRequestInput::DKGFirst(
-            deserialized_event.clone(),
-        ))?,
+        protocol_data: dwallet_dkg_first_protocol_data(deserialized_event.event_data.clone())?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
@@ -186,9 +188,7 @@ fn dwallet_dkg_second_party_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(MPCRequestInput::DKGSecond(
-            deserialized_event.clone(),
-        ))?,
+        protocol_data: dwallet_dkg_second_protocol_data(deserialized_event.event_data.clone())?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
@@ -204,7 +204,7 @@ fn presign_party_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(MPCRequestInput::Presign(deserialized_event.clone()))?,
+        protocol_data: presign_protocol_data(deserialized_event.event_data.clone())?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
@@ -220,7 +220,7 @@ fn sign_party_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(MPCRequestInput::Sign(deserialized_event.clone()))?,
+        protocol_data: sign_protocol_data(deserialized_event.event_data.clone())?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
@@ -236,9 +236,9 @@ fn get_verify_partial_signatures_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(MPCRequestInput::PartialSignatureVerification(
-            deserialized_event.clone(),
-        ))?,
+        protocol_data: partial_signature_verification_protocol_data(
+            deserialized_event.event_data.clone(),
+        )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
@@ -269,10 +269,10 @@ fn network_dkg_secp256k1_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(MPCRequestInput::NetworkEncryptionKeyDkg(
+        protocol_data: network_encryption_key_dkg_protocol_data(
             DWalletMPCNetworkKeyScheme::Secp256k1,
-            deserialized_event.clone(),
-        ))?,
+            deserialized_event.event_data.clone(),
+        )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: false,
         requires_next_active_committee: false,
@@ -288,10 +288,10 @@ fn network_dkg_ristretto_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(MPCRequestInput::NetworkEncryptionKeyDkg(
+        protocol_data: network_encryption_key_dkg_protocol_data(
             DWalletMPCNetworkKeyScheme::Ristretto,
-            deserialized_event.clone(),
-        ))?,
+            deserialized_event.event_data.clone(),
+        )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: false,
         requires_next_active_committee: false,
@@ -307,8 +307,8 @@ fn network_decryption_key_reconfiguration_session_request_from_event(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(deserialized_event.clone()),
+        protocol_data: network_encryption_key_reconfiguration_protocol_data(
+            deserialized_event.event_data.clone(),
         )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
@@ -325,9 +325,9 @@ fn start_encrypted_share_verification_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: ProtocolData::try_new(MPCRequestInput::EncryptedShareVerification(
-            deserialized_event.clone(),
-        ))?,
+        protocol_data: encrypted_share_verification_protocol_data(
+            deserialized_event.event_data.clone(),
+        )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,

@@ -700,32 +700,6 @@ impl DWalletMPCManager {
         }
     }
 
-    // Returns the number of additional (delay) consensus rounds the session should wait for before advancing.
-    //
-    // This method returns the protocol-specific delay for certain MPC rounds in specific protocols
-    // (NetworkDkg, DecryptionKeyReconfiguration).
-    //
-    // - **NetworkDkg protocol**: requires delay for the third round
-    //   using `network_dkg_third_round_delay` config.
-    // - **DecryptionKeyReconfiguration protocol**: requires delay for the third round
-    //   using `decryption_key_reconfiguration_third_round_delay` config.
-    // - **Other protocols**: No delay required, always ready to advance
-    // pub(crate) fn consensus_rounds_delay_for_mpc_round(
-    //     &self,
-    //     current_mpc_round: u64,
-    //     request_data: &MPCEventData,
-    // ) -> u64 {
-    //     match request_data.request_input {
-    //         MPCRequestInput::NetworkEncryptionKeyDkg(_, _) if current_mpc_round == 3 => {
-    //             self.network_dkg_third_round_delay
-    //         }
-    //         MPCRequestInput::NetworkEncryptionKeyReconfiguration(_) if current_mpc_round == 3 => {
-    //             self.decryption_key_reconfiguration_third_round_delay
-    //         }
-    //         _ => 0,
-    //     }
-    // }
-
     /// Builds the outputs to finalize based on the outputs received in the consensus rounds.
     /// If a majority vote is reached, it returns the malicious voters (didn't vote with majority) and the majority vote.
     /// If the threshold is not reached, it returns `None`.

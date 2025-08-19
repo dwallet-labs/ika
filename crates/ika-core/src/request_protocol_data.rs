@@ -2,7 +2,13 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput, SignatureAlgorithm,
 };
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::MPCRequestInput;
+use ika_types::messages_dwallet_mpc::{
+    DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
+    DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, EncryptedShareVerificationRequestEvent,
+    FutureSignRequestEvent, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
+    SignRequestEvent,
+};
 use message_digest::message_digest::Hash;
 use sui_types::base_types::ObjectID;
 // Common structs for shared data between ProtocolSpecificData and AdvanceSpecificData
@@ -157,173 +163,159 @@ pub enum ProtocolData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 }
+pub fn make_dwallet_user_secret_key_shares_public_protocol_data(
+    request_event_data: MakeDWalletUserSecretKeySharesPublicRequestEvent,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::MakeDWalletUserSecretKeySharesPublic {
+        data: MakeDWalletUserSecretKeySharesPublicData {
+            curve: request_event_data.curve.try_into()?,
+            public_user_secret_key_shares: request_event_data.public_user_secret_key_shares,
+            dwallet_decentralized_output: request_event_data.public_output,
+        },
+        dwallet_id: request_event_data.dwallet_id,
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+    })
+}
+
+pub fn imported_key_verification_protocol_data(
+    request_event_data: DWalletImportedKeyVerificationRequestEvent,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::ImportedKeyVerification {
+        data: ImportedKeyVerificationData {
+            curve: request_event_data.curve.try_into()?,
+            encrypted_centralized_secret_share_and_proof: request_event_data
+                .encrypted_centralized_secret_share_and_proof,
+            encryption_key: request_event_data.encryption_key,
+        },
+        dwallet_id: request_event_data.dwallet_id,
+        encrypted_user_secret_key_share_id: request_event_data.encrypted_user_secret_key_share_id,
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+        centralized_party_message: request_event_data.centralized_party_message,
+    })
+}
+
+pub fn dwallet_dkg_first_protocol_data(
+    request_event_data: DWalletDKGFirstRoundRequestEvent,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::DKGFirst {
+        data: DKGFirstData {
+            curve: request_event_data.curve.try_into()?,
+        },
+        dwallet_id: request_event_data.dwallet_id,
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+    })
+}
+
+pub fn dwallet_dkg_second_protocol_data(
+    request_event_data: DWalletDKGSecondRoundRequestEvent,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::DKGSecond {
+        data: DKGSecondData {
+            curve: request_event_data.curve.try_into()?,
+            encrypted_centralized_secret_share_and_proof: request_event_data
+                .encrypted_centralized_secret_share_and_proof,
+            encryption_key: request_event_data.encryption_key,
+        },
+        dwallet_id: request_event_data.dwallet_id,
+        encrypted_secret_share_id: request_event_data.encrypted_user_secret_key_share_id,
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+        first_round_output: request_event_data.first_round_output,
+        centralized_public_key_share_and_proof: request_event_data
+            .centralized_public_key_share_and_proof,
+    })
+}
+
+pub fn presign_protocol_data(
+    request_event_data: PresignRequestEvent,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::Presign {
+        data: PresignData {
+            curve: request_event_data.curve.try_into()?,
+            signature_algorithm: request_event_data.signature_algorithm.try_into()?,
+        },
+        dwallet_id: request_event_data.dwallet_id,
+        presign_id: request_event_data.presign_id,
+        dwallet_public_output: request_event_data.dwallet_public_output,
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+    })
+}
+
+pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::Sign {
+        data: SignData {
+            curve: request_event_data.curve.try_into()?,
+            hash_scheme: Hash::try_from(request_event_data.hash_scheme)
+                .map_err(|_| DwalletMPCError::InvalidSessionPublicInput)?,
+            signature_algorithm: request_event_data.signature_algorithm.try_into()?,
+        },
+        dwallet_id: request_event_data.dwallet_id,
+        sign_id: request_event_data.sign_id,
+        is_future_sign: request_event_data.is_future_sign,
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+        dwallet_decentralized_public_output: request_event_data.dwallet_decentralized_public_output,
+        message: request_event_data.message,
+        presign: request_event_data.presign,
+        message_centralized_signature: request_event_data.message_centralized_signature,
+    })
+}
+
+pub fn network_encryption_key_dkg_protocol_data(
+    key_scheme: DWalletMPCNetworkKeyScheme,
+    request_event_data: DWalletNetworkDKGEncryptionKeyRequestEvent,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::NetworkEncryptionKeyDkg {
+        data: NetworkEncryptionKeyDkgData { key_scheme },
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+    })
+}
+
+pub fn network_encryption_key_reconfiguration_protocol_data(
+    request_event_data: DWalletEncryptionKeyReconfigurationRequestEvent,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::NetworkEncryptionKeyReconfiguration {
+        data: NetworkEncryptionKeyReconfigurationData {},
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+    })
+}
+
+pub fn encrypted_share_verification_protocol_data(
+    request_event_data: EncryptedShareVerificationRequestEvent,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::EncryptedShareVerification {
+        data: EncryptedShareVerificationData {
+            curve: request_event_data.curve.try_into()?,
+            encrypted_centralized_secret_share_and_proof: request_event_data
+                .encrypted_centralized_secret_share_and_proof,
+            decentralized_public_output: request_event_data.decentralized_public_output,
+            encryption_key: request_event_data.encryption_key,
+        },
+        dwallet_id: request_event_data.dwallet_id,
+        encrypted_user_secret_key_share_id: request_event_data.encrypted_user_secret_key_share_id,
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+    })
+}
+
+pub fn partial_signature_verification_protocol_data(
+    request_event_data: FutureSignRequestEvent,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::PartialSignatureVerification {
+        data: PartialSignatureVerificationData {
+            curve: request_event_data.curve.try_into()?,
+            message: request_event_data.message,
+            hash_type: Hash::try_from(request_event_data.hash_scheme).unwrap(),
+            signature_algorithm: request_event_data.signature_algorithm.try_into()?,
+            dwallet_decentralized_output: request_event_data.dkg_output,
+            presign: request_event_data.presign,
+            partially_signed_message: request_event_data.message_centralized_signature,
+        },
+        dwallet_id: request_event_data.dwallet_id,
+        partial_centralized_signed_message_id: request_event_data
+            .partial_centralized_signed_message_id,
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+    })
+}
 
 impl ProtocolData {
-    pub fn try_new(request_input: MPCRequestInput) -> DwalletMPCResult<Self> {
-        let protocol_data = match request_input {
-            MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(session_event) => {
-                ProtocolData::MakeDWalletUserSecretKeySharesPublic {
-                    data: MakeDWalletUserSecretKeySharesPublicData {
-                        curve: session_event.event_data.curve.try_into()?,
-                        public_user_secret_key_shares: session_event
-                            .event_data
-                            .public_user_secret_key_shares,
-                        dwallet_decentralized_output: session_event.event_data.public_output,
-                    },
-                    dwallet_id: session_event.event_data.dwallet_id,
-                    dwallet_network_encryption_key_id: session_event
-                        .event_data
-                        .dwallet_network_encryption_key_id,
-                }
-            }
-            MPCRequestInput::DWalletImportedKeyVerificationRequest(event_data) => {
-                ProtocolData::ImportedKeyVerification {
-                    data: ImportedKeyVerificationData {
-                        curve: event_data.event_data.curve.try_into()?,
-                        encrypted_centralized_secret_share_and_proof: event_data
-                            .event_data
-                            .encrypted_centralized_secret_share_and_proof,
-                        encryption_key: event_data.event_data.encryption_key,
-                    },
-                    dwallet_id: event_data.event_data.dwallet_id,
-                    encrypted_user_secret_key_share_id: event_data
-                        .event_data
-                        .encrypted_user_secret_key_share_id,
-                    dwallet_network_encryption_key_id: event_data
-                        .event_data
-                        .dwallet_network_encryption_key_id,
-                    centralized_party_message: event_data.event_data.centralized_party_message,
-                }
-            }
-            MPCRequestInput::DKGFirst(event_data) => ProtocolData::DKGFirst {
-                data: DKGFirstData {
-                    curve: event_data.event_data.curve.try_into()?,
-                },
-                dwallet_id: event_data.event_data.dwallet_id,
-                dwallet_network_encryption_key_id: event_data
-                    .event_data
-                    .dwallet_network_encryption_key_id,
-            },
-            MPCRequestInput::DKGSecond(event_data) => ProtocolData::DKGSecond {
-                data: DKGSecondData {
-                    curve: event_data.event_data.curve.try_into()?,
-                    encrypted_centralized_secret_share_and_proof: event_data
-                        .event_data
-                        .encrypted_centralized_secret_share_and_proof,
-                    encryption_key: event_data.event_data.encryption_key,
-                },
-                dwallet_id: event_data.event_data.dwallet_id,
-                encrypted_secret_share_id: event_data.event_data.encrypted_user_secret_key_share_id,
-                dwallet_network_encryption_key_id: event_data
-                    .event_data
-                    .dwallet_network_encryption_key_id,
-                first_round_output: event_data.event_data.first_round_output,
-                centralized_public_key_share_and_proof: event_data
-                    .event_data
-                    .centralized_public_key_share_and_proof,
-            },
-            MPCRequestInput::Presign(session_event) => ProtocolData::Presign {
-                data: PresignData {
-                    curve: session_event.event_data.curve.try_into()?,
-                    signature_algorithm: session_event.event_data.signature_algorithm.try_into()?,
-                },
-                dwallet_id: session_event.event_data.dwallet_id,
-                presign_id: session_event.event_data.presign_id,
-                dwallet_public_output: session_event.event_data.dwallet_public_output,
-                dwallet_network_encryption_key_id: session_event
-                    .event_data
-                    .dwallet_network_encryption_key_id,
-            },
-            MPCRequestInput::Sign(session_event) => ProtocolData::Sign {
-                data: SignData {
-                    curve: session_event.event_data.curve.try_into()?,
-                    hash_scheme: Hash::try_from(session_event.event_data.hash_scheme)
-                        .map_err(|_| DwalletMPCError::InvalidSessionPublicInput)?,
-                    signature_algorithm: session_event.event_data.signature_algorithm.try_into()?,
-                },
-                dwallet_id: session_event.event_data.dwallet_id,
-                sign_id: session_event.event_data.sign_id,
-                is_future_sign: session_event.event_data.is_future_sign,
-                dwallet_network_encryption_key_id: session_event
-                    .event_data
-                    .dwallet_network_encryption_key_id,
-                dwallet_decentralized_public_output: session_event
-                    .event_data
-                    .dwallet_decentralized_public_output,
-                message: session_event.event_data.message,
-                presign: session_event.event_data.presign,
-                message_centralized_signature: session_event
-                    .event_data
-                    .message_centralized_signature,
-            },
-            MPCRequestInput::NetworkEncryptionKeyDkg(key_scheme, session_event) => {
-                ProtocolData::NetworkEncryptionKeyDkg {
-                    data: NetworkEncryptionKeyDkgData {
-                        key_scheme: key_scheme.clone(),
-                    },
-                    dwallet_network_encryption_key_id: session_event
-                        .event_data
-                        .dwallet_network_encryption_key_id,
-                }
-            }
-            MPCRequestInput::EncryptedShareVerification(event_data) => {
-                ProtocolData::EncryptedShareVerification {
-                    data: EncryptedShareVerificationData {
-                        curve: event_data.event_data.curve.try_into()?,
-                        encrypted_centralized_secret_share_and_proof: event_data
-                            .event_data
-                            .encrypted_centralized_secret_share_and_proof,
-                        decentralized_public_output: event_data
-                            .event_data
-                            .decentralized_public_output,
-                        encryption_key: event_data.event_data.encryption_key,
-                    },
-                    dwallet_id: event_data.event_data.dwallet_id,
-                    encrypted_user_secret_key_share_id: event_data
-                        .event_data
-                        .encrypted_user_secret_key_share_id,
-                    dwallet_network_encryption_key_id: event_data
-                        .event_data
-                        .dwallet_network_encryption_key_id,
-                }
-            }
-            MPCRequestInput::PartialSignatureVerification(event_data) => {
-                ProtocolData::PartialSignatureVerification {
-                    data: PartialSignatureVerificationData {
-                        curve: event_data.event_data.curve.try_into()?,
-                        message: event_data.event_data.message,
-                        hash_type: Hash::try_from(event_data.event_data.hash_scheme).unwrap(),
-                        signature_algorithm: event_data
-                            .event_data
-                            .signature_algorithm
-                            .try_into()?,
-                        dwallet_decentralized_output: event_data.event_data.dkg_output,
-                        presign: event_data.event_data.presign,
-                        partially_signed_message: event_data
-                            .event_data
-                            .message_centralized_signature,
-                    },
-                    dwallet_id: event_data.event_data.dwallet_id,
-                    partial_centralized_signed_message_id: event_data
-                        .event_data
-                        .partial_centralized_signed_message_id,
-                    dwallet_network_encryption_key_id: event_data
-                        .event_data
-                        .dwallet_network_encryption_key_id,
-                }
-            }
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(session_event) => {
-                ProtocolData::NetworkEncryptionKeyReconfiguration {
-                    data: NetworkEncryptionKeyReconfigurationData {},
-                    dwallet_network_encryption_key_id: session_event
-                        .event_data
-                        .dwallet_network_encryption_key_id,
-                }
-            }
-        };
-        Ok(protocol_data)
-    }
-
     pub fn network_encryption_key_id(&self) -> Option<ObjectID> {
         match self {
             ProtocolData::DKGFirst {

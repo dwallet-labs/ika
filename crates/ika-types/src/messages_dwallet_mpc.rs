@@ -1,6 +1,5 @@
 use crate::crypto::{AuthorityName, keccak256_digest};
 use crate::message::DWalletCheckpointMessageKind;
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use move_core_types::account_address::AccountAddress;
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
@@ -52,50 +51,6 @@ pub const PRESIGN_PROTOCOL_FLAG: u32 = 5;
 pub const SIGN_PROTOCOL_FLAG: u32 = 6;
 pub const FUTURE_SIGN_PROTOCOL_FLAG: u32 = 7;
 pub const SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG: u32 = 8;
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum MPCRequestInput {
-    /// Make the dWallet user secret key shares public, so the network can control it.
-    MakeDWalletUserSecretKeySharesPublicRequest(
-        DWalletSessionEvent<MakeDWalletUserSecretKeySharesPublicRequestEvent>,
-    ),
-
-    /// Import a secret key to a dWallet.
-    DWalletImportedKeyVerificationRequest(
-        DWalletSessionEvent<DWalletImportedKeyVerificationRequestEvent>,
-    ),
-    /// The first round of the DKG protocol.
-    DKGFirst(DWalletSessionEvent<DWalletDKGFirstRoundRequestEvent>),
-    /// The second round of the DKG protocol.
-    /// Contains the data of the event that triggered the round,
-    /// and the network key version of the first round.
-    DKGSecond(DWalletSessionEvent<DWalletDKGSecondRoundRequestEvent>),
-    /// The first round of the Presign protocol for each message in the Batch.
-    /// Contains the `ObjectId` of the dWallet object,
-    /// the DKG decentralized output, the batch session ID (same for each message in the batch),
-    /// and the dWallets network key version.
-    Presign(DWalletSessionEvent<PresignRequestEvent>),
-    /// The first and only round of the Sign protocol.
-    /// Contains all the data needed to sign the message.
-    Sign(DWalletSessionEvent<SignRequestEvent>),
-    /// The only round of the network DKG protocol.
-    /// Contains the network key scheme, the dWallet network decryption key object ID
-    /// and at the end of the session holds the new key version.
-    NetworkEncryptionKeyDkg(
-        DWalletMPCNetworkKeyScheme,
-        DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
-    ),
-    /// The round of verifying the encrypted share proof is valid and
-    /// that the signature on it is valid.
-    /// This is not a real MPC round,
-    /// but we use it to start the verification process using the same events mechanism
-    /// because the system does not support native functions.
-    EncryptedShareVerification(DWalletSessionEvent<EncryptedShareVerificationRequestEvent>),
-    PartialSignatureVerification(DWalletSessionEvent<FutureSignRequestEvent>),
-    NetworkEncryptionKeyReconfiguration(
-        DWalletSessionEvent<DWalletEncryptionKeyReconfigurationRequestEvent>,
-    ),
-}
 
 /// This is a wrapper type for the [`SuiEvent`] type that is being used to write it to the local RocksDB.
 /// This is needed because the [`SuiEvent`] cannot be directly written to the RocksDB.
@@ -323,8 +278,6 @@ impl<E: DWalletSessionEventTrait> DWalletSessionEvent<E> {
 }
 
 /// The Rust representation of the `EncryptedShareVerificationRequestEvent` Move struct.
-/// Defined here so that we can use it in the [`MPCRequestInput`] enum,
-/// as the inner data of the [`MPCRequestInput::EncryptedShareVerification`].
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
 pub struct EncryptedShareVerificationRequestEvent {
     /// Encrypted centralized secret key share and the associated
