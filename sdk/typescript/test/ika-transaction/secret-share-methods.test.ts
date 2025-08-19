@@ -165,7 +165,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 		expect(secretShare.length).toBeGreaterThan(0);
 
 		// Use signWithSecretShare method
-		await ikaTransaction.signWithSecretShare({
+		await ikaTransaction.sign({
 			dWallet: activeDWallet,
 			messageApproval,
 			hashScheme: Hash.KECCAK256,
@@ -479,7 +479,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		// Should throw error with invalid secret share
 		await expect(
-			ikaTransaction.signWithSecretShare({
+			ikaTransaction.sign({
 				dWallet: activeDWallet,
 				messageApproval,
 				hashScheme: Hash.KECCAK256,

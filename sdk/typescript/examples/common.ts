@@ -423,7 +423,7 @@ export async function signPublicUserShare(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.signPublic({
+	await ikaTransaction.sign({
 		dWallet,
 		messageApproval,
 		verifiedPresignCap,
@@ -602,13 +602,13 @@ export async function signWithImportedDWallet(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.signWithImportedDWallet({
+	await ikaTransaction.sign({
 		dWallet,
 		encryptedUserSecretKeyShare,
 		presign,
 		hashScheme,
 		message,
-		importedKeyMessageApproval,
+		messageApproval: importedKeyMessageApproval,
 		verifiedPresignCap,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
@@ -648,12 +648,12 @@ export async function signWithImportedDWalletPublic(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.signWithImportedDWalletPublic({
+	await ikaTransaction.sign({
 		dWallet,
 		presign,
 		hashScheme,
 		message,
-		importedKeyMessageApproval,
+		messageApproval: importedKeyMessageApproval,
 		verifiedPresignCap,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
