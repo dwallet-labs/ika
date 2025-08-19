@@ -35,15 +35,12 @@ export class SharedTestSetup {
 			return;
 		}
 
-		console.log('🔧 Initializing shared test instances...');
-
 		// Create shared SuiClient and IkaClient
 		this.suiClient = createTestSuiClient();
 		this.ikaClient = createTestIkaClient(this.suiClient);
 		await this.ikaClient.initialize();
 
 		this.initialized = true;
-		console.log('✅ Shared test instances ready');
 	}
 
 	/**
@@ -91,7 +88,6 @@ export class SharedTestSetup {
 		this.ikaClient = null;
 		this.sharedKeypairs.clear();
 		this.initialized = false;
-		console.log('🧹 Shared test instances cleaned up');
 	}
 
 	/**
