@@ -267,18 +267,17 @@ describe('IkaTransaction Secret Share Methods', () => {
 		expect(activeDWallet.state.Active?.public_output).toBeDefined();
 
 		// Use requestFutureSignWithSecretShare instead of regular requestFutureSign
-		const { unverifiedPartialUserSignatureCap } =
-			await ikaTransaction.requestFutureSignWithSecretShare({
-				dWallet: activeDWallet,
-				verifiedPresignCap,
-				presign: presignObject,
-				secretShare,
-				publicOutput: new Uint8Array(activeDWallet.state.Active?.public_output ?? []),
-				message,
-				hashScheme: Hash.KECCAK256,
-				ikaCoin: emptyIKACoin,
-				suiCoin: tx.gas,
-			});
+		const { unverifiedPartialUserSignatureCap } = await ikaTransaction.requestFutureSign({
+			dWallet: activeDWallet,
+			verifiedPresignCap,
+			presign: presignObject,
+			secretShare,
+			publicOutput: new Uint8Array(activeDWallet.state.Active?.public_output ?? []),
+			message,
+			hashScheme: Hash.KECCAK256,
+			ikaCoin: emptyIKACoin,
+			suiCoin: tx.gas,
+		});
 
 		// Transfer the capability to avoid UnusedValueWithoutDrop error
 		tx.transferObjects([unverifiedPartialUserSignatureCap], signerAddress);
@@ -350,8 +349,8 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		expect(activeDWallet.state.Active?.public_output).toBeDefined();
 
-		// Use requestFutureSignAndTransferCapWithSecretShare
-		await ikaTransaction.requestFutureSignAndTransferCapWithSecretShare({
+		// Use requestFutureSign
+		await ikaTransaction.requestFutureSign({
 			dWallet: activeDWallet,
 			verifiedPresignCap,
 			presign: presignObject,
@@ -413,8 +412,8 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		const emptyIKACoin = createEmptyTestIkaToken(tx, ikaClient.ikaConfig);
 
-		// Use transferUserShareWithSecretShare
-		await ikaTransaction.transferUserShareWithSecretShare({
+		// Use transferUserShare
+		await ikaTransaction.transferUserShare({
 			dWallet: activeDWallet,
 			destinationEncryptionKeyAddress,
 			sourceSecretShare: secretShare,

@@ -463,7 +463,7 @@ export async function requestFutureSign(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.requestFutureSignAndTransferCap({
+	await ikaTransaction.requestFutureSign({
 		dWallet,
 		presign,
 		verifiedPresignCap,
@@ -547,7 +547,7 @@ export async function requestImportedDWalletVerification(
 
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.requestImportedDWalletVerificationAndTransferCap({
+	await ikaTransaction.requestImportedDWalletVerification({
 		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
