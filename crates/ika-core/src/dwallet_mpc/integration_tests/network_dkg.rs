@@ -78,7 +78,7 @@ async fn test_network_key_reconfiguration() {
         mut epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = utils::IntegrationTestState {
+    let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
         sent_consensus_messages_collectors,
         epoch_stores,
@@ -104,13 +104,13 @@ async fn test_network_key_reconfiguration() {
         ?reconfiguration_checkpoint,
         "Network key reconfiguration checkpoint received"
     );
-    let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(message) =
+    let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(message) =
         reconfiguration_checkpoint
             .messages()
             .first()
             .expect("Expected a message")
     else {
-        error!("Expected a RespondDWalletMPCNetworkDKGOutput message");
+        error!("Expected a RespondDWalletMPCNetworkReconfigurationOutput message");
         panic!("Test failed due to unexpected message type");
     };
     assert!(
