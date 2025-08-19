@@ -42,7 +42,7 @@ pub(crate) fn dwallet_dkg_second_public_input(
             .centralized_public_key_share_and_proof
             .len(),
     );
-    
+
     <DWalletDKGSecondParty as DWalletDKGSecondPartyPublicInputGenerator>::generate_public_input(
         protocol_public_parameters,
         deserialized_event.first_round_output.clone(),
