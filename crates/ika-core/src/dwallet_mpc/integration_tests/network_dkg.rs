@@ -99,7 +99,7 @@ async fn test_network_key_reconfiguration() {
         key_id,
     );
     let (consensus_round, reconfiguration_checkpoint) =
-        utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
+        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
     info!(
         ?reconfiguration_checkpoint,
         "Network key reconfiguration checkpoint received"
