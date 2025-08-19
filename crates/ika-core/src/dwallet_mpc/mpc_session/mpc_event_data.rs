@@ -14,7 +14,7 @@ use ika_types::messages_dwallet_mpc::{
 use mpc::WeightedThresholdAccessStructure;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::error;
 use twopc_mpc::sign::Protocol;
 
 /// The DWallet MPC session data that is based on the event that initiated the session.
@@ -43,7 +43,6 @@ impl MPCEventData {
             ClassGroupsEncryptionKeyAndProof,
         >,
     ) -> Result<Self, DwalletMPCError> {
-        info!("generating input");
         let (public_input, private_input) = session_input_from_event(
             event.clone(),
             access_structure,
@@ -52,7 +51,6 @@ impl MPCEventData {
             next_active_committee,
             validators_class_groups_public_keys_and_proofs,
         )?;
-        info!("generated input");
 
         let needs_decryption_key_shares = matches!(
             event.session_request.request_input.clone(),

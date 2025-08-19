@@ -267,9 +267,7 @@ impl ComputationRequest {
 
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
-                info!(
-                    messages=?self.messages,
-                );
+
                 let result = advance::<DWalletDKGSecondParty>(
                     session_id,
                     self.party_id,
