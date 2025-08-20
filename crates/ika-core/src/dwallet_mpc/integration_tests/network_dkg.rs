@@ -93,12 +93,19 @@ async fn test_network_key_reconfiguration() {
     };
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
-    let mut next_committee = committee.clone();
+    let (
+        next_epoch_dwallet_mpc_services,
+        next_epoch_sui_data_senders,
+        next_epoch_sent_consensus_messages_collectors,
+        next_epoch_epoch_stores,
+        next_epoch_notify_services,
+    ) = utils::create_dwallet_mpc_services(4);
+    let mut next_committee = (*next_epoch_dwallet_mpc_services[0].committee.clone()).clone();
     next_committee.epoch = epoch_id + 1;
     test_state
         .sui_data_senders
         .iter()
-        .for_each(|mut sui_data_sender| {
+        .for_each(|sui_data_sender| {
             let _ = sui_data_sender
                 .next_epoch_committee_sender
                 .send(next_committee.clone());
