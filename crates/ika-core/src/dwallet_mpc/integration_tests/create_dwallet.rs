@@ -51,11 +51,7 @@ async fn dwallet_dkg_first_round() {
         committee,
         sui_data_senders,
     };
-    send_start_network_dkg_event_to_all_parties(
-        &ika_network_config,
-        epoch_id,
-        &mut test_state.sui_data_senders,
-    );
+    send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state.sui_data_senders);
     let (consensus_round, network_key_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
     info!(?network_key_checkpoint, "Network key checkpoint received");
@@ -89,7 +85,6 @@ async fn dwallet_dkg_first_round() {
         });
     let dwallet_dkg_session_identifier = [2; 32];
     send_start_dwallet_dkg_first_round_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         dwallet_dkg_session_identifier,
@@ -144,7 +139,7 @@ async fn create_dwallet() {
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 4;
+            .last_session_to_complete_in_current_epoch = 400;
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
@@ -314,15 +309,7 @@ pub(crate) async fn create_dwallet_test(
         .first()
         .expect("At least one service should exist")
         .epoch;
-    let ika_network_config = test_state
-        .dwallet_mpc_services
-        .first()
-        .expect("At least one service should exist")
-        .dwallet_mpc_manager()
-        .packages_config
-        .clone();
     send_start_dwallet_dkg_first_round_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         dwallet_dkg_session_identifier,
@@ -357,7 +344,6 @@ pub(crate) async fn create_dwallet_test(
     )
     .unwrap();
     send_start_dwallet_dkg_second_round_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         [3; 32],
@@ -368,7 +354,6 @@ pub(crate) async fn create_dwallet_test(
         centralized_dwallet_dkg_result.public_key_share_and_proof,
         encrypted_secret_key_share_and_proof,
         encryption_key.clone(),
-        centralized_dwallet_dkg_result.public_output,
     );
     let (consensus_round, dwallet_second_round_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;

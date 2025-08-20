@@ -46,7 +46,7 @@ async fn sign() {
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 4;
+            .last_session_to_complete_in_current_epoch = 400;
     }
     let (consensus_round, network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
@@ -65,7 +65,6 @@ async fn sign() {
     info!("DWallet DKG second round completed");
     let presign_session_identifier = [4; 32];
     send_start_presign_event(
-        &ika_network_config,
         epoch_id,
         &test_state.sui_data_senders,
         presign_session_identifier,
@@ -93,7 +92,6 @@ async fn sign() {
     )
     .unwrap();
     send_start_sign_event(
-        &ika_network_config,
         epoch_id,
         &test_state.sui_data_senders,
         [5; 32],
