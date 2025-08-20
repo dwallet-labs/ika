@@ -413,7 +413,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 		const emptyIKACoin = createEmptyTestIkaToken(tx, ikaClient.ikaConfig);
 
 		// Use transferUserShare
-		await ikaTransaction.transferUserShare({
+		await ikaTransaction.requestReEncryptUserShareFor({
 			dWallet: activeDWallet as ZeroTrustDWallet,
 			destinationEncryptionKeyAddress,
 			sourceSecretShare: secretShare,
