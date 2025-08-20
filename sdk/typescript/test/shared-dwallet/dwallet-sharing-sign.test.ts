@@ -159,7 +159,5 @@ describe('Shared DWallet Signing (public user shares)', () => {
 			SignatureAlgorithm.ECDSA,
 			testName,
 		);
-
-		expect(true).toBe(true);
 	});
 });

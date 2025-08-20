@@ -23,7 +23,11 @@
 	},
 	"scripts": {
 		"build": "build-package",
-		"test": "echo 'No unit tests for kiosk SDK'",
+		"test": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run",
+		"test:watch": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest",
+		"test:coverage": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run --coverage",
+		"test:coverage:watch": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest --coverage",
+		"coverage:report": "vitest run --coverage --reporter=html",
 		"pre-commit": "pnpm prettier:fix && pnpm lint && pnpm build",
 		"prepublishOnly": "pnpm turbo build",
 		"prettier:check": "prettier -c \"**/*.ts\" --ignore-unknown",
@@ -49,8 +53,10 @@
 	"devDependencies": {
 		"@ika.xyz/build-scripts": "workspace:*",
 		"@types/node": "^22.15.21",
+		"@vitest/coverage-v8": "^3.2.4",
+		"@vitest/ui": "3.2.4",
 		"typescript": "^5.8.3",
-		"vitest": "3.1.4"
+		"vitest": "3.2.4"
 	},
 	"dependencies": {
 		"@ika.xyz/mpc-wasm": "workspace:*",

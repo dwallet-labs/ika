@@ -115,7 +115,5 @@ describe('Shared DWallet (make shares public)', () => {
 			secretShare,
 			testName,
 		);
-
-		expect(true).toBe(true);
 	});
 });

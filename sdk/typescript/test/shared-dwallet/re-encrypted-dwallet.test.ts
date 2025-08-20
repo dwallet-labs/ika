@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { describe, expect, it } from 'vitest';
-import { a } from 'vitest/dist/chunks/suite.d.FvehnV49.js';
 
 import { Hash, SignatureAlgorithm } from '../../src/client/types';
 import {
@@ -22,113 +21,214 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
+/**
+ * Creates and sets up a complete DWallet transfer environment
+ */
+async function setupDWalletTransfer(testName: string) {
+	const suiClient = createTestSuiClient();
+	const ikaClient = createTestIkaClient(suiClient);
+	await ikaClient.initialize();
+
+	// Create complete DWallet for source user
+	const sourceSetup = await createCompleteDWallet(ikaClient, suiClient, testName);
+
+	// Generate destination user keys
+	const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } = generateTestKeypair(
+		testName + '-destination',
+	);
+
+	// Register destination encryption key
+	await registerTestEncryptionKey(
+		ikaClient,
+		suiClient,
+		destinationUserShareEncryptionKeys,
+		testName,
+	);
+
+	return {
+		suiClient,
+		ikaClient,
+		sourceSetup,
+		destinationUserShareEncryptionKeys,
+	};
+}
+
+/**
+ * Completes the transfer flow and returns necessary objects for signing
+ */
+async function completeTransferFlow(
+	ikaClient: any,
+	suiClient: any,
+	sourceDWallet: any,
+	sourceEncryptedUserSecretKeyShare: any,
+	sourceUserShareEncryptionKeys: any,
+	destinationUserShareEncryptionKeys: any,
+	testName: string,
+) {
+	// Transfer encrypted user share
+	const transferUserShareEvent = await testTransferEncryptedUserShare(
+		ikaClient,
+		suiClient,
+		sourceDWallet,
+		destinationUserShareEncryptionKeys.getSuiAddress(),
+		sourceEncryptedUserSecretKeyShare,
+		sourceUserShareEncryptionKeys,
+		testName,
+	);
+
+	expect(transferUserShareEvent).toBeDefined();
+	expect(transferUserShareEvent.event_data).toBeDefined();
+	expect(transferUserShareEvent.event_data.encrypted_user_secret_key_share_id).toBeDefined();
+
+	// Get source encryption key
+	const sourceEncryptionKey = await ikaClient.getActiveEncryptionKey(
+		sourceUserShareEncryptionKeys.getSuiAddress(),
+	);
+	expect(sourceEncryptionKey).toBeDefined();
+
+	// Get destination encrypted user secret key share
+	const destinationEncryptedUserSecretKeyShare = await retryUntil(
+		() =>
+			ikaClient.getEncryptedUserSecretKeyShareInParticularState(
+				transferUserShareEvent.event_data.encrypted_user_secret_key_share_id,
+				'NetworkVerificationCompleted',
+			),
+		(share) => share !== null,
+		30,
+		1000,
+	);
+
+	expect(destinationEncryptedUserSecretKeyShare).toBeDefined();
+	expect((destinationEncryptedUserSecretKeyShare as any).state.$kind).toBe(
+		'NetworkVerificationCompleted',
+	);
+
+	// Accept encrypted user share for transferred DWallet
+	await acceptTestEncryptedUserShareForTransferredDWallet(
+		ikaClient,
+		suiClient,
+		sourceDWallet,
+		destinationUserShareEncryptionKeys,
+		sourceEncryptedUserSecretKeyShare,
+		sourceEncryptionKey,
+		destinationEncryptedUserSecretKeyShare as any,
+		testName,
+	);
+
+	return {
+		transferUserShareEvent,
+		sourceEncryptionKey,
+		destinationEncryptedUserSecretKeyShare,
+	};
+}
+
+/**
+ * Creates presign and returns presign object
+ */
+async function createAndWaitForPresign(
+	ikaClient: any,
+	suiClient: any,
+	dWallet: any,
+	signerAddress: string,
+	testName: string,
+) {
+	const presignRequestEvent = await testPresign(
+		ikaClient,
+		suiClient,
+		dWallet,
+		SignatureAlgorithm.ECDSA,
+		signerAddress,
+		testName,
+	);
+
+	expect(presignRequestEvent).toBeDefined();
+	expect(presignRequestEvent.event_data).toBeDefined();
+	expect(presignRequestEvent.event_data.presign_id).toBeDefined();
+
+	const presignObject = await retryUntil(
+		() =>
+			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
+		(presign) => presign !== null,
+		30,
+		2000,
+	);
+
+	expect(presignObject).toBeDefined();
+	expect((presignObject as any).state.$kind).toBe('Completed');
+
+	return presignObject;
+}
+
+/**
+ * Signs a message and validates the signing process
+ */
+async function signMessageAndValidate(
+	ikaClient: any,
+	suiClient: any,
+	dWallet: any,
+	userShareEncryptionKeys: any,
+	presignObject: any,
+	encryptedUserSecretKeyShare: any,
+	message: Uint8Array,
+	testName: string,
+) {
+	await testSign(
+		ikaClient,
+		suiClient,
+		dWallet,
+		userShareEncryptionKeys,
+		presignObject,
+		encryptedUserSecretKeyShare,
+		message,
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
+		testName,
+	);
+
+	// Validate DWallet remains active after signing
+	const dWalletAfterSigning = await ikaClient.getDWalletInParticularState(dWallet.id.id, 'Active');
+	expect(dWalletAfterSigning).toBeDefined();
+	expect(dWalletAfterSigning.state.$kind).toBe('Active');
+}
+
 describe('DWallet Transfer', () => {
 	it('should transfer DWallet and sign with transferred DWallet', async () => {
 		const testName = 'dwallet-transfer-test';
-		const suiClient = createTestSuiClient();
-		const ikaClient = createTestIkaClient(suiClient);
-		await ikaClient.initialize();
 
-		// Step 1: Create complete DWallet for source user
+		// Setup DWallet transfer environment
+		const { suiClient, ikaClient, sourceSetup, destinationUserShareEncryptionKeys } =
+			await setupDWalletTransfer(testName);
+
 		const {
 			dWallet: sourceDWallet,
 			encryptedUserSecretKeyShare: sourceEncryptedUserSecretKeyShare,
 			userShareEncryptionKeys: sourceUserShareEncryptionKeys,
 			signerAddress: sourceSignerAddress,
-		} = await createCompleteDWallet(ikaClient, suiClient, testName);
+		} = sourceSetup;
 
-		// Step 2: Generate destination user keys
-		const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } = generateTestKeypair(
-			testName + '-destination',
-		);
-
-		// Step 3: Register destination encryption key
-		const result = await registerTestEncryptionKey(
-			ikaClient,
-			suiClient,
-			destinationUserShareEncryptionKeys,
-			testName,
-		);
-
-		expect(result).toBeDefined();
-
-		// Step 4: Transfer encrypted user share
-		const transferUserShareEvent = await testTransferEncryptedUserShare(
+		// Complete transfer flow
+		const { transferUserShareEvent } = await completeTransferFlow(
 			ikaClient,
 			suiClient,
 			sourceDWallet,
-			destinationUserShareEncryptionKeys.getSuiAddress(),
 			sourceEncryptedUserSecretKeyShare,
 			sourceUserShareEncryptionKeys,
-			testName,
-		);
-
-		expect(transferUserShareEvent).toBeDefined();
-		expect(transferUserShareEvent.event_data.encrypted_user_secret_key_share_id).toBeDefined();
-
-		// Step 5: Get source encryption key
-		const sourceEncryptionKey = await ikaClient.getActiveEncryptionKey(
-			sourceUserShareEncryptionKeys.getSuiAddress(),
-		);
-
-		expect(sourceEncryptionKey).toBeDefined();
-
-		// Step 6: Get destination encrypted user secret key share
-		const destinationEncryptedUserSecretKeyShare = await retryUntil(
-			() =>
-				ikaClient.getEncryptedUserSecretKeyShareInParticularState(
-					transferUserShareEvent.event_data.encrypted_user_secret_key_share_id,
-					'NetworkVerificationCompleted',
-				),
-			(share) => share !== null,
-			30,
-			1000,
-		);
-
-		expect(destinationEncryptedUserSecretKeyShare).toBeDefined();
-
-		// Step 7: Accept encrypted user share for transferred DWallet
-		await acceptTestEncryptedUserShareForTransferredDWallet(
-			ikaClient,
-			suiClient,
-			sourceDWallet,
 			destinationUserShareEncryptionKeys,
-			sourceEncryptedUserSecretKeyShare,
-			sourceEncryptionKey,
-			destinationEncryptedUserSecretKeyShare,
 			testName,
 		);
 
 		await delay(5);
 
-		// Step 8: Create presign with transferred DWallet
-		const presignRequestEvent = await testPresign(
+		// Create presign for signing
+		const presignObject = await createAndWaitForPresign(
 			ikaClient,
 			suiClient,
 			sourceDWallet,
-			SignatureAlgorithm.ECDSA,
 			sourceSignerAddress,
 			testName,
 		);
 
-		expect(presignRequestEvent).toBeDefined();
-		expect(presignRequestEvent.event_data.presign_id).toBeDefined();
-
-		// Step 9: Wait for presign to complete
-		const presignObject = await retryUntil(
-			() =>
-				ikaClient.getPresignInParticularState(
-					presignRequestEvent.event_data.presign_id,
-					'Completed',
-				),
-			(presign) => presign !== null,
-			30,
-			2000,
-		);
-
-		expect(presignObject).toBeDefined();
-		expect(presignObject.state.$kind).toBe('Completed');
-
+		// Get updated destination encrypted user secret key share for signing
 		const destinationEncryptedUserSecretKeyShare2 = await retryUntil(
 			() =>
 				ikaClient.getEncryptedUserSecretKeyShareInParticularState(
@@ -140,23 +240,25 @@ describe('DWallet Transfer', () => {
 			1000,
 		);
 
-		// Step 10: Sign a message with transferred DWallet
+		expect(destinationEncryptedUserSecretKeyShare2).toBeDefined();
+		expect(destinationEncryptedUserSecretKeyShare2.state.$kind).toBe('KeyHolderSigned');
+
+		// Sign message with transferred DWallet
 		const message = createTestMessage(testName);
-		await testSign(
+		await signMessageAndValidate(
 			ikaClient,
 			suiClient,
 			sourceDWallet,
-			destinationUserShareEncryptionKeys, // Use destination keys for signing
+			destinationUserShareEncryptionKeys,
 			presignObject,
-			destinationEncryptedUserSecretKeyShare2, // Use destination encrypted share
+			destinationEncryptedUserSecretKeyShare2,
 			message,
-			Hash.KECCAK256,
-			SignatureAlgorithm.ECDSA,
 			testName,
 		);
 
-		// Verify the signing process completed successfully
-		expect(true).toBe(true);
+		// Verify transfer completed successfully and signature was created
+		expect(transferUserShareEvent.event_data.encrypted_user_secret_key_share_id).toBeDefined();
+		expect((presignObject as any).state.$kind).toBe('Completed');
 	});
 
 	it('should handle multiple transfers of the same DWallet', async () => {
@@ -398,8 +500,5 @@ describe('DWallet Transfer', () => {
 			SignatureAlgorithm.ECDSA,
 			testName,
 		);
-
-		// Both users can successfully sign with the same DWallet
-		expect(true).toBe(true);
 	});
 });
