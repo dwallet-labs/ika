@@ -43,7 +43,7 @@ async fn test_network_dkg_full_flow() {
         mut epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
-    send_start_network_dkg_event(&ika_network_config, epoch_id, &mut sui_data_senders);
+    send_start_network_dkg_event(epoch_id, &mut sui_data_senders);
     let mut mpc_round = 1;
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
