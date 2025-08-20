@@ -13,7 +13,13 @@ import { expect } from 'vitest';
 import { IkaClient } from '../../src/client/ika-client.js';
 import { IkaTransaction } from '../../src/client/ika-transaction.js';
 import { getNetworkConfig } from '../../src/client/network-configs.js';
-import { Hash, IkaConfig, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types.js';
+import {
+	Curve,
+	Hash,
+	IkaConfig,
+	SignatureAlgorithm,
+	ZeroTrustDWallet,
+} from '../../src/client/types.js';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
 import { createCompleteDWallet, testPresign, testSign } from './dwallet-test-helpers';
 
@@ -180,7 +186,7 @@ export function generateTestKeypair(testName: string) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed);
+	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
 
 	return {
 		userShareEncryptionKeys,
@@ -197,7 +203,7 @@ export function generateTestKeypairForImportedKeyDWallet(testName: string) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed);
+	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
 	const dWalletKeypair = Secp256k1Keypair.fromSeed(seed);
 
 	return {
