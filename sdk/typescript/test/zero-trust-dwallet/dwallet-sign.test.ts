@@ -50,14 +50,14 @@ async function testSignWithResult(
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
-	const { messageApproval } = ikaTransaction.approveMessage({
+	const messageApproval = ikaTransaction.approveMessage({
 		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	});
 
-	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+	const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 		presign,
 	});
 
@@ -375,7 +375,7 @@ describe('DWallet Signing', () => {
 			);
 
 			const message = createTestMessage(testName);
-			const { messageApproval } = ikaTransaction.approveMessage({
+			const messageApproval = ikaTransaction.approveMessage({
 				dWalletCap: activeDWallet.dwallet_cap_id,
 				signatureAlgorithm: SignatureAlgorithm.ECDSA,
 				hashScheme: Hash.KECCAK256,

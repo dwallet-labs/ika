@@ -80,7 +80,7 @@ export class IkaTransaction {
 	 * @param params.curve - The elliptic curve identifier to use for key generation
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to an object containing the DWallet capability and updated transaction
+	 * @returns Promise resolving to a DWallet capability
 	 * @throws {Error} If the decryption key ID cannot be fetched
 	 */
 	async requestDWalletDKGFirstRoundAsync({
@@ -91,10 +91,7 @@ export class IkaTransaction {
 		curve: Curve;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		dwalletCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}> {
+	}): Promise<TransactionObjectArgument> {
 		const dwalletCap = this.#requestDWalletDKGFirstRound({
 			curve,
 			networkEncryptionKeyID: (await this.#ikaClient.getConfiguredNetworkEncryptionKey()).id,
@@ -102,10 +99,7 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		return {
-			dwalletCap,
-			transaction: this,
-		};
+		return dwalletCap;
 	}
 
 	/**
@@ -116,7 +110,7 @@ export class IkaTransaction {
 	 * @param params.networkEncryptionKeyID - The specific network encryption key ID to use
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Object containing the DWallet capability and updated transaction
+	 * @returns DWallet capability
 	 */
 	requestDWalletDKGFirstRound({
 		curve,
@@ -128,10 +122,7 @@ export class IkaTransaction {
 		networkEncryptionKeyID: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): {
-		dwalletCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	} {
+	}): TransactionObjectArgument {
 		const dwalletCap = this.#requestDWalletDKGFirstRound({
 			curve,
 			networkEncryptionKeyID,
@@ -139,10 +130,7 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		return {
-			dwalletCap,
-			transaction: this,
-		};
+		return dwalletCap;
 	}
 
 	/**
@@ -365,7 +353,7 @@ export class IkaTransaction {
 	 * @param params.signatureAlgorithm - The signature algorithm identifier to use
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Object containing the unverified presign capability and updated transaction
+	 * @returns Unverified presign capability
 	 */
 	requestPresign({
 		dWallet,
@@ -377,10 +365,7 @@ export class IkaTransaction {
 		signatureAlgorithm: SignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): {
-		unverifiedPresignCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	} {
+	}): TransactionObjectArgument {
 		const unverifiedPresignCap = this.#requestPresign({
 			dWallet,
 			signatureAlgorithm,
@@ -388,10 +373,7 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		return {
-			unverifiedPresignCap,
-			transaction: this,
-		};
+		return unverifiedPresignCap;
 	}
 
 	/**
@@ -402,7 +384,7 @@ export class IkaTransaction {
 	 * @param params.signatureAlgorithm - The signature algorithm to use
 	 * @param params.hashScheme - The hash scheme to apply to the message
 	 * @param params.message - The message bytes to approve for signing
-	 * @returns Object containing the message approval and updated transaction
+	 * @returns Message approval
 	 */
 	approveMessage({
 		dWalletCap,
@@ -414,10 +396,7 @@ export class IkaTransaction {
 		signatureAlgorithm: SignatureAlgorithm;
 		hashScheme: Hash;
 		message: Uint8Array;
-	}): {
-		messageApproval: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	} {
+	}): TransactionObjectArgument {
 		const messageApproval = coordinatorTx.approveMessage(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
@@ -428,10 +407,7 @@ export class IkaTransaction {
 			this.#transaction,
 		);
 
-		return {
-			messageApproval,
-			transaction: this,
-		};
+		return messageApproval;
 	}
 
 	/**
@@ -439,12 +415,9 @@ export class IkaTransaction {
 	 * This converts an unverified presign capability into a verified one.
 	 *
 	 * @param params.presign - The presign object to verify
-	 * @returns Object containing the verified presign capability and updated transaction
+	 * @returns Verified presign capability
 	 */
-	verifyPresignCap({ presign }: { presign: Presign }): {
-		verifiedPresignCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	} {
+	verifyPresignCap({ presign }: { presign: Presign }): TransactionObjectArgument {
 		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
@@ -452,10 +425,7 @@ export class IkaTransaction {
 			this.#transaction,
 		);
 
-		return {
-			verifiedPresignCap,
-			transaction: this,
-		};
+		return verifiedPresignCap;
 	}
 
 	/**
@@ -466,7 +436,7 @@ export class IkaTransaction {
 	 * @param params.signatureAlgorithm - The signature algorithm to use
 	 * @param params.hashScheme - The hash scheme to apply to the message
 	 * @param params.message - The message bytes to approve for signing
-	 * @returns Object containing the imported key message approval and updated transaction
+	 * @returns Imported key message approval
 	 */
 	approveImportedKeyMessage({
 		dWalletCap,
@@ -478,10 +448,7 @@ export class IkaTransaction {
 		signatureAlgorithm: SignatureAlgorithm;
 		hashScheme: Hash;
 		message: Uint8Array;
-	}): {
-		importedKeyMessageApproval: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	} {
+	}): TransactionObjectArgument {
 		const importedKeyMessageApproval = coordinatorTx.approveImportedKeyMessage(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
@@ -492,10 +459,7 @@ export class IkaTransaction {
 			this.#transaction,
 		);
 
-		return {
-			importedKeyMessageApproval,
-			transaction: this,
-		};
+		return importedKeyMessageApproval;
 	}
 
 	/**
@@ -1009,7 +973,7 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the capability and updated transaction
+	 * @returns Promise resolving to the unverified partial user signature capability
 	 */
 	async requestFutureSign({
 		dWallet,
@@ -1029,10 +993,7 @@ export class IkaTransaction {
 		hashScheme: Hash;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}>;
+	}): Promise<TransactionObjectArgument>;
 
 	/**
 	 * Request a future sign operation with secret shares for ZeroTrust DWallets and keep capability.
@@ -1050,7 +1011,7 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the capability and updated transaction
+	 * @returns Promise resolving to the unverified partial user signature capability
 	 */
 	async requestFutureSign({
 		dWallet,
@@ -1072,10 +1033,7 @@ export class IkaTransaction {
 		hashScheme: Hash;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}>;
+	}): Promise<TransactionObjectArgument>;
 
 	/**
 	 * Request a future sign operation with public shares for Shared DWallets and keep capability.
@@ -1089,7 +1047,7 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the capability and updated transaction
+	 * @returns Promise resolving to the unverified partial user signature capability
 	 */
 	async requestFutureSign({
 		dWallet,
@@ -1107,10 +1065,7 @@ export class IkaTransaction {
 		hashScheme: Hash;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}>;
+	}): Promise<TransactionObjectArgument>;
 
 	/**
 	 * Universal requestFutureSign method implementation that automatically detects DWallet type and share availability.
@@ -1127,11 +1082,11 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to capability + transaction
+	 * @returns Promise resolving to unverified partial user signature capability
 	 *
 	 * @example
 	 * // ZeroTrust DWallet - Keep capability (encrypted shares)
-	 * const { unverifiedPartialUserSignatureCap, transaction } = await tx.requestFutureSign({
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSign({
 	 *   dWallet, // ZeroTrustDWallet
 	 *   encryptedUserSecretKeyShare,
 	 *   // ... other params
@@ -1139,7 +1094,7 @@ export class IkaTransaction {
 	 *
 	 * @example
 	 * // ZeroTrust DWallet
-	 * const { transaction } = await tx.requestFutureSign({
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSign({
 	 *   dWallet, // ZeroTrustDWallet
 	 *   secretShare,
 	 *   publicOutput,
@@ -1148,7 +1103,7 @@ export class IkaTransaction {
 	 *
 	 * @example
 	 * // Shared DWallet - Public share signing (no secret params needed)
-	 * const { unverifiedPartialUserSignatureCap, transaction } = await tx.requestFutureSign({
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSign({
 	 *   dWallet, // SharedDWallet
 	 *   // ... other params (no secretShare/publicOutput needed)
 	 * });
@@ -1175,10 +1130,7 @@ export class IkaTransaction {
 		hashScheme: Hash;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}> {
+	}): Promise<TransactionObjectArgument> {
 		// Auto-detect share availability
 		const hasPublicShares = !!dWallet.public_user_secret_key_share;
 
@@ -1239,10 +1191,7 @@ export class IkaTransaction {
 			);
 		}
 
-		return {
-			unverifiedPartialUserSignatureCap,
-			transaction: this,
-		};
+		return unverifiedPartialUserSignatureCap;
 	}
 
 	/**
@@ -1257,7 +1206,7 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the capability and updated transaction
+	 * @returns Promise resolving to the unverified partial user signature capability
 	 */
 	async requestFutureSignWithImportedKey({
 		dWallet,
@@ -1277,10 +1226,7 @@ export class IkaTransaction {
 		hashScheme: Hash;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}>;
+	}): Promise<TransactionObjectArgument>;
 
 	/**
 	 * Request a future sign operation with secret shares for Imported DWallets and keep capability.
@@ -1298,7 +1244,7 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the capability and updated transaction
+	 * @returns Promise resolving to the unverified partial user signature capability
 	 */
 	async requestFutureSignWithImportedKey({
 		dWallet,
@@ -1320,10 +1266,7 @@ export class IkaTransaction {
 		hashScheme: Hash;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}>;
+	}): Promise<TransactionObjectArgument>;
 
 	/**
 	 * Request a future sign operation with public shares for ImportedShared DWallets and keep capability.
@@ -1337,7 +1280,7 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the capability and updated transaction
+	 * @returns Promise resolving to the unverified partial user signature capability
 	 */
 	async requestFutureSignWithImportedKey({
 		dWallet,
@@ -1355,10 +1298,7 @@ export class IkaTransaction {
 		hashScheme: Hash;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}>;
+	}): Promise<TransactionObjectArgument>;
 
 	/**
 	 * Universal requestFutureSignWithImportedKey method implementation that automatically detects the imported DWallet type and signing method.
@@ -1374,11 +1314,11 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to capability + transaction
+	 * @returns Promise resolving to unverified partial user signature capability
 	 *
 	 * @example
 	 * // ImportedKeyDWallet - Keep capability (encrypted shares)
-	 * const { unverifiedPartialUserSignatureCap, transaction } = await tx.requestFutureSignWithImportedKey({
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSignWithImportedKey({
 	 *   dWallet, // ImportedKeyDWallet
 	 *   encryptedUserSecretKeyShare,
 	 *   // ... other params
@@ -1386,7 +1326,7 @@ export class IkaTransaction {
 	 *
 	 * @example
 	 * // ImportedKeyDWallet
-	 * const { transaction } = await tx.requestFutureSignWithImportedKey({
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSignWithImportedKey({
 	 *   dWallet, // ImportedKeyDWallet
 	 *   secretShare,
 	 *   publicOutput,
@@ -1395,7 +1335,7 @@ export class IkaTransaction {
 	 *
 	 * @example
 	 * // ImportedSharedDWallet - Public share signing (no secret params needed)
-	 * const { unverifiedPartialUserSignatureCap, transaction } = await tx.requestFutureSignWithImportedKey({
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSignWithImportedKey({
 	 *   dWallet, // ImportedSharedDWallet
 	 *   // ... other params (no secretShare/publicOutput needed)
 	 * });
@@ -1422,10 +1362,7 @@ export class IkaTransaction {
 		hashScheme: Hash;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		unverifiedPartialUserSignatureCap?: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}> {
+	}): Promise<TransactionObjectArgument> {
 		// Auto-detect share availability
 		const hasPublicShares = !!dWallet.public_user_secret_key_share;
 
@@ -1482,10 +1419,7 @@ export class IkaTransaction {
 			);
 		}
 
-		return {
-			unverifiedPartialUserSignatureCap,
-			transaction: this,
-		};
+		return unverifiedPartialUserSignatureCap;
 	}
 
 	/**
@@ -1538,7 +1472,7 @@ export class IkaTransaction {
 	 * @param params.sessionIdentifier - Unique session identifier for this operation
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to an object containing the imported key DWallet capability and updated transaction
+	 * @returns Promise resolving to imported key DWallet capability
 	 */
 	async requestImportedKeyDWalletVerification({
 		importDWalletVerificationRequestInput,
@@ -1554,10 +1488,7 @@ export class IkaTransaction {
 		sessionIdentifier: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		importedKeyDWalletCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}> {
+	}): Promise<TransactionObjectArgument> {
 		const importedKeyDWalletVerificationCap = await this.#requestImportedKeyDwalletVerification({
 			importDWalletVerificationRequestInput,
 			curve,
@@ -1567,10 +1498,7 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		return {
-			importedKeyDWalletCap: importedKeyDWalletVerificationCap,
-			transaction: this,
-		};
+		return importedKeyDWalletVerificationCap;
 	}
 
 	/**
