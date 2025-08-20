@@ -512,12 +512,7 @@ pub(crate) fn send_start_network_dkg_event(
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
 ) {
-    send_configurable_start_network_dkg_event(
-        epoch_id,
-        sui_data_senders,
-        [1u8; 32],
-        1,
-    );
+    send_configurable_start_network_dkg_event(epoch_id, sui_data_senders, [1u8; 32], 1);
 }
 
 pub(crate) fn send_configurable_start_network_dkg_event(
