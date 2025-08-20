@@ -25,6 +25,9 @@ use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
 use tracing::info;
+use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::{ImportedKeyVerificationData, ProtocolData};
 
 #[tokio::test]
 #[cfg(test)]
@@ -265,7 +268,6 @@ async fn create_imported_dwallet() {
         encrypt_secret_key_share_and_prove(user_secret_share, encryption_key.clone(), protocol_pp)
             .unwrap();
     send_start_imported_dwallet_verification_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         import_dwallet_session_id,
@@ -273,7 +275,6 @@ async fn create_imported_dwallet() {
         key_id,
         ObjectID::random(),
         encrypted_secret_key_share_and_proof,
-        user_public_output,
         user_message,
         encryption_key,
     );
@@ -378,7 +379,6 @@ pub(crate) async fn create_dwallet_test(
 }
 
 pub(crate) fn send_start_imported_dwallet_verification_event(
-    ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -386,38 +386,33 @@ pub(crate) fn send_start_imported_dwallet_verification_event(
     dwallet_network_encryption_key_id: ObjectID,
     dwallet_id: ObjectID,
     encrypted_centralized_secret_share_and_proof: Vec<u8>,
-    user_public_output: Vec<u8>,
     centralized_party_message: Vec<u8>,
     encryption_key: Vec<u8>,
 ) {
     let random_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<DWalletImportedKeyVerificationRequestEvent>::type_(
-                    &ika_network_config,
+            vec![DWalletSessionRequest {
+                session_type: SessionType::User,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::User,
+                    session_identifier_preimage,
                 ),
-                contents: bcs::to_bytes(&new_dwallet_session_event(
-                    false,
-                    session_sequence_number,
-                    session_identifier_preimage.to_vec().clone(),
-                    DWalletImportedKeyVerificationRequestEvent {
-                        encrypted_centralized_secret_share_and_proof:
-                            encrypted_centralized_secret_share_and_proof.clone(),
-                        dwallet_id,
+                session_sequence_number,
+                protocol_data: ProtocolData::ImportedKeyVerification {
+                    data: ImportedKeyVerificationData {
+                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        encrypted_centralized_secret_share_and_proof: encrypted_centralized_secret_share_and_proof.clone(),
                         encryption_key: encryption_key.clone(),
-                        encryption_key_id: random_id,
-                        encryption_key_address: Default::default(),
-                        user_public_output: user_public_output.clone(),
-                        encrypted_user_secret_key_share_id: random_id,
-                        centralized_party_message: centralized_party_message.clone(),
-                        dwallet_network_encryption_key_id,
-                        curve: 0,
-                        dwallet_cap_id: random_id,
-                        signer_public_key: vec![],
                     },
-                ))
-                .unwrap(),
+                    dwallet_id,
+                    encrypted_user_secret_key_share_id: random_id,
+                    dwallet_network_encryption_key_id,
+                    centralized_party_message: centralized_party_message.clone(),
+                },
+                epoch: epoch_id,
+                requires_network_key_data: true,
+                requires_next_active_committee: false,
                 pulled: false,
             }],
             epoch_id,

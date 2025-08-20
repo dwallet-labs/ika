@@ -9,12 +9,12 @@ use dwallet_mpc_centralized_party::{
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
-use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletSessionEvent, DWalletSessionEventTrait,
-    EncryptedShareVerificationRequestEvent, IkaNetworkConfig,
-};
+use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent, IkaNetworkConfig, SessionIdentifier, SessionType};
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::info;
+use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::{EncryptedShareVerificationData, ProtocolData};
 
 #[tokio::test]
 #[cfg(test)]
@@ -62,7 +62,6 @@ async fn encrypt_secret_share() {
     )
     .unwrap();
     send_start_encrypt_secret_share_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         [4; 32],
@@ -103,7 +102,6 @@ async fn encrypt_secret_share() {
 }
 
 pub(crate) fn send_start_encrypt_secret_share_event(
-    ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -117,28 +115,27 @@ pub(crate) fn send_start_encrypt_secret_share_event(
     let random_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<EncryptedShareVerificationRequestEvent>::type_(
-                    &ika_network_config,
+            vec![DWalletSessionRequest {
+                session_type: SessionType::User,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::User,
+                    session_identifier_preimage,
                 ),
-                contents: bcs::to_bytes(&new_dwallet_session_event(
-                    false,
-                    session_sequence_number,
-                    session_identifier_preimage.to_vec().clone(),
-                    EncryptedShareVerificationRequestEvent {
-                        encrypted_centralized_secret_share_and_proof:
-                            encrypted_centralized_secret_share_and_proof.clone(),
+                session_sequence_number,
+                protocol_data: ProtocolData::EncryptedShareVerification {
+                    data: EncryptedShareVerificationData {
+                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        encrypted_centralized_secret_share_and_proof: encrypted_centralized_secret_share_and_proof.clone(),
                         decentralized_public_output: decentralized_public_output.clone(),
-                        dwallet_id,
                         encryption_key: encryption_key.clone(),
-                        encryption_key_id: random_id,
-                        encrypted_user_secret_key_share_id: random_id,
-                        source_encrypted_user_secret_key_share_id: random_id,
-                        dwallet_network_encryption_key_id,
-                        curve: 0,
                     },
-                ))
-                .unwrap(),
+                    dwallet_id,
+                    encrypted_user_secret_key_share_id: random_id,
+                    dwallet_network_encryption_key_id,
+                },
+                epoch: epoch_id,
+                requires_network_key_data: true,
+                requires_next_active_committee: false,
                 pulled: false,
             }],
             epoch_id,

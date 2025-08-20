@@ -1,8 +1,8 @@
 use crate::dwallet_mpc::integration_tests::utils;
+use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
 use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
-use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_mpc::{
@@ -11,8 +11,8 @@ use ika_types::messages_dwallet_mpc::{
 };
 use itertools::Itertools;
 use std::collections::HashMap;
-use sui_types::base_types::ObjectID;
 use std::sync::Arc;
+use sui_types::base_types::ObjectID;
 use tracing::info;
 
 #[tokio::test]
