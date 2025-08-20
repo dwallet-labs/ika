@@ -30,11 +30,7 @@ async fn dwallet_dkg_first_round() {
         mut epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
-    send_start_network_dkg_event_to_all_parties(
-        &ika_network_config,
-        epoch_id,
-        &mut sui_data_senders,
-    );
+    send_start_network_dkg_event(epoch_id, &mut sui_data_senders);
     let mut consensus_round = 1;
     let mut network_key_checkpoint = None;
     loop {
@@ -94,7 +90,6 @@ async fn dwallet_dkg_first_round() {
             )])));
     });
     send_start_dwallet_dkg_first_round_event(
-        &ika_network_config,
         epoch_id,
         &mut sui_data_senders,
         [2; 32],

@@ -34,7 +34,6 @@ async fn network_key_received_after_start_event() {
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
     send_start_network_dkg_event_to_all_parties(
-        &ika_network_config,
         epoch_id,
         &mut sui_data_senders,
     );
@@ -92,7 +91,6 @@ async fn network_key_received_after_start_event() {
         key_id,
     );
     send_start_dwallet_dkg_first_round_event(
-        &ika_network_config,
         epoch_id,
         &mut sui_data_senders,
         [2; 32],

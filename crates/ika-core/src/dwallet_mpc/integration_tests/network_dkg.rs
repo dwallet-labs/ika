@@ -44,7 +44,6 @@ async fn test_network_dkg_full_flow() {
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
     send_start_network_dkg_event_to_all_parties(
-        &ika_network_config,
         epoch_id,
         &mut sui_data_senders,
     );

@@ -259,7 +259,6 @@ pub fn create_dwallet_mpc_services(
             create_dwallet_mpc_service(
                 authority_name,
                 committee.clone(),
-                ika_network_config.clone(),
                 seeds.get(authority_name).unwrap().clone(),
             )
         })
@@ -295,7 +294,6 @@ pub fn create_dwallet_mpc_services(
 fn create_dwallet_mpc_service(
     authority_name: &AuthorityName,
     committee: Committee,
-    ika_network_config: IkaNetworkConfig,
     seed: RootSeed,
 ) -> (
     DWalletMPCService,
@@ -511,13 +509,11 @@ use crate::request_protocol_data::{DKGFirstData, NetworkEncryptionKeyDkgData, Pr
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 
 pub(crate) fn send_start_network_dkg_event_to_all_parties(
-    ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
 ) {
     let key_id = ObjectID::random();
     send_configurable_start_network_dkg_event(
-        ika_network_config,
         epoch_id,
         sui_data_senders,
         [1u8; 32],
@@ -535,7 +531,6 @@ pub(crate) fn send_start_network_dkg_event_to_some_parties(
     key_id: ObjectID,
 ) {
     send_configurable_start_network_dkg_event(
-        ika_network_config,
         epoch_id,
         sui_data_senders,
         [1u8; 32],
@@ -546,7 +541,6 @@ pub(crate) fn send_start_network_dkg_event_to_some_parties(
 }
 
 pub(crate) fn send_configurable_start_network_dkg_event(
-    _ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -581,7 +575,6 @@ pub(crate) fn send_configurable_start_network_dkg_event(
 }
 
 pub(crate) fn send_start_dwallet_dkg_first_round_event(
-    _ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
