@@ -57,8 +57,7 @@ export function Note({ title, children }) {
 export function Construction() {
 	return (
 		<InfoBox type="warning" title="🚧 Under Construction 🚧">
-			This SDK is experimental and is not yet ready for production use. We advise you to use the SDK
-			with localnet.
+			This SDK is still in an experimental phase. We advise you use the SDK with localnet.
 		</InfoBox>
 	);
 }
