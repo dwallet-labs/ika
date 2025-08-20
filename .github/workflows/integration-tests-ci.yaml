@@ -1,0 +1,40 @@
+name: Integration Tests CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 1447-all-integration-tests-ci
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  # Change to specific Rust release to pin or `stable` for the latest stable version.
+  rust_stable: 1.88
+  rust_nightly: nightly
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_PRIVATE_REPO_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
+
+jobs:
+  run-tests:
+    name: Run Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Configure git with personal access token
+        run: |
+          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+          targets: x86_64-unknown-linux-gnu
+      - name: Install Target
+        run: rustup target add x86_64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      - name: Run Integration Tests
+        run: cargo test --profile release --no-default-features --color=always --lib dwallet_mpc::integration_tests
