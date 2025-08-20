@@ -56,7 +56,6 @@ async fn sign() {
     info!("DWallet DKG second round completed");
     let presign_session_identifier = [4; 32];
     send_start_presign_event(
-        &ika_network_config,
         epoch_id,
         &test_state.sui_data_senders,
         presign_session_identifier,

@@ -74,18 +74,7 @@ pub(crate) async fn create_network_key_test(
         .first()
         .expect("At least one service should exist")
         .epoch;
-    let packages_config = test_state
-        .dwallet_mpc_services
-        .first()
-        .expect("At least one service should exist")
-        .dwallet_mpc_manager()
-        .packages_config
-        .clone();
-    send_start_network_dkg_event_to_all_parties(
-        &packages_config,
-        epoch_id,
-        &mut test_state.sui_data_senders,
-    );
+    send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state.sui_data_senders);
     let (consensus_round, network_key_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
     info!(?network_key_checkpoint, "Network key checkpoint received");

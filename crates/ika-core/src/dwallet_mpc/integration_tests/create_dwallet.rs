@@ -149,13 +149,6 @@ pub(crate) async fn create_dwallet_test(
         .first()
         .expect("At least one service should exist")
         .epoch;
-    let ika_network_config = test_state
-        .dwallet_mpc_services
-        .first()
-        .expect("At least one service should exist")
-        .dwallet_mpc_manager()
-        .packages_config
-        .clone();
     send_start_dwallet_dkg_first_round_event(
         epoch_id,
         &mut test_state.sui_data_senders,
@@ -191,7 +184,6 @@ pub(crate) async fn create_dwallet_test(
     )
     .unwrap();
     send_start_dwallet_dkg_second_round_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         [3; 32],
