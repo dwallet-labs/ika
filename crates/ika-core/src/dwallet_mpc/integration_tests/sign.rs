@@ -15,8 +15,9 @@ use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletSessionEvent, DWalletSe
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::info;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, SignatureAlgorithm};
+use message_digest::message_digest::Hash;
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{PresignData, ProtocolData};
+use crate::request_protocol_data::{PresignData, ProtocolData, SignData};
 
 #[tokio::test]
 #[cfg(test)]
@@ -209,7 +210,6 @@ async fn future_sign() {
 }
 
 pub(crate) fn send_start_sign_event(
-    ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -221,32 +221,34 @@ pub(crate) fn send_start_sign_event(
     message_centralized_signature: Vec<u8>,
     message: Vec<u8>,
 ) {
-    let presign_id = ObjectID::random();
     let sign_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_: DWalletSessionEvent::<SignRequestEvent>::type_(&ika_network_config),
-                contents: bcs::to_bytes(&new_dwallet_session_event(
-                    true,
-                    session_sequence_number,
-                    session_identifier_preimage.to_vec().clone(),
-                    SignRequestEvent {
-                        sign_id,
-                        dwallet_id,
-                        presign_id,
-                        presign: presign.clone(),
-                        message_centralized_signature: message_centralized_signature.clone(),
-                        dwallet_network_encryption_key_id,
-                        curve: 0,
-                        signature_algorithm: 0,
-                        hash_scheme: 0,
-                        dwallet_decentralized_public_output: dwallet_public_output.clone(),
-                        message: message.clone(),
-                        is_future_sign: false,
+            vec![DWalletSessionRequest {
+                session_type: SessionType::User,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::User,
+                    session_identifier_preimage,
+                ),
+                session_sequence_number,
+                protocol_data: ProtocolData::Sign {
+                    data: SignData {
+                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        hash_scheme: Hash::KECCAK256,
+                        signature_algorithm: SignatureAlgorithm::ECDSA,
                     },
-                ))
-                .unwrap(),
+                    dwallet_id,
+                    sign_id,
+                    is_future_sign: false,
+                    dwallet_network_encryption_key_id,
+                    dwallet_decentralized_public_output: dwallet_public_output.clone(),
+                    message: message.clone(),
+                    presign: presign.clone(),
+                    message_centralized_signature: message_centralized_signature.clone(),
+                },
+                epoch: epoch_id,
+                requires_network_key_data: true,
+                requires_next_active_committee: false,
                 pulled: false,
             }],
             epoch_id,
