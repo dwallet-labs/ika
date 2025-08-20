@@ -58,12 +58,12 @@ const ikaTx = new IkaTransaction({
 
 ## DKG Operations
 
-### requestdWalletDKGFirstRoundAsync
+### requestDWalletDKGFirstRoundAsync
 
 Requests the first round of DKG with automatic decryption key ID fetching.
 
 ```typescript
-const { dwalletCap } = await ikaTx.requestdWalletDKGFirstRoundAsync({
+const dwalletCap = await ikaTx.requestDWalletDKGFirstRoundAsync({
 	curve: Curve.SECP256K1, // Currently only SECP256K1 is supported
 	ikaCoin: userIkaCoin, // User's IKA coin object
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
@@ -76,14 +76,14 @@ const { dwalletCap } = await ikaTx.requestdWalletDKGFirstRoundAsync({
 - `ikaCoin`: User's IKA coin object to use for transaction fees
 - `suiCoin`: The SUI coin object to use for gas fees
 
-**Returns:** `{ dwalletCap, transaction }`
+**Returns:** `TransactionObjectArgument` - The dWallet capability
 
-### requestdWalletDKGFirstRound
+### requestDWalletDKGFirstRound
 
 Requests the first round of DKG with explicit decryption key ID.
 
 ```typescript
-const { dwalletCap } = ikaTx.requestdWalletDKGFirstRound({
+const dwalletCap = ikaTx.requestDWalletDKGFirstRound({
 	curve: Curve.SECP256K1,
 	networkEncryptionKeyID: 'key_id',
 	ikaCoin: userIkaCoin, // User's IKA coin object
@@ -98,32 +98,12 @@ const { dwalletCap } = ikaTx.requestdWalletDKGFirstRound({
 - `ikaCoin`: User's IKA coin object for fees
 - `suiCoin`: SUI coin object for gas
 
-### requestdWalletDKGFirstRoundAndTransferCap
-
-Creates a dWallet and transfers the capability to a specified receiver.
-
-```typescript
-await ikaTx.requestdWalletDKGFirstRoundAndTransferCapAsync({
-	curve: Curve.SECP256K1,
-	ikaCoin: userIkaCoin, // User's IKA coin object
-	suiCoin: tx.splitCoins(tx.gas, [1000000]),
-	receiver: '0x...',
-});
-```
-
-**Parameters:**
-
-- `curve`: Elliptic curve identifier (`Curve.SECP256K1`)
-- `ikaCoin`: User's IKA coin object
-- `suiCoin`: SUI coin object
-- `receiver`: Address that will receive the dWalletCap
-
-### requestdWalletDKGSecondRound
+### requestDWalletDKGSecondRound
 
 Completes the DKG process with the second round.
 
 ```typescript
-ikaTx.requestdWalletDKGSecondRound({
+ikaTx.requestDWalletDKGSecondRound({
 	dWalletCap: dwalletObject.dwallet_cap_id,
 	dkgSecondRoundRequestInput: secondRoundInput,
 	ikaCoin: userIkaCoin, // User's IKA coin object
@@ -160,28 +140,14 @@ const { unverifiedPresignCap } = ikaTx.requestPresign({
 - `ikaCoin`: User's IKA coin object
 - `suiCoin`: SUI coin object
 
-**Returns:** `{ unverifiedPresignCap, transaction }`
-
-### requestPresignAndTransferCap
-
-Requests a presign and transfers the capability to another address.
-
-```typescript
-ikaTx.requestPresignAndTransferCap({
-	dWallet: dwalletObject,
-	signatureAlgorithm: SignatureAlgorithm.ECDSA,
-	ikaCoin: userIkaCoin, // User's IKA coin object
-	suiCoin: tx.splitCoins(tx.gas, [1000000]),
-	receiver: '0x...',
-});
-```
+**Returns:** `TransactionObjectArgument` - The unverified presign capability
 
 ### verifyPresignCap
 
 Verifies a presign capability to ensure it can be used for signing.
 
 ```typescript
-const { verifiedPresignCap } = ikaTx.verifyPresignCap({
+const verifiedPresignCap = ikaTx.verifyPresignCap({
 	presign: presignObject,
 });
 ```
@@ -190,7 +156,7 @@ const { verifiedPresignCap } = ikaTx.verifyPresignCap({
 
 - `presign`: The presign object to verify
 
-**Returns:** `{ verifiedPresignCap, transaction }`
+**Returns:** `TransactionObjectArgument` - The verified presign capability
 
 ## Message Approval
 
@@ -199,7 +165,7 @@ const { verifiedPresignCap } = ikaTx.verifyPresignCap({
 Approves a message for signing with a dWallet.
 
 ```typescript
-const { messageApproval } = ikaTx.approveMessage({
+const messageApproval = ikaTx.approveMessage({
 	dWalletCap: dwalletObject.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
@@ -214,14 +180,14 @@ const { messageApproval } = ikaTx.approveMessage({
 - `hashScheme`: Hash scheme (`Hash.KECCAK256` | `Hash.SHA256`)
 - `message`: The message bytes to approve
 
-**Returns:** `{ messageApproval, transaction }`
+**Returns:** `TransactionObjectArgument` - The message approval object
 
 ### approveImportedKeyMessage
 
 Approves a message for signing with an imported key dWallet.
 
 ```typescript
-const { importedKeyMessageApproval } = ikaTx.approveImportedKeyMessage({
+const importedKeyMessageApproval = ikaTx.approveImportedKeyMessage({
 	dWalletCap: importeddWallet.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
@@ -229,18 +195,21 @@ const { importedKeyMessageApproval } = ikaTx.approveImportedKeyMessage({
 });
 ```
 
+**Returns:** `TransactionObjectArgument` - The imported key message approval object
+
 ## Signing Operations
 
-### sign
+### requestSign
 
-Signs a message using a dWallet with encrypted user shares.
+Signs a message using a dWallet (ZeroTrust or Shared). Automatically detects the dWallet type and signing method based on available shares.
 
 <Warning title="Security">
-Always verify secret shares and public outputs in production environments.
+Always verify secret shares and public outputs in production environments when using unencrypted shares.
 </Warning>
 
 ```typescript
-await ikaTx.sign({
+// ZeroTrust DWallet with encrypted shares
+await ikaTx.requestSign({
 	dWallet: dwalletObject,
 	messageApproval: messageApprovalObject,
 	hashScheme: Hash.KECCAK256,
@@ -251,14 +220,9 @@ await ikaTx.sign({
 	ikaCoin: userIkaCoin, // User's IKA coin object
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
-```
 
-### signWithSecretShare
-
-Signs using unencrypted secret share (requires manual verification).
-
-```typescript
-await ikaTx.signWithSecretShare({
+// ZeroTrust DWallet with unencrypted shares
+await ikaTx.requestSign({
 	dWallet: dwalletObject,
 	messageApproval: messageApprovalObject,
 	hashScheme: Hash.KECCAK256,
@@ -270,18 +234,13 @@ await ikaTx.signWithSecretShare({
 	ikaCoin: userIkaCoin, // User's IKA coin object
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
-```
 
-### signPublic
-
-Signs using a dWallet with public user shares.
-
-```typescript
-await ikaTx.signPublic({
-	dWallet: publicdWallet,
-	verifiedPresignCap: verifiedPresignCapObject,
+// Shared DWallet with public shares (no secret params needed)
+await ikaTx.requestSign({
+	dWallet: sharedDWallet,
 	messageApproval: messageApprovalObject,
 	hashScheme: Hash.KECCAK256,
+	verifiedPresignCap: verifiedPresignCapObject,
 	presign: presignObject,
 	message: messageBytes,
 	ikaCoin: userIkaCoin, // User's IKA coin object
@@ -289,13 +248,30 @@ await ikaTx.signPublic({
 });
 ```
 
-### signWithImporteddWallet
+**Parameters:**
 
-Signs using an imported dWallet with encrypted shares.
+- `dWallet`: The dWallet to sign with (ZeroTrust or Shared DWallet)
+- `messageApproval`: Message approval from approveMessage
+- `hashScheme`: Hash scheme (`Hash.KECCAK256` | `Hash.SHA256`)
+- `verifiedPresignCap`: The verified presign capability
+- `presign`: The completed presign object
+- `encryptedUserSecretKeyShare`: Optional: encrypted user secret key share (for ZeroTrust DWallets)
+- `secretShare`: Optional: unencrypted secret share (requires publicOutput, for ZeroTrust DWallets)
+- `publicOutput`: Optional: public output (required when using secretShare, for ZeroTrust DWallets)
+- `message`: The message bytes to sign
+- `ikaCoin`: User's IKA coin object
+- `suiCoin`: SUI coin object
+
+**Returns:** `Promise<IkaTransaction>` - The updated IkaTransaction instance
+
+### requestSignWithImportedKey
+
+Signs using an Imported Key dWallet. Automatically detects the dWallet type and signing method based on available shares.
 
 ```typescript
-await ikaTx.signWithImporteddWallet({
-	dWallet: importeddWallet,
+// ImportedKeyDWallet with encrypted shares
+await ikaTx.requestSignWithImportedKey({
+	dWallet: importedKeyDWallet,
 	importedKeyMessageApproval: importedKeyMessageApprovalObject,
 	verifiedPresignCap: verifiedPresignCapObject,
 	presign: presignObject,
@@ -305,16 +281,59 @@ await ikaTx.signWithImporteddWallet({
 	ikaCoin: userIkaCoin, // User's IKA coin object
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
+
+// ImportedKeyDWallet with unencrypted shares
+await ikaTx.requestSignWithImportedKey({
+	dWallet: importedKeyDWallet,
+	importedKeyMessageApproval: importedKeyMessageApprovalObject,
+	verifiedPresignCap: verifiedPresignCapObject,
+	presign: presignObject,
+	hashScheme: Hash.KECCAK256,
+	message: messageBytes,
+	secretShare: secretShareBytes,
+	publicOutput: publicOutputBytes,
+	ikaCoin: userIkaCoin, // User's IKA coin object
+	suiCoin: tx.splitCoins(tx.gas, [1000000]),
+});
+
+// ImportedSharedDWallet with public shares (no secret params needed)
+await ikaTx.requestSignWithImportedKey({
+	dWallet: importedSharedDWallet,
+	importedKeyMessageApproval: importedKeyMessageApprovalObject,
+	verifiedPresignCap: verifiedPresignCapObject,
+	presign: presignObject,
+	hashScheme: Hash.KECCAK256,
+	message: messageBytes,
+	ikaCoin: userIkaCoin, // User's IKA coin object
+	suiCoin: tx.splitCoins(tx.gas, [1000000]),
+});
 ```
+
+**Parameters:**
+
+- `dWallet`: The Imported Key dWallet to sign with (ImportedKeyDWallet or ImportedSharedDWallet)
+- `importedKeyMessageApproval`: Imported key message approval from approveImportedKeyMessage
+- `hashScheme`: Hash scheme (`Hash.KECCAK256` | `Hash.SHA256`)
+- `verifiedPresignCap`: The verified presign capability
+- `presign`: The completed presign object
+- `encryptedUserSecretKeyShare`: Optional: encrypted user secret key share (for ImportedKeyDWallet)
+- `secretShare`: Optional: unencrypted secret share (requires publicOutput, for ImportedKeyDWallet)
+- `publicOutput`: Optional: public output (required when using secretShare, for ImportedKeyDWallet)
+- `message`: The message bytes to sign
+- `ikaCoin`: User's IKA coin object
+- `suiCoin`: SUI coin object
+
+**Returns:** `Promise<IkaTransaction>` - The updated IkaTransaction instance
 
 ## Future Signing
 
 ### requestFutureSign
 
-Creates a partial signature for later completion.
+Creates a partial signature for later completion. Automatically detects dWallet type and signing method based on available shares.
 
 ```typescript
-const { unverifiedPartialUserSignatureCap } = await ikaTx.requestFutureSign({
+// ZeroTrust DWallet with encrypted shares
+const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSign({
 	dWallet: dwalletObject,
 	verifiedPresignCap: verifiedPresignCapObject,
 	presign: presignObject,
@@ -324,25 +343,103 @@ const { unverifiedPartialUserSignatureCap } = await ikaTx.requestFutureSign({
 	ikaCoin: userIkaCoin, // User's IKA coin object
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
+
+// ZeroTrust DWallet with unencrypted shares
+const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSign({
+	dWallet: dwalletObject,
+	verifiedPresignCap: verifiedPresignCapObject,
+	presign: presignObject,
+	secretShare: secretShareBytes,
+	publicOutput: publicOutputBytes,
+	message: messageBytes,
+	hashScheme: Hash.KECCAK256,
+	ikaCoin: userIkaCoin, // User's IKA coin object
+	suiCoin: tx.splitCoins(tx.gas, [1000000]),
+});
+
+// Shared DWallet with public shares (no secret params needed)
+const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSign({
+	dWallet: sharedDWallet,
+	verifiedPresignCap: verifiedPresignCapObject,
+	presign: presignObject,
+	message: messageBytes,
+	hashScheme: Hash.KECCAK256,
+	ikaCoin: userIkaCoin, // User's IKA coin object
+	suiCoin: tx.splitCoins(tx.gas, [1000000]),
+});
 ```
 
-### requestFutureSignAndTransferCap
+**Parameters:**
 
-Creates a partial signature and transfers the capability.
+- `dWallet`: The dWallet to create the future sign for (ZeroTrust or Shared DWallet)
+- `verifiedPresignCap`: The verified presign capability
+- `presign`: The completed presign object
+- `encryptedUserSecretKeyShare`: Optional: encrypted user secret key share (for ZeroTrust DWallets)
+- `secretShare`: Optional: unencrypted secret share (requires publicOutput, for ZeroTrust DWallets)
+- `publicOutput`: Optional: public output (required when using secretShare, for ZeroTrust DWallets)
+- `message`: The message bytes to pre-sign
+- `hashScheme`: The hash scheme to use for the message
+- `ikaCoin`: User's IKA coin object
+- `suiCoin`: SUI coin object
+
+**Returns:** `Promise<TransactionObjectArgument>` - The unverified partial user signature capability
+
+### requestFutureSignWithImportedKey
+
+Creates a partial signature for later completion using Imported Key dWallets. Automatically detects dWallet type and signing method based on available shares.
 
 ```typescript
-await ikaTx.requestFutureSignAndTransferCap({
-	dWallet: dwalletObject,
+// ImportedKeyDWallet with encrypted shares
+const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSignWithImportedKey({
+	dWallet: importedKeyDWallet,
 	verifiedPresignCap: verifiedPresignCapObject,
 	presign: presignObject,
 	encryptedUserSecretKeyShare: encryptedShare,
 	message: messageBytes,
 	hashScheme: Hash.KECCAK256,
-	receiver: '0x...',
+	ikaCoin: userIkaCoin, // User's IKA coin object
+	suiCoin: tx.splitCoins(tx.gas, [1000000]),
+});
+
+// ImportedKeyDWallet with unencrypted shares
+const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSignWithImportedKey({
+	dWallet: importedKeyDWallet,
+	verifiedPresignCap: verifiedPresignCapObject,
+	presign: presignObject,
+	secretShare: secretShareBytes,
+	publicOutput: publicOutputBytes,
+	message: messageBytes,
+	hashScheme: Hash.KECCAK256,
+	ikaCoin: userIkaCoin, // User's IKA coin object
+	suiCoin: tx.splitCoins(tx.gas, [1000000]),
+});
+
+// ImportedSharedDWallet with public shares (no secret params needed)
+const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSignWithImportedKey({
+	dWallet: importedSharedDWallet,
+	verifiedPresignCap: verifiedPresignCapObject,
+	presign: presignObject,
+	message: messageBytes,
+	hashScheme: Hash.KECCAK256,
 	ikaCoin: userIkaCoin, // User's IKA coin object
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 ```
+
+**Parameters:**
+
+- `dWallet`: The Imported Key dWallet to create the future sign for (ImportedKeyDWallet or ImportedSharedDWallet)
+- `verifiedPresignCap`: The verified presign capability
+- `presign`: The completed presign object
+- `encryptedUserSecretKeyShare`: Optional: encrypted user secret key share (for ImportedKeyDWallet)
+- `secretShare`: Optional: unencrypted secret share (requires publicOutput, for ImportedKeyDWallet)
+- `publicOutput`: Optional: public output (required when using secretShare, for ImportedKeyDWallet)
+- `message`: The message bytes to pre-sign
+- `hashScheme`: The hash scheme to use for the message
+- `ikaCoin`: User's IKA coin object
+- `suiCoin`: SUI coin object
+
+**Returns:** `Promise<TransactionObjectArgument>` - The unverified partial user signature capability
 
 ### futureSign
 
@@ -357,15 +454,24 @@ ikaTx.futureSign({
 });
 ```
 
+**Parameters:**
+
+- `partialUserSignatureCap`: The partial user signature capability created by requestFutureSign
+- `messageApproval`: The message approval from approveMessage
+- `ikaCoin`: User's IKA coin object
+- `suiCoin`: SUI coin object
+
+**Returns:** `IkaTransaction` - The updated IkaTransaction instance
+
 ## Imported Key Operations
 
-### requestImporteddWalletVerification
+### requestImportedKeyDWalletVerification
 
 Creates a dWallet from an existing cryptographic key.
 
 ```typescript
-const { ImportedKeydWalletCap } = await ikaTx.requestImporteddWalletVerification({
-	importdWalletVerificationRequestInput: verificationInput,
+const importedKeyDWalletCap = await ikaTx.requestImportedKeyDWalletVerification({
+	importDWalletVerificationRequestInput: verificationInput,
 	curve: Curve.SECP256K1,
 	signerPublicKey: publicKeyBytes,
 	sessionIdentifier: createRandomSessionIdentifier(),
@@ -374,27 +480,24 @@ const { ImportedKeydWalletCap } = await ikaTx.requestImporteddWalletVerification
 });
 ```
 
-### requestImporteddWalletVerificationAndTransferCap
+**Parameters:**
 
-Creates an imported dWallet and transfers the capability.
+- `importDWalletVerificationRequestInput`: The prepared verification data from prepareImportedKeyDWalletVerification
+- `curve`: The elliptic curve identifier used for the imported key
+- `signerPublicKey`: The public key of the transaction signer
+- `sessionIdentifier`: Unique session identifier for this operation
+- `ikaCoin`: User's IKA coin object
+- `suiCoin`: SUI coin object
 
-```typescript
-await ikaTx.requestImporteddWalletVerificationAndTransferCap({
-	importdWalletVerificationRequestInput: verificationInput,
-	curve: Curve.SECP256K1,
-	signerPublicKey: publicKeyBytes,
-	sessionIdentifier: createRandomSessionIdentifier(),
-	receiver: '0x...',
-	ikaCoin: userIkaCoin, // User's IKA coin object
-	suiCoin: tx.splitCoins(tx.gas, [1000000]),
-});
-```
+**Returns:** `Promise<TransactionObjectArgument>` - The imported key dWallet capability
 
 ## User Share Management
 
 ### acceptEncryptedUserShare
 
-Accepts an encrypted user share for a dWallet.
+Accepts an encrypted user share for a dWallet. This method has two overloads:
+
+**For regular dWallet:**
 
 ```typescript
 await ikaTx.acceptEncryptedUserShare({
@@ -404,12 +507,10 @@ await ikaTx.acceptEncryptedUserShare({
 });
 ```
 
-### acceptEncryptedUserShareForTransferreddWallet
-
-Accepts an encrypted share for a transferred dWallet.
+**For transferred dWallet:**
 
 ```typescript
-await ikaTx.acceptEncryptedUserShareForTransferreddWallet({
+await ikaTx.acceptEncryptedUserShare({
 	dWallet: dwalletObject,
 	sourceEncryptionKey: sourceEncryptionKeyObject,
 	sourceEncryptedUserSecretKeyShare: sourceEncryptedShare,
@@ -417,12 +518,31 @@ await ikaTx.acceptEncryptedUserShareForTransferreddWallet({
 });
 ```
 
-### transferUserShare
+**Parameters:**
 
-Re-encrypts and transfers user shares to another address.
+For regular dWallet:
+
+- `dWallet`: The dWallet object to accept the share for
+- `userPublicOutput`: The user's public output from the DKG process
+- `encryptedUserSecretKeyShareId`: The ID of the encrypted user secret key share
+
+For transferred dWallet:
+
+- `dWallet`: The dWallet object to accept the share for
+- `sourceEncryptionKey`: The encryption key used to encrypt the user's secret share
+- `sourceEncryptedUserSecretKeyShare`: The encrypted user secret key share
+- `destinationEncryptedUserSecretKeyShare`: The encrypted user secret key share
+
+**Returns:** `Promise<IkaTransaction>` - The updated IkaTransaction instance
+
+### requestReEncryptUserShareFor
+
+Re-encrypts and transfers user shares to another address. This method has two overloads:
+
+**Using encrypted shares (automatic decryption):**
 
 ```typescript
-await ikaTx.transferUserShare({
+await ikaTx.requestReEncryptUserShareFor({
 	dWallet: dwalletObject,
 	destinationEncryptionKeyAddress: '0x...',
 	sourceEncryptedUserSecretKeyShare: encryptedShare,
@@ -431,12 +551,10 @@ await ikaTx.transferUserShare({
 });
 ```
 
-### transferUserShareWithSecretShare
-
-Transfers shares using unencrypted secret share.
+**Using unencrypted secret shares:**
 
 ```typescript
-await ikaTx.transferUserShareWithSecretShare({
+await ikaTx.requestReEncryptUserShareFor({
 	dWallet: dwalletObject,
 	destinationEncryptionKeyAddress: '0x...',
 	sourceSecretShare: secretShareBytes,
@@ -446,18 +564,38 @@ await ikaTx.transferUserShareWithSecretShare({
 });
 ```
 
-### makedWalletUserSecretKeySharesPublic
+**Parameters:**
+
+- `dWallet`: The dWallet whose user share is being transferred
+- `destinationEncryptionKeyAddress`: The Sui address that will receive the re-encrypted share
+- `sourceEncryptedUserSecretKeyShare`: The current user's encrypted secret key share
+- `sourceSecretShare`: Optional: The current user's unencrypted secret share
+- `ikaCoin`: User's IKA coin object
+- `suiCoin`: SUI coin object
+
+**Returns:** `Promise<IkaTransaction>` - The updated IkaTransaction instance
+
+### makeDWalletUserSecretKeySharesPublic
 
 Converts encrypted shares to public shares.
 
 ```typescript
-ikaTx.makedWalletUserSecretKeySharesPublic({
+ikaTx.makeDWalletUserSecretKeySharesPublic({
 	dWallet: dwalletObject,
 	secretShare: secretShareBytes,
 	ikaCoin: userIkaCoin, // User's IKA coin object
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 ```
+
+**Parameters:**
+
+- `dWallet`: The dWallet to make the shares public for
+- `secretShare`: The secret share data to make public
+- `ikaCoin`: User's IKA coin object
+- `suiCoin`: SUI coin object
+
+**Returns:** `IkaTransaction` - The updated IkaTransaction instance
 
 ## Key Management
 
@@ -470,6 +608,12 @@ await ikaTx.registerEncryptionKey({
 	curve: Curve.SECP256K1,
 });
 ```
+
+**Parameters:**
+
+- `curve`: The elliptic curve identifier to register the key for
+
+**Returns:** `Promise<IkaTransaction>` - The updated IkaTransaction instance
 
 ### createSessionIdentifier
 

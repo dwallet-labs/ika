@@ -62,7 +62,7 @@ const ikaTx = new IkaTransaction({
 	transaction: tx,
 });
 
-ikaTx.makedWalletUserSecretKeySharesPublic({
+ikaTx.makeDWalletUserSecretKeySharesPublic({
 	dWallet: activedWallet,
 	secretShare: secretShare,
 	ikaCoin: userIkaCoin,

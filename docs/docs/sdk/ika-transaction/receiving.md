@@ -73,7 +73,7 @@ await ikaTx.acceptEncryptedUserShare({
 	dWallet: activedWallet, // dWallet object provided by sender
 	sourceEncryptedUserSecretKeyShare: senderOriginalShare, // Sender's original share
 	sourceEncryptionKey: senderEncryptionKey,
-	encryptedUserSecretKeyShareId: transferredEncryptedShareId,
+	destinationEncryptedUserSecretKeyShare: transferredEncryptedShare, // EncryptedUserSecretKeyShare object
 });
 
 await signAndExecuteTransaction(tx);

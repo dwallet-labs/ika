@@ -62,7 +62,7 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys,
 });
 
-const dwalletCap = await ikaTx.requestdWalletDKGFirstRoundAsync({
+const dwalletCap = await ikaTx.requestDWalletDKGFirstRoundAsync({
 	curve: Curve.SECP256K1,
 	ikaCoin: userIkaCoin, // You can use your own IKA coin
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
@@ -100,7 +100,7 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys,
 });
 
-ikaTx.requestdWalletDKGSecondRound({
+ikaTx.requestDWalletDKGSecondRound({
 	dWalletCap: dWallet.dwallet_cap_id,
 	dkgSecondRoundRequestInput: dkgSecondRoundInput,
 	ikaCoin: userIkaCoin, // You can use your own IKA coin or create a new one

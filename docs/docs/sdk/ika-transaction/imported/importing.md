@@ -73,7 +73,7 @@ Prepare the cryptographic data needed to verify key ownership:
 ```typescript
 import { prepareImportedKeyDWalletVerification } from '@ika.xyz/sdk';
 
-const importdWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
+const importDWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
 	ikaClient,
 	sessionIdentifierPreimage,
 	userShareEncryptionKeys,
@@ -96,7 +96,7 @@ const ikaTx = new IkaTransaction({
 });
 
 const importedKeydWalletCap = await ikaTx.requestImportedKeyDWalletVerification({
-	importdWalletVerificationRequestInput,
+	importDWalletVerificationRequestInput,
 	curve: Curve.SECP256K1,
 	signerPublicKey: signerPublicKeyBytes,
 	sessionIdentifier: sessionIdentifierObjectId,
@@ -129,7 +129,7 @@ const ikaTx = new IkaTransaction({
 
 await ikaTx.acceptEncryptedUserShare({
 	dWallet: awaitingSignaturedWallet,
-	userPublicOutput: importdWalletVerificationRequestInput.userPublicOutput,
+	userPublicOutput: importDWalletVerificationRequestInput.userPublicOutput,
 	encryptedUserSecretKeyShareId: encryptedUserShareId,
 });
 

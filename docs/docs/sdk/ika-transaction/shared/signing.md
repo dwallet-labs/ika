@@ -84,7 +84,7 @@ const verifiedPresignCap = ikaTx.verifyPresignCap({
 });
 
 // Sign with public shares (no encryption keys needed)
-await ikaTx.sign({
+await ikaTx.requestSign({
 	dWallet: publicdWallet,
 	verifiedPresignCap,
 	messageApproval,

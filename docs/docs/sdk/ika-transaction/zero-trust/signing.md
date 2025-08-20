@@ -87,7 +87,7 @@ const verifiedPresignCap = ikaTx.verifyPresignCap({
 });
 
 // Sign the message
-await ikaTx.sign({
+await ikaTx.requestSign({
 	dWallet: activedWallet,
 	messageApproval,
 	verifiedPresignCap,
