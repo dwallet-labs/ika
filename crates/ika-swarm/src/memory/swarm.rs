@@ -15,7 +15,7 @@ use std::{
 use ika_config::NodeConfig;
 use ika_config::node::{
     AuthorityOverloadConfig, LOCAL_DEFAULT_SUI_FAUCET_URL, LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL,
-    RunWithRange,
+    RunWithRange, get_testing_sui_fullnode_rpc_url,
 };
 use ika_node::IkaNodeHandle;
 use ika_protocol_config::ProtocolVersion;
@@ -207,7 +207,7 @@ impl<R: rand::RngCore + rand::CryptoRng> SwarmBuilder<R> {
         let network_config = if let Some(network_config) = self.network_config {
             network_config
         } else {
-            let sui_fullnode_rpc_url = LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL.to_string();
+            let sui_fullnode_rpc_url = get_testing_sui_fullnode_rpc_url();
             let sui_faucet_url = LOCAL_DEFAULT_SUI_FAUCET_URL.to_string();
             let mut config_builder =
                 ConfigBuilder::new(dir.as_ref(), sui_fullnode_rpc_url, sui_faucet_url);

@@ -1,0 +1,81 @@
+name: TS System Tests CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      SUI_FULLNODE_URL:
+        description: "Sui Fullnode URL"
+        required: false
+        type: string
+      SUI_FAUCET_URL:
+        description: "Sui Faucet URL"
+        required: false
+        type: string
+      ika_config_json:
+        description: "Ika Config JSON"
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_PRIVATE_REPO_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
+  PROFILE: dev
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure git with personal access token
+        if: env.GH_PRIVATE_REPO_TOKEN
+        run: |
+          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # Version of pnpm to install, must match `package.json` "packageManager" field.
+          version: 9.1.1
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 21.x
+          cache: 'pnpm'
+
+      - name: Install wasm pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: 'latest'
+
+      - name: Install curl
+        run: sudo apt-get install -y curl
+
+      - name: Install Sui from Github
+        run: |
+          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.53.2/sui-mainnet-v1.53.2-ubuntu-x86_64.tgz > sui.tgz
+          tar -xvzf sui.tgz
+          sudo cp ./sui /usr/local/bin/sui
+
+      - name: Install dependencies
+        run: pnpm install
+        working-directory: ./sdk/typescript
+
+      - name: Write ika_config.json to file
+        run: |
+          echo '${{ github.event.inputs.ika_config_json }}' > ika_config.json
+
+      - name: Run test
+        run: npx vitest run -t "DWallet Signing|DWallet Future Signing|DWallet Creation|Shared DWallet Signing|Shared DWallet|DWallet Transfer|Shared Imported DWallet Signing|Imported DWallet Creation|Imported DWallet Sharing|Imported DWallet Signing"
+        working-directory: ./sdk/typescript
+        env:
+          SUI_TESTNET_URL: ${{ github.event.inputs.SUI_FULLNODE_URL }}
+          SUI_FAUCET_URL: ${{ github.event.inputs.SUI_FAUCET_URL }}
+

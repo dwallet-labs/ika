@@ -4,9 +4,13 @@ import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
 import { execa } from 'execa';
 import { describe, it } from 'vitest';
 
-import { delay, getNetworkDecryptionKeyID } from '../../src/dwallet-mpc/globals';
-import { createConf } from '../e2e/dwallet-mpc.test';
-import { runFullFlowTestWithNetworkKey, waitForEpochSwitch } from '../e2e/utils/utils';
+import {
+	createTestIkaClient,
+	createTestSuiClient,
+	delay,
+	runSignFullFlow,
+	waitForEpochSwitch,
+} from '../helpers/test-utils';
 import { createConfigMaps } from './config-map';
 import { NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
 import { createNetworkServices } from './network-service';
@@ -91,8 +95,10 @@ describe('chaos tests', () => {
 		await deployIkaNetwork();
 
 		console.log('Ika network deployed, waiting for epoch switch');
-		const conf = await createConf();
-		await waitForEpochSwitch(conf);
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+		await waitForEpochSwitch(ikaClient);
 		console.log('Epoch switched, start new validators & kill old ones');
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
@@ -108,14 +114,14 @@ describe('chaos tests', () => {
 		}
 
 		// sleep for three minutes to allow the new validators to start and join the network
-		await delay(180_000);
+		await delay(180);
 
 		for (let i = 0; i < numOfValidatorsToKill; i++) {
 			await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
 		}
 
 		console.log('deployed new validators, running a full flow test');
-		const networkKeyID = await getNetworkDecryptionKeyID(conf);
-		await runFullFlowTestWithNetworkKey(conf, networkKeyID);
+
+		await runSignFullFlow(ikaClient, suiClient, `chaos-test-full-flow`);
 	}, 3_600_000);
 });

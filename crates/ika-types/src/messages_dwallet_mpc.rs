@@ -1,6 +1,5 @@
 use crate::crypto::{AuthorityName, keccak256_digest};
 use crate::message::DWalletCheckpointMessageKind;
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use move_core_types::account_address::AccountAddress;
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
@@ -9,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::collection_types::{Table, TableVec};
 
@@ -53,243 +52,12 @@ pub const SIGN_PROTOCOL_FLAG: u32 = 6;
 pub const FUTURE_SIGN_PROTOCOL_FLAG: u32 = 7;
 pub const SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG: u32 = 8;
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum MPCRequestInput {
-    /// Make the dWallet user secret key shares public, so the network can control it.
-    MakeDWalletUserSecretKeySharesPublicRequest(
-        DWalletSessionEvent<MakeDWalletUserSecretKeySharesPublicRequestEvent>,
-    ),
-
-    /// Import a secret key to a dWallet.
-    DWalletImportedKeyVerificationRequest(
-        DWalletSessionEvent<DWalletImportedKeyVerificationRequestEvent>,
-    ),
-    /// The first round of the DKG protocol.
-    DKGFirst(DWalletSessionEvent<DWalletDKGFirstRoundRequestEvent>),
-    /// The second round of the DKG protocol.
-    /// Contains the data of the event that triggered the round,
-    /// and the network key version of the first round.
-    DKGSecond(DWalletSessionEvent<DWalletDKGSecondRoundRequestEvent>),
-    /// The first round of the Presign protocol for each message in the Batch.
-    /// Contains the `ObjectId` of the dWallet object,
-    /// the DKG decentralized output, the batch session ID (same for each message in the batch),
-    /// and the dWallets network key version.
-    Presign(DWalletSessionEvent<PresignRequestEvent>),
-    /// The first and only round of the Sign protocol.
-    /// Contains all the data needed to sign the message.
-    Sign(DWalletSessionEvent<SignRequestEvent>),
-    /// The only round of the network DKG protocol.
-    /// Contains the network key scheme, the dWallet network decryption key object ID
-    /// and at the end of the session holds the new key version.
-    NetworkEncryptionKeyDkg(
-        DWalletMPCNetworkKeyScheme,
-        DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
-    ),
-    /// The round of verifying the encrypted share proof is valid and
-    /// that the signature on it is valid.
-    /// This is not a real MPC round,
-    /// but we use it to start the verification process using the same events mechanism
-    /// because the system does not support native functions.
-    EncryptedShareVerification(DWalletSessionEvent<EncryptedShareVerificationRequestEvent>),
-    PartialSignatureVerification(DWalletSessionEvent<FutureSignRequestEvent>),
-    NetworkEncryptionKeyReconfiguration(
-        DWalletSessionEvent<DWalletEncryptionKeyReconfigurationRequestEvent>,
-    ),
-}
-
-impl Display for MPCRequestInput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MPCRequestInput::DKGFirst(_) => write!(f, "dWalletDKGFirstRound"),
-            MPCRequestInput::DKGSecond(_) => write!(f, "dWalletDKGSecondRound"),
-            MPCRequestInput::Presign(_) => write!(f, "Presign"),
-            MPCRequestInput::Sign(_) => write!(f, "{SIGN_STR_KEY}"),
-            MPCRequestInput::NetworkEncryptionKeyDkg(_, _) => {
-                write!(f, "{NETWORK_ENCRYPTION_KEY_DKG_STR_KEY}")
-            }
-            MPCRequestInput::EncryptedShareVerification(_) => {
-                write!(f, "EncryptedShareVerification")
-            }
-            MPCRequestInput::PartialSignatureVerification(_) => {
-                write!(f, "PartialSignatureVerification")
-            }
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(_) => {
-                write!(f, "{NETWORK_ENCRYPTION_KEY_RECONFIGURATION_STR_KEY}")
-            }
-            MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(_) => {
-                write!(f, "MakeDWalletUserSecretKeySharesPublicRequest")
-            }
-            MPCRequestInput::DWalletImportedKeyVerificationRequest(_) => {
-                write!(f, "DWalletImportedKeyVerificationRequestEvent")
-            }
-        }
-    }
-}
-
-impl MPCRequestInput {
-    pub fn get_curve(&self) -> String {
-        let curve = match self {
-            MPCRequestInput::DKGFirst(event) => Some(event.event_data.curve),
-            MPCRequestInput::DKGSecond(event) => Some(event.event_data.curve),
-            MPCRequestInput::Presign(event) => Some(event.event_data.curve),
-            MPCRequestInput::Sign(event) => Some(event.event_data.curve),
-            MPCRequestInput::NetworkEncryptionKeyDkg(_, _event) => None,
-            MPCRequestInput::EncryptedShareVerification(event) => Some(event.event_data.curve),
-            MPCRequestInput::PartialSignatureVerification(event) => Some(event.event_data.curve),
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(_event) => None,
-            MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(event) => {
-                Some(event.event_data.curve)
-            }
-
-            MPCRequestInput::DWalletImportedKeyVerificationRequest(event) => {
-                Some(event.event_data.curve)
-            }
-        };
-        match &curve {
-            None => "".to_string(),
-            Some(curve) => {
-                if curve == &0 {
-                    "Secp256k1".to_string()
-                } else {
-                    "Unknown".to_string()
-                }
-            }
-        }
-    }
-
-    pub fn get_hash_scheme(&self) -> String {
-        let hash_scheme = match self {
-            MPCRequestInput::DKGFirst(_) => None,
-            MPCRequestInput::DKGSecond(_) => None,
-            MPCRequestInput::Presign(_) => None,
-            MPCRequestInput::Sign(event) => Some(event.event_data.hash_scheme),
-            MPCRequestInput::NetworkEncryptionKeyDkg(_, _event) => None,
-            MPCRequestInput::EncryptedShareVerification(_) => None,
-            MPCRequestInput::PartialSignatureVerification(event) => {
-                Some(event.event_data.hash_scheme)
-            }
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(_event) => None,
-            MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(_) => None,
-            MPCRequestInput::DWalletImportedKeyVerificationRequest(_) => None,
-        };
-        match &hash_scheme {
-            None => "".to_string(),
-            Some(hash_scheme) => {
-                if hash_scheme == &0 {
-                    "KECCAK256".to_string()
-                } else if hash_scheme == &1 {
-                    "SHA256".to_string()
-                } else {
-                    "Unknown".to_string()
-                }
-            }
-        }
-    }
-
-    pub fn get_signature_algorithm(&self) -> String {
-        let signature_alg = match self {
-            MPCRequestInput::DKGFirst(_event) => None,
-            MPCRequestInput::DKGSecond(_event) => None,
-            MPCRequestInput::Presign(event) => Some(event.event_data.signature_algorithm),
-            MPCRequestInput::Sign(event) => Some(event.event_data.signature_algorithm),
-            MPCRequestInput::NetworkEncryptionKeyDkg(_, _event) => None,
-            MPCRequestInput::EncryptedShareVerification(_) => None,
-            MPCRequestInput::PartialSignatureVerification(event) => {
-                Some(event.event_data.signature_algorithm)
-            }
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(_event) => None,
-            MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(_) => None,
-            MPCRequestInput::DWalletImportedKeyVerificationRequest(_event) => None,
-        };
-        match &signature_alg {
-            None => "".to_string(),
-            Some(curve) => {
-                if curve == &0 {
-                    "ECDSA".to_string()
-                } else {
-                    "Unknown".to_string()
-                }
-            }
-        }
-    }
-
-    pub fn get_network_encryption_key_id(&self) -> Option<ObjectID> {
-        match self {
-            MPCRequestInput::DKGFirst(event) => {
-                Some(event.event_data.dwallet_network_encryption_key_id)
-            }
-            MPCRequestInput::DKGSecond(event) => {
-                Some(event.event_data.dwallet_network_encryption_key_id)
-            }
-            MPCRequestInput::Presign(event) => {
-                Some(event.event_data.dwallet_network_encryption_key_id)
-            }
-            MPCRequestInput::Sign(event) => {
-                Some(event.event_data.dwallet_network_encryption_key_id)
-            }
-            MPCRequestInput::NetworkEncryptionKeyDkg(_, event) => {
-                Some(event.event_data.dwallet_network_encryption_key_id)
-            }
-            MPCRequestInput::EncryptedShareVerification(event) => {
-                Some(event.event_data.dwallet_network_encryption_key_id)
-            }
-            MPCRequestInput::PartialSignatureVerification(event) => {
-                Some(event.event_data.dwallet_network_encryption_key_id)
-            }
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(event) => {
-                Some(event.event_data.dwallet_network_encryption_key_id)
-            }
-            MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(event) => {
-                Some(event.event_data.dwallet_network_encryption_key_id)
-            }
-            MPCRequestInput::DWalletImportedKeyVerificationRequest(event) => {
-                Some(event.event_data.dwallet_network_encryption_key_id)
-            }
-        }
-    }
-}
-
-impl Debug for MPCRequestInput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MPCRequestInput::DKGFirst(_) => write!(f, "dWalletDKGFirstRound"),
-            MPCRequestInput::DKGSecond(_) => write!(f, "dWalletDKGSecondRound"),
-            MPCRequestInput::Presign(_) => write!(f, "Presign"),
-            MPCRequestInput::Sign(_) => write!(f, "Sign"),
-            MPCRequestInput::NetworkEncryptionKeyDkg(_, _) => write!(f, "NetworkDkg"),
-            MPCRequestInput::EncryptedShareVerification(_) => {
-                write!(f, "EncryptedShareVerification")
-            }
-            MPCRequestInput::PartialSignatureVerification(_) => {
-                write!(f, "PartialSignatureVerification")
-            }
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(_) => {
-                write!(f, "DecryptionKeyReconfiguration")
-            }
-            MPCRequestInput::MakeDWalletUserSecretKeySharesPublicRequest(_) => {
-                write!(f, "MakeDWalletUserSecretKeySharesPublicRequest")
-            }
-            MPCRequestInput::DWalletImportedKeyVerificationRequest(_) => {
-                write!(f, "DWalletImportedKeyVerificationRequestEvent")
-            }
-        }
-    }
-}
-
 /// This is a wrapper type for the [`SuiEvent`] type that is being used to write it to the local RocksDB.
 /// This is needed because the [`SuiEvent`] cannot be directly written to the RocksDB.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DBSuiEvent {
     pub type_: StructTag,
     pub contents: Vec<u8>,
-    // True when the event was pulled from the state of the object,
-    // and False when it was pushed as an event.
-    pub pulled: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct DWalletMPCEvent {
-    pub session_request: MPCSessionRequest,
     // True when the event was pulled from the state of the object,
     // and False when it was pushed as an event.
     pub pulled: bool,
@@ -316,20 +84,6 @@ pub struct DWalletMPCMessage {
     pub session_identifier: SessionIdentifier,
 }
 
-/// Holds information about the current MPC session.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct MPCSessionRequest {
-    pub session_type: SessionType,
-    /// Unique identifier for the MPC session.
-    pub session_identifier: SessionIdentifier,
-    pub session_sequence_number: u64,
-    /// The input to the request MPC session.
-    pub request_input: MPCRequestInput,
-    pub epoch: u64,
-    pub requires_network_key_data: bool,
-    pub requires_next_active_committee: bool,
-}
-
 pub trait DWalletSessionEventTrait {
     fn type_(packages_config: &IkaNetworkConfig) -> StructTag;
 }
@@ -338,7 +92,9 @@ pub trait DWalletSessionEventTrait {
 /// User initiated sessions have a sequence number, which is used to determine in which epoch the session will get
 /// completed.
 /// System sessions are guaranteed to always get completed in the epoch they were created in.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, JsonSchema, Eq, PartialEq, Hash)]
+#[derive(
+    Debug, Serialize, Deserialize, Clone, Copy, JsonSchema, Eq, PartialEq, Hash, Ord, PartialOrd,
+)]
 pub enum SessionType {
     User,
     System,
@@ -522,8 +278,6 @@ impl<E: DWalletSessionEventTrait> DWalletSessionEvent<E> {
 }
 
 /// The Rust representation of the `EncryptedShareVerificationRequestEvent` Move struct.
-/// Defined here so that we can use it in the [`MPCRequestInput`] enum,
-/// as the inner data of the [`MPCRequestInput::EncryptedShareVerification`].
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
 pub struct EncryptedShareVerificationRequestEvent {
     /// Encrypted centralized secret key share and the associated
@@ -954,6 +708,28 @@ pub mod test_helpers {
             session_type,
             session_sequence_number,
             session_identifier_preimage: vec![42u8],
+            event_data,
+        }
+    }
+
+    pub fn new_dwallet_session_event<E: DWalletSessionEventTrait>(
+        is_system: bool,
+        session_sequence_number: u64,
+        session_identifier_preimage: Vec<u8>,
+        event_data: E,
+    ) -> DWalletSessionEvent<E> {
+        let session_type = if is_system {
+            SessionType::System
+        } else {
+            SessionType::User
+        };
+
+        DWalletSessionEvent {
+            epoch: 1,
+            session_object_id: ObjectID::random(),
+            session_type,
+            session_sequence_number,
+            session_identifier_preimage,
             event_data,
         }
     }

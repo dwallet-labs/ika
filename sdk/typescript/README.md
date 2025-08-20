@@ -44,7 +44,9 @@ pnpm run build
 Use `getNetworkConfig(network)` to obtain package/object IDs for `localnet`, `testnet`, or
 `mainnet`.
 
-_For `localnet`, the SDK reads `../../ika_config.json` at process cwd time._
+_For `localnet`, the SDK automatically searches for `ika_config.json` in multiple locations
+including the current directory, parent directories, and can be configured via the `IKA_CONFIG_PATH`
+environment variable._
 
 ```ts
 import { getNetworkConfig } from '@ika.xyz/sdk';

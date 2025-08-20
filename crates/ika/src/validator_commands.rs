@@ -1061,15 +1061,11 @@ impl IkaValidatorCommand {
                 let client = SuiClient::new(
                     &context.get_active_env()?.rpc,
                     SuiClientMetrics::new_for_testing(),
-                    config.packages.ika_package_id,
-                    config.packages.ika_common_package_id,
-                    config.packages.ika_dwallet_2pc_mpc_package_id,
-                    config.packages.ika_system_package_id,
-                    config.objects.ika_system_object_id,
-                    config.objects.ika_dwallet_coordinator_object_id,
+                    config,
                 )
                 .await?;
-                let current_pricing_info = client.get_pricing_info().await;
+                let (_, coordinator_inner) = client.must_get_dwallet_coordinator_inner().await;
+                let current_pricing_info = client.get_pricing_info(coordinator_inner).await;
                 let path = "current_pricing.yaml";
                 let file = BufWriter::new(File::create(path)?);
                 serde_yaml::to_writer(file, &current_pricing_info)?;

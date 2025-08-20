@@ -1647,6 +1647,7 @@ public(package) fun create(
         received_end_of_publish: true,
         extra_fields: bag::new(ctx),
     };
+
     inner.advance_epoch(advance_epoch_approver);
     inner
 }
@@ -2095,6 +2096,13 @@ public(package) fun advance_epoch(
     advance_epoch_approver.approve_advance_epoch_by_witness(dwallet_coordinator_witness(), balance);
 }
 
+public(package) fun has_dwallet(
+    self: &DWalletCoordinatorInner,
+    dwallet_id: ID,
+): bool {
+    self.dwallets.contains(dwallet_id)
+}
+
 /// Gets an immutable reference to a dWallet by ID.
 ///
 /// ### Parameters
@@ -2106,8 +2114,8 @@ public(package) fun advance_epoch(
 ///
 /// ### Aborts
 /// - `EDWalletNotExists`: If the dWallet doesn't exist
-fun get_dwallet(self: &DWalletCoordinatorInner, dwallet_id: ID): &DWallet {
-    assert!(self.dwallets.contains(dwallet_id), EDWalletNotExists);
+public(package) fun get_dwallet(self: &DWalletCoordinatorInner, dwallet_id: ID): &DWallet {
+    assert!(self.has_dwallet(dwallet_id), EDWalletNotExists);
     self.dwallets.borrow(dwallet_id)
 }
 
@@ -2123,47 +2131,8 @@ fun get_dwallet(self: &DWalletCoordinatorInner, dwallet_id: ID): &DWallet {
 /// ### Aborts
 /// - `EDWalletNotExists`: If the dWallet doesn't exist
 fun get_dwallet_mut(self: &mut DWalletCoordinatorInner, dwallet_id: ID): &mut DWallet {
-    assert!(self.dwallets.contains(dwallet_id), EDWalletNotExists);
+    assert!(self.has_dwallet(dwallet_id), EDWalletNotExists);
     self.dwallets.borrow_mut(dwallet_id)
-}
-
-/// Validates that a dWallet is in active state and returns its public output.
-///
-/// This function ensures that a dWallet has completed its creation process
-/// (either DKG or imported key verification) and is ready for cryptographic
-/// operations like signing.
-///
-/// ### Parameters
-/// - `self`: Reference to the dWallet to validate
-///
-/// ### Returns
-/// Reference to the dWallet's public output
-///
-/// ### Aborts
-/// - `EDWalletInactive`: If the dWallet is not in the `Active` state
-///
-/// ### Active State Requirements
-/// A dWallet is considered active when:
-/// - DKG process has completed successfully, OR
-/// - Imported key verification has completed successfully
-/// - User has accepted their encrypted key share
-/// - Public output is available for cryptographic operations
-fun validate_active_and_get_public_output(self: &DWallet): &vector<u8> {
-    match (&self.state) {
-        DWalletState::Active {
-            public_output,
-        } => {
-            public_output
-        },
-        DWalletState::DKGRequested |
-        DWalletState::NetworkRejectedDKGRequest |
-        DWalletState::AwaitingUserDKGVerificationInitiation { .. } |
-        DWalletState::AwaitingNetworkDKGVerification |
-        DWalletState::NetworkRejectedDKGVerification |
-        DWalletState::AwaitingNetworkImportedKeyVerification |
-        DWalletState::NetworkRejectedImportedKeyVerification |
-        DWalletState::AwaitingKeyHolderSignature { .. } => abort EDWalletInactive,
-    }
 }
 
 /// Retrieves an active dWallet and its public output for read-only operations.
@@ -3728,7 +3697,7 @@ fun validate_and_initiate_sign(
     message_centralized_signature: vector<u8>,
     is_future_sign: bool,
     ctx: &mut TxContext,
-): bool {
+): (ID, bool) {
     let created_at_epoch = self.current_epoch;
 
     assert!(self.presign_sessions.contains(presign_cap.presign_id), EPresignNotExist);
@@ -3839,21 +3808,21 @@ fun validate_and_initiate_sign(
         );
     self.validate_network_encryption_key_supports_curve(dwallet_network_encryption_key_id, curve);
 
-    is_imported_key_dwallet
+    (sign_id, is_imported_key_dwallet)
 }
 
 /// Initiates the Sign protocol for this dWallet.
 /// Requires a `MessageApproval`, which approves a message for signing and is unpacked and deleted to ensure it is never used twice.
 public(package) fun request_sign(
     self: &mut DWalletCoordinatorInner,
-    message_approval: MessageApproval,
     presign_cap: VerifiedPresignCap,
+    message_approval: MessageApproval,
     message_centralized_signature: vector<u8>,
     session_identifier: SessionIdentifier,
     payment_ika: &mut Coin<IKA>,
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
-) {
+): ID {
     let MessageApproval {
         dwallet_id,
         signature_algorithm,
@@ -3872,7 +3841,7 @@ public(package) fun request_sign(
             SIGN_PROTOCOL_FLAG,
         );
 
-    let is_imported_key_dwallet = self.validate_and_initiate_sign(
+    let (sign_id, is_imported_key_dwallet) = self.validate_and_initiate_sign(
         pricing_value,
         payment_ika,
         payment_sui,
@@ -3888,20 +3857,21 @@ public(package) fun request_sign(
     );
 
     assert!(!is_imported_key_dwallet, EImportedKeyDWallet);
+    sign_id
 }
 
 /// Initiates the Sign protocol for this imported key dWallet.
 /// Requires an `ImportedKeyMessageApproval`, which approves a message for signing and is unpacked and deleted to ensure it is never used twice.
 public(package) fun request_imported_key_sign(
     self: &mut DWalletCoordinatorInner,
-    message_approval: ImportedKeyMessageApproval,
     presign_cap: VerifiedPresignCap,
+    message_approval: ImportedKeyMessageApproval,
     message_centralized_signature: vector<u8>,
     session_identifier: SessionIdentifier,
     payment_ika: &mut Coin<IKA>,
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
-) {
+): ID {
     let ImportedKeyMessageApproval {
         dwallet_id,
         signature_algorithm,
@@ -3919,7 +3889,7 @@ public(package) fun request_imported_key_sign(
             SIGN_PROTOCOL_FLAG,
         );
 
-    let is_imported_key_dwallet = self.validate_and_initiate_sign(
+    let (sign_id, is_imported_key_dwallet) = self.validate_and_initiate_sign(
         pricing_value,
         payment_ika,
         payment_sui,
@@ -3935,6 +3905,7 @@ public(package) fun request_imported_key_sign(
     );
 
     assert!(is_imported_key_dwallet, ENotImportedKeyDWallet);
+    sign_id
 }
 
 /// Request the Ika network verify the user-side sign protocol (in other words, that `message` is partially signed by the user),
@@ -4176,7 +4147,7 @@ public(package) fun request_sign_with_partial_user_signature(
     payment_ika: &mut Coin<IKA>,
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
-) {
+): ID {
     // Ensure that each partial user signature has a corresponding message approval; otherwise, abort.
     let is_match = self.match_partial_user_signature_with_message_approval(
         &partial_user_signature_cap,
@@ -4227,7 +4198,7 @@ public(package) fun request_sign_with_partial_user_signature(
         );
 
     // Emit signing events to finalize the signing process.
-    let is_imported_key_dwallet = self.validate_and_initiate_sign(
+    let (sign_id, is_imported_key_dwallet) = self.validate_and_initiate_sign(
         pricing_value,
         payment_ika,
         payment_sui,
@@ -4242,6 +4213,7 @@ public(package) fun request_sign_with_partial_user_signature(
         ctx,
     );
     assert!(!is_imported_key_dwallet, EImportedKeyDWallet);
+    sign_id
 }
 
 /// The imported key variant of [`request_sign_with_partial_user_signature()`] (see for documentation).
@@ -4253,7 +4225,7 @@ public(package) fun request_imported_key_sign_with_partial_user_signature(
     payment_ika: &mut Coin<IKA>,
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
-) {
+): ID {
     // Ensure that each partial user signature has a corresponding imported key message approval; otherwise, abort.
     let is_match = self.match_partial_user_signature_with_imported_key_message_approval(
         &partial_user_signature_cap,
@@ -4303,7 +4275,7 @@ public(package) fun request_imported_key_sign_with_partial_user_signature(
         );
 
     // Emit signing events to finalize the signing process.
-    let is_imported_key_dwallet = self.validate_and_initiate_sign(
+    let (sign_id, is_imported_key_dwallet) = self.validate_and_initiate_sign(
         pricing_value,
         payment_ika,
         payment_sui,
@@ -4318,6 +4290,7 @@ public(package) fun request_imported_key_sign_with_partial_user_signature(
         ctx,
     );
     assert!(is_imported_key_dwallet, ENotImportedKeyDWallet);
+    sign_id
 }
 
 /// Matches partial user signature with message approval to ensure they are consistent.
@@ -4875,12 +4848,160 @@ public(package) fun get_network_encryption_key_supported_curves(
 
 /// === Public Functions ===
 
+/// Returns the ID of the dWallet.
+///
+/// ### Parameters
+/// - `self`: Reference to the dWallet Cap
+///
+/// ### Returns
+/// The ID of the dWallet
 public fun dwallet_id(self: &DWalletCap): ID {
     self.dwallet_id
 }
 
+/// Returns the ID of the imported key dWallet.
+///
+/// ### Parameters
+/// - `self`: Reference to the imported key dWallet Cap
+///
+/// ### Returns
+/// The ID of the imported key dWallet
 public fun imported_key_dwallet_id(self: &ImportedKeyDWalletCap): ID {
     self.dwallet_id
+}
+
+/// Returns true if the dWallet is an imported key dWallet.
+///
+/// ### Parameters
+/// - `self`: Reference to the dWallet
+///
+/// ### Returns
+/// True if the dWallet is an imported key dWallet, false otherwise
+public fun is_imported_key_dwallet(self: &DWallet): bool {
+    self.is_imported_key_dwallet
+}
+
+/// Returns true if the dWallet is active.
+///
+/// ### Parameters
+/// - `self`: Reference to the dWallet
+///
+/// ### Returns
+/// True if the dWallet is active, false otherwise
+public fun is_dwallet_active(self: &DWallet): bool {
+    match (&self.state) {
+        DWalletState::Active { .. } => true,
+        _ => false,
+    }
+}
+
+/// Returns the network encryption key ID of the dWallet.
+///
+/// ### Parameters
+/// - `self`: Reference to the dWallet
+///
+/// ### Returns
+/// The network encryption key ID of the dWallet
+public fun dwallet_network_encryption_key_id(self: &DWallet): ID {
+    self.dwallet_network_encryption_key_id
+}
+
+/// Returns the curve of the dWallet.
+///
+/// ### Parameters
+/// - `self`: Reference to the dWallet
+///
+/// ### Returns
+/// The curve of the dWallet
+public fun curve(self: &DWallet): u32 {
+    self.curve
+}
+
+/// Validates that a dWallet is in active state and returns its public output.
+///
+/// This function ensures that a dWallet has completed its creation process
+/// (either DKG or imported key verification) and is ready for cryptographic
+/// operations like signing.
+///
+/// ### Parameters
+/// - `self`: Reference to the dWallet to validate
+///
+/// ### Returns
+/// Reference to the dWallet's public output
+///
+/// ### Aborts
+/// - `EDWalletInactive`: If the dWallet is not in the `Active` state
+///
+/// ### Active State Requirements
+/// A dWallet is considered active when:
+/// - DKG process has completed successfully, OR
+/// - Imported key verification has completed successfully
+/// - User has accepted their encrypted key share
+/// - Public output is available for cryptographic operations
+public fun validate_active_and_get_public_output(self: &DWallet): &vector<u8> {
+    match (&self.state) {
+        DWalletState::Active {
+            public_output,
+        } => {
+            public_output
+        },
+        DWalletState::DKGRequested |
+        DWalletState::NetworkRejectedDKGRequest |
+        DWalletState::AwaitingUserDKGVerificationInitiation { .. } |
+        DWalletState::AwaitingNetworkDKGVerification |
+        DWalletState::NetworkRejectedDKGVerification |
+        DWalletState::AwaitingNetworkImportedKeyVerification |
+        DWalletState::NetworkRejectedImportedKeyVerification |
+        DWalletState::AwaitingKeyHolderSignature { .. } => abort EDWalletInactive,
+    }
+}
+
+/// Returns true if the `SignSession` object exists for the given `sign_id`.
+///
+/// ### Parameters
+/// - `self`: Reference to the dWallet
+/// - `sign_id`: ID of the sign session
+///
+/// ### Returns
+/// True if the `SignSession` object exists, false otherwise
+public fun has_sign_session(
+    self: &DWallet,
+    sign_id: ID,
+): bool {
+    self.sign_sessions.contains(sign_id)
+}
+
+/// Returns a reference to the `SignSession` object for the given `sign_id`.
+///
+/// ### Parameters
+/// - `self`: Reference to the dWallet
+/// - `sign_id`: ID of the sign session
+///
+/// ### Returns
+/// Reference to the `SignSession` object
+public fun get_sign_session(
+    self: &DWallet,
+    sign_id: ID,
+): &SignSession {
+    self.sign_sessions.borrow(sign_id)
+}
+
+/// Returns the signature of the `SignSession` object for the given `sign_id`.
+///
+/// ### Parameters
+/// - `self`: Reference to the sign session
+///
+/// ### Returns
+/// Option of the signature of the `SignSession` object
+public fun get_sign_signature(
+    self: &SignSession,
+): Option<vector<u8>> {
+    match (&self.state) {
+        SignState::Completed {
+            signature,
+        } => option::some(*signature),
+        _ => option::none(),
+    }
 }
 
 // === Test Functions ===
