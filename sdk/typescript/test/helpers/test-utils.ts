@@ -13,7 +13,13 @@ import { expect } from 'vitest';
 import { IkaClient } from '../../src/client/ika-client.js';
 import { IkaTransaction } from '../../src/client/ika-transaction.js';
 import { getNetworkConfig } from '../../src/client/network-configs.js';
-import { Hash, IkaConfig, SignatureAlgorithm } from '../../src/client/types.js';
+import {
+	Curve,
+	Hash,
+	IkaConfig,
+	SignatureAlgorithm,
+	ZeroTrustDWallet,
+} from '../../src/client/types.js';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
 import { createCompleteDWallet, testPresign, testSign } from './dwallet-test-helpers';
 
@@ -86,7 +92,7 @@ export function clearAllTestSeeds(): void {
  */
 export function createTestSuiClient(): SuiClient {
 	return new SuiClient({
-		url: getFullnodeUrl('localnet'),
+		url: process.env.SUI_TESTNET_URL || getFullnodeUrl('localnet'),
 	});
 }
 
@@ -100,7 +106,7 @@ export async function requestTestFaucetFunds(address: string): Promise<void> {
 	for (let attempt = 1; attempt <= maxRetries; attempt++) {
 		try {
 			await requestSuiFromFaucetV2({
-				host: getFaucetHost('localnet'),
+				host: process.env.SUI_FAUCET_URL || getFaucetHost('localnet'),
 				recipient: address,
 			});
 
@@ -180,7 +186,7 @@ export function generateTestKeypair(testName: string) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed);
+	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
 
 	return {
 		userShareEncryptionKeys,
@@ -191,13 +197,13 @@ export function generateTestKeypair(testName: string) {
 }
 
 /**
- * Generates deterministic keypair for imported DWallet testing
+ * Generates deterministic keypair for Imported Key DWallet testing
  */
-export function generateTestKeypairForImportedDWallet(testName: string) {
+export function generateTestKeypairForImportedKeyDWallet(testName: string) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed);
+	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
 	const dWalletKeypair = Secp256k1Keypair.fromSeed(seed);
 
 	return {
@@ -294,8 +300,6 @@ export async function retryUntil<T>(
 	throw new Error(`Condition not met after ${maxAttempts} attempts`);
 }
 
-export const DEFAULT_TIMEOUT = 600_000; // 10 minutes
-
 export function delay(seconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
 }
@@ -342,7 +346,7 @@ export async function runSignFullFlow(
 	await testSign(
 		ikaClient,
 		suiClient,
-		activeDWallet,
+		activeDWallet as ZeroTrustDWallet,
 		userShareEncryptionKeys,
 		presignObject,
 		encryptedUserSecretKeyShare,
@@ -351,10 +355,6 @@ export async function runSignFullFlow(
 		SignatureAlgorithm.ECDSA,
 		testName,
 	);
-
-	// Verify the signing process completed successfully
-	// The fact that testSign didn't throw an error indicates success
-	expect(true).toBe(true);
 }
 
 export async function waitForEpochSwitch(ikaClient: IkaClient) {

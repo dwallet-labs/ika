@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import type { SuiClient } from '@mysten/sui/client';
-import { Transaction } from '@mysten/sui/transactions';
+import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import type {
 	DKGSecondRoundRequestInput,
@@ -16,9 +16,13 @@ import {
 	EncryptedUserSecretKeyShare,
 	EncryptionKey,
 	Hash,
+	ImportedKeyDWallet,
+	ImportedSharedDWallet,
 	PartialUserSignature,
 	Presign,
+	SharedDWallet,
 	SignatureAlgorithm,
+	ZeroTrustDWallet,
 } from '../../src/client/types.js';
 import type { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
@@ -102,10 +106,11 @@ export async function createCompleteDWallet(
 	);
 
 	// Step 7: Accept encrypted user share
+	// Type assertion: DKG flow only creates ZeroTrust DWallets
 	await acceptTestEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		awaitingKeyHolderSignatureDWallet,
+		awaitingKeyHolderSignatureDWallet as ZeroTrustDWallet,
 		dkgSecondRoundRequestInput.userPublicOutput,
 		secondRoundMoveResponse,
 		userShareEncryptionKeys,
@@ -156,12 +161,13 @@ export async function requestTestDKGFirstRound(
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.requestDWalletDKGFirstRoundAndTransferCapAsync({
-		curve: 0,
+	const dwalletCap = await ikaTransaction.requestDWalletDKGFirstRoundAsync({
+		curve: Curve.SECP256K1,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
-		receiver: signerAddress,
 	});
+
+	transaction.transferObjects([dwalletCap], signerAddress);
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
@@ -241,7 +247,7 @@ export async function requestTestDkgSecondRound(
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
 	ikaTransaction.requestDWalletDKGSecondRound({
-		dWallet,
+		dWalletCap: dWallet.dwallet_cap_id,
 		dkgSecondRoundRequestInput,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
@@ -273,7 +279,7 @@ export async function requestTestDkgSecondRound(
 export async function acceptTestEncryptedUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	userPublicOutput: Uint8Array,
 	secondRoundMoveResponse: {
 		event_data: {
@@ -302,7 +308,7 @@ export async function acceptTestEncryptedUserShare(
 export async function acceptTestEncryptedUserShareForTransferredDWallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	destinationUserShareEncryptionKeys: UserShareEncryptionKeys,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	sourceEncryptionKey: EncryptionKey,
@@ -316,7 +322,7 @@ export async function acceptTestEncryptedUserShareForTransferredDWallet(
 		destinationUserShareEncryptionKeys,
 	);
 
-	await ikaTransaction.acceptEncryptedUserShareForTransferredDWallet({
+	await ikaTransaction.acceptEncryptedUserShare({
 		dWallet,
 		sourceEncryptedUserSecretKeyShare,
 		sourceEncryptionKey,
@@ -332,7 +338,7 @@ export async function acceptTestEncryptedUserShareForTransferredDWallet(
 export async function makeTestDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	secretShare: Uint8Array,
 	testName: string,
 ) {
@@ -354,12 +360,12 @@ export async function makeTestDWalletUserSecretKeySharesPublic(
 }
 
 /**
- * Make imported DWallet user secret key shares public for testing
+ * Make Imported Key DWallet user secret key shares public for testing
  */
-export async function makeTestImportedDWalletUserSecretKeySharesPublic(
+export async function makeTestImportedKeyDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	secretShare: Uint8Array,
 	testName: string,
 ) {
@@ -396,13 +402,14 @@ export async function testPresign(
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	ikaTransaction.requestPresignAndTransferCap({
+	const unverifiedPresignCap = ikaTransaction.requestPresign({
 		dWallet,
 		signatureAlgorithm,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
-		receiver: signerAddress,
 	});
+
+	transaction.transferObjects([unverifiedPresignCap], signerAddress);
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
@@ -427,7 +434,7 @@ export async function testPresign(
 export async function testSign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	presign: Presign,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
@@ -439,30 +446,52 @@ export async function testSign(
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
-	const { messageApproval } = ikaTransaction.approveMessage({
-		dWallet,
+	const messageApproval = ikaTransaction.approveMessage({
+		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	});
 
-	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+	const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 		presign,
 	});
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.sign({
-		dWallet,
-		messageApproval,
-		verifiedPresignCap,
-		hashScheme,
-		presign,
-		encryptedUserSecretKeyShare,
-		message,
-		ikaCoin: emptyIKACoin,
-		suiCoin: transaction.gas,
-	});
+	// Use appropriate signing method based on DWallet type
+	if (dWallet.kind === 'imported-key') {
+		const importedKeyMessageApproval = ikaTransaction.approveImportedKeyMessage({
+			dWalletCap: dWallet.dwallet_cap_id,
+			signatureAlgorithm,
+			hashScheme,
+			message,
+		});
+
+		await ikaTransaction.requestSignWithImportedKey({
+			dWallet,
+			importedKeyMessageApproval,
+			verifiedPresignCap,
+			hashScheme,
+			presign,
+			encryptedUserSecretKeyShare,
+			message,
+			ikaCoin: emptyIKACoin,
+			suiCoin: transaction.gas,
+		});
+	} else {
+		await ikaTransaction.requestSign({
+			dWallet,
+			messageApproval,
+			verifiedPresignCap,
+			hashScheme,
+			presign,
+			encryptedUserSecretKeyShare,
+			message,
+			ikaCoin: emptyIKACoin,
+			suiCoin: transaction.gas,
+		});
+	}
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
@@ -475,7 +504,7 @@ export async function testSign(
 export async function testSignPublicUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: SharedDWallet | ImportedSharedDWallet,
 	presign: Presign,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -485,29 +514,50 @@ export async function testSignPublicUserShare(
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction);
 
-	const { messageApproval } = ikaTransaction.approveMessage({
-		dWallet,
+	const messageApproval = ikaTransaction.approveMessage({
+		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	});
 
-	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+	const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 		presign,
 	});
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.signPublic({
-		dWallet,
-		messageApproval,
-		verifiedPresignCap,
-		presign,
-		message,
-		hashScheme,
-		ikaCoin: emptyIKACoin,
-		suiCoin: transaction.gas,
-	});
+	// Use appropriate signing method based on DWallet type
+	if (dWallet.kind === 'imported-key-shared') {
+		const importedKeyMessageApproval = ikaTransaction.approveImportedKeyMessage({
+			dWalletCap: dWallet.dwallet_cap_id,
+			signatureAlgorithm,
+			hashScheme,
+			message,
+		});
+
+		await ikaTransaction.requestSignWithImportedKey({
+			dWallet,
+			importedKeyMessageApproval,
+			verifiedPresignCap,
+			presign,
+			message,
+			hashScheme,
+			ikaCoin: emptyIKACoin,
+			suiCoin: transaction.gas,
+		});
+	} else {
+		await ikaTransaction.requestSign({
+			dWallet,
+			messageApproval,
+			verifiedPresignCap,
+			presign,
+			message,
+			hashScheme,
+			ikaCoin: emptyIKACoin,
+			suiCoin: transaction.gas,
+		});
+	}
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
@@ -520,7 +570,7 @@ export async function testSignPublicUserShare(
 export async function requestTestFutureSign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	presign: Presign,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
@@ -532,23 +582,46 @@ export async function requestTestFutureSign(
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
-	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+	const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 		presign,
 	});
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.requestFutureSignAndTransferCap({
-		dWallet,
-		presign,
-		verifiedPresignCap,
-		encryptedUserSecretKeyShare,
-		message,
-		hashScheme,
-		ikaCoin: emptyIKACoin,
-		suiCoin: transaction.gas,
-		receiver: signerAddress,
-	});
+	let unverifiedPartialUserSignatureCap2: TransactionObjectArgument;
+
+	// Use appropriate future signing method based on DWallet type
+	if (dWallet.kind === 'imported-key') {
+		const unverifiedPartialUserSignatureCap = await ikaTransaction.requestFutureSignWithImportedKey(
+			{
+				dWallet,
+				presign,
+				verifiedPresignCap,
+				encryptedUserSecretKeyShare,
+				message,
+				hashScheme,
+				ikaCoin: emptyIKACoin,
+				suiCoin: transaction.gas,
+			},
+		);
+
+		unverifiedPartialUserSignatureCap2 = unverifiedPartialUserSignatureCap;
+	} else {
+		const unverifiedPartialUserSignatureCap = await ikaTransaction.requestFutureSign({
+			dWallet,
+			presign,
+			verifiedPresignCap,
+			encryptedUserSecretKeyShare,
+			message,
+			hashScheme,
+			ikaCoin: emptyIKACoin,
+			suiCoin: transaction.gas,
+		});
+
+		unverifiedPartialUserSignatureCap2 = unverifiedPartialUserSignatureCap;
+	}
+
+	transaction.transferObjects([unverifiedPartialUserSignatureCap2], signerAddress);
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
@@ -586,8 +659,8 @@ export async function testFutureSign(
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
-	const { messageApproval } = ikaTransaction.approveMessage({
-		dWallet,
+	const messageApproval = ikaTransaction.approveMessage({
+		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -597,7 +670,7 @@ export async function testFutureSign(
 
 	ikaTransaction.futureSign({
 		messageApproval,
-		partialUserSignature,
+		partialUserSignatureCap: partialUserSignature.cap_id,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
 	});
@@ -608,9 +681,9 @@ export async function testFutureSign(
 }
 
 /**
- * Request imported DWallet verification for testing
+ * Request Imported Key DWallet verification for testing
  */
-export async function requestTestImportedDWalletVerification(
+export async function requestTestImportedKeyDWalletVerification(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput,
@@ -626,15 +699,16 @@ export async function requestTestImportedDWalletVerification(
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.requestImportedDWalletVerificationAndTransferCap({
+	const importedKeyDWalletCap = await ikaTransaction.requestImportedKeyDWalletVerification({
 		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
 		sessionIdentifier,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
-		receiver,
 	});
+
+	transaction.transferObjects([importedKeyDWalletCap], receiver);
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
@@ -654,12 +728,12 @@ export async function requestTestImportedDWalletVerification(
 }
 
 /**
- * Sign with imported DWallet for testing
+ * Sign with Imported Key DWallet for testing
  */
-export async function testSignWithImportedDWallet(
+export async function testSignWithImportedKeyDWallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ImportedKeyDWallet,
 	presign: Presign,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -671,20 +745,20 @@ export async function testSignWithImportedDWallet(
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
-	const { importedKeyMessageApproval } = ikaTransaction.approveImportedKeyMessage({
-		dWallet,
+	const importedKeyMessageApproval = ikaTransaction.approveImportedKeyMessage({
+		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	});
 
-	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+	const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 		presign,
 	});
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.signWithImportedDWallet({
+	await ikaTransaction.requestSignWithImportedKey({
 		dWallet,
 		encryptedUserSecretKeyShare,
 		presign,
@@ -702,12 +776,12 @@ export async function testSignWithImportedDWallet(
 }
 
 /**
- * Sign with imported DWallet public for testing
+ * Sign with Imported Key DWallet public for testing
  */
-export async function testSignWithImportedDWalletPublic(
+export async function testSignWithImportedKeyDWalletPublic(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ImportedSharedDWallet,
 	presign: Presign,
 	message: Uint8Array,
 	hashScheme: Hash,
@@ -717,20 +791,20 @@ export async function testSignWithImportedDWalletPublic(
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction);
 
-	const { importedKeyMessageApproval } = ikaTransaction.approveImportedKeyMessage({
-		dWallet,
+	const importedKeyMessageApproval = ikaTransaction.approveImportedKeyMessage({
+		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	});
 
-	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+	const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 		presign,
 	});
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.signWithImportedDWalletPublic({
+	await ikaTransaction.requestSignWithImportedKey({
 		dWallet,
 		presign,
 		hashScheme,
@@ -752,7 +826,7 @@ export async function testSignWithImportedDWalletPublic(
 export async function testTransferEncryptedUserShare(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
-	dWallet: DWallet,
+	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	destinationEncryptionKeyAddress: string,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
@@ -763,7 +837,7 @@ export async function testTransferEncryptedUserShare(
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.transferUserShare({
+	await ikaTransaction.requestReEncryptUserShareFor({
 		dWallet,
 		destinationEncryptionKeyAddress,
 		sourceEncryptedUserSecretKeyShare,

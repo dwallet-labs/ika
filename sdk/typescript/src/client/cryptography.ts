@@ -21,6 +21,7 @@ import {
 } from '../../../mpc-wasm/dist/node/dwallet_mpc_wasm.js';
 import type { IkaClient } from './ika-client.js';
 import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
+import { Curve } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 
@@ -55,9 +56,13 @@ export interface ImportDWalletVerificationRequestInput {
  * Uses SECP256k1 curve with class groups for homomorphic encryption capabilities.
  *
  * @param seed - The seed bytes to generate the keypair from
+ * @param curve - The curve to use for key generation
  * @returns Object containing the encryption key (public) and decryption key (private)
  */
-export function createClassGroupsKeypair(seed: Uint8Array): {
+export function createClassGroupsKeypair(
+	seed: Uint8Array,
+	curve: Curve,
+): {
 	encryptionKey: Uint8Array;
 	decryptionKey: Uint8Array;
 } {
@@ -65,7 +70,14 @@ export function createClassGroupsKeypair(seed: Uint8Array): {
 		throw new Error('Seed must be 32 bytes');
 	}
 
-	const [encryptionKey, decryptionKey] = generate_secp_cg_keypair_from_seed(seed);
+	let encryptionKey: Uint8Array;
+	let decryptionKey: Uint8Array;
+
+	if (curve === Curve.SECP256K1) {
+		[encryptionKey, decryptionKey] = generate_secp_cg_keypair_from_seed(seed);
+	} else {
+		throw new Error('Only SECP256K1 curve is supported for now');
+	}
 
 	return {
 		encryptionKey: Uint8Array.from(encryptionKey),
@@ -211,7 +223,7 @@ export async function prepareDKGSecondRoundAsync(
  * @returns Promise resolving to complete verification data for the import process
  * @throws {Error} If network parameters cannot be fetched or key import preparation fails
  */
-export async function prepareImportDWalletVerification(
+export async function prepareImportedKeyDWalletVerification(
 	ikaClient: IkaClient,
 	sessionIdentifier: Uint8Array,
 	userShareEncryptionKeys: UserShareEncryptionKeys,

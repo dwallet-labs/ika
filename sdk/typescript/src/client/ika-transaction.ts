@@ -22,10 +22,13 @@ import type {
 	EncryptedUserSecretKeyShare,
 	EncryptionKey,
 	Hash,
-	PartialUserSignature,
+	ImportedKeyDWallet,
+	ImportedSharedDWallet,
 	Presign,
+	SharedDWallet,
 	SignatureAlgorithm,
 	UserSignatureInputs,
+	ZeroTrustDWallet,
 } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 
@@ -60,7 +63,9 @@ export class IkaTransaction {
 
 	/**
 	 * Creates a new IkaTransaction instance
-	 * @param params - Configuration parameters for the transaction
+	 * @param params.ikaClient - The IkaClient instance for network operations
+	 * @param params.transaction - The Sui transaction builder to wrap
+	 * @param params.userShareEncryptionKeys - Optional encryption keys for user share operations
 	 */
 	constructor({ ikaClient, transaction, userShareEncryptionKeys }: IkaTransactionParams) {
 		this.#ikaClient = ikaClient;
@@ -72,11 +77,10 @@ export class IkaTransaction {
 	 * Request the DKG (Distributed Key Generation) first round with automatic decryption key ID fetching.
 	 * This initiates the creation of a new DWallet through a distributed key generation process.
 	 *
-	 * @param params - The parameters for the DKG first round
 	 * @param params.curve - The elliptic curve identifier to use for key generation
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to an object containing the DWallet capability and updated transaction
+	 * @returns Promise resolving to a DWallet capability
 	 * @throws {Error} If the decryption key ID cannot be fetched
 	 */
 	async requestDWalletDKGFirstRoundAsync({
@@ -87,10 +91,7 @@ export class IkaTransaction {
 		curve: Curve;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		dwalletCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}> {
+	}): Promise<TransactionObjectArgument> {
 		const dwalletCap = this.#requestDWalletDKGFirstRound({
 			curve,
 			networkEncryptionKeyID: (await this.#ikaClient.getConfiguredNetworkEncryptionKey()).id,
@@ -98,22 +99,18 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		return {
-			dwalletCap,
-			transaction: this,
-		};
+		return dwalletCap;
 	}
 
 	/**
 	 * Request the DKG (Distributed Key Generation) first round with explicit decryption key ID.
 	 * This initiates the creation of a new DWallet through a distributed key generation process.
 	 *
-	 * @param params - The parameters for the DKG first round
 	 * @param params.curve - The elliptic curve identifier to use for key generation
 	 * @param params.networkEncryptionKeyID - The specific network encryption key ID to use
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Object containing the DWallet capability and updated transaction
+	 * @returns DWallet capability
 	 */
 	requestDWalletDKGFirstRound({
 		curve,
@@ -125,10 +122,7 @@ export class IkaTransaction {
 		networkEncryptionKeyID: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): {
-		dwalletCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	} {
+	}): TransactionObjectArgument {
 		const dwalletCap = this.#requestDWalletDKGFirstRound({
 			curve,
 			networkEncryptionKeyID,
@@ -136,90 +130,14 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		return {
-			dwalletCap,
-			transaction: this,
-		};
-	}
-
-	/**
-	 * Request the DKG first round and transfer the DWalletCap to a specified receiver.
-	 * This method fetches the decryption key ID automatically from the IKA client.
-	 *
-	 * @param params - The parameters for the DKG first round
-	 * @param params.curve - The elliptic curve identifier to use for key generation
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @param params.receiver - The address that will receive the DWalletCap
-	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If the decryption key ID cannot be fetched
-	 */
-	async requestDWalletDKGFirstRoundAndTransferCapAsync({
-		curve,
-		ikaCoin,
-		suiCoin,
-		receiver,
-	}: {
-		curve: Curve;
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-		receiver: string;
-	}) {
-		const cap = this.#requestDWalletDKGFirstRound({
-			curve,
-			networkEncryptionKeyID: (await this.#ikaClient.getConfiguredNetworkEncryptionKey()).id,
-			ikaCoin,
-			suiCoin,
-		});
-
-		this.#transaction.transferObjects([cap], receiver);
-
-		return this;
-	}
-
-	/**
-	 * Request the DKG first round and transfer the DWalletCap to a specified receiver.
-	 * This method requires an explicit decryption key ID.
-	 *
-	 * @param params - The parameters for the DKG first round
-	 * @param params.curve - The elliptic curve identifier to use for key generation
-	 * @param params.networkEncryptionKeyID - The specific network encryption key ID to use
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @param params.receiver - The address that will receive the DWalletCap
-	 * @returns The updated IkaTransaction instance
-	 */
-	requestDWalletDKGFirstRoundAndTransferCap({
-		curve,
-		networkEncryptionKeyID,
-		ikaCoin,
-		suiCoin,
-		receiver,
-	}: {
-		curve: Curve;
-		networkEncryptionKeyID: string;
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-		receiver: string;
-	}) {
-		const cap = this.#requestDWalletDKGFirstRound({
-			curve,
-			networkEncryptionKeyID,
-			ikaCoin,
-			suiCoin,
-		});
-
-		this.#transaction.transferObjects([cap], receiver);
-
-		return this;
+		return dwalletCap;
 	}
 
 	/**
 	 * Request the DKG (Distributed Key Generation) second round to complete DWallet creation.
 	 * This finalizes the distributed key generation process started in the first round.
 	 *
-	 * @param params - The parameters for the DKG second round
-	 * @param params.dWallet - The DWallet object from the first round
+	 * @param params.dWalletCap - The dWalletCap object from the first round, created for dWallet
 	 * @param params.dkgSecondRoundRequestInput - Cryptographic data prepared for the second round
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
@@ -227,12 +145,12 @@ export class IkaTransaction {
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	requestDWalletDKGSecondRound({
-		dWallet,
+		dWalletCap,
 		dkgSecondRoundRequestInput,
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
+		dWalletCap: TransactionObjectArgument | string;
 		dkgSecondRoundRequestInput: DKGSecondRoundRequestInput;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -244,7 +162,7 @@ export class IkaTransaction {
 		coordinatorTx.requestDWalletDKGSecondRound(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			this.#transaction.object(dWallet.dwallet_cap_id),
+			this.#transaction.object(dWalletCap),
 			dkgSecondRoundRequestInput.userDKGMessage,
 			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
 			this.#userShareEncryptionKeys.getSuiAddress(),
@@ -263,7 +181,6 @@ export class IkaTransaction {
 	 * Accept an encrypted user share for a DWallet.
 	 * This completes the user's participation in the DKG process by accepting their encrypted share.
 	 *
-	 * @param params - The parameters for accepting the encrypted user share
 	 * @param params.dWallet - The DWallet object to accept the share for
 	 * @param params.userPublicOutput - The user's public output from the DKG process, this is used to verify the user's public output signature.
 	 * @param params.encryptedUserSecretKeyShareId - The ID of the encrypted user secret key share
@@ -275,25 +192,10 @@ export class IkaTransaction {
 		userPublicOutput,
 		encryptedUserSecretKeyShareId,
 	}: {
-		dWallet: DWallet;
+		dWallet: ZeroTrustDWallet | ImportedKeyDWallet;
 		userPublicOutput: Uint8Array;
 		encryptedUserSecretKeyShareId: string;
-	}) {
-		if (!this.#userShareEncryptionKeys) {
-			throw new Error('User share encryption keys are not set');
-		}
-
-		coordinatorTx.acceptEncryptedUserShare(
-			this.#ikaClient.ikaConfig,
-			this.#getCoordinatorObjectRef(),
-			dWallet.id.id,
-			encryptedUserSecretKeyShareId,
-			await this.#userShareEncryptionKeys.getUserOutputSignature(dWallet, userPublicOutput),
-			this.#transaction,
-		);
-
-		return this;
-	}
+	}): Promise<IkaTransaction>;
 
 	/**
 	 * Accept an encrypted user share for a transferred DWallet.
@@ -303,7 +205,6 @@ export class IkaTransaction {
 	 * the public key of the sender (or its address) should be known to the receiver,
 	 * so that the verification here would be impactful.
 	 *
-	 * @param params - The parameters for accepting the encrypted user share
 	 * @param params.dWallet - The DWallet object to accept the share for
 	 * @param params.sourceEncryptionKey - The encryption key used to encrypt the user's secret share.
 	 * @param params.sourceEncryptedUserSecretKeyShare - The encrypted user secret key share.
@@ -311,42 +212,82 @@ export class IkaTransaction {
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
-	async acceptEncryptedUserShareForTransferredDWallet({
+	async acceptEncryptedUserShare({
 		dWallet,
 		sourceEncryptionKey,
 		sourceEncryptedUserSecretKeyShare,
 		destinationEncryptedUserSecretKeyShare,
 	}: {
-		dWallet: DWallet;
+		dWallet: ZeroTrustDWallet | ImportedKeyDWallet;
 		sourceEncryptionKey: EncryptionKey;
 		sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		destinationEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+	}): Promise<IkaTransaction>;
+
+	async acceptEncryptedUserShare({
+		dWallet,
+		userPublicOutput,
+		encryptedUserSecretKeyShareId,
+		sourceEncryptionKey,
+		sourceEncryptedUserSecretKeyShare,
+		destinationEncryptedUserSecretKeyShare,
+	}: {
+		dWallet: ZeroTrustDWallet | ImportedKeyDWallet;
+		userPublicOutput?: Uint8Array;
+		encryptedUserSecretKeyShareId?: string;
+		sourceEncryptionKey?: EncryptionKey;
+		sourceEncryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
+		destinationEncryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
 	}) {
 		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
 
-		coordinatorTx.acceptEncryptedUserShare(
-			this.#ikaClient.ikaConfig,
-			this.#getCoordinatorObjectRef(),
-			dWallet.id.id,
-			destinationEncryptedUserSecretKeyShare.id.id,
-			await this.#userShareEncryptionKeys.getUserOutputSignatureForTransferredDWallet(
-				dWallet,
-				sourceEncryptedUserSecretKeyShare,
-				sourceEncryptionKey,
-			),
-			this.#transaction,
-		);
+		// Regular DWallet encrypted user share acceptance
+		if (userPublicOutput && encryptedUserSecretKeyShareId) {
+			coordinatorTx.acceptEncryptedUserShare(
+				this.#ikaClient.ikaConfig,
+				this.#getCoordinatorObjectRef(),
+				dWallet.id.id,
+				encryptedUserSecretKeyShareId,
+				await this.#userShareEncryptionKeys.getUserOutputSignature(dWallet, userPublicOutput),
+				this.#transaction,
+			);
 
-		return this;
+			return this;
+		}
+
+		// Transferred DWallet encrypted user share acceptance
+		if (
+			sourceEncryptionKey &&
+			sourceEncryptedUserSecretKeyShare &&
+			destinationEncryptedUserSecretKeyShare
+		) {
+			coordinatorTx.acceptEncryptedUserShare(
+				this.#ikaClient.ikaConfig,
+				this.#getCoordinatorObjectRef(),
+				dWallet.id.id,
+				destinationEncryptedUserSecretKeyShare.id.id,
+				await this.#userShareEncryptionKeys.getUserOutputSignatureForTransferredDWallet(
+					dWallet,
+					sourceEncryptedUserSecretKeyShare,
+					sourceEncryptionKey,
+				),
+				this.#transaction,
+			);
+
+			return this;
+		}
+
+		throw new Error(
+			'Invalid parameters: must provide either (userPublicOutput, encryptedUserSecretKeyShareId) for regular DWallet or (sourceEncryptionKey, sourceEncryptedUserSecretKeyShare, destinationEncryptedUserSecretKeyShare) for transferred DWallet',
+		);
 	}
 
 	/**
 	 * Register an encryption key for the current user on the specified curve.
 	 * This allows the user to participate in encrypted operations on the network.
 	 *
-	 * @param params - The parameters for registering the encryption key
 	 * @param params.curve - The elliptic curve identifier to register the key for
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
@@ -373,7 +314,6 @@ export class IkaTransaction {
 	 * Make the DWallet user secret key shares public, allowing them to be used without decryption.
 	 * This is useful for scenarios where the secret share can be publicly accessible.
 	 *
-	 * @param params - The parameters for making the secret key shares public
 	 * @param params.dWallet - The DWallet to make the shares public for
 	 * @param params.secretShare - The secret share data to make public
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
@@ -386,7 +326,7 @@ export class IkaTransaction {
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
+		dWallet: ZeroTrustDWallet | ImportedKeyDWallet;
 		secretShare: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -409,12 +349,11 @@ export class IkaTransaction {
 	 * Request a presign operation for a DWallet.
 	 * Presigning allows for faster signature generation by pre-computing part of the signature.
 	 *
-	 * @param params - The parameters for requesting the presign
 	 * @param params.dWallet - The DWallet to create the presign for
 	 * @param params.signatureAlgorithm - The signature algorithm identifier to use
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Object containing the unverified presign capability and updated transaction
+	 * @returns Unverified presign capability
 	 */
 	requestPresign({
 		dWallet,
@@ -426,10 +365,7 @@ export class IkaTransaction {
 		signatureAlgorithm: SignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): {
-		unverifiedPresignCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	} {
+	}): TransactionObjectArgument {
 		const unverifiedPresignCap = this.#requestPresign({
 			dWallet,
 			signatureAlgorithm,
@@ -437,102 +373,51 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		return {
-			unverifiedPresignCap,
-			transaction: this,
-		};
-	}
-
-	/**
-	 * Request a presign operation and transfer the capability to a specified receiver.
-	 * This allows delegation of the presign capability to another address.
-	 *
-	 * @param params - The parameters for requesting the presign
-	 * @param params.dWallet - The DWallet to create the presign for
-	 * @param params.signatureAlgorithm - The signature algorithm identifier to use
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @param params.receiver - The address that will receive the unverified presign capability
-	 * @returns The updated IkaTransaction instance
-	 */
-	requestPresignAndTransferCap({
-		dWallet,
-		signatureAlgorithm,
-		ikaCoin,
-		suiCoin,
-		receiver,
-	}: {
-		dWallet: DWallet;
-		signatureAlgorithm: SignatureAlgorithm;
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-		receiver: string;
-	}) {
-		const unverifiedPresignCap = this.#requestPresign({
-			dWallet,
-			signatureAlgorithm,
-			ikaCoin,
-			suiCoin,
-		});
-
-		this.#transaction.transferObjects([unverifiedPresignCap], receiver);
-
-		return this;
+		return unverifiedPresignCap;
 	}
 
 	/**
 	 * Approve a message for signing with a DWallet.
 	 * This creates an approval object that can be used in subsequent signing operations.
 	 *
-	 * @param params - The parameters for message approval
-	 * @param params.dWallet - The DWallet to approve the message for
+	 * @param params.dWalletCap - The dWalletCap object, that owns the dWallet
 	 * @param params.signatureAlgorithm - The signature algorithm to use
 	 * @param params.hashScheme - The hash scheme to apply to the message
 	 * @param params.message - The message bytes to approve for signing
-	 * @returns Object containing the message approval and updated transaction
+	 * @returns Message approval
 	 */
 	approveMessage({
-		dWallet,
+		dWalletCap,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	}: {
-		dWallet: DWallet;
+		dWalletCap: TransactionObjectArgument | string;
 		signatureAlgorithm: SignatureAlgorithm;
 		hashScheme: Hash;
 		message: Uint8Array;
-	}): {
-		messageApproval: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	} {
+	}): TransactionObjectArgument {
 		const messageApproval = coordinatorTx.approveMessage(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			dWallet.dwallet_cap_id,
+			this.#transaction.object(dWalletCap),
 			signatureAlgorithm,
 			hashScheme,
 			message,
 			this.#transaction,
 		);
 
-		return {
-			messageApproval,
-			transaction: this,
-		};
+		return messageApproval;
 	}
 
 	/**
 	 * Verify a presign capability to ensure it can be used for signing.
 	 * This converts an unverified presign capability into a verified one.
 	 *
-	 * @param params - The parameters for presign verification
 	 * @param params.presign - The presign object to verify
-	 * @returns Object containing the verified presign capability and updated transaction
+	 * @returns Verified presign capability
 	 */
-	verifyPresignCap({ presign }: { presign: Presign }): {
-		verifiedPresignCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	} {
+	verifyPresignCap({ presign }: { presign: Presign }): TransactionObjectArgument {
 		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
@@ -540,60 +425,49 @@ export class IkaTransaction {
 			this.#transaction,
 		);
 
-		return {
-			verifiedPresignCap,
-			transaction: this,
-		};
+		return verifiedPresignCap;
 	}
 
 	/**
 	 * Approve a message for signing with an imported key DWallet.
 	 * This is similar to approveMessage but specifically for DWallets created with imported keys.
 	 *
-	 * @param params - The parameters for imported key message approval
-	 * @param params.dWallet - The imported key DWallet to approve the message for
+	 * @param params.dWalletCap - The dWalletCap object, that owns the dWallet
 	 * @param params.signatureAlgorithm - The signature algorithm to use
 	 * @param params.hashScheme - The hash scheme to apply to the message
 	 * @param params.message - The message bytes to approve for signing
-	 * @returns Object containing the imported key message approval and updated transaction
+	 * @returns Imported key message approval
 	 */
 	approveImportedKeyMessage({
-		dWallet,
+		dWalletCap,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	}: {
-		dWallet: DWallet;
+		dWalletCap: TransactionObjectArgument | string;
 		signatureAlgorithm: SignatureAlgorithm;
 		hashScheme: Hash;
 		message: Uint8Array;
-	}): {
-		importedKeyMessageApproval: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	} {
+	}): TransactionObjectArgument {
 		const importedKeyMessageApproval = coordinatorTx.approveImportedKeyMessage(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			dWallet.dwallet_cap_id,
+			this.#transaction.object(dWalletCap),
 			signatureAlgorithm,
 			hashScheme,
 			message,
 			this.#transaction,
 		);
 
-		return {
-			importedKeyMessageApproval,
-			transaction: this,
-		};
+		return importedKeyMessageApproval;
 	}
 
 	/**
-	 * Sign a message using a DWallet with encrypted user shares.
+	 * Sign a message using a ZeroTrust DWallet with encrypted user shares.
 	 * This performs the actual signing operation using the presign and user's encrypted share.
 	 *
-	 * @param params - The parameters for signing
-	 * @param params.dWallet - The DWallet to sign with
-	 * @param params.messageApproval - The message approval from approveMessage
+	 * @param params.dWallet - The ZeroTrust DWallet to sign with
+	 * @param params.messageApproval - Message approval
 	 * @param params.hashScheme - The hash scheme used for the message
 	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
@@ -602,9 +476,8 @@ export class IkaTransaction {
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If user share encryption keys are not set or presign is not completed
 	 */
-	async sign({
+	async requestSign({
 		dWallet,
 		messageApproval,
 		hashScheme,
@@ -615,7 +488,7 @@ export class IkaTransaction {
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
+		dWallet: ZeroTrustDWallet;
 		messageApproval: TransactionObjectArgument;
 		hashScheme: Hash;
 		verifiedPresignCap: TransactionObjectArgument;
@@ -624,48 +497,28 @@ export class IkaTransaction {
 		message: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}) {
-		await this.#requestSign({
-			verifiedPresignCap,
-			messageApproval,
-			userSignatureInputs: {
-				activeDWallet: dWallet,
-				presign,
-				encryptedUserSecretKeyShare,
-				message,
-				hash: hashScheme,
-			},
-			ikaCoin,
-			suiCoin,
-		});
-
-		return this;
-	}
+	}): Promise<IkaTransaction>;
 
 	/**
-	 * Sign a message using a DWallet with a secret share.
-	 * This performs the actual signing operation using the presign and user's secret share.
+	 * Sign a message using a ZeroTrust DWallet with unencrypted secret shares.
+	 * This performs the actual signing operation using the presign and user's unencrypted share.
 	 *
 	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
 	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
-	 * This method is used when developer has access to the user's unencrypted secret share and public output which should be verified before using this method.
-	 *
-	 * @param params - The parameters for signing
-	 * @param params.dWallet - The DWallet to sign with
-	 * @param params.verifiedPresignCap - The verified presign capability
-	 * @param params.messageApproval - The message approval from approveMessage
+	 * @param params.dWallet - The ZeroTrust DWallet to sign with
+	 * @param params.messageApproval - Message approval
 	 * @param params.hashScheme - The hash scheme used for the message
+	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
-	 * @param params.secretShare - The secret share to use for signing
-	 * @param params.publicOutput - The public output to use for signing which should be verified before using this method.
+	 * @param params.secretShare - The user's unencrypted secret share
+	 * @param params.publicOutput - The user's public output
 	 * @param params.message - The message bytes to sign
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If presign is not completed or user share is not public
 	 */
-	async signWithSecretShare({
+	async requestSign({
 		dWallet,
 		messageApproval,
 		hashScheme,
@@ -677,7 +530,7 @@ export class IkaTransaction {
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
+		dWallet: ZeroTrustDWallet;
 		messageApproval: TransactionObjectArgument;
 		hashScheme: Hash;
 		verifiedPresignCap: TransactionObjectArgument;
@@ -687,88 +540,432 @@ export class IkaTransaction {
 		message: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}) {
-		await this.#requestSign({
-			verifiedPresignCap,
-			messageApproval,
-			userSignatureInputs: {
-				activeDWallet: dWallet,
-				publicOutput,
-				presign,
-				secretShare,
-				message,
-				hash: hashScheme,
-			},
-			ikaCoin,
-			suiCoin,
-		});
-
-		return this;
-	}
+	}): Promise<IkaTransaction>;
 
 	/**
-	 * Sign a message using a DWallet with public user shares.
-	 * This method is used when the user's secret key share has been made public.
+	 * Sign a message using a Shared DWallet with public shares.
+	 * This performs the actual signing operation using the DWallet's public shares.
+	 * No secret share or public output parameters are needed as they are available on the DWallet.
 	 *
-	 * @param params - The parameters for public signing
-	 * @param params.dWallet - The DWallet to sign with (must have public shares)
-	 * @param params.verifiedPresignCap - The verified presign capability
-	 * @param params.messageApproval - The message approval from approveMessage
+	 * @param params.dWallet - The Shared DWallet to sign with
+	 * @param params.messageApproval - Message approval
 	 * @param params.hashScheme - The hash scheme used for the message
+	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
 	 * @param params.message - The message bytes to sign
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If presign is not completed or user share is not public
 	 */
-	async signPublic({
+	async requestSign({
 		dWallet,
-		verifiedPresignCap,
 		messageApproval,
 		hashScheme,
+		verifiedPresignCap,
 		presign,
 		message,
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
-		verifiedPresignCap: TransactionObjectArgument;
+		dWallet: SharedDWallet;
 		messageApproval: TransactionObjectArgument;
 		hashScheme: Hash;
+		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		message: Uint8Array;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
+	}): Promise<IkaTransaction>;
+
+	/**
+	 * Universal sign method implementation that automatically detects the DWallet type and signing method.
+	 * This performs the actual signing operation using the presign and user's share (encrypted, secret, or public).
+	 * Only supports ZeroTrust and Shared DWallets. For Imported Key DWallets, use signWithImportedKey instead.
+	 *
+	 * @param params.dWallet - The DWallet to sign with (ZeroTrust or Shared DWallet)
+	 * @param params.messageApproval - Message approval
+	 * @param params.hashScheme - The hash scheme used for the message
+	 * @param params.verifiedPresignCap - The verified presign capability
+	 * @param params.presign - The completed presign object
+	 * @param params.encryptedUserSecretKeyShare - Optional: encrypted user secret key share (for ZeroTrust DWallets)
+	 * @param params.secretShare - Optional: unencrypted secret share (requires publicOutput, for ZeroTrust DWallets)
+	 * @param params.publicOutput - Optional: public output (required when using secretShare, for ZeroTrust DWallets)
+	 * @param params.message - The message bytes to sign
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to the updated IkaTransaction instance
+	 *
+	 * @example
+	 * // ZeroTrust DWallet - Zero-trust signing (encrypted shares)
+	 * await tx.requestSign({
+	 *   dWallet, // ZeroTrustDWallet
+	 *   messageApproval,
+	 *   encryptedUserSecretKeyShare,
+	 *   // ... other params
+	 * });
+	 *
+	 * @example
+	 * // ZeroTrust DWallet - Secret share signing
+	 * await tx.requestSign({
+	 *   dWallet, // ZeroTrustDWallet
+	 *   messageApproval,
+	 *   secretShare,
+	 *   publicOutput,
+	 *   // ... other params
+	 * });
+	 *
+	 * @example
+	 * // Shared DWallet - Public share signing (no secret params needed)
+	 * await tx.requestSign({
+	 *   dWallet, // SharedDWallet
+	 *   messageApproval,
+	 *   // ... other params (no secretShare/publicOutput needed)
+	 * });
+	 */
+
+	async requestSign({
+		dWallet,
+		messageApproval,
+		hashScheme,
+		verifiedPresignCap,
+		presign,
+		encryptedUserSecretKeyShare,
+		secretShare,
+		publicOutput,
+		message,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: ZeroTrustDWallet | SharedDWallet;
+		messageApproval: TransactionObjectArgument;
+		hashScheme: Hash;
+		verifiedPresignCap: TransactionObjectArgument;
+		presign: Presign;
+		encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
+		secretShare?: Uint8Array;
+		publicOutput?: Uint8Array;
+		message: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
 	}) {
-		this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
-		this.#assertDWalletPublicOutputSet(dWallet);
+		// Auto-detect share availability
+		const hasPublicShares = !!dWallet.public_user_secret_key_share;
 
-		await this.#requestSign({
-			verifiedPresignCap,
-			messageApproval,
-			userSignatureInputs: {
-				activeDWallet: dWallet,
-				presign,
-				// No need to verify public output in public user-share flows, as there is no zero-trust security in this model.
-				publicOutput: Uint8Array.from(dWallet.state.Active?.public_output),
-				secretShare: Uint8Array.from(dWallet.public_user_secret_key_share),
-				message,
-				hash: hashScheme,
-			},
-			ikaCoin,
-			suiCoin,
-		});
+		// Regular DWallet signing (ZeroTrust and Shared only)
+		if (encryptedUserSecretKeyShare) {
+			// Encrypted shares
+			await this.#requestSign({
+				verifiedPresignCap,
+				messageApproval,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					encryptedUserSecretKeyShare,
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+			return this;
+		} else if (secretShare && publicOutput) {
+			// Secret share provided
+			await this.#requestSign({
+				verifiedPresignCap,
+				messageApproval,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					secretShare,
+					publicOutput,
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+			return this;
+		} else if (hasPublicShares) {
+			// Public shares available on DWallet
+			this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
+			this.#assertDWalletPublicOutputSet(dWallet);
 
-		return this;
+			await this.#requestSign({
+				verifiedPresignCap,
+				messageApproval,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					// No need to verify public output in public user-share flows, as there is no zero-trust security in this model.
+					publicOutput: Uint8Array.from(dWallet.state.Active?.public_output),
+					secretShare: Uint8Array.from(dWallet.public_user_secret_key_share),
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+			return this;
+		} else {
+			throw new Error(
+				'DWallet signing requires either encryptedUserSecretKeyShare, (secretShare + publicOutput), or public_user_secret_key_share on the DWallet',
+			);
+		}
 	}
 
 	/**
-	 * Request a future sign operation, which creates a partial user signature that can be used later.
-	 * This allows for pre-signing messages that can be completed later without revealing the full signature.
+	 * Sign a message using an Imported Key DWallet with encrypted user shares.
+	 * This performs the actual signing operation using the presign and user's encrypted share.
 	 *
-	 * @param params - The parameters for requesting future sign
-	 * @param params.dWallet - The DWallet to create the future sign for
+	 * @param params.dWallet - The Imported Key DWallet to sign with
+	 * @param params.importedKeyMessageApproval - Imported key message approval
+	 * @param params.hashScheme - The hash scheme used for the message
+	 * @param params.verifiedPresignCap - The verified presign capability
+	 * @param params.presign - The completed presign object
+	 * @param params.encryptedUserSecretKeyShare - The user's encrypted secret key share
+	 * @param params.message - The message bytes to sign
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to the updated IkaTransaction instance
+	 */
+	async requestSignWithImportedKey({
+		dWallet,
+		importedKeyMessageApproval,
+		hashScheme,
+		verifiedPresignCap,
+		presign,
+		encryptedUserSecretKeyShare,
+		message,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: ImportedKeyDWallet;
+		importedKeyMessageApproval: TransactionObjectArgument;
+		hashScheme: Hash;
+		verifiedPresignCap: TransactionObjectArgument;
+		presign: Presign;
+		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+		message: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<IkaTransaction>;
+
+	/**
+	 * Sign a message using an Imported Key DWallet with unencrypted secret shares.
+	 * This performs the actual signing operation using the presign and user's unencrypted share.
+	 *
+	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
+	 * which must be verified by the caller in order to guarantee zero-trust security.
+	 *
+	 * @param params.dWallet - The Imported Key DWallet to sign with
+	 * @param params.importedKeyMessageApproval - Imported key message approval
+	 * @param params.hashScheme - The hash scheme used for the message
+	 * @param params.verifiedPresignCap - The verified presign capability
+	 * @param params.presign - The completed presign object
+	 * @param params.secretShare - The user's unencrypted secret share
+	 * @param params.publicOutput - The user's public output
+	 * @param params.message - The message bytes to sign
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to the updated IkaTransaction instance
+	 */
+	async requestSignWithImportedKey({
+		dWallet,
+		importedKeyMessageApproval,
+		hashScheme,
+		verifiedPresignCap,
+		presign,
+		secretShare,
+		publicOutput,
+		message,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: ImportedKeyDWallet;
+		importedKeyMessageApproval: TransactionObjectArgument;
+		hashScheme: Hash;
+		verifiedPresignCap: TransactionObjectArgument;
+		presign: Presign;
+		secretShare: Uint8Array;
+		publicOutput: Uint8Array;
+		message: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<IkaTransaction>;
+
+	/**
+	 * Sign a message using an ImportedShared DWallet with public shares.
+	 * This performs the actual signing operation using the DWallet's public shares.
+	 * No secret share or public output parameters are needed as they are available on the DWallet.
+	 *
+	 * @param params.dWallet - The ImportedShared DWallet to sign with
+	 * @param params.importedKeyMessageApproval - Imported key message approval
+	 * @param params.hashScheme - The hash scheme used for the message
+	 * @param params.verifiedPresignCap - The verified presign capability
+	 * @param params.presign - The completed presign object
+	 * @param params.message - The message bytes to sign
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to the updated IkaTransaction instance
+	 */
+	async requestSignWithImportedKey({
+		dWallet,
+		importedKeyMessageApproval,
+		hashScheme,
+		verifiedPresignCap,
+		presign,
+		message,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: ImportedSharedDWallet;
+		importedKeyMessageApproval: TransactionObjectArgument;
+		hashScheme: Hash;
+		verifiedPresignCap: TransactionObjectArgument;
+		presign: Presign;
+		message: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<IkaTransaction>;
+
+	/**
+	 * Universal signWithImportedKey method implementation that automatically detects the Imported Key DWallet type and signing method.
+	 * This performs the actual signing operation using the presign and user's share (encrypted, secret, or public).
+	 *
+	 * @param params.dWallet - The Imported Key DWallet to sign with (type and share availability auto-detected)
+	 * @param params.importedKeyMessageApproval - Imported key message approval
+	 * @param params.hashScheme - The hash scheme used for the message
+	 * @param params.verifiedPresignCap - The verified presign capability
+	 * @param params.presign - The completed presign object
+	 * @param params.encryptedUserSecretKeyShare - Optional: encrypted user secret key share (for ImportedKeyDWallet)
+	 * @param params.secretShare - Optional: unencrypted secret share (requires publicOutput, for ImportedKeyDWallet)
+	 * @param params.publicOutput - Optional: public output (required when using secretShare, for ImportedKeyDWallet)
+	 * @param params.message - The message bytes to sign
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to the updated IkaTransaction instance
+	 *
+	 * @example
+	 * // ImportedKeyDWallet - Zero-trust signing (encrypted shares)
+	 * await tx.requestSignWithImportedKey({
+	 *   dWallet, // ImportedKeyDWallet
+	 *   importedKeyMessageApproval,
+	 *   encryptedUserSecretKeyShare,
+	 *   // ... other params
+	 * });
+	 *
+	 * @example
+	 * // ImportedKeyDWallet - Secret share signing
+	 * await tx.requestSignWithImportedKey({
+	 *   dWallet, // ImportedKeyDWallet
+	 *   importedKeyMessageApproval,
+	 *   secretShare,
+	 *   publicOutput,
+	 *   // ... other params
+	 * });
+	 *
+	 * @example
+	 * // ImportedSharedDWallet - Public share signing (no secret params needed)
+	 * await tx.requestSignWithImportedKey({
+	 *   dWallet, // ImportedSharedDWallet
+	 *   importedKeyMessageApproval,
+	 *   // ... other params (no secretShare/publicOutput needed)
+	 * });
+	 */
+	async requestSignWithImportedKey({
+		dWallet,
+		importedKeyMessageApproval,
+		hashScheme,
+		verifiedPresignCap,
+		presign,
+		encryptedUserSecretKeyShare,
+		secretShare,
+		publicOutput,
+		message,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: ImportedKeyDWallet | ImportedSharedDWallet;
+		importedKeyMessageApproval: TransactionObjectArgument;
+		hashScheme: Hash;
+		verifiedPresignCap: TransactionObjectArgument;
+		presign: Presign;
+		encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
+		secretShare?: Uint8Array;
+		publicOutput?: Uint8Array;
+		message: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		if (!dWallet.is_imported_key_dwallet) {
+			throw new Error('dWallet must be an ImportedKeyDWallet');
+		}
+
+		// Auto-detect share availability
+		const hasPublicShares = !!dWallet.public_user_secret_key_share;
+
+		// Auto-detect signing method based on available shares and parameters
+		if (encryptedUserSecretKeyShare) {
+			// Encrypted shares
+			await this.#requestImportedKeySign({
+				verifiedPresignCap,
+				importedKeyMessageApproval,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					encryptedUserSecretKeyShare,
+					presign,
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+			return this;
+		} else if (secretShare && publicOutput) {
+			// Secret share provided
+			await this.#requestImportedKeySign({
+				verifiedPresignCap,
+				importedKeyMessageApproval,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					secretShare,
+					publicOutput,
+					presign,
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+			return this;
+		} else if (hasPublicShares) {
+			// Public shares available on DWallet
+			this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
+			await this.#requestImportedKeySign({
+				verifiedPresignCap,
+				importedKeyMessageApproval,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+			return this;
+		} else {
+			throw new Error(
+				'Imported Key DWallet signing requires either encryptedUserSecretKeyShare, (secretShare + publicOutput), or public_user_secret_key_share on the DWallet',
+			);
+		}
+	}
+
+	/**
+	 * Request a future sign operation with encrypted shares for ZeroTrust DWallets and keep capability.
+	 * This creates a partial user signature capability that is returned with the transaction.
+	 *
+	 * @param params.dWallet - The ZeroTrust DWallet to create the future sign for
 	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
 	 * @param params.encryptedUserSecretKeyShare - The user's encrypted secret key share
@@ -776,8 +973,7 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to an object containing the unverified partial signature capability and updated transaction
-	 * @throws {Error} If user share encryption keys are not set or presign is not completed
+	 * @returns Promise resolving to the unverified partial user signature capability
 	 */
 	async requestFutureSign({
 		dWallet,
@@ -789,48 +985,24 @@ export class IkaTransaction {
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
-		hashScheme: Hash;
+		dWallet: ZeroTrustDWallet;
 		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		message: Uint8Array;
+		hashScheme: Hash;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}> {
-		const unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
-			verifiedPresignCap,
-			userSignatureInputs: {
-				activeDWallet: dWallet,
-				presign,
-				encryptedUserSecretKeyShare,
-				message,
-				hash: hashScheme,
-			},
-			ikaCoin,
-			suiCoin,
-		});
-
-		return {
-			unverifiedPartialUserSignatureCap,
-			transaction: this,
-		};
-	}
+	}): Promise<TransactionObjectArgument>;
 
 	/**
-	 * Request a future sign operation, which creates a partial user signature that can be used later.
-	 * This allows for pre-signing messages that can be completed later without revealing the full signature.
+	 * Request a future sign operation with secret shares for ZeroTrust DWallets and keep capability.
+	 * This creates a partial user signature capability that is returned with the transaction.
 	 *
 	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
 	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
-	 * This method is used when developer has access to the user's unencrypted secret share and public output which should be verified before using this method.
-	 *
-	 * @param params - The parameters for requesting future sign
-	 * @param params.dWallet - The DWallet to create the future sign for
+	 * @param params.dWallet - The ZeroTrust DWallet to create the future sign for
 	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
 	 * @param params.secretShare - The user's unencrypted secret share
@@ -839,10 +1011,9 @@ export class IkaTransaction {
 	 * @param params.hashScheme - The hash scheme to use for the message
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to an object containing the unverified partial signature capability and updated transaction
-	 * @throws {Error} If user share encryption keys are not set or presign is not completed
+	 * @returns Promise resolving to the unverified partial user signature capability
 	 */
-	async requestFutureSignWithSecretShare({
+	async requestFutureSign({
 		dWallet,
 		verifiedPresignCap,
 		presign,
@@ -853,119 +1024,229 @@ export class IkaTransaction {
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
-		hashScheme: Hash;
+		dWallet: ZeroTrustDWallet;
 		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		secretShare: Uint8Array;
 		publicOutput: Uint8Array;
 		message: Uint8Array;
+		hashScheme: Hash;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		unverifiedPartialUserSignatureCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}> {
-		const unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
-			verifiedPresignCap,
-			userSignatureInputs: {
-				activeDWallet: dWallet,
-				presign,
-				secretShare,
-				publicOutput,
-				message,
-				hash: hashScheme,
-			},
-			ikaCoin,
-			suiCoin,
-		});
+	}): Promise<TransactionObjectArgument>;
 
-		return {
-			unverifiedPartialUserSignatureCap,
-			transaction: this,
-		};
+	/**
+	 * Request a future sign operation with public shares for Shared DWallets and keep capability.
+	 * This creates a partial user signature capability that is returned with the transaction.
+	 * No secret share or public output parameters are needed as they are available on the DWallet.
+	 *
+	 * @param params.dWallet - The Shared DWallet to create the future sign for
+	 * @param params.verifiedPresignCap - The verified presign capability
+	 * @param params.presign - The completed presign object
+	 * @param params.message - The message bytes to pre-sign
+	 * @param params.hashScheme - The hash scheme to use for the message
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to the unverified partial user signature capability
+	 */
+	async requestFutureSign({
+		dWallet,
+		verifiedPresignCap,
+		presign,
+		message,
+		hashScheme,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: SharedDWallet;
+		verifiedPresignCap: TransactionObjectArgument;
+		presign: Presign;
+		message: Uint8Array;
+		hashScheme: Hash;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<TransactionObjectArgument>;
+
+	/**
+	 * Universal requestFutureSign method implementation that automatically detects DWallet type and share availability.
+	 * This method intelligently routes to the appropriate future signing implementation.
+	 * Only supports ZeroTrust and Shared DWallets. For Imported Key DWallets, use requestFutureSignWithImportedKey instead.
+	 *
+	 * @param params.dWallet - The DWallet to create the future sign for (ZeroTrust or Shared DWallet)
+	 * @param params.verifiedPresignCap - The verified presign capability
+	 * @param params.presign - The completed presign object
+	 * @param params.encryptedUserSecretKeyShare - Optional: encrypted user secret key share (for ZeroTrust DWallets)
+	 * @param params.secretShare - Optional: unencrypted secret share (requires publicOutput, for ZeroTrust DWallets)
+	 * @param params.publicOutput - Optional: public output (required when using secretShare, for ZeroTrust DWallets)
+	 * @param params.message - The message bytes to pre-sign
+	 * @param params.hashScheme - The hash scheme to use for the message
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to unverified partial user signature capability
+	 *
+	 * @example
+	 * // ZeroTrust DWallet - Keep capability (encrypted shares)
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSign({
+	 *   dWallet, // ZeroTrustDWallet
+	 *   encryptedUserSecretKeyShare,
+	 *   // ... other params
+	 * });
+	 *
+	 * @example
+	 * // ZeroTrust DWallet
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSign({
+	 *   dWallet, // ZeroTrustDWallet
+	 *   secretShare,
+	 *   publicOutput,
+	 *   // ... other params
+	 * });
+	 *
+	 * @example
+	 * // Shared DWallet - Public share signing (no secret params needed)
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSign({
+	 *   dWallet, // SharedDWallet
+	 *   // ... other params (no secretShare/publicOutput needed)
+	 * });
+	 */
+	async requestFutureSign({
+		dWallet,
+		verifiedPresignCap,
+		presign,
+		encryptedUserSecretKeyShare,
+		secretShare,
+		publicOutput,
+		message,
+		hashScheme,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: ZeroTrustDWallet | SharedDWallet;
+		verifiedPresignCap: TransactionObjectArgument;
+		presign: Presign;
+		encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
+		secretShare?: Uint8Array;
+		publicOutput?: Uint8Array;
+		message: Uint8Array;
+		hashScheme: Hash;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<TransactionObjectArgument> {
+		// Auto-detect share availability
+		const hasPublicShares = !!dWallet.public_user_secret_key_share;
+
+		let unverifiedPartialUserSignatureCap: TransactionObjectArgument;
+
+		// Auto-detect signing method based on available shares and parameters
+		if (encryptedUserSecretKeyShare) {
+			// Encrypted shares
+			unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
+				verifiedPresignCap,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					encryptedUserSecretKeyShare,
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+		} else if (secretShare && publicOutput) {
+			// Secret share provided
+			unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
+				verifiedPresignCap,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					secretShare,
+					publicOutput,
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+		} else if (hasPublicShares) {
+			// Public shares available on DWallet
+			this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
+			this.#assertDWalletPublicOutputSet(dWallet);
+
+			unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
+				verifiedPresignCap,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					// No need to verify public output in public user-share flows, as there is no zero-trust security in this model.
+					publicOutput: Uint8Array.from(dWallet.state.Active?.public_output),
+					secretShare: Uint8Array.from(dWallet.public_user_secret_key_share),
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+		} else {
+			throw new Error(
+				'DWallet future signing requires either encryptedUserSecretKeyShare, (secretShare + publicOutput), or public_user_secret_key_share on the DWallet',
+			);
+		}
+
+		return unverifiedPartialUserSignatureCap;
 	}
 
 	/**
-	 * Request a future sign operation and transfer the capability to a specified receiver.
-	 * This creates a partial user signature capability that can be delegated to another address.
+	 * Request a future sign operation with encrypted shares for Imported Key DWallets and keep capability.
+	 * This creates a partial user signature capability that is returned with the transaction.
 	 *
-	 * @param params - The parameters for requesting future sign and keep
-	 * @param params.dWallet - The DWallet to create the future sign for
+	 * @param params.dWallet - The Imported Key DWallet to create the future sign for
 	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
 	 * @param params.encryptedUserSecretKeyShare - The user's encrypted secret key share
 	 * @param params.message - The message bytes to pre-sign
 	 * @param params.hashScheme - The hash scheme to use for the message
-	 * @param params.receiver - The address that will receive the partial signature capability
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If user share encryption keys are not set or presign is not completed
+	 * @returns Promise resolving to the unverified partial user signature capability
 	 */
-	async requestFutureSignAndTransferCap({
+	async requestFutureSignWithImportedKey({
 		dWallet,
 		verifiedPresignCap,
 		presign,
 		encryptedUserSecretKeyShare,
 		message,
 		hashScheme,
-		receiver,
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
+		dWallet: ImportedKeyDWallet;
 		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		message: Uint8Array;
 		hashScheme: Hash;
-		receiver: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}) {
-		const unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
-			verifiedPresignCap,
-			userSignatureInputs: {
-				activeDWallet: dWallet,
-				presign,
-				encryptedUserSecretKeyShare,
-				message,
-				hash: hashScheme,
-			},
-			ikaCoin,
-			suiCoin,
-		});
-
-		this.#transaction.transferObjects([unverifiedPartialUserSignatureCap], receiver);
-
-		return this;
-	}
+	}): Promise<TransactionObjectArgument>;
 
 	/**
-	 * Request a future sign operation and transfer the capability to a specified receiver.
-	 * This creates a partial user signature capability that can be delegated to another address.
+	 * Request a future sign operation with secret shares for Imported Key DWallets and keep capability.
+	 * This creates a partial user signature capability that is returned with the transaction.
 	 *
 	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
 	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
-	 * This method is used when developer has access to the user's unencrypted secret share.
-	 *
-	 * @param params - The parameters for requesting future sign and keep
-	 * @param params.dWallet - The DWallet to create the future sign for
+	 * @param params.dWallet - The Imported Key DWallet to create the future sign for
 	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
 	 * @param params.secretShare - The user's unencrypted secret share
 	 * @param params.publicOutput - The user's public output
 	 * @param params.message - The message bytes to pre-sign
 	 * @param params.hashScheme - The hash scheme to use for the message
-	 * @param params.receiver - The address that will receive the partial signature capability
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If user share encryption keys are not set or presign is not completed
+	 * @returns Promise resolving to the unverified partial user signature capability
 	 */
-	async requestFutureSignAndTransferCapWithSecretShare({
+	async requestFutureSignWithImportedKey({
 		dWallet,
 		verifiedPresignCap,
 		presign,
@@ -973,58 +1254,191 @@ export class IkaTransaction {
 		publicOutput,
 		message,
 		hashScheme,
-		receiver,
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
+		dWallet: ImportedKeyDWallet;
 		verifiedPresignCap: TransactionObjectArgument;
 		presign: Presign;
 		secretShare: Uint8Array;
 		publicOutput: Uint8Array;
 		message: Uint8Array;
 		hashScheme: Hash;
-		receiver: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}) {
-		const unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
-			verifiedPresignCap,
-			userSignatureInputs: {
-				activeDWallet: dWallet,
-				presign,
-				secretShare,
-				publicOutput,
-				message,
-				hash: hashScheme,
-			},
-			ikaCoin,
-			suiCoin,
-		});
+	}): Promise<TransactionObjectArgument>;
 
-		this.#transaction.transferObjects([unverifiedPartialUserSignatureCap], receiver);
+	/**
+	 * Request a future sign operation with public shares for ImportedShared DWallets and keep capability.
+	 * This creates a partial user signature capability that is returned with the transaction.
+	 * No secret share or public output parameters are needed as they are available on the DWallet.
+	 *
+	 * @param params.dWallet - The ImportedShared DWallet to create the future sign for
+	 * @param params.verifiedPresignCap - The verified presign capability
+	 * @param params.presign - The completed presign object
+	 * @param params.message - The message bytes to pre-sign
+	 * @param params.hashScheme - The hash scheme to use for the message
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to the unverified partial user signature capability
+	 */
+	async requestFutureSignWithImportedKey({
+		dWallet,
+		verifiedPresignCap,
+		presign,
+		message,
+		hashScheme,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: ImportedSharedDWallet;
+		verifiedPresignCap: TransactionObjectArgument;
+		presign: Presign;
+		message: Uint8Array;
+		hashScheme: Hash;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<TransactionObjectArgument>;
 
-		return this;
+	/**
+	 * Universal requestFutureSignWithImportedKey method implementation that automatically detects the Imported Key DWallet type and signing method.
+	 * This method intelligently routes to the appropriate future signing implementation for Imported Key DWallets.
+	 *
+	 * @param params.dWallet - The Imported Key DWallet to create the future sign for (type and share availability auto-detected)
+	 * @param params.verifiedPresignCap - The verified presign capability
+	 * @param params.presign - The completed presign object
+	 * @param params.encryptedUserSecretKeyShare - Optional: encrypted user secret key share (for ImportedKeyDWallet)
+	 * @param params.secretShare - Optional: unencrypted secret share (requires publicOutput, for ImportedKeyDWallet)
+	 * @param params.publicOutput - Optional: public output (required when using secretShare, for ImportedKeyDWallet)
+	 * @param params.message - The message bytes to pre-sign
+	 * @param params.hashScheme - The hash scheme to use for the message
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to unverified partial user signature capability
+	 *
+	 * @example
+	 * // ImportedKeyDWallet - Keep capability (encrypted shares)
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSignWithImportedKey({
+	 *   dWallet, // ImportedKeyDWallet
+	 *   encryptedUserSecretKeyShare,
+	 *   // ... other params
+	 * });
+	 *
+	 * @example
+	 * // ImportedKeyDWallet
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSignWithImportedKey({
+	 *   dWallet, // ImportedKeyDWallet
+	 *   secretShare,
+	 *   publicOutput,
+	 *   // ... other params
+	 * });
+	 *
+	 * @example
+	 * // ImportedSharedDWallet - Public share signing (no secret params needed)
+	 * const unverifiedPartialUserSignatureCap = await tx.requestFutureSignWithImportedKey({
+	 *   dWallet, // ImportedSharedDWallet
+	 *   // ... other params (no secretShare/publicOutput needed)
+	 * });
+	 */
+	async requestFutureSignWithImportedKey({
+		dWallet,
+		verifiedPresignCap,
+		presign,
+		encryptedUserSecretKeyShare,
+		secretShare,
+		publicOutput,
+		message,
+		hashScheme,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: ImportedKeyDWallet | ImportedSharedDWallet;
+		verifiedPresignCap: TransactionObjectArgument;
+		presign: Presign;
+		encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
+		secretShare?: Uint8Array;
+		publicOutput?: Uint8Array;
+		message: Uint8Array;
+		hashScheme: Hash;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<TransactionObjectArgument> {
+		// Auto-detect share availability
+		const hasPublicShares = !!dWallet.public_user_secret_key_share;
+
+		let unverifiedPartialUserSignatureCap: TransactionObjectArgument;
+
+		// Auto-detect signing method based on available shares and parameters
+		if (encryptedUserSecretKeyShare) {
+			// Encrypted shares
+			unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
+				verifiedPresignCap,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					encryptedUserSecretKeyShare,
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+		} else if (secretShare && publicOutput) {
+			// Secret share provided
+			unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
+				verifiedPresignCap,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					secretShare,
+					publicOutput,
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+		} else if (hasPublicShares) {
+			// Public shares available on DWallet
+			this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
+
+			unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
+				verifiedPresignCap,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					message,
+					hash: hashScheme,
+				},
+				ikaCoin,
+				suiCoin,
+			});
+		} else {
+			throw new Error(
+				'Imported Key DWallet future signing requires either encryptedUserSecretKeyShare, (secretShare + publicOutput), or public_user_secret_key_share on the DWallet',
+			);
+		}
+
+		return unverifiedPartialUserSignatureCap;
 	}
 
 	/**
 	 * Complete a future sign operation using a previously created partial user signature.
 	 * This method takes a partial signature created earlier and combines it with message approval to create a full signature.
 	 *
-	 * @param params - The parameters for completing the future sign
-	 * @param params.partialUserSignature - The partial user signature created by requestFutureSign
+	 * @param params.partialUserSignatureCap - The partial user signature capability created by requestFutureSign
 	 * @param params.messageApproval - The message approval from approveMessage
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns The updated IkaTransaction instance
 	 */
 	futureSign({
-		partialUserSignature,
+		partialUserSignatureCap,
 		messageApproval,
 		ikaCoin,
 		suiCoin,
 	}: {
-		partialUserSignature: PartialUserSignature;
+		partialUserSignatureCap: TransactionObjectArgument | string;
 		messageApproval: TransactionObjectArgument;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -1035,7 +1449,7 @@ export class IkaTransaction {
 			coordinatorTx.verifyPartialUserSignatureCap(
 				this.#ikaClient.ikaConfig,
 				this.#getCoordinatorObjectRef(),
-				this.#transaction.object(partialUserSignature.cap_id),
+				this.#transaction.object(partialUserSignatureCap),
 				this.#transaction,
 			),
 			messageApproval,
@@ -1049,20 +1463,18 @@ export class IkaTransaction {
 	}
 
 	/**
-	 * Request verification for an imported DWallet key.
+	 * Request verification for an Imported Key DWallet key and keep the capability.
 	 * This method creates a DWallet from an existing cryptographic key that was generated outside the network.
 	 *
-	 * @param params - The parameters for imported DWallet verification
-	 * @param params.importDWalletVerificationRequestInput - The prepared verification data from prepareImportDWalletVerification
+	 * @param params.importDWalletVerificationRequestInput - The prepared verification data from prepareImportedKeyDWalletVerification
 	 * @param params.curve - The elliptic curve identifier used for the imported key
 	 * @param params.signerPublicKey - The public key of the transaction signer
 	 * @param params.sessionIdentifier - Unique session identifier for this operation
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to an object containing the imported key DWallet capability and updated transaction
-	 * @throws {Error} If user share encryption keys are not set
+	 * @returns Promise resolving to imported key DWallet capability
 	 */
-	async requestImportedDWalletVerification({
+	async requestImportedKeyDWalletVerification({
 		importDWalletVerificationRequestInput,
 		curve,
 		signerPublicKey,
@@ -1076,10 +1488,7 @@ export class IkaTransaction {
 		sessionIdentifier: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<{
-		ImportedKeyDWalletCap: TransactionObjectArgument;
-		transaction: IkaTransaction;
-	}> {
+	}): Promise<TransactionObjectArgument> {
 		const importedKeyDWalletVerificationCap = await this.#requestImportedKeyDwalletVerification({
 			importDWalletVerificationRequestInput,
 			curve,
@@ -1089,288 +1498,42 @@ export class IkaTransaction {
 			suiCoin,
 		});
 
-		return {
-			ImportedKeyDWalletCap: importedKeyDWalletVerificationCap,
-			transaction: this,
-		};
+		return importedKeyDWalletVerificationCap;
 	}
 
 	/**
-	 * Request verification for an imported DWallet key and transfer the capability to a specified receiver.
-	 * This creates an imported DWallet and delegates the capability to another address.
-	 *
-	 * @param params - The parameters for imported DWallet verification and keep
-	 * @param params.importDWalletVerificationRequestInput - The prepared verification data from prepareImportDWalletVerification
-	 * @param params.curve - The elliptic curve identifier used for the imported key
-	 * @param params.signerPublicKey - The public key of the transaction signer
-	 * @param params.sessionIdentifier - Unique session identifier for this operation
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @param params.receiver - The address that will receive the imported key DWallet capability
-	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If user share encryption keys are not set
-	 */
-	async requestImportedDWalletVerificationAndTransferCap({
-		importDWalletVerificationRequestInput,
-		curve,
-		signerPublicKey,
-		sessionIdentifier,
-		ikaCoin,
-		suiCoin,
-		receiver,
-	}: {
-		importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput;
-		curve: Curve;
-		signerPublicKey: Uint8Array;
-		sessionIdentifier: string;
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-		receiver: string;
-	}) {
-		const importedKeyDWalletVerificationCap = await this.#requestImportedKeyDwalletVerification({
-			importDWalletVerificationRequestInput,
-			curve,
-			signerPublicKey,
-			sessionIdentifier,
-			ikaCoin,
-			suiCoin,
-		});
-
-		this.#transaction.transferObjects([importedKeyDWalletVerificationCap], receiver);
-
-		return this;
-	}
-
-	/**
-	 * Sign a message using a DWallet created from an imported key with encrypted user shares.
-	 * This method is specifically for DWallets that were created from imported keys rather than generated through DKG.
-	 *
-	 * @param params - The parameters for signing with imported DWallet
-	 * @param params.dWallet - The imported key DWallet to sign with
-	 * @param params.importedKeyMessageApproval - The message approval from approveImportedKeyMessage
-	 * @param params.verifiedPresignCap - The verified presign capability
-	 * @param params.presign - The completed presign object
-	 * @param params.hashScheme - The hash scheme used for the message
-	 * @param params.message - The message bytes to sign
-	 * @param params.encryptedUserSecretKeyShare - The user's encrypted secret key share
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If user share encryption keys are not set or presign is not completed
-	 */
-	async signWithImportedDWallet({
-		dWallet,
-		importedKeyMessageApproval,
-		verifiedPresignCap,
-		presign,
-		hashScheme,
-		message,
-		encryptedUserSecretKeyShare,
-		ikaCoin,
-		suiCoin,
-	}: {
-		dWallet: DWallet;
-		importedKeyMessageApproval: TransactionObjectArgument;
-		verifiedPresignCap: TransactionObjectArgument;
-		presign: Presign;
-		hashScheme: Hash;
-		message: Uint8Array;
-		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-	}) {
-		await this.#requestImportedKeySign({
-			verifiedPresignCap,
-			importedKeyMessageApproval,
-			userSignatureInputs: {
-				activeDWallet: dWallet,
-				encryptedUserSecretKeyShare,
-				presign,
-				message,
-				hash: hashScheme,
-			},
-			ikaCoin,
-			suiCoin,
-		});
-
-		return this;
-	}
-
-	/**
-	 * Sign a message using a DWallet created from an imported key with encrypted user shares.
-	 * This method is specifically for DWallets that were created from imported keys rather than generated through DKG.
-	 *
-	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
-	 * which must be verified by the caller in order to guarantee zero-trust security.
-	 *
-	 * This method is used when developer has access to the user's unencrypted secret share.
-	 *
-	 * @param params - The parameters for signing with imported DWallet
-	 * @param params.dWallet - The imported key DWallet to sign with
-	 * @param params.importedKeyMessageApproval - The message approval from approveImportedKeyMessage
-	 * @param params.verifiedPresignCap - The verified presign capability
-	 * @param params.presign - The completed presign object
-	 * @param params.hashScheme - The hash scheme used for the message
-	 * @param params.message - The message bytes to sign
-	 * @param params.secretShare - The user's unencrypted secret share
-	 * @param params.publicOutput - The public output to use for signing which should be verified before using this method.
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If user share encryption keys are not set or presign is not completed
-	 */
-	async signWithImportedDWalletWithSecretShare({
-		dWallet,
-		importedKeyMessageApproval,
-		verifiedPresignCap,
-		presign,
-		hashScheme,
-		message,
-		secretShare,
-		publicOutput,
-		ikaCoin,
-		suiCoin,
-	}: {
-		dWallet: DWallet;
-		importedKeyMessageApproval: TransactionObjectArgument;
-		verifiedPresignCap: TransactionObjectArgument;
-		presign: Presign;
-		hashScheme: Hash;
-		message: Uint8Array;
-		secretShare: Uint8Array;
-		publicOutput: Uint8Array;
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-	}) {
-		await this.#requestImportedKeySign({
-			verifiedPresignCap,
-			importedKeyMessageApproval,
-			userSignatureInputs: {
-				activeDWallet: dWallet,
-				secretShare,
-				publicOutput,
-				presign,
-				message,
-				hash: hashScheme,
-			},
-			ikaCoin,
-			suiCoin,
-		});
-
-		return this;
-	}
-
-	/**
-	 * Sign a message using a DWallet created from an imported key with public user shares.
-	 * This method is used when the imported DWallet's user secret key share has been made public.
-	 *
-	 * @param params - The parameters for signing with imported DWallet using public shares
-	 * @param params.dWallet - The imported key DWallet to sign with (must have public shares)
-	 * @param params.importedKeyMessageApproval - The message approval from approveImportedKeyMessage
-	 * @param params.verifiedPresignCap - The verified presign capability
-	 * @param params.presign - The completed presign object
-	 * @param params.hashScheme - The hash scheme used for the message
-	 * @param params.message - The message bytes to sign
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If user share encryption keys are not set, presign is not completed, or DWallet public user secret key share is not set
-	 */
-	async signWithImportedDWalletPublic({
-		dWallet,
-		importedKeyMessageApproval,
-		verifiedPresignCap,
-		presign,
-		hashScheme,
-		message,
-		ikaCoin,
-		suiCoin,
-	}: {
-		dWallet: DWallet;
-		importedKeyMessageApproval: TransactionObjectArgument;
-		verifiedPresignCap: TransactionObjectArgument;
-		presign: Presign;
-		hashScheme: Hash;
-		message: Uint8Array;
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-	}) {
-		this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
-
-		await this.#requestImportedKeySign({
-			verifiedPresignCap,
-			importedKeyMessageApproval,
-			userSignatureInputs: {
-				activeDWallet: dWallet,
-				presign,
-				message,
-				hash: hashScheme,
-			},
-			ikaCoin,
-			suiCoin,
-		});
-
-		return this;
-	}
-
-	/**
-	 * Transfer an encrypted user share from the current user to another address.
+	 * Transfer an encrypted user share from the current user to another address using encrypted shares.
 	 * This re-encrypts the user's share with the destination address's encryption key.
+	 * The encrypted share is automatically decrypted internally.
 	 *
-	 * @param params - The parameters for transferring encrypted user share
 	 * @param params.dWallet - The DWallet whose user share is being transferred
 	 * @param params.destinationEncryptionKeyAddress - The Sui address that will receive the re-encrypted share
 	 * @param params.sourceEncryptedUserSecretKeyShare - The current user's encrypted secret key share
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If user share encryption keys are not set
 	 */
-	async transferUserShare({
+	async requestReEncryptUserShareFor({
 		dWallet,
 		destinationEncryptionKeyAddress,
 		sourceEncryptedUserSecretKeyShare,
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
+		dWallet: ZeroTrustDWallet | ImportedKeyDWallet;
 		destinationEncryptionKeyAddress: string;
 		sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}) {
-		if (!this.#userShareEncryptionKeys) {
-			throw new Error('User share encryption keys are not set');
-		}
-
-		const { secretShare: sourceSecretShare } = await this.#userShareEncryptionKeys.decryptUserShare(
-			dWallet,
-			sourceEncryptedUserSecretKeyShare,
-			await this.#ikaClient.getProtocolPublicParameters(dWallet),
-		);
-
-		await this.#requestReEncryptUserShareFor({
-			dWallet,
-			destinationEncryptionKeyAddress,
-			sourceEncryptedUserSecretKeyShare,
-			sourceSecretShare,
-			ikaCoin,
-			suiCoin,
-		});
-
-		return this;
-	}
+	}): Promise<IkaTransaction>;
 
 	/**
-	 * Transfer an encrypted user share from the current user to another address.
+	 * Transfer an encrypted user share from the current user to another address using unencrypted secret shares.
 	 * This re-encrypts the user's share with the destination address's encryption key.
 	 *
-	 * SECURITY WARNING: This method does not verify `secretShare`,
+	 * SECURITY WARNING: This method does not verify `sourceSecretShare`,
 	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
-	 * This method is used when developer has access to the user's unencrypted secret share.
-	 *
-	 * @param params - The parameters for transferring encrypted user share
 	 * @param params.dWallet - The DWallet whose user share is being transferred
 	 * @param params.destinationEncryptionKeyAddress - The Sui address that will receive the re-encrypted share
 	 * @param params.sourceSecretShare - The current user's unencrypted secret share
@@ -1378,9 +1541,8 @@ export class IkaTransaction {
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
-	 * @throws {Error} If user share encryption keys are not set
 	 */
-	async transferUserShareWithSecretShare({
+	async requestReEncryptUserShareFor({
 		dWallet,
 		destinationEncryptionKeyAddress,
 		sourceSecretShare,
@@ -1388,18 +1550,68 @@ export class IkaTransaction {
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWallet: DWallet;
+		dWallet: ZeroTrustDWallet | ImportedKeyDWallet;
 		destinationEncryptionKeyAddress: string;
 		sourceSecretShare: Uint8Array;
 		sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}) {
+	}): Promise<IkaTransaction>;
+
+	/**
+	 * Universal transferUserShare method implementation.
+	 * This re-encrypts the user's share with the destination address's encryption key.
+	 * When sourceSecretShare is provided, it's used directly; otherwise, the encrypted share is decrypted automatically.
+	 *
+	 * @param params.dWallet - The DWallet whose user share is being transferred
+	 * @param params.destinationEncryptionKeyAddress - The Sui address that will receive the re-encrypted share
+	 * @param params.sourceEncryptedUserSecretKeyShare - The current user's encrypted secret key share
+	 * @param params.sourceSecretShare - Optional: The current user's unencrypted secret share
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to the updated IkaTransaction instance
+	 * @throws {Error} If user share encryption keys are not set
+	 */
+	async requestReEncryptUserShareFor({
+		dWallet,
+		destinationEncryptionKeyAddress,
+		sourceEncryptedUserSecretKeyShare,
+		sourceSecretShare,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: ZeroTrustDWallet | ImportedKeyDWallet;
+		destinationEncryptionKeyAddress: string;
+		sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+		sourceSecretShare?: Uint8Array;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<IkaTransaction> {
+		let finalSourceSecretShare: Uint8Array;
+
+		if (sourceSecretShare) {
+			// Use provided secret share directly
+			finalSourceSecretShare = sourceSecretShare;
+		} else {
+			// Decrypt the encrypted share automatically
+			if (!this.#userShareEncryptionKeys) {
+				throw new Error('User share encryption keys are not set');
+			}
+
+			const { secretShare: decryptedSecretShare } =
+				await this.#userShareEncryptionKeys.decryptUserShare(
+					dWallet,
+					sourceEncryptedUserSecretKeyShare,
+					await this.#ikaClient.getProtocolPublicParameters(dWallet),
+				);
+			finalSourceSecretShare = decryptedSecretShare;
+		}
+
 		await this.#requestReEncryptUserShareFor({
 			dWallet,
 			destinationEncryptionKeyAddress,
 			sourceEncryptedUserSecretKeyShare,
-			sourceSecretShare,
+			sourceSecretShare: finalSourceSecretShare,
 			ikaCoin,
 			suiCoin,
 		});
