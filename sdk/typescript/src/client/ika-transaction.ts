@@ -1466,7 +1466,7 @@ export class IkaTransaction {
 	 * Request verification for an Imported Key DWallet key and keep the capability.
 	 * This method creates a DWallet from an existing cryptographic key that was generated outside the network.
 	 *
-	 * @param params.importDWalletVerificationRequestInput - The prepared verification data from prepareImportDWalletVerification
+	 * @param params.importDWalletVerificationRequestInput - The prepared verification data from prepareImportedKeyDWalletVerification
 	 * @param params.curve - The elliptic curve identifier used for the imported key
 	 * @param params.signerPublicKey - The public key of the transaction signer
 	 * @param params.sessionIdentifier - Unique session identifier for this operation

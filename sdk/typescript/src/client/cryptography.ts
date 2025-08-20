@@ -223,7 +223,7 @@ export async function prepareDKGSecondRoundAsync(
  * @returns Promise resolving to complete verification data for the import process
  * @throws {Error} If network parameters cannot be fetched or key import preparation fails
  */
-export async function prepareImportDWalletVerification(
+export async function prepareImportedKeyDWalletVerification(
 	ikaClient: IkaClient,
 	sessionIdentifier: Uint8Array,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
