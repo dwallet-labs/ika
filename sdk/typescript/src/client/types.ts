@@ -75,8 +75,8 @@ export type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
 
 export const DWalletKind = {
 	ZeroTrust: 'zero-trust',
-	Imported: 'imported',
-	ImportedShared: 'imported-shared',
+	ImportedKey: 'imported-key',
+	ImportedKeyShared: 'imported-key-shared',
 	Shared: 'shared',
 } as const;
 

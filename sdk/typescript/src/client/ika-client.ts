@@ -1088,11 +1088,11 @@ export class IkaClient {
 
 	#getDWalletKind(dWallet: DWalletInternal): DWalletKind {
 		if (dWallet.is_imported_key_dwallet && dWallet.public_user_secret_key_share) {
-			return 'imported-shared';
+			return 'imported-key-shared';
 		}
 
 		if (dWallet.is_imported_key_dwallet) {
-			return 'imported';
+			return 'imported-key';
 		}
 
 		if (dWallet.public_user_secret_key_share) {
