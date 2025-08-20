@@ -377,7 +377,7 @@ export async function sign(
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
 	// Use appropriate signing method based on DWallet type
-	if (dWallet.kind === 'imported') {
+	if (dWallet.kind === 'imported-key') {
 		const importedKeyMessageApproval = ikaTransaction.approveImportedKeyMessage({
 			dWalletCap: dWallet.dwallet_cap_id,
 			signatureAlgorithm,
@@ -445,7 +445,7 @@ export async function signPublicUserShare(
 	const emptyIKACoin = createEmptyIkaToken(transaction, ikaClient.ikaConfig);
 
 	// Use appropriate signing method based on DWallet type
-	if (dWallet.kind === 'imported-shared') {
+	if (dWallet.kind === 'imported-key-shared') {
 		const importedKeyMessageApproval = ikaTransaction.approveImportedKeyMessage({
 			dWalletCap: dWallet.dwallet_cap_id,
 			signatureAlgorithm,
@@ -515,7 +515,7 @@ export async function requestFutureSign(
 	let unverifiedPartialUserSignatureCapA: TransactionObjectArgument;
 
 	// Use appropriate future sign method based on DWallet type
-	if (dWallet.kind === 'imported') {
+	if (dWallet.kind === 'imported-key') {
 		const unverifiedPartialUserSignatureCap = await ikaTransaction.requestFutureSignWithImportedKey(
 			{
 				dWallet,

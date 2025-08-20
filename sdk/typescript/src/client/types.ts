@@ -89,11 +89,11 @@ export type ZeroTrustDWallet = DWalletInternal & {
 };
 
 export type ImportedKeyDWallet = DWalletInternal & {
-	kind: 'imported';
+	kind: 'imported-key';
 };
 
 export type ImportedSharedDWallet = DWalletInternal & {
-	kind: 'imported-shared';
+	kind: 'imported-key-shared';
 };
 
 export type SharedDWallet = DWalletInternal & {
