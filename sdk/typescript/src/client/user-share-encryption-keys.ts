@@ -11,7 +11,7 @@ import {
 	userAndNetworkDKGOutputMatch,
 	verifyAndGetDWalletDKGPublicOutput,
 } from './cryptography.js';
-import type { DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './types.js';
+import type { Curve, DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './types.js';
 import { encodeToASCII } from './utils.js';
 
 /**
@@ -24,6 +24,7 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
 		encryptionKey: bcs.vector(bcs.u8()),
 		decryptionKey: bcs.vector(bcs.u8()),
 		secretShareSigningSecretKey: bcs.vector(bcs.u8()),
+		curve: bcs.u64(),
 	}),
 });
 
@@ -39,43 +40,54 @@ export class UserShareEncryptionKeys {
 	decryptionKey: Uint8Array;
 	/** The Ed25519 keypair used for signing encrypted secret share operations */
 	#encryptedSecretShareSigningKeypair: Ed25519Keypair;
+	/** The curve used to generate the encryption/decryption keys */
+	curve: Curve;
 
-	private domainSeperators = {
+	private domainSeparators = {
 		classGroups: 'CLASS_GROUPS_DECRYPTION_KEY_V1',
 		encryptionSignerKey: 'ED25519_SIGNING_KEY_V1',
 	};
 
-	private constructor(rootSeedKey: Uint8Array);
+	private constructor(rootSeedKey: Uint8Array, curve: Curve);
 	private constructor(
 		encryptionKey: Uint8Array,
 		decryptionKey: Uint8Array,
 		secretShareSigningSecretKey: Uint8Array,
+		curve: Curve,
 	);
-	private constructor(arg1: Uint8Array, arg2?: Uint8Array, arg3?: Uint8Array) {
-		if (arg2 === undefined && arg3 === undefined) {
+	private constructor(arg1: Uint8Array, arg2: Curve | Uint8Array, arg3?: Uint8Array, arg4?: Curve) {
+		if (arg3 === undefined && arg4 === undefined) {
+			// First overload: rootSeedKey and curve
 			const rootSeedKey = arg1;
-			const classGroupsSeed = this.#hash(this.domainSeperators.classGroups, rootSeedKey);
+			const curve = arg2 as Curve;
+			this.curve = curve;
+
+			const classGroupsSeed = this.#hash(this.domainSeparators.classGroups, rootSeedKey, curve);
 			const encryptionSignerKeySeed = this.#hash(
-				this.domainSeperators.encryptionSignerKey,
+				this.domainSeparators.encryptionSignerKey,
 				rootSeedKey,
+				curve,
 			);
 
-			const classGroupsKeypair = createClassGroupsKeypair(classGroupsSeed);
+			const classGroupsKeypair = createClassGroupsKeypair(classGroupsSeed, curve);
 			this.encryptionKey = new Uint8Array(classGroupsKeypair.encryptionKey);
 			this.decryptionKey = new Uint8Array(classGroupsKeypair.decryptionKey);
 			this.#encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
 				toHex(encryptionSignerKeySeed),
 			);
 		} else {
-			if (arg2 === undefined || arg3 === undefined) {
+			// Second overload: encryptionKey, decryptionKey, secretShareSigningSecretKey, curve
+			if (arg3 === undefined || arg4 === undefined) {
 				throw new Error(
-					'encryptionKey, decryptionKey, and secretShareSigningSecretKey must be provided',
+					'encryptionKey, decryptionKey, secretShareSigningSecretKey, and curve must be provided',
 				);
 			}
 
 			const encryptionKey = arg1;
-			const decryptionKey = arg2;
+			const decryptionKey = arg2 as Uint8Array;
 			const secretShareSigningSecretKey = arg3;
+			const curve = arg4;
+			this.curve = curve;
 
 			if (
 				encryptionKey.length !== 32 ||
@@ -99,19 +111,25 @@ export class UserShareEncryptionKeys {
 	 * Creates UserShareEncryptionKeys from a root seed key (Uint8Array).
 	 *
 	 * @param rootSeedKey - The root seed key to generate keys from
+	 * @param curve - The curve to use for key generation
 	 * @returns A new UserShareEncryptionKeys instance
 	 */
-	static fromRootSeedKey(rootSeedKey: Uint8Array): UserShareEncryptionKeys {
-		return new UserShareEncryptionKeys(rootSeedKey);
+	static fromRootSeedKey(rootSeedKey: Uint8Array, curve: Curve): UserShareEncryptionKeys {
+		return new UserShareEncryptionKeys(rootSeedKey, curve);
 	}
 
 	static fromShareEncryptionKeysBytes(
 		shareEncryptionKeysBytes: Uint8Array,
 	): UserShareEncryptionKeys {
-		const { encryptionKey, decryptionKey, secretShareSigningSecretKey } =
+		const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve } =
 			this.#parseShareEncryptionKeys(shareEncryptionKeysBytes);
 
-		return new UserShareEncryptionKeys(encryptionKey, decryptionKey, secretShareSigningSecretKey);
+		return new UserShareEncryptionKeys(
+			encryptionKey,
+			decryptionKey,
+			secretShareSigningSecretKey,
+			curve,
+		);
 	}
 
 	toShareEncryptionKeysBytes(): Uint8Array {
@@ -268,9 +286,9 @@ export class UserShareEncryptionKeys {
 	 * @param rootSeed - The root seed to use
 	 * @returns The hashed seed as a Uint8Array
 	 */
-	#hash(domainSeparator: string, rootSeed: Uint8Array): Uint8Array {
+	#hash(domainSeparator: string, rootSeed: Uint8Array, curve: Curve): Uint8Array {
 		return new Uint8Array(
-			keccak_256(Uint8Array.from([...encodeToASCII(domainSeparator), ...rootSeed])),
+			keccak_256(Uint8Array.from([...encodeToASCII(domainSeparator), curve, ...rootSeed])),
 		);
 	}
 
@@ -282,19 +300,21 @@ export class UserShareEncryptionKeys {
 				secretShareSigningSecretKey: Uint8Array.from(
 					this.#encryptedSecretShareSigningKeypair.getSecretKey(),
 				),
+				curve: this.curve,
 			},
 		}).toBytes();
 	}
 
 	static #parseShareEncryptionKeys(shareEncryptionKeysBytes: Uint8Array) {
 		const {
-			V1: { encryptionKey, decryptionKey, secretShareSigningSecretKey },
+			V1: { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve },
 		} = VersionedUserShareEncryptionKeysBcs.parse(shareEncryptionKeysBytes);
 
 		return {
 			encryptionKey: new Uint8Array(encryptionKey),
 			decryptionKey: new Uint8Array(decryptionKey),
 			secretShareSigningSecretKey: new Uint8Array(secretShareSigningSecretKey),
+			curve: Number(curve) as Curve,
 		};
 	}
 }
