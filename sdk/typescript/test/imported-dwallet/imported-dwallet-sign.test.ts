@@ -23,8 +23,8 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('Imported DWallet Signing', () => {
-	it('should create an imported DWallet and sign a message', async () => {
+describe('Imported Key DWallet Signing', () => {
+	it('should create an Imported Key DWallet and sign a message', async () => {
 		const testName = 'imported-dwallet-sign-test';
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);

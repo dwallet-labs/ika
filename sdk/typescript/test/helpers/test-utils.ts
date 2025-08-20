@@ -191,7 +191,7 @@ export function generateTestKeypair(testName: string) {
 }
 
 /**
- * Generates deterministic keypair for imported DWallet testing
+ * Generates deterministic keypair for Imported Key DWallet testing
  */
 export function generateTestKeypairForImportedKeyDWallet(testName: string) {
 	const seed = createDeterministicSeed(testName);

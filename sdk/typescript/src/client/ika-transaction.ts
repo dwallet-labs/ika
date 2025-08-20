@@ -580,7 +580,7 @@ export class IkaTransaction {
 	/**
 	 * Universal sign method implementation that automatically detects the DWallet type and signing method.
 	 * This performs the actual signing operation using the presign and user's share (encrypted, secret, or public).
-	 * Only supports ZeroTrust and Shared DWallets. For Imported DWallets, use signWithImportedKey instead.
+	 * Only supports ZeroTrust and Shared DWallets. For Imported Key DWallets, use signWithImportedKey instead.
 	 *
 	 * @param params.dWallet - The DWallet to sign with (ZeroTrust or Shared DWallet)
 	 * @param params.messageApproval - Message approval
@@ -714,10 +714,10 @@ export class IkaTransaction {
 	}
 
 	/**
-	 * Sign a message using an Imported DWallet with encrypted user shares.
+	 * Sign a message using an Imported Key DWallet with encrypted user shares.
 	 * This performs the actual signing operation using the presign and user's encrypted share.
 	 *
-	 * @param params.dWallet - The Imported DWallet to sign with
+	 * @param params.dWallet - The Imported Key DWallet to sign with
 	 * @param params.importedKeyMessageApproval - Imported key message approval
 	 * @param params.hashScheme - The hash scheme used for the message
 	 * @param params.verifiedPresignCap - The verified presign capability
@@ -751,13 +751,13 @@ export class IkaTransaction {
 	}): Promise<IkaTransaction>;
 
 	/**
-	 * Sign a message using an Imported DWallet with unencrypted secret shares.
+	 * Sign a message using an Imported Key DWallet with unencrypted secret shares.
 	 * This performs the actual signing operation using the presign and user's unencrypted share.
 	 *
 	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
 	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
-	 * @param params.dWallet - The Imported DWallet to sign with
+	 * @param params.dWallet - The Imported Key DWallet to sign with
 	 * @param params.importedKeyMessageApproval - Imported key message approval
 	 * @param params.hashScheme - The hash scheme used for the message
 	 * @param params.verifiedPresignCap - The verified presign capability
@@ -829,10 +829,10 @@ export class IkaTransaction {
 	}): Promise<IkaTransaction>;
 
 	/**
-	 * Universal signWithImportedKey method implementation that automatically detects the imported DWallet type and signing method.
+	 * Universal signWithImportedKey method implementation that automatically detects the Imported Key DWallet type and signing method.
 	 * This performs the actual signing operation using the presign and user's share (encrypted, secret, or public).
 	 *
-	 * @param params.dWallet - The imported DWallet to sign with (type and share availability auto-detected)
+	 * @param params.dWallet - The Imported Key DWallet to sign with (type and share availability auto-detected)
 	 * @param params.importedKeyMessageApproval - Imported key message approval
 	 * @param params.hashScheme - The hash scheme used for the message
 	 * @param params.verifiedPresignCap - The verified presign capability
@@ -956,7 +956,7 @@ export class IkaTransaction {
 			return this;
 		} else {
 			throw new Error(
-				'Imported DWallet signing requires either encryptedUserSecretKeyShare, (secretShare + publicOutput), or public_user_secret_key_share on the DWallet',
+				'Imported Key DWallet signing requires either encryptedUserSecretKeyShare, (secretShare + publicOutput), or public_user_secret_key_share on the DWallet',
 			);
 		}
 	}
@@ -1070,7 +1070,7 @@ export class IkaTransaction {
 	/**
 	 * Universal requestFutureSign method implementation that automatically detects DWallet type and share availability.
 	 * This method intelligently routes to the appropriate future signing implementation.
-	 * Only supports ZeroTrust and Shared DWallets. For Imported DWallets, use requestFutureSignWithImportedKey instead.
+	 * Only supports ZeroTrust and Shared DWallets. For Imported Key DWallets, use requestFutureSignWithImportedKey instead.
 	 *
 	 * @param params.dWallet - The DWallet to create the future sign for (ZeroTrust or Shared DWallet)
 	 * @param params.verifiedPresignCap - The verified presign capability
@@ -1195,10 +1195,10 @@ export class IkaTransaction {
 	}
 
 	/**
-	 * Request a future sign operation with encrypted shares for Imported DWallets and keep capability.
+	 * Request a future sign operation with encrypted shares for Imported Key DWallets and keep capability.
 	 * This creates a partial user signature capability that is returned with the transaction.
 	 *
-	 * @param params.dWallet - The Imported DWallet to create the future sign for
+	 * @param params.dWallet - The Imported Key DWallet to create the future sign for
 	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
 	 * @param params.encryptedUserSecretKeyShare - The user's encrypted secret key share
@@ -1229,13 +1229,13 @@ export class IkaTransaction {
 	}): Promise<TransactionObjectArgument>;
 
 	/**
-	 * Request a future sign operation with secret shares for Imported DWallets and keep capability.
+	 * Request a future sign operation with secret shares for Imported Key DWallets and keep capability.
 	 * This creates a partial user signature capability that is returned with the transaction.
 	 *
 	 * SECURITY WARNING: This method does not verify `secretShare` and `publicOutput`,
 	 * which must be verified by the caller in order to guarantee zero-trust security.
 	 *
-	 * @param params.dWallet - The Imported DWallet to create the future sign for
+	 * @param params.dWallet - The Imported Key DWallet to create the future sign for
 	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
 	 * @param params.secretShare - The user's unencrypted secret share
@@ -1301,10 +1301,10 @@ export class IkaTransaction {
 	}): Promise<TransactionObjectArgument>;
 
 	/**
-	 * Universal requestFutureSignWithImportedKey method implementation that automatically detects the imported DWallet type and signing method.
-	 * This method intelligently routes to the appropriate future signing implementation for imported DWallets.
+	 * Universal requestFutureSignWithImportedKey method implementation that automatically detects the Imported Key DWallet type and signing method.
+	 * This method intelligently routes to the appropriate future signing implementation for Imported Key DWallets.
 	 *
-	 * @param params.dWallet - The imported DWallet to create the future sign for (type and share availability auto-detected)
+	 * @param params.dWallet - The Imported Key DWallet to create the future sign for (type and share availability auto-detected)
 	 * @param params.verifiedPresignCap - The verified presign capability
 	 * @param params.presign - The completed presign object
 	 * @param params.encryptedUserSecretKeyShare - Optional: encrypted user secret key share (for ImportedKeyDWallet)
@@ -1415,7 +1415,7 @@ export class IkaTransaction {
 			});
 		} else {
 			throw new Error(
-				'Imported DWallet future signing requires either encryptedUserSecretKeyShare, (secretShare + publicOutput), or public_user_secret_key_share on the DWallet',
+				'Imported Key DWallet future signing requires either encryptedUserSecretKeyShare, (secretShare + publicOutput), or public_user_secret_key_share on the DWallet',
 			);
 		}
 
@@ -1463,7 +1463,7 @@ export class IkaTransaction {
 	}
 
 	/**
-	 * Request verification for an imported DWallet key and keep the capability.
+	 * Request verification for an Imported Key DWallet key and keep the capability.
 	 * This method creates a DWallet from an existing cryptographic key that was generated outside the network.
 	 *
 	 * @param params.importDWalletVerificationRequestInput - The prepared verification data from prepareImportDWalletVerification

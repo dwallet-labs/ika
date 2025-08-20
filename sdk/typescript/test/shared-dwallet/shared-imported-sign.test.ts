@@ -31,8 +31,8 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('Shared Imported DWallet Signing (public user shares)', () => {
-	it('should sign a message using public shares of an imported DWallet', async () => {
+describe('Shared Imported Key DWallet Signing (public user shares)', () => {
+	it('should sign a message using public shares of an Imported Key DWallet', async () => {
 		const testName = 'shared-imported-sign-test';
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);

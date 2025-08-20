@@ -21,8 +21,8 @@ import {
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('Imported DWallet Sharing (make shares public)', () => {
-	it('should make imported DWallet user secret key shares public', async () => {
+describe('Imported Key DWallet Sharing (make shares public)', () => {
+	it('should make Imported Key DWallet user secret key shares public', async () => {
 		const testName = 'imported-dwallet-sharing-test';
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);

@@ -360,7 +360,7 @@ export async function makeTestDWalletUserSecretKeySharesPublic(
 }
 
 /**
- * Make imported DWallet user secret key shares public for testing
+ * Make Imported Key DWallet user secret key shares public for testing
  */
 export async function makeTestImportedKeyDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
@@ -681,7 +681,7 @@ export async function testFutureSign(
 }
 
 /**
- * Request imported DWallet verification for testing
+ * Request Imported Key DWallet verification for testing
  */
 export async function requestTestImportedKeyDWalletVerification(
 	ikaClient: IkaClient,
@@ -728,7 +728,7 @@ export async function requestTestImportedKeyDWalletVerification(
 }
 
 /**
- * Sign with imported DWallet for testing
+ * Sign with Imported Key DWallet for testing
  */
 export async function testSignWithImportedKeyDWallet(
 	ikaClient: IkaClient,
@@ -776,7 +776,7 @@ export async function testSignWithImportedKeyDWallet(
 }
 
 /**
- * Sign with imported DWallet public for testing
+ * Sign with Imported Key DWallet public for testing
  */
 export async function testSignWithImportedKeyDWalletPublic(
 	ikaClient: IkaClient,
