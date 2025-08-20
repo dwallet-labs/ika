@@ -1,13 +1,20 @@
-name: TypeScript Continuous Integration
+name: TS System Tests CI
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    paths:
-      - 'sdk/**'
   workflow_dispatch:
+    inputs:
+      SUI_FULLNODE_URL:
+        description: "Sui Fullnode URL"
+        required: false
+        type: string
+      SUI_FAUCET_URL:
+        description: "Sui Faucet URL"
+        required: false
+        type: string
+      ika_config_json:
+        description: "Ika Config JSON"
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -61,14 +68,14 @@ jobs:
         run: pnpm install
         working-directory: ./sdk/typescript
 
-      - name: Format Check
-        run: pnpm run prettier:check
-        working-directory: ./sdk/typescript
+      - name: Write ika_config.json to file
+        run: |
+          echo '${{ github.event.inputs.ika_config_json }}' > ika_config.json
 
-      - name: Build
-        run: pnpm run build
+      - name: Run test
+        run: npx vitest run -t "DWallet Signing|DWallet Future Signing|DWallet Creation|Shared DWallet Signing|Shared DWallet|DWallet Transfer|Shared Imported DWallet Signing|Imported DWallet Creation|Imported DWallet Sharing|Imported DWallet Signing"
         working-directory: ./sdk/typescript
+        env:
+          SUI_TESTNET_URL: ${{ github.event.inputs.SUI_FULLNODE_URL }}
+          SUI_FAUCET_URL: ${{ github.event.inputs.SUI_FAUCET_URL }}
 
-      - name: Lint
-        run: pnpm run eslint:check
-        working-directory: ./sdk/typescript

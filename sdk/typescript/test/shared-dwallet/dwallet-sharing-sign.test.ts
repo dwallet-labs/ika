@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
-import { Hash, SignatureAlgorithm } from '../../src/client/types';
+import { Hash, SharedDWallet, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
 	makeTestDWalletUserSecretKeySharesPublic,
@@ -77,10 +77,11 @@ describe('Shared DWallet Signing (public user shares)', () => {
 			2000,
 		);
 
+		// Type assertion: DKG flow only creates ZeroTrust DWallets
 		await acceptTestEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			awaitingKeyHolderSignatureDWallet,
+			awaitingKeyHolderSignatureDWallet as ZeroTrustDWallet,
 			dkgSecondRoundRequestInput.userPublicOutput,
 			secondRoundMoveResponse,
 			userShareEncryptionKeys,
@@ -113,7 +114,7 @@ describe('Shared DWallet Signing (public user shares)', () => {
 		await makeTestDWalletUserSecretKeySharesPublic(
 			ikaClient,
 			suiClient,
-			activeDWallet,
+			activeDWallet as ZeroTrustDWallet,
 			secretShare,
 			testName,
 		);
@@ -152,7 +153,7 @@ describe('Shared DWallet Signing (public user shares)', () => {
 		await testSignPublicUserShare(
 			ikaClient,
 			suiClient,
-			sharedDWallet,
+			sharedDWallet as SharedDWallet,
 			presignObject,
 			message,
 			Hash.KECCAK256,
