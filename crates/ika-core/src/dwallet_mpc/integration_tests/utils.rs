@@ -838,6 +838,7 @@ pub(crate) fn send_start_sign_event(
     message_centralized_signature: Vec<u8>,
     message: Vec<u8>,
 ) {
+    let sign_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
