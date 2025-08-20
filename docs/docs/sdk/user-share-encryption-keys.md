@@ -27,6 +27,8 @@ In the Ika network, users need to securely manage their secret shares while main
 UserShareEncryptionKeys handles extremely sensitive cryptographic material. Always follow security best practices, conduct security reviews, and consider getting security audits for production applications.
 </Info>
 
+UserShareEncryptionKeys is only supported for SECP256K1 curve for now, and they share the same curve as the signing curve of the dWallet.
+
 ## Creating UserShareEncryptionKeys
 
 There are several ways to create a `UserShareEncryptionKeys` instance depending on your use case.
@@ -43,7 +45,7 @@ const rootSeedKey = new Uint8Array(32);
 crypto.getRandomValues(rootSeedKey);
 
 // Create UserShareEncryptionKeys from the seed
-const userShareKeys = UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey);
+const userShareKeys = UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, Curve.SECP256K1);
 
 console.log('Sui address:', userShareKeys.getSuiAddress());
 ```
@@ -71,7 +73,7 @@ const userShareKeys = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(seria
 You can serialize keys for persistent storage:
 
 ```typescript
-const userShareKeys = UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey);
+const userShareKeys = UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, Curve.SECP256K1);
 
 // Serialize keys to bytes for storage
 const serializedBytes = userShareKeys.toShareEncryptionKeysBytes();
@@ -91,7 +93,7 @@ Always store serialized keys securely. The serialized data contains sensitive cr
 Access basic information about your keys:
 
 ```typescript
-const userShareKeys = UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey);
+const userShareKeys = UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, Curve.SECP256K1);
 
 // Get the Ed25519 public key
 const publicKey = userShareKeys.getPublicKey();
