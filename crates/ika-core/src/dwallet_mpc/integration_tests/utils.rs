@@ -613,7 +613,6 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
 }
 
 pub(crate) fn send_start_dwallet_dkg_second_round_event(
-    ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -810,7 +809,7 @@ pub(crate) fn send_start_presign_event(
                     },
                     dwallet_id,
                     presign_id,
-                    dwallet_public_output,
+                    dwallet_public_output: dwallet_public_output.clone(),
                     dwallet_network_encryption_key_id,
                 },
                 epoch: 1,
