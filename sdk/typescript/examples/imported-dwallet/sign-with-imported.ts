@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { prepareImportDWalletVerification } from '../../src/client/cryptography.js';
-import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types.js';
+import { Curve, Hash, ImportedKeyDWallet, SignatureAlgorithm } from '../../src/client/types.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
 	createSessionIdentifier,
 	createSuiClient,
-	generateKeypairForImportedDWallet,
+	generateKeypairForImportedKeyDWallet,
 	presign,
-	requestImportedDWalletVerification,
-	signWithImportedDWallet,
+	requestImportedKeyDWalletVerification,
+	signWithImportedKeyDWallet,
 } from '../common.js';
 
 const suiClient = createSuiClient();
@@ -21,7 +21,7 @@ async function main() {
 	await ikaClient.initialize();
 
 	const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-		generateKeypairForImportedDWallet();
+		generateKeypairForImportedKeyDWallet();
 
 	const { sessionIdentifier, sessionIdentifierPreimage } = await createSessionIdentifier(
 		ikaClient,
@@ -36,7 +36,7 @@ async function main() {
 		dWalletKeypair,
 	);
 
-	const importedKeyDWalletVerificationRequestEvent = await requestImportedDWalletVerification(
+	const importedKeyDWalletVerificationRequestEvent = await requestImportedKeyDWalletVerification(
 		ikaClient,
 		suiClient,
 		importDWalletVerificationRequestInput,
@@ -54,7 +54,7 @@ async function main() {
 	await acceptEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		importedKeyDWallet,
+		importedKeyDWallet as ImportedKeyDWallet,
 		importDWalletVerificationRequestInput.userPublicOutput,
 		importedKeyDWalletVerificationRequestEvent,
 		userShareEncryptionKeys,
@@ -81,10 +81,10 @@ async function main() {
 		'Completed',
 	);
 
-	await signWithImportedDWallet(
+	await signWithImportedKeyDWallet(
 		ikaClient,
 		suiClient,
-		activeDWallet,
+		activeDWallet as ImportedKeyDWallet,
 		presignObject,
 		// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
 		new TextEncoder().encode('hello world'),
