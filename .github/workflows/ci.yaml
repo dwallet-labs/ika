@@ -82,7 +82,7 @@ jobs:
         run: cargo clippy --all-features -- -D warnings
 
   cargo-check:
-    name: Cargo Check
+    name: Cargo Test Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -98,7 +98,5 @@ jobs:
       - name: Install Target
         run: rustup target add x86_64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
-      - name: cargo check (ika bin)
-        run: cargo check --bin ika --target x86_64-unknown-linux-gnu
       - name: cargo check (ika-core tests)
         run: cargo check -p ika-core --tests --target x86_64-unknown-linux-gnu
