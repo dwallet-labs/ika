@@ -6,7 +6,7 @@ use crate::dwallet_mpc::integration_tests::utils::{
     send_start_dwallet_dkg_second_round_event, send_start_network_dkg_event_to_all_parties,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{ImportedKeyVerificationData, ProtocolData};
+use crate::request_protocol_data::{ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData, ProtocolData};
 use dwallet_mpc_centralized_party::{
     create_imported_dwallet_centralized_step_inner, encrypt_secret_key_share_and_prove,
     generate_secp256k1_cg_keypair_from_seed_internal,
@@ -186,7 +186,6 @@ async fn make_dwallet_public() {
     let result =
         create_dwallet_test(&mut test_state, consensus_round, key_id, network_key_bytes).await;
     send_make_dwallet_public_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         [4; 32],
@@ -422,7 +421,6 @@ pub(crate) fn send_start_imported_dwallet_verification_event(
 }
 
 pub(crate) fn send_make_dwallet_public_event(
-    ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -434,24 +432,25 @@ pub(crate) fn send_make_dwallet_public_event(
 ) {
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_:
-                    DWalletSessionEvent::<MakeDWalletUserSecretKeySharesPublicRequestEvent>::type_(
-                        &ika_network_config,
-                    ),
-                contents: bcs::to_bytes(&new_dwallet_session_event(
-                    false,
-                    session_sequence_number,
-                    session_identifier_preimage.to_vec().clone(),
-                    MakeDWalletUserSecretKeySharesPublicRequestEvent {
+            vec![DWalletSessionRequest {
+                session_type: SessionType::User,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::User,
+                    session_identifier_preimage,
+                ),
+                session_sequence_number,
+                protocol_data: ProtocolData::MakeDWalletUserSecretKeySharesPublic {
+                    data: MakeDWalletUserSecretKeySharesPublicData {
+                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
                         public_user_secret_key_shares: public_user_secret_key_shares.clone(),
-                        dwallet_id,
-                        dwallet_network_encryption_key_id,
-                        curve: 0,
-                        public_output: public_output.clone(),
+                        dwallet_decentralized_output: public_output.clone(),
                     },
-                ))
-                .unwrap(),
+                    dwallet_id,
+                    dwallet_network_encryption_key_id,
+                },
+                epoch: epoch_id,
+                requires_network_key_data: true,
+                requires_next_active_committee: false,
                 pulled: false,
             }],
             epoch_id,
