@@ -6,9 +6,10 @@ extern crate core;
 
 use dwallet_session_request::DWalletSessionRequest;
 use ika_types::committee::Committee;
-use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
+use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletNetworkEncryptionKeyData};
 use std::collections::HashMap;
 use std::sync::Arc;
+use sui_json_rpc_types::SuiEvent;
 use sui_types::base_types::{EpochId, ObjectID};
 use tokio::sync::broadcast;
 use tokio::sync::watch::Receiver;
@@ -64,12 +65,13 @@ impl Clone for SuiDataReceivers {
 pub struct SuiDataSenders {
     pub network_keys_sender:
         tokio::sync::watch::Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-    pub new_events_sender: broadcast::Sender<Vec<SuiEvent>>,
+    pub new_events_sender: broadcast::Sender<Vec<DWalletSessionRequest>>,
     pub next_epoch_committee_sender: tokio::sync::watch::Sender<Committee>,
     pub last_session_to_complete_in_current_epoch_sender:
         tokio::sync::watch::Sender<(EpochId, u64)>,
     pub end_of_publish_sender: tokio::sync::watch::Sender<Option<u64>>,
-    pub uncompleted_events_sender: tokio::sync::watch::Sender<(Vec<DBSuiEvent>, EpochId)>,
+    pub uncompleted_events_sender:
+        tokio::sync::watch::Sender<(Vec<DWalletSessionRequest>, EpochId)>,
 }
 
 #[cfg(test)]
