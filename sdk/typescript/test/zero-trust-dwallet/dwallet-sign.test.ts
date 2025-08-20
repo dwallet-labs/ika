@@ -63,7 +63,7 @@ async function testSignWithResult(
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.sign({
+	await ikaTransaction.requestSign({
 		dWallet,
 		messageApproval,
 		verifiedPresignCap,
@@ -383,7 +383,7 @@ describe('DWallet Signing', () => {
 			});
 
 			// Try to sign with null presign (this should fail)
-			await ikaTransaction.sign({
+			await ikaTransaction.requestSign({
 				dWallet: activeDWallet as ZeroTrustDWallet,
 				messageApproval,
 				verifiedPresignCap: null as any,

@@ -164,7 +164,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 		expect(secretShare).toBeInstanceOf(Uint8Array);
 		expect(secretShare.length).toBeGreaterThan(0);
 
-		await ikaTransaction.sign({
+		await ikaTransaction.requestSign({
 			dWallet: activeDWallet as ZeroTrustDWallet,
 			messageApproval,
 			hashScheme: Hash.KECCAK256,
@@ -478,7 +478,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		// Should throw error with invalid secret share
 		await expect(
-			ikaTransaction.sign({
+			ikaTransaction.requestSign({
 				dWallet: activeDWallet as ZeroTrustDWallet,
 				messageApproval,
 				hashScheme: Hash.KECCAK256,

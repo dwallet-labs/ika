@@ -477,7 +477,7 @@ export class IkaTransaction {
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 */
-	async sign({
+	async requestSign({
 		dWallet,
 		messageApproval,
 		hashScheme,
@@ -518,7 +518,7 @@ export class IkaTransaction {
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 */
-	async sign({
+	async requestSign({
 		dWallet,
 		messageApproval,
 		hashScheme,
@@ -557,7 +557,7 @@ export class IkaTransaction {
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 */
-	async sign({
+	async requestSign({
 		dWallet,
 		messageApproval,
 		hashScheme,
@@ -597,7 +597,7 @@ export class IkaTransaction {
 	 *
 	 * @example
 	 * // ZeroTrust DWallet - Zero-trust signing (encrypted shares)
-	 * await tx.sign({
+	 * await tx.requestSign({
 	 *   dWallet, // ZeroTrustDWallet
 	 *   messageApproval,
 	 *   encryptedUserSecretKeyShare,
@@ -606,7 +606,7 @@ export class IkaTransaction {
 	 *
 	 * @example
 	 * // ZeroTrust DWallet - Secret share signing
-	 * await tx.sign({
+	 * await tx.requestSign({
 	 *   dWallet, // ZeroTrustDWallet
 	 *   messageApproval,
 	 *   secretShare,
@@ -616,14 +616,14 @@ export class IkaTransaction {
 	 *
 	 * @example
 	 * // Shared DWallet - Public share signing (no secret params needed)
-	 * await tx.sign({
+	 * await tx.requestSign({
 	 *   dWallet, // SharedDWallet
 	 *   messageApproval,
 	 *   // ... other params (no secretShare/publicOutput needed)
 	 * });
 	 */
 
-	async sign({
+	async requestSign({
 		dWallet,
 		messageApproval,
 		hashScheme,
@@ -728,7 +728,7 @@ export class IkaTransaction {
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 */
-	async signWithImportedKey({
+	async requestSignWithImportedKey({
 		dWallet,
 		importedKeyMessageApproval,
 		hashScheme,
@@ -769,7 +769,7 @@ export class IkaTransaction {
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 */
-	async signWithImportedKey({
+	async requestSignWithImportedKey({
 		dWallet,
 		importedKeyMessageApproval,
 		hashScheme,
@@ -808,7 +808,7 @@ export class IkaTransaction {
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Promise resolving to the updated IkaTransaction instance
 	 */
-	async signWithImportedKey({
+	async requestSignWithImportedKey({
 		dWallet,
 		importedKeyMessageApproval,
 		hashScheme,
@@ -847,7 +847,7 @@ export class IkaTransaction {
 	 *
 	 * @example
 	 * // ImportedKeyDWallet - Zero-trust signing (encrypted shares)
-	 * await tx.signWithImportedKey({
+	 * await tx.requestSignWithImportedKey({
 	 *   dWallet, // ImportedKeyDWallet
 	 *   importedKeyMessageApproval,
 	 *   encryptedUserSecretKeyShare,
@@ -856,7 +856,7 @@ export class IkaTransaction {
 	 *
 	 * @example
 	 * // ImportedKeyDWallet - Secret share signing
-	 * await tx.signWithImportedKey({
+	 * await tx.requestSignWithImportedKey({
 	 *   dWallet, // ImportedKeyDWallet
 	 *   importedKeyMessageApproval,
 	 *   secretShare,
@@ -866,13 +866,13 @@ export class IkaTransaction {
 	 *
 	 * @example
 	 * // ImportedSharedDWallet - Public share signing (no secret params needed)
-	 * await tx.signWithImportedKey({
+	 * await tx.requestSignWithImportedKey({
 	 *   dWallet, // ImportedSharedDWallet
 	 *   importedKeyMessageApproval,
 	 *   // ... other params (no secretShare/publicOutput needed)
 	 * });
 	 */
-	async signWithImportedKey({
+	async requestSignWithImportedKey({
 		dWallet,
 		importedKeyMessageApproval,
 		hashScheme,
