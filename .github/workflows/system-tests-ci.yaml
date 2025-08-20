@@ -55,15 +55,14 @@ jobs:
         with:
           version: 'latest'
 
-      - name: Install Homebrew
-        run: |
-          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+      - name: Install curl
+        run: sudo apt-get install -y curl
 
-      - name: Install Sui using Homebrew
-        run: brew install sui
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
+      - name: Install Sui from Github
+        run: |
+          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.53.2/sui-mainnet-v1.53.2-ubuntu-x86_64.tgz > sui.tgz
+          tar -xvzf sui.tgz
+          sudo cp ./sui /usr/local/bin/sui
 
       - name: Install dependencies
         run: pnpm install
