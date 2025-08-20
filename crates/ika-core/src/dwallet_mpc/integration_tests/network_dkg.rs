@@ -67,7 +67,7 @@ pub(crate) async fn create_network_key_test(
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 4;
+            .last_session_to_complete_in_current_epoch = 400;
     }
     let epoch_id = test_state
         .dwallet_mpc_services

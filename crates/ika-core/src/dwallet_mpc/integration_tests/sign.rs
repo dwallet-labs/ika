@@ -83,7 +83,6 @@ async fn sign() {
     )
     .unwrap();
     send_start_sign_event(
-        &ika_network_config,
         epoch_id,
         &test_state.sui_data_senders,
         [5; 32],

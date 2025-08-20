@@ -822,7 +822,6 @@ pub(crate) fn send_start_presign_event(
 }
 
 pub(crate) fn send_start_sign_event(
-    _ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -859,7 +858,7 @@ pub(crate) fn send_start_sign_event(
                     presign: presign.clone(),
                     message_centralized_signature: message_centralized_signature.clone(),
                 },
-                epoch: 1,
+                epoch: epoch_id,
                 requires_network_key_data: true,
                 requires_next_active_committee: false,
                 pulled: false,
