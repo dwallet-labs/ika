@@ -51,10 +51,7 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         mut epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
-    utils::send_start_network_dkg_event_to_all_parties(
-        epoch_id,
-        &mut sui_data_senders,
-    );
+    utils::send_start_network_dkg_event_to_all_parties(epoch_id, &mut sui_data_senders);
     let mut test_state = utils::IntegrationTestState {
         dwallet_mpc_services,
         sent_consensus_messages_collectors,
