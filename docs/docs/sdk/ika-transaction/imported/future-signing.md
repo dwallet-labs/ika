@@ -1,6 +1,6 @@
 ---
 id: future-signing-imported
-title: Future Signing with Imported dWallets
+title: Future Signing with Imported Key dWallets
 description: Pre-sign messages for later completion with imported dWallets
 sidebar_position: 3
 sidebar_label: Future Signing
@@ -8,7 +8,7 @@ sidebar_label: Future Signing
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Future Signing with Imported dWallets
+# Future Signing with Imported Key dWallets
 
 <Construction />
 

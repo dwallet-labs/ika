@@ -1,6 +1,6 @@
 ---
 id: signing-with-imported-dwallet
-title: Signing with an Imported dWallet
+title: Signing with an Imported Key dWallet
 description: Sign messages using imported dWallet keys
 sidebar_position: 2
 sidebar_label: Signing
@@ -8,7 +8,7 @@ sidebar_label: Signing
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Signing with an Imported dWallet
+# Signing with an Imported key dWallet
 
 <Construction />
 

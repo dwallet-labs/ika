@@ -1,6 +1,6 @@
 ---
 id: importing-a-dwallet
-title: Importing a dWallet
+title: Importing a dWallet with Private Key
 description: Import existing cryptographic keys as dWallets
 sidebar_position: 1
 sidebar_label: Importing a dWallet
@@ -8,7 +8,7 @@ sidebar_label: Importing a dWallet
 
 import { Info, Warning, Construction } from '../../../../src/components/InfoBox';
 
-# Importing a dWallet
+# Importing a dWallet with Private Key
 
 <Construction />
 

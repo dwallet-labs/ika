@@ -42,7 +42,7 @@ The dWalletCap owner is in complete control. They can sign transactions whenever
 
 ---
 
-## Imported dWallets
+## Imported Key dWallets
 
 <Warning title="Security Trade-off">
 Import existing keys, but know that you're creating two ways to control the same wallet.
@@ -53,7 +53,7 @@ Here's what actually happens: you import your existing keypair into the dWallet 
 **The security problem:**
 You still have your original private key sitting around, and the dWallet also has control. So now there are two ways to control the same wallet. If someone gets your original key, they can bypass the entire dWallet security model.
 
-**[→ Learn more about Imported dWallets](./imported)**
+**[→ Learn more about Imported Key dWallets](./imported)**
 
 ---
 
@@ -65,7 +65,7 @@ You want actual security where you control your own signing. This is the only op
 **Pick Shared if:**
 You want to give full control to a dWalletCap owner. Good when you specifically want someone else to have complete signing control. For example DAOs and automated smart contract systems.
 
-**Choose Imported if:**
+**Choose Imported Key if:**
 You're stuck with existing keys and accept the security trade-off. Remember, your original keypair is still a weak point, but sometimes convenience wins over perfect security.
 
 ## Ready to Get Started?
@@ -73,8 +73,8 @@ You're stuck with existing keys and accept the security trade-off. Remember, you
 Alright, you've picked your flavor of dWallet. Here's what to do next:
 
 1. **[Get your dev environment set up](../setup-localnet.md)** - You'll need a local network to play with
-2. **[Set up encryption keys](../user-share-encryption-keys.md)** - This is important for Zero-Trust and Imported dWallets
+2. **[Set up encryption keys](../user-share-encryption-keys.md)** - This is important for Zero-Trust and Imported Key dWallets
 3. **Jump into your chosen guide:**
    - **[Zero-Trust dWallets](./zero-trust)**
    - **[Shared dWallets](./shared)**
-   - **[Imported dWallets](./imported)**
+   - **[Imported Key dWallets](./imported)**
