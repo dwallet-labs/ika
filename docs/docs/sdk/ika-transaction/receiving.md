@@ -69,7 +69,7 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys: yourUserShareEncryptionKeys,
 });
 
-await ikaTx.acceptEncryptedUserShareForTransferreddWallet({
+await ikaTx.acceptEncryptedUserShare({
 	dWallet: activedWallet, // dWallet object provided by sender
 	sourceEncryptedUserSecretKeyShare: senderOriginalShare, // Sender's original share
 	sourceEncryptionKey: senderEncryptionKey,

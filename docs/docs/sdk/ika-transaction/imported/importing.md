@@ -71,9 +71,9 @@ await signAndExecuteTransaction(tx);
 Prepare the cryptographic data needed to verify key ownership:
 
 ```typescript
-import { prepareImportdWalletVerification } from '@ika.xyz/sdk';
+import { prepareImportedKeyDWalletVerification } from '@ika.xyz/sdk';
 
-const importdWalletVerificationRequestInput = await prepareImportdWalletVerification(
+const importdWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
 	ikaClient,
 	sessionIdentifierPreimage,
 	userShareEncryptionKeys,
@@ -95,7 +95,7 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys,
 });
 
-const { ImportedKeydWalletCap } = await ikaTx.requestImporteddWalletVerification({
+const importedKeydWalletCap = await ikaTx.requestImportedKeyDWalletVerification({
 	importdWalletVerificationRequestInput,
 	curve: Curve.SECP256K1,
 	signerPublicKey: signerPublicKeyBytes,
@@ -109,7 +109,7 @@ tx.moveCall({
 	target: '0x...',
 	typeArguments: ['0x...'],
 	function: 'deposit_dwallet_for_user',
-	arguments: [ImportedKeydWalletCap],
+	arguments: [importedKeydWalletCap],
 });
 
 await signAndExecuteTransaction(tx);

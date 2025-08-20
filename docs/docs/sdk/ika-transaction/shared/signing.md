@@ -37,7 +37,7 @@ const ikaTx = new IkaTransaction({
 	transaction: tx,
 });
 
-const { unverifiedPresignCap } = ikaTx.requestPresign({
+const unverifiedPresignCap = ikaTx.requestPresign({
 	dWallet: publicdWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin,
@@ -71,7 +71,7 @@ const ikaTx = new IkaTransaction({
 });
 
 // Approve the message you want to sign
-const { messageApproval } = ikaTx.approveMessage({
+const messageApproval = ikaTx.approveMessage({
 	dWalletCap: publicdWallet.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
@@ -79,12 +79,12 @@ const { messageApproval } = ikaTx.approveMessage({
 });
 
 // Verify the presign capability
-const { verifiedPresignCap } = ikaTx.verifyPresignCap({
+const verifiedPresignCap = ikaTx.verifyPresignCap({
 	presign: completedPresign,
 });
 
 // Sign with public shares (no encryption keys needed)
-await ikaTx.signPublic({
+await ikaTx.sign({
 	dWallet: publicdWallet,
 	verifiedPresignCap,
 	messageApproval,

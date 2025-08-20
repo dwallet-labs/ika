@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { prepareImportDWalletVerification } from '../../src/client/cryptography';
+import { prepareImportedKeyDWalletVerification } from '../../src/client/cryptography';
 import { Curve, Hash, ImportedKeyDWallet, SignatureAlgorithm } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
@@ -48,7 +48,7 @@ describe('Imported Key DWallet Signing', () => {
 
 		await delay(3);
 
-		const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+		const importDWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
 			ikaClient,
 			sessionIdentifierPreimage,
 			userShareEncryptionKeys,

@@ -42,7 +42,7 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys,
 });
 
-const { unverifiedPresignCap } = ikaTx.requestPresign({
+const unverifiedPresignCap = ikaTx.requestPresign({
 	dWallet: activedWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin,
@@ -70,12 +70,12 @@ const ikaTx = new IkaTransaction({
 });
 
 // Verify the presign capability
-const { verifiedPresignCap } = ikaTx.verifyPresignCap({
+const verifiedPresignCap = ikaTx.verifyPresignCap({
 	presign: completedPresign,
 });
 
 // Request future sign (creates partial signature)
-const { unverifiedPartialUserSignatureCap } = await ikaTx.requestFutureSign({
+const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSign({
 	dWallet: activedWallet,
 	verifiedPresignCap,
 	presign: completedPresign,
@@ -112,7 +112,7 @@ const ikaTx = new IkaTransaction({
 });
 
 // Approve the same message
-const { messageApproval } = ikaTx.approveMessage({
+const messageApproval = ikaTx.approveMessage({
 	dWalletCap: activedWallet.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,

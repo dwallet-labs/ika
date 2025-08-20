@@ -39,7 +39,7 @@ const ikaTx = new IkaTransaction({
 	// No userShareEncryptionKeys needed for public dWallets
 });
 
-const { unverifiedPresignCap } = ikaTx.requestPresign({
+const unverifiedPresignCap = ikaTx.requestPresign({
 	dWallet: publicdWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin,
@@ -67,17 +67,15 @@ const ikaTx = new IkaTransaction({
 });
 
 // Verify the presign capability
-const { verifiedPresignCap } = ikaTx.verifyPresignCap({
+const verifiedPresignCap = ikaTx.verifyPresignCap({
 	presign: completedPresign,
 });
 
 // Request future sign using public secret shares
-const { unverifiedPartialUserSignatureCap } = await ikaTx.requestFutureSignWithSecretShare({
+const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSign({
 	dWallet: publicdWallet,
 	verifiedPresignCap,
 	presign: completedPresign,
-	secretShare: Uint8Array.from(publicdWallet.public_user_secret_key_share), // Public share
-	publicOutput: Uint8Array.from(publicdWallet.state.Active?.public_output), // Public output
 	message: messageBytes, // Your message as Uint8Array
 	hashScheme: Hash.KECCAK256,
 	ikaCoin: userIkaCoin,
@@ -110,7 +108,7 @@ const ikaTx = new IkaTransaction({
 });
 
 // Approve message using standard method (not specialized like imported)
-const { messageApproval } = ikaTx.approveMessage({
+const messageApproval = ikaTx.approveMessage({
 	dWalletCap: publicdWallet.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,

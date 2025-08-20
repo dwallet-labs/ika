@@ -124,7 +124,7 @@ Exposed utilities under `client/cryptography`:
 - `createDKGUserOutput(pp, firstRound, sessionId)`
 - `prepareDKGSecondRound(pp, dWallet, sessionId, encKey)` and
   `prepareDKGSecondRoundAsync(ikaClient, ...)`
-- `prepareImportDWalletVerification(ikaClient, sessionId, userKeys, keypair)`
+- `prepareImportedKeyDWalletVerification(ikaClient, sessionId, userKeys, keypair)`
 - `encryptSecretShare(...)`, `decryptUserShare(...)`
 - `verifyUserShare(...)`, `verifySecpSignature(...)`
 

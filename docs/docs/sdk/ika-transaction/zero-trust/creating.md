@@ -62,7 +62,7 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys,
 });
 
-const { dwalletCap } = await ikaTx.requestdWalletDKGFirstRoundAsync({
+const dwalletCap = await ikaTx.requestdWalletDKGFirstRoundAsync({
 	curve: Curve.SECP256K1,
 	ikaCoin: userIkaCoin, // You can use your own IKA coin
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),

@@ -42,7 +42,7 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys,
 });
 
-await ikaTx.transferUserShare({
+await ikaTx.requestReEncryptUserShareFor({
 	dWallet: activedWallet,
 	destinationEncryptionKeyAddress: recipientAddress,
 	sourceEncryptedUserSecretKeyShare: yourEncryptedUserShare,
@@ -58,7 +58,7 @@ await signAndExecuteTransaction(tx);
 If you already have access to your decrypted secret share:
 
 ```typescript
-await ikaTx.transferUserShareWithSecretShare({
+await ikaTx.requestReEncryptUserShareFor({
 	dWallet: activedWallet,
 	destinationEncryptionKeyAddress: recipientAddress,
 	sourceSecretShare: yourDecryptedSecretShare, // Already decrypted

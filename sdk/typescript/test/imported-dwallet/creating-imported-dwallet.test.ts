@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { prepareImportDWalletVerification } from '../../src/client/cryptography';
+import { prepareImportedKeyDWalletVerification } from '../../src/client/cryptography';
 import { Curve, ImportedKeyDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
@@ -45,7 +45,7 @@ describe('Imported Key DWallet Creation', () => {
 
 		await delay(3);
 
-		const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+		const importDWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
 			ikaClient,
 			sessionIdentifierPreimage,
 			userShareEncryptionKeys,
@@ -145,7 +145,7 @@ describe('Imported Key DWallet Creation', () => {
 
 		// Test with all zeros session identifier - should work (as evidenced by test output)
 		const zeroSessionIdentifierPreimage = new Uint8Array(32).fill(0);
-		const verificationInput = await prepareImportDWalletVerification(
+		const verificationInput = await prepareImportedKeyDWalletVerification(
 			ikaClient,
 			zeroSessionIdentifierPreimage,
 			userShareEncryptionKeys,
@@ -160,7 +160,7 @@ describe('Imported Key DWallet Creation', () => {
 
 		// Test with maximum values session identifier
 		const maxSessionIdentifierPreimage = new Uint8Array(32).fill(255);
-		const verificationInput2 = await prepareImportDWalletVerification(
+		const verificationInput2 = await prepareImportedKeyDWalletVerification(
 			ikaClient,
 			maxSessionIdentifierPreimage,
 			userShareEncryptionKeys,
@@ -198,7 +198,7 @@ describe('Imported Key DWallet Creation', () => {
 
 		// This should fail when trying to use uninitialized keypair
 		await expect(
-			prepareImportDWalletVerification(
+			prepareImportedKeyDWalletVerification(
 				ikaClient,
 				sessionIdentifierPreimage,
 				userShareEncryptionKeys,
@@ -229,7 +229,7 @@ describe('Imported Key DWallet Creation', () => {
 
 		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
 
-		const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+		const importDWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
 			ikaClient,
 			sessionIdentifierPreimage,
 			userShareEncryptionKeys,

@@ -42,7 +42,7 @@ const ikaTx = new IkaTransaction({
 	userShareEncryptionKeys, // Same keys used during import
 });
 
-const { unverifiedPresignCap } = ikaTx.requestPresign({
+const unverifiedPresignCap = ikaTx.requestPresign({
 	dWallet: importeddWallet,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin,
@@ -70,12 +70,12 @@ const ikaTx = new IkaTransaction({
 });
 
 // Verify the presign capability
-const { verifiedPresignCap } = ikaTx.verifyPresignCap({
+const verifiedPresignCap = ikaTx.verifyPresignCap({
 	presign: completedPresign,
 });
 
 // Request future sign (creates partial signature)
-const { unverifiedPartialUserSignatureCap } = await ikaTx.requestFutureSign({
+const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSignWithImportedKey({
 	dWallet: importeddWallet,
 	verifiedPresignCap,
 	presign: completedPresign,
@@ -112,7 +112,7 @@ const ikaTx = new IkaTransaction({
 });
 
 // Approve message using imported key method (different from zero-trust)
-const { importedKeyMessageApproval } = ikaTx.approveImportedKeyMessage({
+const importedKeyMessageApproval = ikaTx.approveImportedKeyMessage({
 	dWalletCap: importeddWallet.dwallet_cap_id,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	hashScheme: Hash.KECCAK256,
