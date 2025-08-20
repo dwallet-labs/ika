@@ -588,9 +588,9 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
     sui_data_senders.iter().for_each(|mut sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
-                session_type: SessionType::System,
+                session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
-                    SessionType::System,
+                    SessionType::User,
                     session_identifier_preimage,
                 ),
                 session_sequence_number,
@@ -612,7 +612,6 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
 }
 
 pub(crate) fn send_start_dwallet_dkg_second_round_event(
-    ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -623,15 +622,14 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
     centralized_public_key_share_and_proof: Vec<u8>,
     encrypted_centralized_secret_share_and_proof: Vec<u8>,
     encryption_key: Vec<u8>,
-    user_public_output: Vec<u8>,
 ) {
     let encrypted_user_secret_key_share_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
-                session_type: SessionType::System,
+                session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
-                    SessionType::System,
+                    SessionType::User,
                     session_identifier_preimage,
                 ),
                 session_sequence_number,

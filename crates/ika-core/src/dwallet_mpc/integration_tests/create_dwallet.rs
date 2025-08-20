@@ -195,7 +195,6 @@ async fn create_dwallet() {
     )
     .unwrap();
     send_start_dwallet_dkg_second_round_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         [3; 32],
@@ -206,7 +205,6 @@ async fn create_dwallet() {
         centralized_dwallet_dkg_result.public_key_share_and_proof,
         encrypted_secret_key_share_and_proof,
         encryption_key,
-        centralized_dwallet_dkg_result.public_output,
     );
     let (consensus_round, dwallet_second_round_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
