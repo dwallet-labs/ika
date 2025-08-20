@@ -6,7 +6,9 @@ use crate::dwallet_mpc::integration_tests::utils::{
     send_start_dwallet_dkg_second_round_event, send_start_network_dkg_event_to_all_parties,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData, ProtocolData};
+use crate::request_protocol_data::{
+    ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData, ProtocolData,
+};
 use dwallet_mpc_centralized_party::{
     create_imported_dwallet_centralized_step_inner, encrypt_secret_key_share_and_prove,
     generate_secp256k1_cg_keypair_from_seed_internal,

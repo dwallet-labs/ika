@@ -16,7 +16,9 @@ use crate::dwallet_mpc::integration_tests::utils::{
     TestingSubmitToConsensus, send_start_network_dkg_event_to_all_parties,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
+use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
+use crate::request_protocol_data::{NetworkEncryptionKeyReconfigurationData, ProtocolData};
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::ConsensusTransactionKind;
@@ -24,6 +26,7 @@ use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent,
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, IkaNetworkConfig,
+    SessionIdentifier, SessionType,
 };
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
@@ -101,7 +104,6 @@ async fn test_network_key_reconfiguration() {
                 .send(next_committee.clone());
         });
     send_start_network_key_reconfiguration_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         [3u8; 32],
@@ -181,7 +183,6 @@ pub(crate) async fn create_network_key_test(
 }
 
 pub(crate) fn send_start_network_key_reconfiguration_event(
-    ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
@@ -194,20 +195,20 @@ pub(crate) fn send_start_network_key_reconfiguration_event(
             epoch_id
         );
         let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DBSuiEvent {
-                type_:
-                    DWalletSessionEvent::<DWalletEncryptionKeyReconfigurationRequestEvent>::type_(
-                        &ika_network_config,
-                    ),
-                contents: bcs::to_bytes(&new_dwallet_session_event(
-                    true,
-                    session_sequence_number,
-                    session_identifier_preimage.to_vec().clone(),
-                    DWalletEncryptionKeyReconfigurationRequestEvent {
-                        dwallet_network_encryption_key_id,
-                    },
-                ))
-                .unwrap(),
+            vec![DWalletSessionRequest {
+                session_type: SessionType::System,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::System,
+                    session_identifier_preimage,
+                ),
+                session_sequence_number,
+                protocol_data: ProtocolData::NetworkEncryptionKeyReconfiguration {
+                    data: NetworkEncryptionKeyReconfigurationData {},
+                    dwallet_network_encryption_key_id,
+                },
+                epoch: 1,
+                requires_network_key_data: false,
+                requires_next_active_committee: false,
                 pulled: false,
             }],
             epoch_id,
