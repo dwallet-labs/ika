@@ -2,9 +2,6 @@ name: Integration Tests CI
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - 1447-all-integration-tests-ci
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
