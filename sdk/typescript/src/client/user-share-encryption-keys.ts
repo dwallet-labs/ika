@@ -43,7 +43,7 @@ export class UserShareEncryptionKeys {
 	/** The curve used to generate the encryption/decryption keys */
 	curve: Curve;
 
-	private domainSeperators = {
+	private domainSeparators = {
 		classGroups: 'CLASS_GROUPS_DECRYPTION_KEY_V1',
 		encryptionSignerKey: 'ED25519_SIGNING_KEY_V1',
 	};
@@ -62,9 +62,9 @@ export class UserShareEncryptionKeys {
 			const curve = arg2 as Curve;
 			this.curve = curve;
 
-			const classGroupsSeed = this.#hash(this.domainSeperators.classGroups, rootSeedKey, curve);
+			const classGroupsSeed = this.#hash(this.domainSeparators.classGroups, rootSeedKey, curve);
 			const encryptionSignerKeySeed = this.#hash(
-				this.domainSeperators.encryptionSignerKey,
+				this.domainSeparators.encryptionSignerKey,
 				rootSeedKey,
 				curve,
 			);
