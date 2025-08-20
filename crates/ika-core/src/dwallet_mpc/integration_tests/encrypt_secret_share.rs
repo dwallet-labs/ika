@@ -3,18 +3,21 @@ use crate::dwallet_mpc::integration_tests::create_dwallet::create_dwallet_test;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::{EncryptedShareVerificationData, ProtocolData};
 use dwallet_mpc_centralized_party::{
     encrypt_secret_key_share_and_prove, network_dkg_public_output_to_protocol_pp_inner,
 };
+use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
-use ika_types::messages_dwallet_mpc::{DBSuiEvent, DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent, IkaNetworkConfig, SessionIdentifier, SessionType};
+use ika_types::messages_dwallet_mpc::{
+    DBSuiEvent, DWalletSessionEvent, DWalletSessionEventTrait,
+    EncryptedShareVerificationRequestEvent, IkaNetworkConfig, SessionIdentifier, SessionType,
+};
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::info;
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
-use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{EncryptedShareVerificationData, ProtocolData};
 
 #[tokio::test]
 #[cfg(test)]
@@ -125,7 +128,8 @@ pub(crate) fn send_start_encrypt_secret_share_event(
                 protocol_data: ProtocolData::EncryptedShareVerification {
                     data: EncryptedShareVerificationData {
                         curve: DWalletMPCNetworkKeyScheme::Secp256k1,
-                        encrypted_centralized_secret_share_and_proof: encrypted_centralized_secret_share_and_proof.clone(),
+                        encrypted_centralized_secret_share_and_proof:
+                            encrypted_centralized_secret_share_and_proof.clone(),
                         decentralized_public_output: decentralized_public_output.clone(),
                         encryption_key: encryption_key.clone(),
                     },

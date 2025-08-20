@@ -5,11 +5,14 @@ use crate::dwallet_mpc::integration_tests::utils::{
     IntegrationTestState, send_start_dwallet_dkg_first_round_event,
     send_start_dwallet_dkg_second_round_event, send_start_network_dkg_event_to_all_parties,
 };
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::{ImportedKeyVerificationData, ProtocolData};
 use dwallet_mpc_centralized_party::{
     create_imported_dwallet_centralized_step_inner, encrypt_secret_key_share_and_prove,
     generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
 };
+use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use ika_types::committee::Committee;
 use ika_types::message::{DKGSecondRoundOutput, DWalletCheckpointMessageKind};
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
@@ -25,9 +28,6 @@ use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
 use tracing::info;
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
-use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{ImportedKeyVerificationData, ProtocolData};
 
 #[tokio::test]
 #[cfg(test)]
@@ -402,7 +402,8 @@ pub(crate) fn send_start_imported_dwallet_verification_event(
                 protocol_data: ProtocolData::ImportedKeyVerification {
                     data: ImportedKeyVerificationData {
                         curve: DWalletMPCNetworkKeyScheme::Secp256k1,
-                        encrypted_centralized_secret_share_and_proof: encrypted_centralized_secret_share_and_proof.clone(),
+                        encrypted_centralized_secret_share_and_proof:
+                            encrypted_centralized_secret_share_and_proof.clone(),
                         encryption_key: encryption_key.clone(),
                     },
                     dwallet_id,
