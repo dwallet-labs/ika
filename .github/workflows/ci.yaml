@@ -82,7 +82,7 @@ jobs:
         run: cargo clippy --all-features -- -D warnings
 
   cargo-check:
-    name: Cargo Check
+    name: Cargo Test Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
