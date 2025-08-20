@@ -46,11 +46,7 @@ async fn dwallet_dkg_first_round() {
         committee,
         sui_data_senders,
     };
-    send_start_network_dkg_event_to_all_parties(
-        &ika_network_config,
-        epoch_id,
-        &mut test_state.sui_data_senders,
-    );
+    send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state.sui_data_senders);
     let (consensus_round, network_key_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
     info!(?network_key_checkpoint, "Network key checkpoint received");
@@ -84,7 +80,6 @@ async fn dwallet_dkg_first_round() {
         });
     let dwallet_dkg_session_identifier = [2; 32];
     send_start_dwallet_dkg_first_round_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         dwallet_dkg_session_identifier,
@@ -134,11 +129,7 @@ async fn create_dwallet() {
             .last_session_to_complete_in_current_epoch = 4;
     }
 
-    send_start_network_dkg_event_to_all_parties(
-        &ika_network_config,
-        epoch_id,
-        &mut test_state.sui_data_senders,
-    );
+    send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state.sui_data_senders);
     let (consensus_round, network_key_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
     info!(?network_key_checkpoint, "Network key checkpoint received");
@@ -172,7 +163,6 @@ async fn create_dwallet() {
         });
     let dwallet_dkg_session_identifier = [2; 32];
     send_start_dwallet_dkg_first_round_event(
-        &ika_network_config,
         epoch_id,
         &mut test_state.sui_data_senders,
         dwallet_dkg_session_identifier,
