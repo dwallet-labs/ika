@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { decrypt_user_share } from '@ika.xyz/mpc-wasm';
+import { decrypt_user_share } from '@mehmetkircal/ika-wasm';
 import { bcs, toHex } from '@mysten/bcs';
 import { Ed25519Keypair, Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { keccak_256 } from '@noble/hashes/sha3';

@@ -1,12 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { bcs } from '@mysten/sui/bcs';
-import { decodeSuiPrivateKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
-import type { Keypair, PublicKey } from '@mysten/sui/cryptography';
-import { keccak_256 } from '@noble/hashes/sha3';
-import { randomBytes } from '@noble/hashes/utils.js';
-
 import {
 	centralized_and_decentralized_parties_dkg_output_match,
 	create_dkg_centralized_output as create_dkg_user_output,
@@ -18,7 +12,13 @@ import {
 	public_key_from_dwallet_output,
 	verify_secp_signature,
 	verify_user_share,
-} from '../../../mpc-wasm/dist/node/dwallet_mpc_wasm.js';
+} from '@mehmetkircal/ika-wasm';
+import { bcs } from '@mysten/sui/bcs';
+import { decodeSuiPrivateKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
+import type { Keypair, PublicKey } from '@mysten/sui/cryptography';
+import { keccak_256 } from '@noble/hashes/sha3';
+import { randomBytes } from '@noble/hashes/utils.js';
+
 import type { IkaClient } from './ika-client.js';
 import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
 import { Curve } from './types.js';

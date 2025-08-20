@@ -1,7 +1,6 @@
 {
-	"name": "@ika.xyz/mpc-wasm",
+	"name": "@mehmetkircal/ika-wasm",
 	"description": "IKA MPC in WASM",
-	"type": "commonjs",
 	"scripts": {
 		"build": "npm run build:node && npm run build:web && npm run build:bundler",
 		"note": "wasm-pack uses release profile by default",
@@ -11,11 +10,32 @@
 		"prepare": "npm run build"
 	},
 	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
-	"version": "0.1.9",
+	"version": "1.0.2",
 	"license": "BSD-3-Clause-Clear",
-	"main": "dist/node/dwallet_mpc_wasm.js",
-	"browser": "dist/web/dwallet_mpc_wasm.js",
-	"types": "dist/node/dwallet_mpc_wasm.d.ts",
+	"types": "./dist/web/dwallet_mpc_wasm.d.ts",
+	"exports": {
+		".": {
+			"browser": "./dist/bundler/dwallet_mpc_wasm.js",
+			"import": "./index.mjs",
+			"require": "./index.js",
+			"types": "./dist/web/dwallet_mpc_wasm.d.ts"
+		},
+		"./web": {
+			"import": "./dist/web/dwallet_mpc_wasm.js",
+			"require": "./dist/web/dwallet_mpc_wasm.js",
+			"types": "./dist/web/dwallet_mpc_wasm.d.ts"
+		},
+		"./bundler": {
+			"import": "./dist/bundler/dwallet_mpc_wasm.js",
+			"require": "./dist/bundler/dwallet_mpc_wasm.js",
+			"types": "./dist/bundler/dwallet_mpc_wasm.d.ts"
+		},
+		"./web/dwallet_mpc_wasm_bg.wasm": {
+			"browser": "./dist/web/dwallet_mpc_wasm_bg.wasm",
+			"import": "./dist/web/dwallet_mpc_wasm_bg.wasm",
+			"require": "./dist/web/dwallet_mpc_wasm_bg.wasm"
+		}
+	},
 	"devDependencies": {
 		"cross-env": "^7.0.3"
 	},
@@ -29,6 +49,7 @@
 		"LICENSE",
 		"README.md",
 		"dist",
-		"src"
+		"index.js",
+		"index.mjs"
 	]
 }

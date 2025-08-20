@@ -1,10 +1,10 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { create_sign_centralized_party_message as create_sign_user_message } from '@mehmetkircal/ika-wasm';
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
-import { create_sign_centralized_party_message as create_sign_user_message } from '../../../mpc-wasm/dist/node/dwallet_mpc_wasm.js';
 import * as coordinatorTx from '../tx/coordinator.js';
 import type {
 	DKGSecondRoundRequestInput,

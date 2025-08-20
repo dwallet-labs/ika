@@ -1,5 +1,5 @@
-// Copyright (c) dWallet Labs, Ltd.
-// SPDX-License-Identifier: BSD-3-Clause-Clear
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
 
 import * as child_process from 'child_process';
 import { existsSync, promises as fs } from 'fs';
@@ -33,9 +33,6 @@ export async function buildPackage(buildOptions?: BuildOptions) {
 	await buildESM(allFiles, packageJson, buildOptions);
 	await buildImportDirectories(packageJson);
 }
-
-// Add default export
-export default buildPackage;
 
 async function findAllFiles(dir: string, files: string[] = []) {
 	const dirFiles = await fs.readdir(dir);
