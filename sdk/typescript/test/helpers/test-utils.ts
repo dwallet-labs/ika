@@ -86,7 +86,7 @@ export function clearAllTestSeeds(): void {
  */
 export function createTestSuiClient(): SuiClient {
 	return new SuiClient({
-		url: getFullnodeUrl('localnet'),
+		url: process.env.SUI_TESTNET_URL || getFullnodeUrl('localnet'),
 	});
 }
 
@@ -100,7 +100,7 @@ export async function requestTestFaucetFunds(address: string): Promise<void> {
 	for (let attempt = 1; attempt <= maxRetries; attempt++) {
 		try {
 			await requestSuiFromFaucetV2({
-				host: getFaucetHost('localnet'),
+				host: process.env.SUI_FAUCET_URL || getFaucetHost('localnet'),
 				recipient: address,
 			});
 
