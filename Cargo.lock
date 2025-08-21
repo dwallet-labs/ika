@@ -5765,6 +5765,7 @@ dependencies = [
  "dashmap",
  "derive_more 2.0.1",
  "dwallet-classgroups-types",
+ "dwallet-mpc-centralized-party",
  "dwallet-mpc-types",
  "dwallet-rng",
  "enum_dispatch",
