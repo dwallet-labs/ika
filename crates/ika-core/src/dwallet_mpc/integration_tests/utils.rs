@@ -7,7 +7,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
+use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, SignatureAlgorithm};
 use dwallet_rng::RootSeed;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
@@ -507,9 +507,9 @@ pub(crate) fn override_legit_messages_with_false_messages(
 }
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
-    DKGFirstData, DKGSecondData, NetworkEncryptionKeyDkgData, ProtocolData,
+    DKGFirstData, DKGSecondData, NetworkEncryptionKeyDkgData, PresignData, ProtocolData, SignData,
 };
-use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
+use message_digest::message_digest::Hash;
 
 pub(crate) fn send_start_network_dkg_event_to_all_parties(
     epoch_id: EpochId,
@@ -782,4 +782,90 @@ pub(crate) async fn advance_mpc_flow_until_completion(
         );
         consensus_round += 1;
     }
+}
+
+pub(crate) fn send_start_presign_event(
+    epoch_id: EpochId,
+    sui_data_senders: &Vec<SuiDataSenders>,
+    session_identifier_preimage: [u8; 32],
+    session_sequence_number: u64,
+    dwallet_network_encryption_key_id: ObjectID,
+    dwallet_id: Option<ObjectID>,
+    dwallet_public_output: Option<Vec<u8>>,
+) {
+    let presign_id = ObjectID::random();
+    sui_data_senders.iter().for_each(|sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DWalletSessionRequest {
+                session_type: SessionType::User,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::User,
+                    session_identifier_preimage,
+                ),
+                session_sequence_number,
+                protocol_data: ProtocolData::Presign {
+                    data: PresignData {
+                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        signature_algorithm: SignatureAlgorithm::ECDSA,
+                    },
+                    dwallet_id,
+                    presign_id,
+                    dwallet_public_output: dwallet_public_output.clone(),
+                    dwallet_network_encryption_key_id,
+                },
+                epoch: 1,
+                requires_network_key_data: true,
+                requires_next_active_committee: false,
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
+}
+
+pub(crate) fn send_start_sign_event(
+    epoch_id: EpochId,
+    sui_data_senders: &Vec<SuiDataSenders>,
+    session_identifier_preimage: [u8; 32],
+    session_sequence_number: u64,
+    dwallet_network_encryption_key_id: ObjectID,
+    dwallet_id: ObjectID,
+    dwallet_public_output: Vec<u8>,
+    presign: Vec<u8>,
+    message_centralized_signature: Vec<u8>,
+    message: Vec<u8>,
+) {
+    let sign_id = ObjectID::random();
+    sui_data_senders.iter().for_each(|sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DWalletSessionRequest {
+                session_type: SessionType::User,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::User,
+                    session_identifier_preimage,
+                ),
+                session_sequence_number,
+                protocol_data: ProtocolData::Sign {
+                    data: SignData {
+                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        hash_scheme: Hash::KECCAK256,
+                        signature_algorithm: SignatureAlgorithm::ECDSA,
+                    },
+                    dwallet_id,
+                    sign_id,
+                    is_future_sign: false,
+                    dwallet_network_encryption_key_id,
+                    dwallet_decentralized_public_output: dwallet_public_output.clone(),
+                    message: message.clone(),
+                    presign: presign.clone(),
+                    message_centralized_signature: message_centralized_signature.clone(),
+                },
+                epoch: epoch_id,
+                requires_network_key_data: true,
+                requires_next_active_committee: false,
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
 }
