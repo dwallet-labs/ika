@@ -163,8 +163,6 @@ export async function decrypt_user_share(
 	);
 }
 
-// Add other WASM functions as needed...
-
 /**
  * Manually initialize the WASM module.
  * This is optional as functions will auto-initialize on first use.
