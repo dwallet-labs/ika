@@ -410,11 +410,11 @@ impl DWalletMPCManager {
             .mpc_sessions
             .iter()
             .filter_map(|(_, session)| {
-                let MPCSessionStatus::Active { request, .. } = &session.status else {
+                let SessionStatus::Active { request, .. } = &session.status else {
                     return None;
                 };
 
-                // Always advance system sessions, and only advance user session
+                //   Always advance system sessions, and only advance user session
                 // if they come before the last session to complete in the current epoch (at the current time).
                 let should_advance = match request.session_src {
                     SessionSource::User => {
