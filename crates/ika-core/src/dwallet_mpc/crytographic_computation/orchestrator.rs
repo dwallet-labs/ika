@@ -207,12 +207,6 @@ impl CryptographicComputationsOrchestrator {
         {
             // Don't run a task that we already spawned.
             return true;
-        } else {
-            info!(
-                current_computations=?self.currently_running_cryptographic_computations,
-                completed_computations=?self.completed_cryptographic_computations,
-                "No previous computation found for this request, proceeding to spawn a new one"
-            );
         }
 
         if !self.has_available_cores_to_perform_computation() {
