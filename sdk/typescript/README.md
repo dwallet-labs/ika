@@ -1,5 +1,9 @@
 ### @ika.xyz/sdk — TypeScript SDK for Ika Network
 
+⚠️ **Warning**: This package is currently in development and may have breaking changes.
+
+## Overview
+
 This package provides a TypeScript SDK for interacting with the Ika Network on Sui.
 
 - Programmatically build transaction blocks for dWallet flows (DKG, presign, sign, imported-key
@@ -120,7 +124,7 @@ Exposed utilities under `client/cryptography`:
 - `createDKGUserOutput(pp, firstRound, sessionId)`
 - `prepareDKGSecondRound(pp, dWallet, sessionId, encKey)` and
   `prepareDKGSecondRoundAsync(ikaClient, ...)`
-- `prepareImportDWalletVerification(ikaClient, sessionId, userKeys, keypair)`
+- `prepareImportedKeyDWalletVerification(ikaClient, sessionId, userKeys, keypair)`
 - `encryptSecretShare(...)`, `decryptUserShare(...)`
 - `verifyUserShare(...)`, `verifySecpSignature(...)`
 

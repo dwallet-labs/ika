@@ -1,6 +1,8 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import fs from 'fs';
+import path from 'path';
 import { toHex } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
@@ -13,7 +15,13 @@ import { expect } from 'vitest';
 import { IkaClient } from '../../src/client/ika-client.js';
 import { IkaTransaction } from '../../src/client/ika-transaction.js';
 import { getNetworkConfig } from '../../src/client/network-configs.js';
-import { Hash, IkaConfig, SignatureAlgorithm } from '../../src/client/types.js';
+import {
+	Curve,
+	Hash,
+	IkaConfig,
+	SignatureAlgorithm,
+	ZeroTrustDWallet,
+} from '../../src/client/types.js';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
 import { createCompleteDWallet, testPresign, testSign } from './dwallet-test-helpers';
 
@@ -86,7 +94,7 @@ export function clearAllTestSeeds(): void {
  */
 export function createTestSuiClient(): SuiClient {
 	return new SuiClient({
-		url: getFullnodeUrl('localnet'),
+		url: process.env.SUI_TESTNET_URL || getFullnodeUrl('localnet'),
 	});
 }
 
@@ -100,7 +108,7 @@ export async function requestTestFaucetFunds(address: string): Promise<void> {
 	for (let attempt = 1; attempt <= maxRetries; attempt++) {
 		try {
 			await requestSuiFromFaucetV2({
-				host: getFaucetHost('localnet'),
+				host: process.env.SUI_FAUCET_URL || getFaucetHost('localnet'),
 				recipient: address,
 			});
 
@@ -131,14 +139,70 @@ export async function requestTestFaucetFunds(address: string): Promise<void> {
 	}
 }
 
+export function findIkaConfigFile(): string {
+	const possiblePaths = [
+		// Current working directory
+		'ika_config.json',
+		// One level up
+		'../ika_config.json',
+		// Two levels up (current hardcoded path)
+		'../../ika_config.json',
+		// Three levels up
+		'../../../ika_config.json',
+		// From environment variable if set
+		...(process.env.IKA_CONFIG_PATH ? [process.env.IKA_CONFIG_PATH] : []),
+		// From project root (assuming we're in sdk/typescript/src/client/)
+		path.resolve(__dirname, '../../../../ika_config.json'),
+		// From workspace root (assuming we're in sdk/typescript/)
+		path.resolve(__dirname, '../../../ika_config.json'),
+	];
+
+	for (const configPath of possiblePaths) {
+		try {
+			const resolvedPath = path.resolve(configPath);
+			if (fs.existsSync(resolvedPath)) {
+				return resolvedPath;
+			}
+		} catch {
+			// Continue to next path if this one fails
+			continue;
+		}
+	}
+
+	throw new Error(
+		`Could not find ika_config.json file. Tried the following locations:\n` +
+			`${possiblePaths.map((p) => `  - ${p}`).join('\n')}\n\n` +
+			`Please ensure the file exists in one of these locations, or set the IKA_CONFIG_PATH environment variable.`,
+	);
+}
+
 /**
  * Creates an IkaClient for testing
  */
 export function createTestIkaClient(suiClient: SuiClient): IkaClient {
+	const configPath = findIkaConfigFile();
+	const parsedJson = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
 	return new IkaClient({
 		suiClient,
-		network: 'localnet',
-		config: getNetworkConfig('localnet'),
+		config: {
+			packages: {
+				ikaPackage: parsedJson.packages.ika_package_id,
+				ikaCommonPackage: parsedJson.packages.ika_common_package_id,
+				ikaDwallet2pcMpcPackage: parsedJson.packages.ika_dwallet_2pc_mpc_package_id,
+				ikaSystemPackage: parsedJson.packages.ika_system_package_id,
+			},
+			objects: {
+				ikaSystemObject: {
+					objectID: parsedJson.objects.ika_system_object_id,
+					initialSharedVersion: 0,
+				},
+				ikaDWalletCoordinator: {
+					objectID: parsedJson.objects.ika_dwallet_coordinator_object_id,
+					initialSharedVersion: 0,
+				},
+			},
+		},
 	});
 }
 
@@ -176,11 +240,14 @@ export async function executeTestTransactionWithKeypair(
 /**
  * Generates deterministic keypair for testing
  */
-export function generateTestKeypair(testName: string) {
+export async function generateTestKeypair(testName: string) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed);
+	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+		seed,
+		Curve.SECP256K1,
+	);
 
 	return {
 		userShareEncryptionKeys,
@@ -191,13 +258,16 @@ export function generateTestKeypair(testName: string) {
 }
 
 /**
- * Generates deterministic keypair for imported DWallet testing
+ * Generates deterministic keypair for Imported Key DWallet testing
  */
-export function generateTestKeypairForImportedDWallet(testName: string) {
+export async function generateTestKeypairForImportedKeyDWallet(testName: string) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed);
+	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+		seed,
+		Curve.SECP256K1,
+	);
 	const dWalletKeypair = Secp256k1Keypair.fromSeed(seed);
 
 	return {
@@ -294,8 +364,6 @@ export async function retryUntil<T>(
 	throw new Error(`Condition not met after ${maxAttempts} attempts`);
 }
 
-export const DEFAULT_TIMEOUT = 600_000; // 10 minutes
-
 export function delay(seconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
 }
@@ -342,7 +410,7 @@ export async function runSignFullFlow(
 	await testSign(
 		ikaClient,
 		suiClient,
-		activeDWallet,
+		activeDWallet as ZeroTrustDWallet,
 		userShareEncryptionKeys,
 		presignObject,
 		encryptedUserSecretKeyShare,
@@ -351,10 +419,6 @@ export async function runSignFullFlow(
 		SignatureAlgorithm.ECDSA,
 		testName,
 	);
-
-	// Verify the signing process completed successfully
-	// The fact that testSign didn't throw an error indicates success
-	expect(true).toBe(true);
 }
 
 export async function waitForEpochSwitch(ikaClient: IkaClient) {

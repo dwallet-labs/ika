@@ -7,6 +7,11 @@ import type { Keypair, PublicKey } from '@mysten/sui/cryptography';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { randomBytes } from '@noble/hashes/utils.js';
 
+import type { IkaClient } from './ika-client.js';
+import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
+import { Curve } from './types.js';
+import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
+import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 import {
 	centralized_and_decentralized_parties_dkg_output_match,
 	create_dkg_centralized_output as create_dkg_user_output,
@@ -18,11 +23,7 @@ import {
 	public_key_from_dwallet_output,
 	verify_secp_signature,
 	verify_user_share,
-} from '../../../mpc-wasm/dist/node/dwallet_mpc_wasm.js';
-import type { IkaClient } from './ika-client.js';
-import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
-import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
-import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
+} from './wasm-loader.js';
 
 /**
  * Prepared data for the second round of Distributed Key Generation (DKG).
@@ -55,17 +56,28 @@ export interface ImportDWalletVerificationRequestInput {
  * Uses SECP256k1 curve with class groups for homomorphic encryption capabilities.
  *
  * @param seed - The seed bytes to generate the keypair from
+ * @param curve - The curve to use for key generation
  * @returns Object containing the encryption key (public) and decryption key (private)
  */
-export function createClassGroupsKeypair(seed: Uint8Array): {
+export async function createClassGroupsKeypair(
+	seed: Uint8Array,
+	curve: Curve,
+): Promise<{
 	encryptionKey: Uint8Array;
 	decryptionKey: Uint8Array;
-} {
+}> {
 	if (seed.length !== 32) {
 		throw new Error('Seed must be 32 bytes');
 	}
 
-	const [encryptionKey, decryptionKey] = generate_secp_cg_keypair_from_seed(seed);
+	let encryptionKey: Uint8Array;
+	let decryptionKey: Uint8Array;
+
+	if (curve === Curve.SECP256K1) {
+		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed(seed);
+	} else {
+		throw new Error('Only SECP256K1 curve is supported for now');
+	}
 
 	return {
 		encryptionKey: Uint8Array.from(encryptionKey),
@@ -85,16 +97,16 @@ export function createClassGroupsKeypair(seed: Uint8Array): {
  * @returns Object containing the user's DKG message, public output, and secret key share
  *
  */
-export function createDKGUserOutput(
+export async function createDKGUserOutput(
 	protocolPublicParameters: Uint8Array,
 	networkFirstRoundOutput: Uint8Array,
 	sessionIdentifier: Uint8Array,
-): {
+): Promise<{
 	userDKGMessage: Uint8Array;
 	userPublicOutput: Uint8Array;
 	userSecretKeyShare: Uint8Array;
-} {
-	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
+}> {
+	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
 		sessionIdentifierDigest(sessionIdentifier),
@@ -116,12 +128,12 @@ export function createDKGUserOutput(
  * @param protocolPublicParameters - The protocol public parameters for encryption
  * @returns The encrypted secret share with proof of correct encryption
  */
-export function encryptSecretShare(
+export async function encryptSecretShare(
 	userSecretKeyShare: Uint8Array,
 	encryptionKey: Uint8Array,
 	protocolPublicParameters: Uint8Array,
-): Uint8Array {
-	const encryptedUserShareAndProof = encrypt_secret_share(
+): Promise<Uint8Array> {
+	const encryptedUserShareAndProof = await encrypt_secret_share(
 		userSecretKeyShare,
 		encryptionKey,
 		protocolPublicParameters,
@@ -141,12 +153,12 @@ export function encryptSecretShare(
  * @returns Complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available in the DWallet
  */
-export function prepareDKGSecondRound(
+export async function prepareDKGSecondRound(
 	protocolPublicParameters: Uint8Array,
 	dWallet: DWallet,
 	sessionIdentifier: Uint8Array,
 	encryptionKey: Uint8Array,
-): DKGSecondRoundRequestInput {
+): Promise<DKGSecondRoundRequestInput> {
 	const networkFirstRoundOutput =
 		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
 
@@ -154,13 +166,13 @@ export function prepareDKGSecondRound(
 		throw new Error('First round output is undefined');
 	}
 
-	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = create_dkg_user_output(
+	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
 		sessionIdentifierDigest(sessionIdentifier),
 	);
 
-	const encryptedUserShareAndProof = encryptSecretShare(
+	const encryptedUserShareAndProof = await encryptSecretShare(
 		userSecretKeyShare,
 		encryptionKey,
 		protocolPublicParameters,
@@ -211,7 +223,7 @@ export async function prepareDKGSecondRoundAsync(
  * @returns Promise resolving to complete verification data for the import process
  * @throws {Error} If network parameters cannot be fetched or key import preparation fails
  */
-export async function prepareImportDWalletVerification(
+export async function prepareImportedKeyDWalletVerification(
 	ikaClient: IkaClient,
 	sessionIdentifier: Uint8Array,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
@@ -223,13 +235,17 @@ export async function prepareImportDWalletVerification(
 
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
-	const [userSecretShare, userPublicOutput, userMessage] = create_imported_dwallet_user_output(
-		protocolPublicParameters,
-		sessionIdentifierDigest(sessionIdentifier),
-		bcs.vector(bcs.u8()).serialize(decodeSuiPrivateKey(keypair.getSecretKey()).secretKey).toBytes(),
-	);
+	const [userSecretShare, userPublicOutput, userMessage] =
+		await create_imported_dwallet_user_output(
+			protocolPublicParameters,
+			sessionIdentifierDigest(sessionIdentifier),
+			bcs
+				.vector(bcs.u8())
+				.serialize(decodeSuiPrivateKey(keypair.getSecretKey()).secretKey)
+				.toBytes(),
+		);
 
-	const encryptedUserShareAndProof = encryptSecretShare(
+	const encryptedUserShareAndProof = await encryptSecretShare(
 		userSecretShare,
 		userShareEncryptionKeys.encryptionKey,
 		protocolPublicParameters,
@@ -257,16 +273,16 @@ export async function prepareImportDWalletVerification(
  * @returns The user's sign message that will be sent to the network for signature generation
  * @throws {Error} If the DWallet is not in active state or public output is missing
  */
-export function createUserSignMessageWithPublicOutput(
+export async function createUserSignMessageWithPublicOutput(
 	protocolPublicParameters: Uint8Array,
 	publicOutput: Uint8Array,
 	userSecretKeyShare: Uint8Array,
 	presign: Uint8Array,
 	message: Uint8Array,
 	hash: number,
-): Uint8Array {
+): Promise<Uint8Array> {
 	return Uint8Array.from(
-		create_sign_user_message(
+		await create_sign_user_message(
 			protocolPublicParameters,
 			publicOutput,
 			userSecretKeyShare,
@@ -283,10 +299,10 @@ export function createUserSignMessageWithPublicOutput(
  * @param network_dkg_public_output - The network DKG public output
  * @returns The protocol public parameters
  */
-export function networkDkgPublicOutputToProtocolPublicParameters(
+export async function networkDkgPublicOutputToProtocolPublicParameters(
 	network_dkg_public_output: Uint8Array,
-): Uint8Array {
-	return Uint8Array.from(network_dkg_public_output_to_protocol_pp(network_dkg_public_output));
+): Promise<Uint8Array> {
+	return Uint8Array.from(await network_dkg_public_output_to_protocol_pp(network_dkg_public_output));
 }
 
 /**
@@ -297,12 +313,12 @@ export function networkDkgPublicOutputToProtocolPublicParameters(
  * @param networkDkgPublicOutput - The network DKG public output
  * @returns True if the user's secret key share is valid, false otherwise
  */
-export function verifyUserShare(
+export async function verifyUserShare(
 	userSecretKeyShare: Uint8Array,
 	userDKGOutput: Uint8Array,
 	networkDkgPublicOutput: Uint8Array,
-): boolean {
-	return verify_user_share(userSecretKeyShare, userDKGOutput, networkDkgPublicOutput);
+): Promise<boolean> {
+	return await verify_user_share(userSecretKeyShare, userDKGOutput, networkDkgPublicOutput);
 }
 
 /**
@@ -315,14 +331,14 @@ export function verifyUserShare(
  * @param hash - The hash scheme identifier to use for verification
  * @returns True if the signature is valid, false otherwise
  */
-export function verifySecpSignature(
+export async function verifySecpSignature(
 	publicKey: Uint8Array,
 	signature: Uint8Array,
 	message: Uint8Array,
 	networkDkgPublicOutput: Uint8Array,
 	hash: number,
-): boolean {
-	return verify_secp_signature(publicKey, signature, message, networkDkgPublicOutput, hash);
+): Promise<boolean> {
+	return await verify_secp_signature(publicKey, signature, message, networkDkgPublicOutput, hash);
 }
 
 /**
@@ -331,8 +347,8 @@ export function verifySecpSignature(
  * @param dWalletOutput - The DWallet output
  * @returns The public key
  */
-export function publicKeyFromDWalletOutput(dWalletOutput: Uint8Array): Uint8Array {
-	return Uint8Array.from(public_key_from_dwallet_output(dWalletOutput));
+export async function publicKeyFromDWalletOutput(dWalletOutput: Uint8Array): Promise<Uint8Array> {
+	return Uint8Array.from(await public_key_from_dwallet_output(dWalletOutput));
 }
 
 /**
@@ -393,11 +409,14 @@ export async function verifyAndGetDWalletDKGPublicOutput(
  * @param networkDKGOutput - The network's public output
  * @returns True if the user's public output matches the network's public output, false otherwise
  */
-export function userAndNetworkDKGOutputMatch(
+export async function userAndNetworkDKGOutputMatch(
 	userPublicOutput: Uint8Array,
 	networkDKGOutput: Uint8Array,
-): boolean {
-	return centralized_and_decentralized_parties_dkg_output_match(userPublicOutput, networkDKGOutput);
+): Promise<boolean> {
+	return await centralized_and_decentralized_parties_dkg_output_match(
+		userPublicOutput,
+		networkDKGOutput,
+	);
 }
 
 /**

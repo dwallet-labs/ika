@@ -1,62 +1,15 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import fs from 'fs';
-import path from 'path';
-
 import type { IkaConfig, Network } from './types.js';
-
-/**
- * Find the ika_config.json file by searching in multiple possible locations
- * @returns The path to the found ika_config.json file
- * @throws {Error} If no ika_config.json file can be found
- */
-function findIkaConfigFile(): string {
-	const possiblePaths = [
-		// Current working directory
-		'ika_config.json',
-		// One level up
-		'../ika_config.json',
-		// Two levels up (current hardcoded path)
-		'../../ika_config.json',
-		// Three levels up
-		'../../../ika_config.json',
-		// From environment variable if set
-		...(process.env.IKA_CONFIG_PATH ? [process.env.IKA_CONFIG_PATH] : []),
-		// From project root (assuming we're in sdk/typescript/src/client/)
-		path.resolve(__dirname, '../../../../ika_config.json'),
-		// From workspace root (assuming we're in sdk/typescript/)
-		path.resolve(__dirname, '../../../ika_config.json'),
-	];
-
-	for (const configPath of possiblePaths) {
-		try {
-			const resolvedPath = path.resolve(configPath);
-			if (fs.existsSync(resolvedPath)) {
-				return resolvedPath;
-			}
-		} catch {
-			// Continue to next path if this one fails
-			continue;
-		}
-	}
-
-	throw new Error(
-		`Could not find ika_config.json file. Tried the following locations:\n` +
-			`${possiblePaths.map((p) => `  - ${p}`).join('\n')}\n\n` +
-			`Please ensure the file exists in one of these locations, or set the IKA_CONFIG_PATH environment variable.`,
-	);
-}
 
 /**
  * Get the network configuration for a specific Ika network.
  * This function returns the appropriate package IDs, object IDs, and shared versions
  * for the specified network environment.
  *
- * @param network - The network environment to get configuration for ('localnet', 'testnet', or 'mainnet')
- * @param ikaConfigPath - The path to the ika_config.json file to use. If not provided, the function will search for the file in the default locations. Only used for localnet.
+ * @param network - The network environment to get configuration for ('testnet', or 'mainnet')
  * @returns The complete Ika configuration object for the specified network
- * @throws {Error} If reading the localnet config file fails
  *
  * @example
  * ```typescript
@@ -64,37 +17,8 @@ function findIkaConfigFile(): string {
  * console.log(config.packages.ikaSystemPackage);
  * ```
  */
-export function getNetworkConfig(network: Network, ikaConfigPath?: string): IkaConfig {
+export function getNetworkConfig(network: Network): IkaConfig {
 	switch (network) {
-		case 'localnet': {
-			try {
-				const configPath = ikaConfigPath ?? findIkaConfigFile();
-				const parsedJson = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-
-				return {
-					packages: {
-						ikaPackage: parsedJson.packages.ika_package_id,
-						ikaCommonPackage: parsedJson.packages.ika_common_package_id,
-						ikaSystemPackage: parsedJson.packages.ika_system_package_id,
-						ikaDwallet2pcMpcPackage: parsedJson.packages.ika_dwallet_2pc_mpc_package_id,
-					},
-					objects: {
-						ikaSystemObject: {
-							objectID: parsedJson.objects.ika_system_object_id,
-							initialSharedVersion: 0,
-						},
-						ikaDWalletCoordinator: {
-							objectID: parsedJson.objects.ika_dwallet_coordinator_object_id,
-							initialSharedVersion: 0,
-						},
-					},
-				};
-			} catch (error) {
-				throw new Error(
-					`Failed to load localnet configuration: ${error instanceof Error ? error.message : String(error)}`,
-				);
-			}
-		}
 		case 'testnet':
 			return {
 				packages: {

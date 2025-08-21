@@ -35,7 +35,7 @@ async function deployIkaNetwork() {
 	await createNetworkServices(kc, NAMESPACE_NAME);
 }
 
-describe('chaos tests', () => {
+describe('system tests', () => {
 	it('deploy the ika network from the current directory to the local kubernetes cluster', async () => {
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		await deployIkaNetwork();
@@ -122,6 +122,6 @@ describe('chaos tests', () => {
 
 		console.log('deployed new validators, running a full flow test');
 
-		await runSignFullFlow(ikaClient, suiClient, `chaos-test-full-flow`);
+		await runSignFullFlow(ikaClient, suiClient, `system-test-full-flow`);
 	}, 3_600_000);
 });

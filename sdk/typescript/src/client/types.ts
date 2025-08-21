@@ -31,7 +31,7 @@ export interface IkaConfig {
 	objects: IkaObjectsConfig;
 }
 
-export type Network = 'localnet' | 'testnet' | 'mainnet';
+export type Network = 'testnet' | 'mainnet';
 
 /**
  * Represents a network encryption key with its metadata
@@ -65,14 +65,42 @@ export interface IkaClientOptions {
 		protocolPublicParameters: Uint8Array;
 	};
 	cache?: boolean;
-	network: Network;
 	/** Default encryption key options for the client */
 	encryptionKeyOptions?: EncryptionKeyOptions;
 }
 
 export type CoordinatorInner = typeof CoordinatorInnerModule.DWalletCoordinatorInner.$inferType;
 export type SystemInner = typeof SystemInnerModule.SystemInner.$inferType;
-export type DWallet = typeof CoordinatorInnerModule.DWallet.$inferType;
+
+export const DWalletKind = {
+	ZeroTrust: 'zero-trust',
+	ImportedKey: 'imported-key',
+	ImportedKeyShared: 'imported-key-shared',
+	Shared: 'shared',
+} as const;
+
+export type DWalletKind = (typeof DWalletKind)[keyof typeof DWalletKind];
+
+export type DWalletInternal = typeof CoordinatorInnerModule.DWallet.$inferType;
+
+export type ZeroTrustDWallet = DWalletInternal & {
+	kind: 'zero-trust';
+};
+
+export type ImportedKeyDWallet = DWalletInternal & {
+	kind: 'imported-key';
+};
+
+export type ImportedSharedDWallet = DWalletInternal & {
+	kind: 'imported-key-shared';
+};
+
+export type SharedDWallet = DWalletInternal & {
+	kind: 'shared';
+};
+
+export type DWallet = ZeroTrustDWallet | ImportedKeyDWallet | ImportedSharedDWallet | SharedDWallet;
+
 export type DWalletCap = typeof CoordinatorInnerModule.DWalletCap.$inferType;
 export type Presign = typeof CoordinatorInnerModule.PresignSession.$inferType;
 export type EncryptedUserSecretKeyShare =
