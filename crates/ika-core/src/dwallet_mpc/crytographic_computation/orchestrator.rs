@@ -126,7 +126,7 @@ impl CryptographicComputationsOrchestrator {
 
             debug!(
                 session_identifier=?computation_update.computation_id.session_identifier,
-                mpc_round=?computation_update.computation_id.current_round,
+                current_round=?computation_update.computation_id.current_round,
                 attempt_number=?computation_update.computation_id.attempt_number,
                 currently_running_sessions_count =? self.currently_running_cryptographic_computations.len(),
                 "Received a cryptographic computation completed update"
@@ -201,7 +201,7 @@ impl CryptographicComputationsOrchestrator {
         if !self.has_available_cores_to_perform_computation() {
             info!(
                 session_identifier=?computation_id.session_identifier,
-                mpc_round=?computation_id.current_round,
+                current_round=?computation_id.current_round,
                 attempt_number=?computation_id.attempt_number,
                 mpc_protocol=?computation_request.protocol_data.to_string(),
                 "No available CPU cores to perform cryptographic computation"
@@ -235,7 +235,7 @@ impl CryptographicComputationsOrchestrator {
         info!(
             party_id,
             session_identifier=?computation_id.session_identifier,
-            mpc_round=?computation_id.current_round,
+            current_round=?computation_id.current_round,
             attempt_number=?computation_id.attempt_number,
             mpc_protocol=?protocol_metadata.to_string(),
             "Starting cryptographic computation",

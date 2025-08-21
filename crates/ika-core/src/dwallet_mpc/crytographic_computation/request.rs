@@ -55,7 +55,7 @@ impl Request {
             mpc_protocol=?self.protocol_data.to_string(),
             validator=?self.validator_name,
             session_identifier=?computation_id.session_identifier,
-            mpc_round=?computation_id.current_round,
+            current_round=?computation_id.current_round,
             access_structure=?self.access_structure,
             "Advancing an MPC session"
         );
@@ -416,7 +416,7 @@ impl Request {
                             error=?err,
                             session_identifier=?computation_id.session_identifier,
                             validator=?self.validator_name,
-                            mpc_round=?computation_id.current_round,
+                            current_round=?computation_id.current_round,
                             "failed to verify secret share"
                         );
                         Err(DwalletMPCError::DWalletSecretNotMatchedDWalletOutput)
