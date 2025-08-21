@@ -508,11 +508,36 @@ use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{DKGFirstData, NetworkEncryptionKeyDkgData, ProtocolData};
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 
-pub(crate) fn send_start_network_dkg_event(
+pub(crate) fn send_start_network_dkg_event_to_all_parties(
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
 ) {
-    send_configurable_start_network_dkg_event(epoch_id, sui_data_senders, [1u8; 32], 1);
+    let key_id = ObjectID::random();
+    send_configurable_start_network_dkg_event(
+        epoch_id,
+        sui_data_senders,
+        [1u8; 32],
+        1,
+        &(0..sui_data_senders.len()).collect::<Vec<_>>(),
+        key_id,
+    );
+}
+
+pub(crate) fn send_start_network_dkg_event_to_some_parties(
+    ika_network_config: &IkaNetworkConfig,
+    epoch_id: EpochId,
+    sui_data_senders: &mut Vec<SuiDataSenders>,
+    parties: &[usize],
+    key_id: ObjectID,
+) {
+    send_configurable_start_network_dkg_event(
+        epoch_id,
+        sui_data_senders,
+        [1u8; 32],
+        1,
+        parties,
+        key_id,
+    );
 }
 
 pub(crate) fn send_configurable_start_network_dkg_event(
@@ -520,31 +545,36 @@ pub(crate) fn send_configurable_start_network_dkg_event(
     sui_data_senders: &mut Vec<SuiDataSenders>,
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
+    parties: &[usize],
+    key_id: ObjectID,
 ) {
-    let network_key_id = ObjectID::random();
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
-        let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DWalletSessionRequest {
-                session_type: SessionType::System,
-                session_identifier: SessionIdentifier::new(
-                    SessionType::System,
-                    session_identifier_preimage,
-                ),
-                session_sequence_number,
-                protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
-                    data: NetworkEncryptionKeyDkgData {
-                        key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
+    sui_data_senders
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| parties.contains(i))
+        .for_each(|(_, mut sui_data_sender)| {
+            let _ = sui_data_sender.uncompleted_events_sender.send((
+                vec![DWalletSessionRequest {
+                    session_type: SessionType::System,
+                    session_identifier: SessionIdentifier::new(
+                        SessionType::System,
+                        session_identifier_preimage,
+                    ),
+                    session_sequence_number,
+                    protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
+                        data: NetworkEncryptionKeyDkgData {
+                            key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        },
+                        dwallet_network_encryption_key_id: key_id,
                     },
-                    dwallet_network_encryption_key_id: network_key_id,
-                },
-                epoch: 1,
-                requires_network_key_data: false,
-                requires_next_active_committee: false,
-                pulled: false,
-            }],
-            epoch_id,
-        ));
-    });
+                    epoch: 1,
+                    requires_network_key_data: false,
+                    requires_next_active_committee: false,
+                    pulled: false,
+                }],
+                epoch_id,
+            ));
+        });
 }
 
 pub(crate) fn send_start_dwallet_dkg_first_round_event(

@@ -12,7 +12,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     TestingAuthorityPerEpochStore, TestingDWalletCheckpointNotify, TestingSubmitToConsensus,
-    send_start_network_dkg_event,
+    send_start_network_dkg_event_to_all_parties,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
@@ -43,8 +43,8 @@ async fn test_network_dkg_full_flow() {
         mut epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
-    send_start_network_dkg_event(epoch_id, &mut sui_data_senders);
-    let mut mpc_round = 1;
+    send_start_network_dkg_event_to_all_parties(epoch_id, &mut sui_data_senders);
+    let mut consensus_round = 1;
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
@@ -55,7 +55,10 @@ async fn test_network_dkg_full_flow() {
         )
         .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
+            assert_eq!(
+                consensus_round, 5,
+                "Network DKG should complete after 4 rounds"
+            );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
@@ -64,8 +67,8 @@ async fn test_network_dkg_full_flow() {
             &committee,
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
-            mpc_round,
+            consensus_round,
         );
-        mpc_round += 1;
+        consensus_round += 1;
     }
 }
