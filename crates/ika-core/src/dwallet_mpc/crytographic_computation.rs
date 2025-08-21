@@ -21,3 +21,11 @@ pub(crate) struct ComputationId {
     pub(crate) mpc_round: u64,
     pub(crate) attempt_number: u64,
 }
+
+impl PartialEq for ComputationId {
+    fn eq(&self, other: &Self) -> bool {
+        self.session_identifier == other.session_identifier
+            && self.mpc_round == other.mpc_round
+            && self.attempt_number == other.attempt_number
+    }
+}
