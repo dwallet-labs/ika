@@ -3,7 +3,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { Hash, SignatureAlgorithm } from '../../src/client/types';
+import { Hash, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
 import { createCompleteDWallet, testPresign } from '../helpers/dwallet-test-helpers';
 import { createIndividualTestSetup, getSharedTestSetup } from '../helpers/shared-test-setup';
 import {
@@ -50,20 +50,20 @@ async function testSignWithResult(
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
-	const { messageApproval } = ikaTransaction.approveMessage({
+	const messageApproval = ikaTransaction.approveMessage({
 		dWalletCap: dWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	});
 
-	const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+	const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 		presign,
 	});
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	await ikaTransaction.sign({
+	await ikaTransaction.requestSign({
 		dWallet,
 		messageApproval,
 		verifiedPresignCap,
@@ -375,7 +375,7 @@ describe('DWallet Signing', () => {
 			);
 
 			const message = createTestMessage(testName);
-			const { messageApproval } = ikaTransaction.approveMessage({
+			const messageApproval = ikaTransaction.approveMessage({
 				dWalletCap: activeDWallet.dwallet_cap_id,
 				signatureAlgorithm: SignatureAlgorithm.ECDSA,
 				hashScheme: Hash.KECCAK256,
@@ -383,8 +383,8 @@ describe('DWallet Signing', () => {
 			});
 
 			// Try to sign with null presign (this should fail)
-			await ikaTransaction.sign({
-				dWallet: activeDWallet,
+			await ikaTransaction.requestSign({
+				dWallet: activeDWallet as ZeroTrustDWallet,
 				messageApproval,
 				verifiedPresignCap: null as any,
 				hashScheme: Hash.KECCAK256,

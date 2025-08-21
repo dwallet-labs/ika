@@ -3,37 +3,43 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { prepareImportDWalletVerification } from '../../src/client/cryptography';
-import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types';
+import { prepareImportedKeyDWalletVerification } from '../../src/client/cryptography';
+import {
+	Curve,
+	Hash,
+	ImportedKeyDWallet,
+	ImportedSharedDWallet,
+	SignatureAlgorithm,
+} from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
 	createTestSessionIdentifier,
-	makeTestImportedDWalletUserSecretKeySharesPublic,
+	makeTestImportedKeyDWalletUserSecretKeySharesPublic,
 	registerTestEncryptionKey,
-	requestTestImportedDWalletVerification,
+	requestTestImportedKeyDWalletVerification,
 	testPresign,
 	testSignPublicUserShare,
-	testSignWithImportedDWalletPublic,
+	testSignWithImportedKeyDWalletPublic,
 } from '../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
 	createTestMessage,
 	createTestSuiClient,
 	delay,
-	generateTestKeypairForImportedDWallet,
+	generateTestKeypairForImportedKeyDWallet,
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('Shared Imported DWallet Signing (public user shares)', () => {
-	it('should sign a message using public shares of an imported DWallet', async () => {
+describe('Shared Imported Key DWallet Signing (public user shares)', () => {
+	it('should sign a message using public shares of an Imported Key DWallet', async () => {
 		const testName = 'shared-imported-sign-test';
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedDWallet(testName);
+			generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -50,24 +56,25 @@ describe('Shared Imported DWallet Signing (public user shares)', () => {
 
 		await delay(3);
 
-		const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+		const importDWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
 			ikaClient,
 			sessionIdentifierPreimage,
 			userShareEncryptionKeys,
 			dWalletKeypair,
 		);
 
-		const importedKeyDWalletVerificationRequestEvent = await requestTestImportedDWalletVerification(
-			ikaClient,
-			suiClient,
-			importDWalletVerificationRequestInput,
-			Curve.SECP256K1,
-			signerPublicKey,
-			sessionIdentifier,
-			userShareEncryptionKeys,
-			signerAddress,
-			testName,
-		);
+		const importedKeyDWalletVerificationRequestEvent =
+			await requestTestImportedKeyDWalletVerification(
+				ikaClient,
+				suiClient,
+				importDWalletVerificationRequestInput,
+				Curve.SECP256K1,
+				signerPublicKey,
+				sessionIdentifier,
+				userShareEncryptionKeys,
+				signerAddress,
+				testName,
+			);
 
 		const awaitingKeyHolderSignatureDWallet = await retryUntil(
 			() =>
@@ -83,7 +90,7 @@ describe('Shared Imported DWallet Signing (public user shares)', () => {
 		await acceptTestEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			awaitingKeyHolderSignatureDWallet,
+			awaitingKeyHolderSignatureDWallet as ImportedKeyDWallet,
 			importDWalletVerificationRequestInput.userPublicOutput,
 			importedKeyDWalletVerificationRequestEvent,
 			userShareEncryptionKeys,
@@ -117,10 +124,10 @@ describe('Shared Imported DWallet Signing (public user shares)', () => {
 			await ikaClient.getProtocolPublicParameters(activeDWallet),
 		);
 
-		await makeTestImportedDWalletUserSecretKeySharesPublic(
+		await makeTestImportedKeyDWalletUserSecretKeySharesPublic(
 			ikaClient,
 			suiClient,
-			activeDWallet,
+			activeDWallet as ImportedKeyDWallet,
 			secretShare,
 			testName,
 		);
@@ -156,10 +163,10 @@ describe('Shared Imported DWallet Signing (public user shares)', () => {
 			2000,
 		);
 
-		await testSignWithImportedDWalletPublic(
+		await testSignWithImportedKeyDWalletPublic(
 			ikaClient,
 			suiClient,
-			sharedDWallet,
+			sharedDWallet as ImportedSharedDWallet,
 			presignObject,
 			message,
 			Hash.KECCAK256,

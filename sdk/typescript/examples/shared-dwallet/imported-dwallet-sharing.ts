@@ -1,16 +1,16 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { prepareImportDWalletVerification } from '../../src/client/cryptography.js';
-import { Curve } from '../../src/client/types.js';
+import { prepareImportedKeyDWalletVerification } from '../../src/client/cryptography.js';
+import { Curve, ImportedKeyDWallet } from '../../src/client/types.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
 	createSessionIdentifier,
 	createSuiClient,
-	generateKeypairForImportedDWallet,
-	makeImportedDWalletUserSecretKeySharesPublic,
-	requestImportedDWalletVerification,
+	generateKeypairForImportedKeyDWallet,
+	makeImportedKeyDWalletUserSecretKeySharesPublic,
+	requestImportedKeyDWalletVerification,
 } from '../common.js';
 
 const suiClient = createSuiClient();
@@ -20,7 +20,7 @@ async function main() {
 	await ikaClient.initialize();
 
 	const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-		generateKeypairForImportedDWallet();
+		generateKeypairForImportedKeyDWallet();
 
 	const { sessionIdentifier, sessionIdentifierPreimage } = await createSessionIdentifier(
 		ikaClient,
@@ -28,14 +28,14 @@ async function main() {
 		signerAddress,
 	);
 
-	const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+	const importDWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
 		ikaClient,
 		sessionIdentifierPreimage,
 		userShareEncryptionKeys,
 		dWalletKeypair,
 	);
 
-	const importedKeyDWalletVerificationRequestEvent = await requestImportedDWalletVerification(
+	const importedKeyDWalletVerificationRequestEvent = await requestImportedKeyDWalletVerification(
 		ikaClient,
 		suiClient,
 		importDWalletVerificationRequestInput,
@@ -53,7 +53,7 @@ async function main() {
 	await acceptEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		awaitingKeyHolderSignatureDWallet,
+		awaitingKeyHolderSignatureDWallet as ImportedKeyDWallet,
 		importDWalletVerificationRequestInput.userPublicOutput,
 		importedKeyDWalletVerificationRequestEvent,
 		userShareEncryptionKeys,
@@ -74,10 +74,10 @@ async function main() {
 		await ikaClient.getProtocolPublicParameters(activeDWallet),
 	);
 
-	await makeImportedDWalletUserSecretKeySharesPublic(
+	await makeImportedKeyDWalletUserSecretKeySharesPublic(
 		ikaClient,
 		suiClient,
-		activeDWallet,
+		activeDWallet as ImportedKeyDWallet,
 		secretShare,
 	);
 }

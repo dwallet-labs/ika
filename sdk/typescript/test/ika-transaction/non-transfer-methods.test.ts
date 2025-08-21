@@ -47,7 +47,7 @@ describe('IkaTransaction Non-Transfer Methods', () => {
 		const emptyIKACoin = createEmptyTestIkaToken(tx, ikaClient.ikaConfig);
 
 		// Use the non-transfer version - should return dwalletCap instead of transferring it
-		const { dwalletCap } = ikaTransaction.requestDWalletDKGFirstRound({
+		const dwalletCap = ikaTransaction.requestDWalletDKGFirstRound({
 			curve: Curve.SECP256K1,
 			networkEncryptionKeyID: networkEncryptionKey.id,
 			ikaCoin: emptyIKACoin,
@@ -85,7 +85,7 @@ describe('IkaTransaction Non-Transfer Methods', () => {
 		const emptyIKACoin = createEmptyTestIkaToken(tx, ikaClient.ikaConfig);
 
 		// Use the non-transfer version - should return unverifiedPresignCap instead of transferring it
-		const { unverifiedPresignCap } = ikaTransaction.requestPresign({
+		const unverifiedPresignCap = ikaTransaction.requestPresign({
 			dWallet: activeDWallet,
 			signatureAlgorithm: SignatureAlgorithm.ECDSA,
 			ikaCoin: emptyIKACoin,

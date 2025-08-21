@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { Hash, SignatureAlgorithm } from '../../src/client/types';
+import { Hash, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
 import {
 	createCompleteDWallet,
 	requestTestFutureSign,
@@ -66,7 +66,7 @@ describe('DWallet Future Signing', () => {
 		const futureSignRequest = await requestTestFutureSign(
 			ikaClient,
 			suiClient,
-			activeDWallet,
+			activeDWallet as ZeroTrustDWallet,
 			presignObject,
 			userShareEncryptionKeys,
 			encryptedUserSecretKeyShare,
@@ -160,7 +160,7 @@ describe('DWallet Future Signing', () => {
 			const futureSignRequest = await requestTestFutureSign(
 				ikaClient,
 				suiClient,
-				activeDWallet,
+				activeDWallet as ZeroTrustDWallet,
 				presignObject,
 				userShareEncryptionKeys,
 				encryptedUserSecretKeyShare,
@@ -251,7 +251,7 @@ describe('DWallet Future Signing', () => {
 			const futureSignRequest = await requestTestFutureSign(
 				ikaClient,
 				suiClient,
-				activeDWallet,
+				activeDWallet as ZeroTrustDWallet,
 				presignObject,
 				userShareEncryptionKeys,
 				encryptedUserSecretKeyShare,
