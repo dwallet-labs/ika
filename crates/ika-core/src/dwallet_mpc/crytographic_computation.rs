@@ -10,11 +10,12 @@ mod request;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
 pub(crate) use orchestrator::CryptographicComputationsOrchestrator;
 pub(crate) use request::Request as ComputationRequest;
+use std::hash::Hash;
 
 const MPC_SIGN_SECOND_ROUND: u64 = 2;
 
 /// A unique key for a computation request.
-#[derive(Debug, Clone, Copy, Eq, Hash)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ComputationId {
     pub(crate) session_identifier: SessionIdentifier,
     pub(crate) consensus_round: u64,
@@ -27,5 +28,15 @@ impl PartialEq for ComputationId {
         self.session_identifier == other.session_identifier
             && self.mpc_round == other.mpc_round
             && self.attempt_number == other.attempt_number
+    }
+}
+
+impl Eq for ComputationId {}
+
+impl Hash for ComputationId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.session_identifier.hash(state);
+        self.mpc_round.hash(state);
+        self.attempt_number.hash(state);
     }
 }
