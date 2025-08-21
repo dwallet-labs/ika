@@ -61,7 +61,7 @@ jobs:
         run: cargo fmt -- --check
       - name: Fmt Check - Wasm
         run: cargo fmt -- --check
-        working-directory: sdk/mpc-wasm
+        working-directory: sdk/ika-wasm
   clippy:
     if: github.event_name == 'push'
     name: Clippy
