@@ -15,7 +15,6 @@ use tracing::info;
 
 #[tokio::test]
 #[cfg(test)]
-/// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
 async fn sign() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
