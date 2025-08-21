@@ -548,30 +548,33 @@ pub(crate) fn send_configurable_start_network_dkg_event(
     parties: &[usize],
     key_id: ObjectID,
 ) {
-    let network_key_id = ObjectID::random();
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
-        let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DWalletSessionRequest {
-                session_type: SessionType::System,
-                session_identifier: SessionIdentifier::new(
-                    SessionType::System,
-                    session_identifier_preimage,
-                ),
-                session_sequence_number,
-                protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
-                    data: NetworkEncryptionKeyDkgData {
-                        key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
+    sui_data_senders
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| parties.contains(i))
+        .for_each(|(_, mut sui_data_sender)| {
+            let _ = sui_data_sender.uncompleted_events_sender.send((
+                vec![DWalletSessionRequest {
+                    session_type: SessionType::System,
+                    session_identifier: SessionIdentifier::new(
+                        SessionType::System,
+                        session_identifier_preimage,
+                    ),
+                    session_sequence_number,
+                    protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
+                        data: NetworkEncryptionKeyDkgData {
+                            key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        },
+                        dwallet_network_encryption_key_id: key_id,
                     },
-                    dwallet_network_encryption_key_id: network_key_id,
-                },
-                epoch: 1,
-                requires_network_key_data: false,
-                requires_next_active_committee: false,
-                pulled: false,
-            }],
-            epoch_id,
-        ));
-    });
+                    epoch: 1,
+                    requires_network_key_data: false,
+                    requires_next_active_committee: false,
+                    pulled: false,
+                }],
+                epoch_id,
+            ));
+        });
 }
 
 pub(crate) fn send_start_dwallet_dkg_first_round_event(
