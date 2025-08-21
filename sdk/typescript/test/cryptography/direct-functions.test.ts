@@ -23,7 +23,7 @@ describe('Cryptography Direct Functions', () => {
 		]);
 
 		// Test creating a class groups keypair
-		const keypair = createClassGroupsKeypair(seed);
+		const keypair = createClassGroupsKeypair(seed, Curve.SECP256K1);
 
 		// Test against expected deterministic outputs
 		expect(keypair).toBeDefined();
@@ -49,7 +49,7 @@ describe('Cryptography Direct Functions', () => {
 		expect(actualDecryptionKeyStart).toBe(expectedDecryptionKeyStart);
 
 		// Test that same seed creates same keypair
-		const keypair2 = createClassGroupsKeypair(seed);
+		const keypair2 = createClassGroupsKeypair(seed, Curve.SECP256K1);
 
 		expect(keypair.encryptionKey).toEqual(keypair2.encryptionKey);
 		expect(keypair.decryptionKey).toEqual(keypair2.decryptionKey);
@@ -57,7 +57,7 @@ describe('Cryptography Direct Functions', () => {
 		// Test that different seeds create different keypairs
 		const seed2 = new Uint8Array(32);
 		crypto.getRandomValues(seed2);
-		const keypair3 = createClassGroupsKeypair(seed2);
+		const keypair3 = createClassGroupsKeypair(seed2, Curve.SECP256K1);
 
 		expect(keypair.encryptionKey).not.toEqual(keypair3.encryptionKey);
 		expect(keypair.decryptionKey).not.toEqual(keypair3.decryptionKey);
@@ -68,13 +68,17 @@ describe('Cryptography Direct Functions', () => {
 		const invalidSeed = new Uint8Array(16); // Too small
 		crypto.getRandomValues(invalidSeed);
 
-		expect(() => createClassGroupsKeypair(invalidSeed)).toThrow('Seed must be 32 bytes');
+		expect(() => createClassGroupsKeypair(invalidSeed, Curve.SECP256K1)).toThrow(
+			'Seed must be 32 bytes',
+		);
 
 		// Test with another wrong seed size
 		const tooLargeSeed = new Uint8Array(64); // Too large
 		crypto.getRandomValues(tooLargeSeed);
 
-		expect(() => createClassGroupsKeypair(tooLargeSeed)).toThrow('Seed must be 32 bytes');
+		expect(() => createClassGroupsKeypair(tooLargeSeed, Curve.SECP256K1)).toThrow(
+			'Seed must be 32 bytes',
+		);
 	});
 
 	it('should create random session identifier', async () => {

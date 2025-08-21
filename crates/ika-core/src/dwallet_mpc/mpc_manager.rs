@@ -410,7 +410,7 @@ impl DWalletMPCManager {
             .mpc_sessions
             .iter()
             .filter_map(|(_, session)| {
-                let SessionStatus::Active { request, .. } = &session.status else {
+                let MPCSessionStatus::Active { request, .. } = &session.status else {
                     return None;
                 };
 

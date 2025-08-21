@@ -352,6 +352,9 @@ fn deserialize_event_contents<T: DeserializeOwned + DWalletSessionEventTrait>(
 #[cfg(test)]
 mod tests {
     use crate::sui_connector::sui_event_into_request::deserialize_event_contents;
+    use ika_types::messages_dwallet_mpc::{
+        DWalletDKGFirstRoundRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent,
+    };
 
     #[test]
     fn deserializes_pushed_event() {

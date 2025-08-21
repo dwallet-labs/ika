@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { prepareImportDWalletVerification } from '../../src/client/cryptography.js';
+import { prepareImportedKeyDWalletVerification } from '../../src/client/cryptography.js';
 import { Curve, Hash, ImportedKeyDWallet, SignatureAlgorithm } from '../../src/client/types.js';
 import {
 	acceptEncryptedUserShare,
@@ -29,7 +29,7 @@ async function main() {
 		signerAddress,
 	);
 
-	const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+	const importDWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
 		ikaClient,
 		sessionIdentifierPreimage,
 		userShareEncryptionKeys,
