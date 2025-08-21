@@ -31,6 +31,7 @@ First, create a presign for the public dWallet:
 
 ```typescript
 import { IkaTransaction, SignatureAlgorithm } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
@@ -58,6 +59,7 @@ Create a partial signature using the public secret shares:
 
 ```typescript
 import { Hash } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
@@ -100,6 +102,8 @@ await signAndExecuteTransaction(tx);
 Complete the signature using public dWallet methods:
 
 ```typescript
+import { Transaction } from '@mysten/sui/transactions';
+
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,

@@ -34,6 +34,7 @@ First, create a presign exactly like in regular signing:
 
 ```typescript
 import { IkaTransaction, SignatureAlgorithm } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
@@ -61,6 +62,7 @@ Create a partial signature for future completion:
 
 ```typescript
 import { Hash } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
@@ -104,6 +106,8 @@ await signAndExecuteTransaction(tx);
 Later, complete the signature maintaining zero-trust security:
 
 ```typescript
+import { Transaction } from '@mysten/sui/transactions';
+
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,

@@ -33,6 +33,7 @@ First, register your encryption key, if you did before with your `UserShareEncry
 
 ```typescript
 import { Curve, IkaTransaction } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
@@ -55,6 +56,8 @@ Choose one approach based on whether you want to keep or transfer the dWallet ca
 ### Use dWallet Capability as you want
 
 ```typescript
+import { Transaction } from '@mysten/sui/transactions';
+
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,
@@ -85,6 +88,7 @@ Complete the key generation process:
 
 ```typescript
 import { prepareDKGSecondRoundAsync } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
 const dkgSecondRoundInput = await prepareDKGSecondRoundAsync(
 	ikaClient,
@@ -115,6 +119,8 @@ await signAndExecuteTransaction(tx);
 Accept your encrypted share to complete the process:
 
 ```typescript
+import { Transaction } from '@mysten/sui/transactions';
+
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,

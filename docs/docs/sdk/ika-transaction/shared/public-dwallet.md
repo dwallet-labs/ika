@@ -30,7 +30,7 @@ Make a dWallet's secret shares public, allowing anyone to sign with it. This tra
 First, create a normal dWallet through the standard DKG process (see [Creating a dWallet](../zero-trust/creating.md)):
 
 ```typescript
-const activedWallet = await ikaClient.getdWalletInParticularState(dwalletID, 'Active');
+const activedWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
 
 const encryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeyShare(
 	encryptedUserSecretKeyShareId,
@@ -55,6 +55,7 @@ Make the secret shares publicly accessible on-chain:
 
 ```typescript
 import { IkaTransaction } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
