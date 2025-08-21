@@ -47,9 +47,6 @@ pub(crate) struct DWalletMPCSession {
     /// computed by summing the number of failed attempts.
     pub(crate) mpc_round_to_threshold_not_reached_consensus_rounds: HashMap<u64, HashSet<u64>>,
 
-    // Todo (#1442): Move this field into `MPCSessionStatus::Active` as non-optional.
-    pub(crate) request_data: Option<DWalletSessionRequest>,
-
     /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
     /// Used to build the input of messages to advance each round of the session.
     pub(super) messages_by_consensus_round: HashMap<u64, HashMap<PartyID, MPCMessage>>,
@@ -63,7 +60,6 @@ impl DWalletMPCSession {
         status: MPCSessionStatus,
         session_identifier: SessionIdentifier,
         party_id: PartyID,
-        request_data: Option<DWalletSessionRequest>,
     ) -> Self {
         Self {
             status,
@@ -73,13 +69,11 @@ impl DWalletMPCSession {
             current_mpc_round: 1,
             mpc_round_to_threshold_not_reached_consensus_rounds: HashMap::new(),
             party_id,
-            request_data,
             validator_name,
         }
     }
 
     pub(crate) fn clear_data(&mut self) {
-        self.request_data = None;
         self.messages_by_consensus_round = HashMap::new();
         self.outputs_by_consensus_round = HashMap::new();
     }
@@ -103,13 +97,23 @@ impl DWalletMPCSession {
         sender_party_id: PartyID,
         message: DWalletMPCMessage,
     ) {
-        let mpc_protocol = self
-            .request_data
-            .as_ref()
-            .map(|request_data| {
-                DWalletSessionRequestMetricData::from(&request_data.protocol_data).to_string()
-            })
-            .unwrap_or_default();
+        let mpc_protocol = match &self.status {
+            MPCSessionStatus::Active { request, .. } => {
+                DWalletSessionRequestMetricData::from(&request.protocol_data).to_string()
+            }
+            MPCSessionStatus::WaitingForSessionRequest => {
+                "Unknown - waiting for session request".to_string()
+            }
+            _ => {
+                error!(
+                    should_never_happen=true,
+                    session_identifier=?self.session_identifier,
+                    "tried to add a message to a non-active MPC session"
+                );
+                return;
+            }
+        };
+
         debug!(
             session_identifier=?message.session_identifier,
             from_authority=?message.authority,
@@ -141,10 +145,6 @@ impl DWalletMPCSession {
             .entry(consensus_round)
             .or_default();
 
-        // let mpc_round_messages_map = consensus_round_messages_map
-        //     .entry(mpc_round_number)
-        //     .or_default();
-
         if let Vacant(e) = consensus_round_messages_map.entry(sender_party_id) {
             e.insert(message.message);
         }
@@ -153,10 +153,17 @@ impl DWalletMPCSession {
     /// Records a threshold not reached error that we got when advancing
     /// this session with messages up to `consensus_round`.
     pub(crate) fn record_threshold_not_reached(&mut self, consensus_round: u64) {
-        let protocol_name = DWalletSessionRequestMetricData::from(
-            &self.request_data.as_ref().unwrap().protocol_data,
-        )
-        .to_string();
+        let MPCSessionStatus::Active { request, .. } = &self.status else {
+            error!(
+                should_never_happen=true,
+                session_identifier=?self.session_identifier,
+                "tried to record threshold not reached for a non-active MPC session"
+            );
+            return;
+        };
+
+        let protocol_name =
+            DWalletSessionRequestMetricData::from(&request.protocol_data).to_string();
 
         error!(
             mpc_protocol=?protocol_name,
@@ -183,21 +190,13 @@ impl DWalletMPCSession {
         sender_party_id: PartyID,
         output: DWalletMPCOutput,
     ) {
-        let mpc_protocol = self
-            .request_data
-            .as_ref()
-            .map(|request| {
-                DWalletSessionRequestMetricData::from(&request.protocol_data).to_string()
-            })
-            .unwrap_or_default();
-
         debug!(
             session_identifier=?output.session_identifier,
             from_authority=?output.authority,
             receiving_authority=?self.validator_name,
             output_messages=?output.output,
             consensus_round,
-            ?mpc_protocol,
+            status =? self.status,
             "Received a dWallet MPC output",
         );
 
@@ -206,7 +205,7 @@ impl DWalletMPCSession {
             info!(
                 authority=?self.validator_name,
                 current_mpc_round=self.current_mpc_round,
-                mpc_protocol,
+                status =? self.status,
                 "Received our output from consensus, marking MPC session as computation completed",
             );
 
@@ -240,8 +239,11 @@ impl DWalletMPCSession {
         self.status = MPCSessionStatus::ComputationCompleted;
     }
 
-    pub(crate) fn request_data(&self) -> Option<&DWalletSessionRequest> {
-        self.request_data.as_ref()
+    pub(crate) fn request_metric_data(&self) -> Option<DWalletSessionRequestMetricData> {
+        let MPCSessionStatus::Active { request, .. } = &self.status else {
+            return None;
+        };
+        Some((&request.protocol_data).into())
     }
 }
 
@@ -269,6 +271,7 @@ pub enum MPCSessionStatus {
     Active {
         public_input: PublicInput,
         private_input: MPCPrivateInput,
+        request: DWalletSessionRequest,
     },
     WaitingForSessionRequest,
     ComputationCompleted,
@@ -441,7 +444,7 @@ impl DWalletMPCManager {
         }
 
         if let Some(session) = self.mpc_sessions.get(&session_identifier) {
-            if session.request_data.is_some() {
+            if !matches!(session.status, MPCSessionStatus::WaitingForSessionRequest) {
                 // The corresponding session already has its data set, nothing to do.
                 return;
             }
@@ -465,13 +468,13 @@ impl DWalletMPCManager {
         let status = MPCSessionStatus::Active {
             public_input,
             private_input,
+            request: request.clone(),
         };
 
         self.dwallet_mpc_metrics
             .add_received_request_start(&(&request.protocol_data).into());
 
         if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
-            session.request_data = Some(request);
             session.status = status;
         } else {
             self.new_mpc_session(&session_identifier, Some(request), status);
