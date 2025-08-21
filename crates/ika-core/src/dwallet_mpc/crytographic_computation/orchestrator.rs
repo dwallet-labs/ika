@@ -198,6 +198,17 @@ impl CryptographicComputationsOrchestrator {
         computation_request: ComputationRequest,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> bool {
+        if self
+            .currently_running_cryptographic_computations
+            .contains(&computation_id)
+            || self
+            .completed_cryptographic_computations
+            .contains(&computation_id)
+        {
+            // Don't run a task that we already spawned.
+            return true;
+        }
+
         if !self.has_available_cores_to_perform_computation() {
             info!(
                 session_identifier=?computation_id.session_identifier,
@@ -211,18 +222,6 @@ impl CryptographicComputationsOrchestrator {
 
             return false;
         }
-
-        if self
-            .currently_running_cryptographic_computations
-            .contains(&computation_id)
-            || self
-                .completed_cryptographic_computations
-                .contains(&computation_id)
-        {
-            // Don't run a task that we already spawned.
-            return true;
-        }
-
         let handle = Handle::current();
 
         let party_id = computation_request.party_id;
