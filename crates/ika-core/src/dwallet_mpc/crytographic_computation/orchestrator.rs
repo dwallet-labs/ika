@@ -204,6 +204,7 @@ impl CryptographicComputationsOrchestrator {
                 mpc_round=?computation_id.mpc_round,
                 attempt_number=?computation_id.attempt_number,
                 mpc_protocol=?computation_request.protocol_data.to_string(),
+                available_cores=?self.available_cores_for_cryptographic_computations,
                 "No available CPU cores to perform cryptographic computation"
             );
 
