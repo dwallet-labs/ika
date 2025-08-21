@@ -138,7 +138,7 @@ impl DWalletMPCService {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-utils")]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         seed: RootSeed,
@@ -176,7 +176,7 @@ impl DWalletMPCService {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-utils")]
     pub(crate) fn dwallet_mpc_manager(&self) -> &DWalletMPCManager {
         &self.dwallet_mpc_manager
     }
