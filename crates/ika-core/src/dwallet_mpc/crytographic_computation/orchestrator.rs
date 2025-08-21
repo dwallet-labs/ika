@@ -209,7 +209,7 @@ impl CryptographicComputationsOrchestrator {
             return true;
         } else {
             info!(
-                current_computations=?self.currently_running_cryptographic_computations, 
+                current_computations=?self.currently_running_cryptographic_computations,
                 completed_computations=?self.completed_cryptographic_computations,
                 "No previous computation found for this request, proceeding to spawn a new one"
             );
