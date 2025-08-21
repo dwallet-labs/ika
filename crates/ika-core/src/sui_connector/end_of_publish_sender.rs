@@ -3,7 +3,7 @@
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::consensus_adapter::SubmitToConsensus;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use ika_types::messages_consensus::ConsensusTransaction;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -49,13 +49,13 @@ impl EndOfPublishSender {
         }
     }
 
-    fn epoch_store(&self) -> DwalletMPCResult<Arc<AuthorityPerEpochStore>> {
+    fn epoch_store(&self) -> DwalletResult<Arc<AuthorityPerEpochStore>> {
         self.epoch_store
             .upgrade()
-            .ok_or(DwalletMPCError::EpochEnded(self.epoch_id))
+            .ok_or(DwalletError::EpochEnded(self.epoch_id))
     }
 
-    async fn send_end_of_publish(&self) -> DwalletMPCResult<()> {
+    async fn send_end_of_publish(&self) -> DwalletResult<()> {
         let tx = ConsensusTransaction::new_end_of_publish(self.epoch_store()?.name);
         self.consensus_adapter
             .submit_to_consensus(&[tx], &self.epoch_store()?)

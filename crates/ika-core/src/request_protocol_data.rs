@@ -1,7 +1,7 @@
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput, SignatureAlgorithm,
 };
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
@@ -165,7 +165,7 @@ pub enum ProtocolData {
 }
 pub fn make_dwallet_user_secret_key_shares_public_protocol_data(
     request_event_data: MakeDWalletUserSecretKeySharesPublicRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
+) -> DwalletResult<ProtocolData> {
     Ok(ProtocolData::MakeDWalletUserSecretKeySharesPublic {
         data: MakeDWalletUserSecretKeySharesPublicData {
             curve: request_event_data.curve.try_into()?,
@@ -179,7 +179,7 @@ pub fn make_dwallet_user_secret_key_shares_public_protocol_data(
 
 pub fn imported_key_verification_protocol_data(
     request_event_data: DWalletImportedKeyVerificationRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
+) -> DwalletResult<ProtocolData> {
     Ok(ProtocolData::ImportedKeyVerification {
         data: ImportedKeyVerificationData {
             curve: request_event_data.curve.try_into()?,
@@ -196,7 +196,7 @@ pub fn imported_key_verification_protocol_data(
 
 pub fn dwallet_dkg_first_protocol_data(
     request_event_data: DWalletDKGFirstRoundRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
+) -> DwalletResult<ProtocolData> {
     Ok(ProtocolData::DKGFirst {
         data: DKGFirstData {
             curve: request_event_data.curve.try_into()?,
@@ -208,7 +208,7 @@ pub fn dwallet_dkg_first_protocol_data(
 
 pub fn dwallet_dkg_second_protocol_data(
     request_event_data: DWalletDKGSecondRoundRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
+) -> DwalletResult<ProtocolData> {
     Ok(ProtocolData::DKGSecond {
         data: DKGSecondData {
             curve: request_event_data.curve.try_into()?,
@@ -227,7 +227,7 @@ pub fn dwallet_dkg_second_protocol_data(
 
 pub fn presign_protocol_data(
     request_event_data: PresignRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
+) -> DwalletResult<ProtocolData> {
     Ok(ProtocolData::Presign {
         data: PresignData {
             curve: request_event_data.curve.try_into()?,
@@ -240,12 +240,12 @@ pub fn presign_protocol_data(
     })
 }
 
-pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCResult<ProtocolData> {
+pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletResult<ProtocolData> {
     Ok(ProtocolData::Sign {
         data: SignData {
             curve: request_event_data.curve.try_into()?,
             hash_scheme: Hash::try_from(request_event_data.hash_scheme)
-                .map_err(|_| DwalletMPCError::InvalidSessionPublicInput)?,
+                .map_err(|_| DwalletError::InvalidSessionPublicInput)?,
             signature_algorithm: request_event_data.signature_algorithm.try_into()?,
         },
         dwallet_id: request_event_data.dwallet_id,
@@ -262,7 +262,7 @@ pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCRes
 pub fn network_encryption_key_dkg_protocol_data(
     key_scheme: DWalletMPCNetworkKeyScheme,
     request_event_data: DWalletNetworkDKGEncryptionKeyRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
+) -> DwalletResult<ProtocolData> {
     Ok(ProtocolData::NetworkEncryptionKeyDkg {
         data: NetworkEncryptionKeyDkgData { key_scheme },
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
@@ -271,7 +271,7 @@ pub fn network_encryption_key_dkg_protocol_data(
 
 pub fn network_encryption_key_reconfiguration_protocol_data(
     request_event_data: DWalletEncryptionKeyReconfigurationRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
+) -> DwalletResult<ProtocolData> {
     Ok(ProtocolData::NetworkEncryptionKeyReconfiguration {
         data: NetworkEncryptionKeyReconfigurationData {},
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
@@ -280,7 +280,7 @@ pub fn network_encryption_key_reconfiguration_protocol_data(
 
 pub fn encrypted_share_verification_protocol_data(
     request_event_data: EncryptedShareVerificationRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
+) -> DwalletResult<ProtocolData> {
     Ok(ProtocolData::EncryptedShareVerification {
         data: EncryptedShareVerificationData {
             curve: request_event_data.curve.try_into()?,
@@ -297,7 +297,7 @@ pub fn encrypted_share_verification_protocol_data(
 
 pub fn partial_signature_verification_protocol_data(
     request_event_data: FutureSignRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
+) -> DwalletResult<ProtocolData> {
     Ok(ProtocolData::PartialSignatureVerification {
         data: PartialSignatureVerificationData {
             curve: request_event_data.curve.try_into()?,

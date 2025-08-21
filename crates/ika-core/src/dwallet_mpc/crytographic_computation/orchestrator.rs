@@ -23,7 +23,7 @@ use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
 use group::PartyID;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -41,7 +41,7 @@ struct ComputationCompletionUpdate {
     computation_id: ComputationId,
     party_id: PartyID,
     protocol_metadata: DWalletSessionRequestMetricData,
-    computation_result: DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>,
+    computation_result: DwalletResult<mpc::GuaranteedOutputDeliveryRoundResult>,
     elapsed_ms: u128,
 }
 
@@ -83,7 +83,7 @@ pub(crate) struct CryptographicComputationsOrchestrator {
 
 impl CryptographicComputationsOrchestrator {
     /// Creates a new orchestrator for cryptographic computations.
-    pub(crate) fn try_new(root_seed: RootSeed) -> DwalletMPCResult<Self> {
+    pub(crate) fn try_new(root_seed: RootSeed) -> DwalletResult<Self> {
         let (report_computation_completed_sender, report_computation_completed_receiver) =
             tokio::sync::mpsc::channel(COMPUTATION_UPDATE_CHANNEL_SIZE);
         let mut available_cores_for_computations =
@@ -92,7 +92,7 @@ impl CryptographicComputationsOrchestrator {
             // When `IkaRuntimes::calculate_num_of_computations_cores` returns 0,
             // Rayon will use the default number of threads, which is the number of available cores on the machine
             available_cores_for_computations = std::thread::available_parallelism()
-                .map_err(|e| DwalletMPCError::FailedToGetAvailableParallelism(e.to_string()))?
+                .map_err(|e| DwalletError::FailedToGetAvailableParallelism(e.to_string()))?
                 .into();
         }
         info!(
@@ -114,19 +114,19 @@ impl CryptographicComputationsOrchestrator {
     pub(crate) fn receive_completed_computations(
         &mut self,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-    ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
+    ) -> HashMap<ComputationId, DwalletResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
         let mut completed_computation_results = HashMap::new();
         while let Ok(computation_update) = self.completed_computation_receiver.try_recv() {
             let party_id = computation_update.party_id;
             let protocol_name = computation_update.protocol_metadata.to_string();
             let session_identifier = computation_update.computation_id.session_identifier;
-            let mpc_round = computation_update.computation_id.mpc_round;
+            let mpc_round = computation_update.computation_id.current_round;
             let attempt_number = computation_update.computation_id.attempt_number;
             let elapsed_ms = computation_update.elapsed_ms;
 
             debug!(
                 session_identifier=?computation_update.computation_id.session_identifier,
-                mpc_round=?computation_update.computation_id.mpc_round,
+                mpc_round=?computation_update.computation_id.current_round,
                 attempt_number=?computation_update.computation_id.attempt_number,
                 currently_running_sessions_count =? self.currently_running_cryptographic_computations.len(),
                 "Received a cryptographic computation completed update"
@@ -201,7 +201,7 @@ impl CryptographicComputationsOrchestrator {
         if !self.has_available_cores_to_perform_computation() {
             info!(
                 session_identifier=?computation_id.session_identifier,
-                mpc_round=?computation_id.mpc_round,
+                mpc_round=?computation_id.current_round,
                 attempt_number=?computation_id.attempt_number,
                 mpc_protocol=?computation_request.protocol_data.to_string(),
                 "No available CPU cores to perform cryptographic computation"
@@ -227,13 +227,15 @@ impl CryptographicComputationsOrchestrator {
         let protocol_metadata: DWalletSessionRequestMetricData =
             (&computation_request.protocol_cryptographic_data).into();
 
-        dwallet_mpc_metrics
-            .add_advance_call(&protocol_metadata, &computation_id.mpc_round.to_string());
+        dwallet_mpc_metrics.add_advance_call(
+            &protocol_metadata,
+            &computation_id.current_round.to_string(),
+        );
 
         info!(
             party_id,
             session_identifier=?computation_id.session_identifier,
-            mpc_round=?computation_id.mpc_round,
+            mpc_round=?computation_id.current_round,
             attempt_number=?computation_id.attempt_number,
             mpc_protocol=?protocol_metadata.to_string(),
             "Starting cryptographic computation",

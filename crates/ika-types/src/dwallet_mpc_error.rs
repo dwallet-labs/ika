@@ -4,7 +4,7 @@ use group::PartyID;
 use sui_types::base_types::{EpochId, ObjectID};
 
 #[derive(thiserror::Error, Debug, Clone)]
-pub enum DwalletMPCError {
+pub enum DwalletError {
     #[error("mpc session with ID `{session_id:?}` was not found")]
     MPCSessionNotFound { session_id: ObjectID },
 
@@ -171,13 +171,16 @@ pub enum DwalletMPCError {
 
     #[error("checkpoint message is empty")]
     CheckpointMessageIsEmpty,
+
+    #[error("Invalid session type")]
+    InvalidSessionType,
 }
 
 /// A wrapper type for the result of a runtime operation.
-pub type DwalletMPCResult<T> = Result<T, DwalletMPCError>;
+pub type DwalletResult<T> = Result<T, DwalletError>;
 
-impl From<serde_json::Error> for DwalletMPCError {
+impl From<serde_json::Error> for DwalletError {
     fn from(err: serde_json::Error) -> Self {
-        DwalletMPCError::SerdeError(err.classify())
+        DwalletError::SerdeError(err.classify())
     }
 }

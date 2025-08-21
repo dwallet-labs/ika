@@ -15,7 +15,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use group::{PartyID, secp256k1};
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::Committee;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use mpc::{Party, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
 use twopc_mpc::ProtocolPublicParameters;
@@ -32,7 +32,7 @@ pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
         new_committee: Committee,
         decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
         network_dkg_public_output: VersionedNetworkDkgOutput,
-    ) -> DwalletMPCResult<<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput>;
+    ) -> DwalletResult<<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput>;
 }
 
 fn current_tangible_party_id_to_upcoming(
@@ -62,7 +62,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationSecp256k1Party 
         upcoming_committee: Committee,
         decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
         network_dkg_public_output: VersionedNetworkDkgOutput,
-    ) -> DwalletMPCResult<<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput> {
+    ) -> DwalletResult<<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput> {
         let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output;
         let current_committee = current_committee.clone();
 
@@ -92,7 +92,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationSecp256k1Party 
                     .clone(),
                 bcs::from_bytes(&network_dkg_public_output)?,
             )
-            .map_err(DwalletMPCError::from)?;
+            .map_err(DwalletError::from)?;
 
         Ok(public_input)
     }
@@ -100,7 +100,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationSecp256k1Party 
 
 fn extract_encryption_keys_from_committee(
     committee: &Committee,
-) -> DwalletMPCResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>> {
+) -> DwalletResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>> {
     committee
         .class_groups_public_keys_and_proofs
         .iter()
@@ -110,7 +110,7 @@ fn extract_encryption_keys_from_committee(
 
             Ok((party_id, key))
         })
-        .collect::<DwalletMPCResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>>>()
+        .collect::<DwalletResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>>>()
 }
 
 pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output(
@@ -118,9 +118,9 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_dkg_public_output: &SerializedWrappedMPCPublicOutput,
-) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
+) -> DwalletResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
-        bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
+        bcs::from_bytes(public_output_bytes).map_err(DwalletError::BcsError)?;
 
     match &mpc_public_output {
         VersionedNetworkDkgOutput::V1(public_output_bytes) => {
@@ -131,7 +131,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 .default_decryption_key_share_public_parameters::<secp256k1::GroupElement>(
                     access_structure,
                 )
-                .map_err(DwalletMPCError::from)?;
+                .map_err(DwalletError::from)?;
 
             let protocol_public_parameters = ProtocolPublicParameters::new::<
                 { secp256k1::SCALAR_LIMBS },

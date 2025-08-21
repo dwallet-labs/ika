@@ -20,7 +20,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use group::PartyID;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use mpc::WeightedThresholdAccessStructure;
 use std::collections::HashMap;
 
@@ -59,7 +59,7 @@ pub(crate) fn session_input_from_request(
         PartyID,
         ClassGroupsEncryptionKeyAndProof,
     >,
-) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
+) -> DwalletResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
     match &request.protocol_data {
@@ -125,7 +125,7 @@ pub(crate) fn session_input_from_request(
                 .class_groups_decryption_key;
 
             let next_active_committee = next_active_committee.ok_or(
-                DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
+                DwalletError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
             )?;
 
             Ok((

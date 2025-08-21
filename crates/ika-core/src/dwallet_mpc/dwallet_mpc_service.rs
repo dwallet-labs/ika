@@ -17,7 +17,7 @@ use crate::dwallet_checkpoints::{
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
+use crate::dwallet_mpc::mpc_session::{SessionStatus, SessionType};
 use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
@@ -30,7 +30,7 @@ use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use ika_types::message::{
     DKGFirstRoundOutput, DKGSecondRoundOutput, DWalletCheckpointMessageKind,
     DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput, MPCNetworkDKGOutput,
@@ -273,7 +273,7 @@ impl DWalletMPCService {
             .await;
     }
 
-    async fn handle_new_requests(&mut self) -> DwalletMPCResult<()> {
+    async fn handle_new_requests(&mut self) -> DwalletResult<()> {
         let uncompleted_requests = self.load_uncompleted_requests().await;
         let pulled_requests = match self.receive_new_sui_requests() {
             Ok(requests) => requests,
@@ -281,26 +281,31 @@ impl DWalletMPCService {
                 error!(
                     error=?e,
                     "failed to receive dWallet new dWallet requests");
-                return Err(DwalletMPCError::TokioRecv);
+                return Err(DwalletError::TokioRecv);
             }
         };
         let requests = [uncompleted_requests, pulled_requests].concat();
 
-        let requests_session_identifiers =
-            requests.iter().map(|e| e.session_identifier).collect_vec();
+        let requests_session_identifiers: HashMap<SessionIdentifier, &DWalletSessionRequest> =
+            requests.iter().map(|e| (e.session_identifier, e)).collect();
 
-        match self
-            .state
-            .get_dwallet_mpc_sessions_completed_status(requests_session_identifiers.clone())
-        {
+        match self.state.get_dwallet_mpc_sessions_completed_status(
+            requests_session_identifiers.keys().cloned().collect(),
+        ) {
             Ok(mpc_session_identifier_to_computation_completed) => {
                 for (session_identifier, session_completed) in
                     mpc_session_identifier_to_computation_completed
                 {
+                    // Safe to unwrap, as we just inserted the session identifier into the map.
+                    let request = requests_session_identifiers
+                        .get(&session_identifier)
+                        .unwrap();
+
                     if session_completed {
                         self.dwallet_mpc_manager
                             .complete_computation_mpc_session_and_create_if_not_exists(
                                 &session_identifier,
+                                SessionType::from(&request.protocol_data),
                             );
 
                         info!(
@@ -545,7 +550,7 @@ impl DWalletMPCService {
         &mut self,
         completed_computation_results: HashMap<
             ComputationId,
-            DwalletMPCResult<GuaranteedOutputDeliveryRoundResult>,
+            DwalletResult<GuaranteedOutputDeliveryRoundResult>,
         >,
     ) {
         let committee = self.committee.clone();
@@ -554,7 +559,7 @@ impl DWalletMPCService {
 
         for (computation_id, computation_result) in completed_computation_results {
             let session_identifier = computation_id.session_identifier;
-            let mpc_round = computation_id.mpc_round;
+            let mpc_round = computation_id.current_round;
             let consensus_adapter = self.dwallet_submit_to_consensus.clone();
 
             let Some(session) = self
@@ -572,7 +577,7 @@ impl DWalletMPCService {
                 return;
             };
 
-            let MPCSessionStatus::Active { request, .. } = session.status.clone() else {
+            let SessionStatus::Active { request, .. } = session.status.clone() else {
                 warn!(
                     ?session_identifier,
                     validator=?validator_name,
@@ -959,25 +964,25 @@ impl DWalletMPCService {
     pub fn verify_validator_keys(
         epoch_start_system: &EpochStartSystem,
         config: &NodeConfig,
-    ) -> DwalletMPCResult<()> {
+    ) -> DwalletResult<()> {
         let authority_name = config.protocol_public_key();
         let Some(onchain_validator) = epoch_start_system
             .get_ika_validators()
             .into_iter()
             .find(|v| v.authority_name() == authority_name)
         else {
-            return Err(DwalletMPCError::MPCManagerError(format!(
+            return Err(DwalletError::MPCManagerError(format!(
                 "Validator {authority_name} not found in the epoch start system state"
             )));
         };
 
         if *config.network_key_pair().public() != onchain_validator.get_network_pubkey() {
-            return Err(DwalletMPCError::MPCManagerError(
+            return Err(DwalletError::MPCManagerError(
                 "Network key pair does not match on-chain validator".to_string(),
             ));
         }
         if *config.consensus_key_pair().public() != onchain_validator.get_consensus_pubkey() {
-            return Err(DwalletMPCError::MPCManagerError(
+            return Err(DwalletError::MPCManagerError(
                 "Consensus key pair does not match on-chain validator".to_string(),
             ));
         }
@@ -985,7 +990,7 @@ impl DWalletMPCService {
         let root_seed = config
             .root_seed_key_pair
             .clone()
-            .ok_or(DwalletMPCError::MissingRootSeed)?
+            .ok_or(DwalletError::MissingRootSeed)?
             .root_seed()
             .clone();
 
@@ -1001,7 +1006,7 @@ impl DWalletMPCService {
             .class_groups_public_key_and_proof()
             != bcs::to_bytes(&class_groups_key_pair.encryption_key_and_proof())?
         {
-            return Err(DwalletMPCError::MPCManagerError(
+            return Err(DwalletError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),
             ));
         }

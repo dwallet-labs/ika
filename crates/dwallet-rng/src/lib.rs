@@ -1,7 +1,7 @@
 use commitment::CommitmentSizedNumber;
 use fastcrypto::encoding::{Base64, Encoding};
 use group::OsCsRng;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use merlin::Transcript;
 use rand_chacha::ChaCha20Rng;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
@@ -30,13 +30,13 @@ impl RootSeed {
     }
 
     /// Reads a class group seed (encoded in Base64) from a file.
-    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> DwalletMPCResult<Self> {
+    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> DwalletResult<Self> {
         let contents = std::fs::read_to_string(path)
-            .map_err(|e| DwalletMPCError::FailedToReadSeed(e.to_string()))?;
+            .map_err(|e| DwalletError::FailedToReadSeed(e.to_string()))?;
         let decoded = Base64::decode(contents.as_str().trim())
-            .map_err(|e| DwalletMPCError::FailedToReadSeed(e.to_string()))?;
+            .map_err(|e| DwalletError::FailedToReadSeed(e.to_string()))?;
         Ok(RootSeed::new(decoded.try_into().map_err(|e| {
-            DwalletMPCError::FailedToReadSeed(format!("failed to read class group seed: {e:?}"))
+            DwalletError::FailedToReadSeed(format!("failed to read class group seed: {e:?}"))
         })?))
     }
 
@@ -45,10 +45,10 @@ impl RootSeed {
     pub fn save_to_file<P: AsRef<std::path::Path> + Clone>(
         &self,
         path: P,
-    ) -> DwalletMPCResult<String> {
+    ) -> DwalletResult<String> {
         let contents = Base64::encode(self.0);
         std::fs::write(path.clone(), contents.clone())
-            .map_err(|e| DwalletMPCError::FailedToWriteSeed(e.to_string()))?;
+            .map_err(|e| DwalletError::FailedToWriteSeed(e.to_string()))?;
         Ok(contents)
     }
 

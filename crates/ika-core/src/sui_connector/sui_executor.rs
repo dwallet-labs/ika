@@ -12,7 +12,7 @@ use fastcrypto::traits::ToFromBytes;
 use ika_config::node::RunWithRange;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::EpochId;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointMessage;
 use ika_types::messages_dwallet_mpc::{
@@ -513,11 +513,11 @@ where
     fn break_down_checkpoint_message_into_vector_arg(
         ptb: &mut ProgrammableTransactionBuilder,
         message: Vec<u8>,
-    ) -> DwalletMPCResult<Argument> {
+    ) -> DwalletResult<Argument> {
         // Set to 15 because the limit is up to 16 (smaller than).
         let messages = message.chunks(15 * 1024).collect_vec();
         if messages.is_empty() {
-            return Err(DwalletMPCError::CheckpointMessageIsEmpty);
+            return Err(DwalletError::CheckpointMessageIsEmpty);
         }
         let vector_arg = ptb
             .input(CallArg::Pure(bcs::to_bytes(messages.first().unwrap())?))
@@ -540,7 +540,7 @@ where
                 vec![TypeTag::U8],
                 vec![vector_arg, message_arg],
             );
-            Ok::<(), DwalletMPCError>(())
+            Ok::<(), DwalletError>(())
         })?;
 
         Ok(vector_arg)
@@ -725,7 +725,7 @@ where
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
         transaction: Transaction,
         sui_client: &Arc<SuiClient<C>>,
-    ) -> DwalletMPCResult<SuiTransactionBlockResponse> {
+    ) -> DwalletResult<SuiTransactionBlockResponse> {
         let mut last_submitted_tx_digest = notifier_tx_lock.lock().await;
         if let Some(prev_digest) = *last_submitted_tx_digest {
             while sui_client

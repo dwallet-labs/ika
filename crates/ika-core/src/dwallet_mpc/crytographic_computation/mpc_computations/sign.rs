@@ -12,7 +12,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedPresignOutput, VersionedUserSignedMessage,
 };
 use group::PartyID;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
 use message_digest::message_digest::{Hash, message_digest};
 use mpc::{Party, Weight, WeightedThresholdAccessStructure};
@@ -47,7 +47,7 @@ pub(crate) type SignPublicInput =
 fn generate_expected_decrypters(
     access_structure: &WeightedThresholdAccessStructure,
     session_identifier: SessionIdentifier,
-) -> DwalletMPCResult<HashSet<PartyID>> {
+) -> DwalletResult<HashSet<PartyID>> {
     let total_weight = access_structure.total_weight();
     let expected_decrypters_weight =
         access_structure.threshold + (total_weight as f64 * 0.10).floor() as Weight;
@@ -55,7 +55,7 @@ fn generate_expected_decrypters(
     let mut seed_rng = rand_chacha::ChaCha20Rng::from_seed(session_identifier.into_bytes());
     let expected_decrypters = access_structure
         .random_subset_with_target_weight(expected_decrypters_weight, &mut seed_rng)
-        .map_err(DwalletMPCError::from)?;
+        .map_err(DwalletError::from)?;
 
     Ok(expected_decrypters)
 }
@@ -71,7 +71,7 @@ pub(crate) fn sign_session_public_input(
     access_structure: &WeightedThresholdAccessStructure,
     network_keys: &DwalletMPCNetworkKeys,
     protocol_public_parameters: ProtocolPublicParameters,
-) -> DwalletMPCResult<<SignParty as Party>::PublicInput> {
+) -> DwalletResult<<SignParty as Party>::PublicInput> {
     let decryption_pp = network_keys.get_decryption_key_share_public_parameters(
         // The `StartSignRoundEvent` is assign with a Secp256k1 dwallet.
         // Todo (#473): Support generic network key scheme
@@ -87,9 +87,9 @@ pub(crate) fn sign_session_public_input(
             &message_digest(
                 &message.clone(),
                 &Hash::try_from(hash_scheme)
-                    .map_err(|e| DwalletMPCError::SignatureVerificationFailed(e.to_string()))?,
+                    .map_err(|e| DwalletError::SignatureVerificationFailed(e.to_string()))?,
             )
-            .map_err(|e| DwalletMPCError::SignatureVerificationFailed(e.to_string()))?,
+            .map_err(|e| DwalletError::SignatureVerificationFailed(e.to_string()))?,
         )?,
         presign,
         message_centralized_signature,
@@ -136,7 +136,7 @@ pub(crate) trait SignPartyPublicInputGenerator: Party {
         centralized_signed_message: &Vec<u8>,
         decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-    ) -> DwalletMPCResult<<SignParty as Party>::PublicInput>;
+    ) -> DwalletResult<<SignParty as Party>::PublicInput>;
 }
 
 impl SignPartyPublicInputGenerator for SignParty {
@@ -148,7 +148,7 @@ impl SignPartyPublicInputGenerator for SignParty {
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-    ) -> DwalletMPCResult<<SignParty as Party>::PublicInput> {
+    ) -> DwalletResult<<SignParty as Party>::PublicInput> {
         let dkg_output = bcs::from_bytes(dkg_output)?;
         let presign = bcs::from_bytes(presign)?;
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
@@ -190,7 +190,7 @@ pub(crate) fn verify_partial_signature(
     presign: &SerializedWrappedMPCPublicOutput,
     partially_signed_message: &SerializedWrappedMPCPublicOutput,
     protocol_public_parameters: &ProtocolPublicParameters,
-) -> DwalletMPCResult<()> {
+) -> DwalletResult<()> {
     let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
         bcs::from_bytes(dwallet_decentralized_output)?;
     let presign: VersionedPresignOutput = bcs::from_bytes(presign)?;
@@ -215,7 +215,7 @@ pub(crate) fn verify_partial_signature(
                 presign,
                 partial,
                 message,
-            ).map_err(DwalletMPCError::from)
+            ).map_err(DwalletError::from)
         }
     }
 }

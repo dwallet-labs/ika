@@ -6,7 +6,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedEncryptedUserShare,
 };
 use group::OsCsRng;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::AsyncProtocol;
 
@@ -18,7 +18,7 @@ pub(crate) fn verify_encrypted_share(
     decentralized_public_output: &SerializedWrappedMPCPublicOutput,
     encryption_key: &[u8],
     protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-) -> DwalletMPCResult<()> {
+) -> DwalletResult<()> {
     let encrypted_centralized_secret_share_and_proof =
         match bcs::from_bytes(encrypted_centralized_secret_share_and_proof)? {
             VersionedEncryptedUserShare::V1(output) => output.clone(),
@@ -29,7 +29,7 @@ pub(crate) fn verify_encrypted_share(
         encryption_key,
         protocol_public_parameters,
     )
-    .map_err(|_| DwalletMPCError::EncryptedUserShareVerificationFailed)
+    .map_err(|_| DwalletError::EncryptedUserShareVerificationFailed)
 }
 
 /// Verifies that the given centralized secret key share

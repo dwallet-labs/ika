@@ -24,7 +24,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_types::crypto::AuthorityPublicKeyBytes;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
 use message_digest::message_digest::message_digest;
 use mpc::guaranteed_output_delivery::Party;
 use mpc::{
@@ -50,12 +50,12 @@ impl Request {
         computation_id: ComputationId,
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-    ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+    ) -> DwalletResult<GuaranteedOutputDeliveryRoundResult> {
         info!(
             mpc_protocol=?self.protocol_data.to_string(),
             validator=?self.validator_name,
             session_identifier=?computation_id.session_identifier,
-            mpc_round=?computation_id.mpc_round,
+            mpc_round=?computation_id.current_round,
             access_structure=?self.access_structure,
             "Advancing an MPC session"
         );
@@ -70,7 +70,7 @@ impl Request {
         // and keep private!
         let mut rng = root_seed.mpc_round_rng(
             session_id,
-            computation_id.mpc_round,
+            computation_id.current_round,
             computation_id.consensus_round,
         );
 
@@ -258,7 +258,7 @@ impl Request {
                 decryption_key_shares,
                 ..
             } => {
-                if computation_id.mpc_round == MPC_SIGN_SECOND_ROUND {
+                if computation_id.current_round == MPC_SIGN_SECOND_ROUND {
                     // Todo (#1408): Return update_expected_decrypters_metrics
                 }
 
@@ -335,7 +335,7 @@ impl Request {
             } => {
                 let hashed_message = bcs::to_bytes(
                     &message_digest(&data.message, &data.hash_type)
-                        .map_err(|err| DwalletMPCError::MessageDigest(err.to_string()))?,
+                        .map_err(|err| DwalletError::MessageDigest(err.to_string()))?,
                 )?;
 
                 verify_partial_signature(
@@ -416,10 +416,10 @@ impl Request {
                             error=?err,
                             session_identifier=?computation_id.session_identifier,
                             validator=?self.validator_name,
-                            mpc_round=?computation_id.mpc_round,
+                            mpc_round=?computation_id.current_round,
                             "failed to verify secret share"
                         );
-                        Err(DwalletMPCError::DWalletSecretNotMatchedDWalletOutput)
+                        Err(DwalletError::DWalletSecretNotMatchedDWalletOutput)
                     }
                 }
             }
