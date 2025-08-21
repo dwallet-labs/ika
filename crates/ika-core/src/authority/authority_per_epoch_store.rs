@@ -48,7 +48,7 @@ use crate::system_checkpoints::{
 use group::PartyID;
 use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
 use ika_types::digests::MessageDigest;
-use ika_types::dwallet_mpc_error::DwalletResult;
+use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::Round;
 use ika_types::messages_consensus::{
@@ -598,13 +598,13 @@ impl AuthorityPerEpochStore {
     pub fn authority_name_to_party_id(
         &self,
         authority_name: &AuthorityName,
-    ) -> DwalletResult<PartyID> {
+    ) -> DwalletMPCResult<PartyID> {
         authority_name_to_party_id_from_committee(self.committee().as_ref(), authority_name)
     }
 
     pub fn get_weighted_threshold_access_structure(
         &self,
-    ) -> DwalletResult<WeightedThresholdAccessStructure> {
+    ) -> DwalletMPCResult<WeightedThresholdAccessStructure> {
         generate_access_structure_from_committee(self.committee().as_ref())
     }
 

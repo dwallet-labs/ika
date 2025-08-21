@@ -25,7 +25,7 @@ use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
-use ika_types::dwallet_mpc_error::DwalletResult;
+use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, SessionIdentifier,
@@ -122,7 +122,7 @@ impl DWalletMPCManager {
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
-    ) -> DwalletResult<Self> {
+    ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
         let mpc_computations_orchestrator =
@@ -405,7 +405,7 @@ impl DWalletMPCManager {
     pub(crate) async fn perform_cryptographic_computation(
         &mut self,
         last_read_consensus_round: u64,
-    ) -> HashMap<ComputationId, DwalletResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
+    ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
         let mut ready_to_advance_sessions: Vec<_> = self
             .mpc_sessions
             .iter()

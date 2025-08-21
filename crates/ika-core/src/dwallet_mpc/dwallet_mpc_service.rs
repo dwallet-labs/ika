@@ -32,7 +32,7 @@ use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
-use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::{
     DKGFirstRoundOutput, DKGSecondRoundOutput, DWalletCheckpointMessageKind,
     DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput, MPCNetworkDKGOutput,
@@ -284,7 +284,7 @@ impl DWalletMPCService {
             .await;
     }
 
-    async fn handle_new_requests(&mut self) -> DwalletResult<()> {
+    async fn handle_new_requests(&mut self) -> DwalletMPCResult<()> {
         let uncompleted_requests = self.load_uncompleted_requests().await;
         let pulled_requests = match self.receive_new_sui_requests() {
             Ok(requests) => requests,
@@ -292,7 +292,7 @@ impl DWalletMPCService {
                 error!(
                     error=?e,
                     "failed to receive dWallet new dWallet requests");
-                return Err(DwalletError::TokioRecv);
+                return Err(DwalletMPCError::TokioRecv);
             }
         };
         let requests = [uncompleted_requests, pulled_requests].concat();
@@ -561,7 +561,7 @@ impl DWalletMPCService {
         &mut self,
         completed_computation_results: HashMap<
             ComputationId,
-            DwalletResult<GuaranteedOutputDeliveryRoundResult>,
+            DwalletMPCResult<GuaranteedOutputDeliveryRoundResult>,
         >,
     ) {
         let committee = self.committee.clone();
@@ -975,25 +975,25 @@ impl DWalletMPCService {
     pub fn verify_validator_keys(
         epoch_start_system: &EpochStartSystem,
         config: &NodeConfig,
-    ) -> DwalletResult<()> {
+    ) -> DwalletMPCResult<()> {
         let authority_name = config.protocol_public_key();
         let Some(onchain_validator) = epoch_start_system
             .get_ika_validators()
             .into_iter()
             .find(|v| v.authority_name() == authority_name)
         else {
-            return Err(DwalletError::MPCManagerError(format!(
+            return Err(DwalletMPCError::MPCManagerError(format!(
                 "Validator {authority_name} not found in the epoch start system state"
             )));
         };
 
         if *config.network_key_pair().public() != onchain_validator.get_network_pubkey() {
-            return Err(DwalletError::MPCManagerError(
+            return Err(DwalletMPCError::MPCManagerError(
                 "Network key pair does not match on-chain validator".to_string(),
             ));
         }
         if *config.consensus_key_pair().public() != onchain_validator.get_consensus_pubkey() {
-            return Err(DwalletError::MPCManagerError(
+            return Err(DwalletMPCError::MPCManagerError(
                 "Consensus key pair does not match on-chain validator".to_string(),
             ));
         }
@@ -1001,7 +1001,7 @@ impl DWalletMPCService {
         let root_seed = config
             .root_seed_key_pair
             .clone()
-            .ok_or(DwalletError::MissingRootSeed)?
+            .ok_or(DwalletMPCError::MissingRootSeed)?
             .root_seed()
             .clone();
 
@@ -1017,7 +1017,7 @@ impl DWalletMPCService {
             .class_groups_public_key_and_proof()
             != bcs::to_bytes(&class_groups_key_pair.encryption_key_and_proof())?
         {
-            return Err(DwalletError::MPCManagerError(
+            return Err(DwalletMPCError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),
             ));
         }

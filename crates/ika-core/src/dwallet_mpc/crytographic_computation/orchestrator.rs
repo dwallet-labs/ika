@@ -23,7 +23,7 @@ use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
 use group::PartyID;
-use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -41,7 +41,7 @@ struct ComputationCompletionUpdate {
     computation_id: ComputationId,
     party_id: PartyID,
     protocol_metadata: DWalletSessionRequestMetricData,
-    computation_result: DwalletResult<mpc::GuaranteedOutputDeliveryRoundResult>,
+    computation_result: DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>,
     elapsed_ms: u128,
 }
 
@@ -83,7 +83,7 @@ pub(crate) struct CryptographicComputationsOrchestrator {
 
 impl CryptographicComputationsOrchestrator {
     /// Creates a new orchestrator for cryptographic computations.
-    pub(crate) fn try_new(root_seed: RootSeed) -> DwalletResult<Self> {
+    pub(crate) fn try_new(root_seed: RootSeed) -> DwalletMPCResult<Self> {
         let (report_computation_completed_sender, report_computation_completed_receiver) =
             tokio::sync::mpsc::channel(COMPUTATION_UPDATE_CHANNEL_SIZE);
         let mut available_cores_for_computations =
@@ -92,7 +92,7 @@ impl CryptographicComputationsOrchestrator {
             // When `IkaRuntimes::calculate_num_of_computations_cores` returns 0,
             // Rayon will use the default number of threads, which is the number of available cores on the machine
             available_cores_for_computations = std::thread::available_parallelism()
-                .map_err(|e| DwalletError::FailedToGetAvailableParallelism(e.to_string()))?
+                .map_err(|e| DwalletMPCError::FailedToGetAvailableParallelism(e.to_string()))?
                 .into();
         }
         info!(
@@ -114,7 +114,7 @@ impl CryptographicComputationsOrchestrator {
     pub(crate) fn receive_completed_computations(
         &mut self,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-    ) -> HashMap<ComputationId, DwalletResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
+    ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
         let mut completed_computation_results = HashMap::new();
         while let Ok(computation_update) = self.completed_computation_receiver.try_recv() {
             let party_id = computation_update.party_id;

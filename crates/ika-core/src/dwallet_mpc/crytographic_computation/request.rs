@@ -24,7 +24,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_types::crypto::AuthorityPublicKeyBytes;
-use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use message_digest::message_digest::message_digest;
 use mpc::guaranteed_output_delivery::Party;
 use mpc::{
@@ -50,7 +50,7 @@ impl Request {
         computation_id: ComputationId,
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-    ) -> DwalletResult<GuaranteedOutputDeliveryRoundResult> {
+    ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         info!(
             mpc_protocol=?self.protocol_data.to_string(),
             validator=?self.validator_name,
@@ -335,7 +335,7 @@ impl Request {
             } => {
                 let hashed_message = bcs::to_bytes(
                     &message_digest(&data.message, &data.hash_type)
-                        .map_err(|err| DwalletError::MessageDigest(err.to_string()))?,
+                        .map_err(|err| DwalletMPCError::MessageDigest(err.to_string()))?,
                 )?;
 
                 verify_partial_signature(
@@ -419,7 +419,7 @@ impl Request {
                             mpc_round=?computation_id.current_round,
                             "failed to verify secret share"
                         );
-                        Err(DwalletError::DWalletSecretNotMatchedDWalletOutput)
+                        Err(DwalletMPCError::DWalletSecretNotMatchedDWalletOutput)
                     }
                 }
             }

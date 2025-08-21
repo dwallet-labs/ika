@@ -4,7 +4,7 @@
 use group::PartyID;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::crypto::AuthorityName;
-use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::{Weight, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
 use std::vec::Vec;
@@ -36,13 +36,13 @@ pub const FIRST_EPOCH_ID: EpochId = 0;
 pub(crate) fn authority_name_to_party_id_from_committee(
     committee: &Committee,
     authority_name: &AuthorityName,
-) -> DwalletResult<PartyID> {
+) -> DwalletMPCResult<PartyID> {
     // The index of the authority `authority_name` in the `committee`.
     // This value is in the range `0..number_of_tangible_parties`,
     // and represents a unique index to the set of authority names.
     let authority_index = committee
         .authority_index(authority_name)
-        .ok_or(DwalletError::AuthorityNameNotFound(*authority_name))?;
+        .ok_or(DwalletMPCError::AuthorityNameNotFound(*authority_name))?;
 
     // A tangible party ID is of type `PartyID` and in the range `1..=number_of_tangible_parties`.
     // Increment the index to transform it from 0-based to 1-based.
@@ -58,7 +58,7 @@ pub(crate) fn authority_name_to_party_id_from_committee(
 
 pub(crate) fn get_validators_class_groups_public_keys_and_proofs(
     committee: &Committee,
-) -> DwalletResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>> {
+) -> DwalletMPCResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>> {
     let mut validators_class_groups_public_keys_and_proofs = HashMap::new();
     for (name, _) in committee.voting_rights.iter() {
         let party_id = authority_name_to_party_id_from_committee(committee, name)?;
@@ -73,7 +73,7 @@ pub(crate) fn get_validators_class_groups_public_keys_and_proofs(
 /// Convert a `committee` to a `WeightedThresholdAccessStructure` that is used by the cryptographic library.
 pub(crate) fn generate_access_structure_from_committee(
     committee: &Committee,
-) -> DwalletResult<WeightedThresholdAccessStructure> {
+) -> DwalletMPCResult<WeightedThresholdAccessStructure> {
     let party_to_weight: HashMap<PartyID, Weight> = committee
         .voting_rights
         .iter()
@@ -85,14 +85,14 @@ pub(crate) fn generate_access_structure_from_committee(
 
             Ok((tangible_party_id, weight))
         })
-        .collect::<DwalletResult<HashMap<PartyID, Weight>>>()?;
+        .collect::<DwalletMPCResult<HashMap<PartyID, Weight>>>()?;
     let threshold: PartyID = committee
         .quorum_threshold()
         .try_into()
         .expect("should never have more than 2^16 parties");
 
     // TODO: use error directly
-    WeightedThresholdAccessStructure::new(threshold, party_to_weight).map_err(DwalletError::from)
+    WeightedThresholdAccessStructure::new(threshold, party_to_weight).map_err(DwalletMPCError::from)
 }
 
 /// Convert a given `party_id` to it's corresponding authority name (address).

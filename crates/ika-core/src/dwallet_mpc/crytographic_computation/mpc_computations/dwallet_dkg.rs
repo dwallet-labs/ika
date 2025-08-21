@@ -8,7 +8,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
     VersionedPublicKeyShareAndProof,
 };
-use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::Party;
 use twopc_mpc::dkg::Protocol;
@@ -22,7 +22,7 @@ pub(crate) type DWalletDKGSecondParty = <AsyncProtocol as Protocol>::ProofVerifi
 
 pub(crate) fn dwallet_dkg_first_public_input(
     protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-) -> DwalletResult<<DWalletDKGFirstParty as mpc::Party>::PublicInput> {
+) -> DwalletMPCResult<<DWalletDKGFirstParty as mpc::Party>::PublicInput> {
     <DWalletDKGFirstParty as DWalletDKGFirstPartyPublicInputGenerator>::generate_public_input(
         protocol_public_parameters.clone(),
     )
@@ -32,7 +32,7 @@ pub(crate) fn dwallet_dkg_second_public_input(
     first_round_output: &SerializedWrappedMPCPublicOutput,
     centralized_public_key_share_and_proof: &SerializedWrappedMPCPublicOutput,
     protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-) -> DwalletResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
+) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
     <DWalletDKGSecondParty as DWalletDKGSecondPartyPublicInputGenerator>::generate_public_input(
         protocol_public_parameters,
         first_round_output,
@@ -51,7 +51,7 @@ pub(crate) trait DWalletDKGFirstPartyPublicInputGenerator: Party {
     /// Generates the public input required for the first round of the DKG protocol.
     fn generate_public_input(
         protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    ) -> DwalletResult<<DWalletDKGFirstParty as mpc::Party>::PublicInput>;
+    ) -> DwalletMPCResult<<DWalletDKGFirstParty as mpc::Party>::PublicInput>;
 }
 
 /// A trait for generating the public input for the last round of the DKG protocol.
@@ -67,13 +67,13 @@ pub(crate) trait DWalletDKGSecondPartyPublicInputGenerator: Party {
         protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
         first_round_output: &SerializedWrappedMPCPublicOutput,
         centralized_party_public_key_share: &SerializedWrappedMPCPublicOutput,
-    ) -> DwalletResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput>;
+    ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput>;
 }
 
 impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
     fn generate_public_input(
         protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    ) -> DwalletResult<<DWalletDKGFirstParty as Party>::PublicInput> {
+    ) -> DwalletMPCResult<<DWalletDKGFirstParty as Party>::PublicInput> {
         let input: Self::PublicInput = protocol_public_parameters;
         Ok(input)
     }
@@ -84,23 +84,23 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
         protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
         first_round_output_buf: &SerializedWrappedMPCPublicOutput,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
-    ) -> DwalletResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
+    ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
         let first_round_output_buf: VersionedCentralizedDKGPublicOutput =
-            bcs::from_bytes(first_round_output_buf).map_err(DwalletError::BcsError)?;
+            bcs::from_bytes(first_round_output_buf).map_err(DwalletMPCError::BcsError)?;
 
         let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
             bcs::from_bytes(centralized_party_public_key_share_buf)
-                .map_err(DwalletError::BcsError)?;
+                .map_err(DwalletMPCError::BcsError)?;
 
         match first_round_output_buf {
             VersionedCentralizedDKGPublicOutput::V1(first_round_output) => {
                 let first_round_output: <DWalletDKGFirstParty as Party>::PublicOutput =
-                    bcs::from_bytes(&first_round_output).map_err(DwalletError::BcsError)?;
+                    bcs::from_bytes(&first_round_output).map_err(DwalletMPCError::BcsError)?;
 
                 let centralized_party_public_key_share = match centralized_party_public_key_share {
                     VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
                         bcs::from_bytes(&centralized_party_public_key_share)
-                            .map_err(DwalletError::BcsError)?
+                            .map_err(DwalletMPCError::BcsError)?
                     }
                 };
 

@@ -30,7 +30,7 @@ macro_rules! fp_ensure {
         }
     };
 }
-use crate::dwallet_mpc_error::DwalletError;
+use crate::dwallet_mpc_error::DwalletMPCError;
 use sui_types::error::SuiError;
 
 #[macro_export]
@@ -251,8 +251,8 @@ pub enum IkaError {
 
 pub type IkaResult<T = ()> = Result<T, IkaError>;
 
-impl From<DwalletError> for IkaError {
-    fn from(error: DwalletError) -> Self {
+impl From<DwalletMPCError> for IkaError {
+    fn from(error: DwalletMPCError) -> Self {
         IkaError::DwalletMPCError(error.to_string())
     }
 }

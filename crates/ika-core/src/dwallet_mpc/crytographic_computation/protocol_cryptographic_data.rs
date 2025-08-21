@@ -16,7 +16,7 @@ use crate::request_protocol_data::{
 use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use group::PartyID;
-use ika_types::dwallet_mpc_error::DwalletError;
+use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResult};
 use mpc::{GuaranteesOutputDelivery, WeightedThresholdAccessStructure};
@@ -89,7 +89,7 @@ impl ProtocolCryptographicData {
     pub fn try_new_native(
         protocol_specific_data: &ProtocolData,
         public_input: PublicInput,
-    ) -> Result<Option<Self>, DwalletError> {
+    ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
             ProtocolData::MakeDWalletUserSecretKeySharesPublic {
                 data:
@@ -102,7 +102,7 @@ impl ProtocolCryptographicData {
             } => {
                 let PublicInput::MakeDWalletUserSecretKeySharesPublic(public_input) = public_input
                 else {
-                    return Err(DwalletError::InvalidSessionPublicInput);
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
                 ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic {
                     data: MakeDWalletUserSecretKeySharesPublicData {
@@ -127,7 +127,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 let PublicInput::PartialSignatureVerification(public_input) = public_input else {
-                    return Err(DwalletError::InvalidSessionPublicInput);
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 ProtocolCryptographicData::PartialSignatureVerification {
@@ -144,7 +144,7 @@ impl ProtocolCryptographicData {
                 }
             }
             _ => {
-                return Err(DwalletError::InvalidSessionType);
+                return Err(DwalletMPCError::InvalidSessionType);
             }
         };
 
@@ -161,7 +161,7 @@ impl ProtocolCryptographicData {
         decryption_key_reconfiguration_third_round_delay: u64,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
         decryption_key_shares: &Box<DwalletMPCNetworkKeys>,
-    ) -> Result<Option<Self>, DwalletError> {
+    ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
             ProtocolData::ImportedKeyVerification {
                 data:
@@ -174,7 +174,7 @@ impl ProtocolCryptographicData {
             } => {
                 let PublicInput::DWalletImportedKeyVerificationRequest(public_input) = public_input
                 else {
-                    return Err(DwalletError::InvalidSessionPublicInput);
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 let advance_request_result =
@@ -207,7 +207,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 let PublicInput::DKGFirst(public_input) = public_input else {
-                    return Err(DwalletError::InvalidSessionPublicInput);
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 let advance_request_result = Party::<DWalletDKGFirstParty>::ready_to_advance(
@@ -239,7 +239,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 let PublicInput::DKGSecond(public_input) = public_input else {
-                    return Err(DwalletError::InvalidSessionPublicInput);
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 let advance_request_result = Party::<DWalletDKGSecondParty>::ready_to_advance(
@@ -275,7 +275,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 let PublicInput::Presign(public_input) = public_input else {
-                    return Err(DwalletError::InvalidSessionPublicInput);
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 let advance_request_result = Party::<PresignParty>::ready_to_advance(
@@ -311,7 +311,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 let PublicInput::Sign(public_input) = public_input else {
-                    return Err(DwalletError::InvalidSessionPublicInput);
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 let advance_request_result = Party::<SignParty>::ready_to_advance(
@@ -346,7 +346,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
-                    return Err(DwalletError::InvalidSessionPublicInput);
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 let advance_request_result = Party::<Secp256k1Party>::ready_to_advance(
@@ -377,7 +377,7 @@ impl ProtocolCryptographicData {
             } => {
                 let PublicInput::NetworkEncryptionKeyReconfiguration(public_input) = public_input
                 else {
-                    return Err(DwalletError::InvalidSessionPublicInput);
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 let advance_request_result =
@@ -415,7 +415,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 let PublicInput::EncryptedShareVerification(public_input) = public_input else {
-                    return Err(DwalletError::InvalidSessionPublicInput);
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 ProtocolCryptographicData::EncryptedShareVerification {
@@ -430,7 +430,7 @@ impl ProtocolCryptographicData {
                 }
             }
             _ => {
-                return Err(DwalletError::InvalidSessionType);
+                return Err(DwalletMPCError::InvalidSessionType);
             }
         };
         Ok(Some(res))
@@ -474,7 +474,7 @@ impl DWalletMPCManager {
         protocol_data: &ProtocolData,
         consensus_round: u64,
         public_input: PublicInput,
-    ) -> Result<Option<ProtocolCryptographicData>, DwalletError> {
+    ) -> Result<Option<ProtocolCryptographicData>, DwalletMPCError> {
         match session_type {
             SessionType::Native => {
                 ProtocolCryptographicData::try_new_native(protocol_data, public_input)

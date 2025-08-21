@@ -10,7 +10,7 @@ use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
-use ika_types::dwallet_mpc_error::{DwalletError, DwalletResult};
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
@@ -280,18 +280,18 @@ where
         quorum_threshold: u64,
         validity_threshold: u64,
         read_next_epoch_class_groups_keys: bool,
-    ) -> DwalletResult<Committee> {
+    ) -> DwalletMPCResult<Committee> {
         let validator_ids: Vec<_> = committee.iter().map(|(id, _)| *id).collect();
 
         let validators = sui_client
             .get_validators_info_by_ids(validator_ids)
             .await
-            .map_err(DwalletError::IkaError)?;
+            .map_err(DwalletMPCError::IkaError)?;
 
         let committee_mpc_data = sui_client
             .get_mpc_data_from_validators_pool(&validators, read_next_epoch_class_groups_keys)
             .await
-            .map_err(DwalletError::IkaError)?;
+            .map_err(DwalletMPCError::IkaError)?;
 
         let class_group_encryption_keys_and_proofs = committee
             .iter()
