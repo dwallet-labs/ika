@@ -31,7 +31,7 @@ describe('Imported Key DWallet Signing', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedKeyDWallet(testName);
+			await generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 

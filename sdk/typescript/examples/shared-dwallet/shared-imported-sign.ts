@@ -28,7 +28,7 @@ async function main() {
 	await ikaClient.initialize();
 
 	const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-		generateKeypairForImportedKeyDWallet();
+		await generateKeypairForImportedKeyDWallet();
 
 	const { sessionIdentifier, sessionIdentifierPreimage } = await createSessionIdentifier(
 		ikaClient,

@@ -1,7 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { create_sign_centralized_party_message as create_sign_user_message } from '@mehmetkircal/ika-wasm';
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
@@ -31,6 +30,7 @@ import type {
 	ZeroTrustDWallet,
 } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
+import { create_sign_centralized_party_message as create_sign_user_message } from './wasm-loader.js';
 
 /**
  * Parameters for creating an IkaTransaction instance
@@ -2002,7 +2002,7 @@ export class IkaTransaction {
 			this.#getCoordinatorObjectRef(),
 			dWallet.id.id,
 			destinationEncryptionKeyAddress,
-			encryptSecretShare(
+			await encryptSecretShare(
 				sourceSecretShare,
 				new Uint8Array(destinationEncryptionKeyObj.encryption_key),
 				publicParameters,
@@ -2068,7 +2068,7 @@ export class IkaTransaction {
 		hash: number;
 	}): Promise<Uint8Array> {
 		return new Uint8Array(
-			create_sign_user_message(
+			await create_sign_user_message(
 				protocolPublicParameters,
 				publicOutput,
 				userSecretKeyShare,

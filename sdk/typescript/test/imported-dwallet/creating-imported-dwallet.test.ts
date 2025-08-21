@@ -28,7 +28,7 @@ describe('Imported Key DWallet Creation', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedKeyDWallet(testName);
+			await generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -137,7 +137,7 @@ describe('Imported Key DWallet Creation', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedKeyDWallet(testName);
+			await generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -181,7 +181,7 @@ describe('Imported Key DWallet Creation', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerAddress } =
-			generateTestKeypairForImportedKeyDWallet(testName);
+			await generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -214,7 +214,7 @@ describe('Imported Key DWallet Creation', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedKeyDWallet(testName);
+			await generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 

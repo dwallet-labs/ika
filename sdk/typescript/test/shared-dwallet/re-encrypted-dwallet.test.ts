@@ -33,7 +33,7 @@ async function setupDWalletTransfer(testName: string) {
 	const sourceSetup = await createCompleteDWallet(ikaClient, suiClient, testName);
 
 	// Generate destination user keys
-	const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } = generateTestKeypair(
+	const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } = await generateTestKeypair(
 		testName + '-destination',
 	);
 
@@ -278,9 +278,8 @@ describe('DWallet Transfer', () => {
 		// Step 2: Generate multiple destination user keys
 		const destinations: any[] = [];
 		for (let i = 0; i < 3; i++) {
-			const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } = generateTestKeypair(
-				testName + '-destination-' + i,
-			);
+			const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } =
+				await generateTestKeypair(testName + '-destination-' + i);
 
 			// Register destination encryption key
 			await registerTestEncryptionKey(
@@ -365,9 +364,8 @@ describe('DWallet Transfer', () => {
 		} = await createCompleteDWallet(ikaClient, suiClient, testName);
 
 		// Step 2: Generate destination user keys
-		const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } = generateTestKeypair(
-			testName + '-destination',
-		);
+		const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } =
+			await generateTestKeypair(testName + '-destination');
 
 		// Step 3: Register destination encryption key
 		await registerTestEncryptionKey(

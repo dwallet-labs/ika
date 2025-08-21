@@ -10,30 +10,23 @@
 		"prepare": "npm run build"
 	},
 	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
-	"version": "1.0.2",
+	"version": "1.3.0",
 	"license": "BSD-3-Clause-Clear",
 	"types": "./dist/web/dwallet_mpc_wasm.d.ts",
 	"exports": {
 		".": {
-			"browser": "./dist/bundler/dwallet_mpc_wasm.js",
-			"import": "./index.mjs",
-			"require": "./index.js",
+			"browser": "./dist/web/dwallet_mpc_wasm.js",
+			"node": "./dist/node/dwallet_mpc_wasm.js",
+			"default": "./dist/bundler/dwallet_mpc_wasm.js",
 			"types": "./dist/web/dwallet_mpc_wasm.d.ts"
 		},
 		"./web": {
 			"import": "./dist/web/dwallet_mpc_wasm.js",
-			"require": "./dist/web/dwallet_mpc_wasm.js",
 			"types": "./dist/web/dwallet_mpc_wasm.d.ts"
 		},
-		"./bundler": {
-			"import": "./dist/bundler/dwallet_mpc_wasm.js",
-			"require": "./dist/bundler/dwallet_mpc_wasm.js",
-			"types": "./dist/bundler/dwallet_mpc_wasm.d.ts"
-		},
-		"./web/dwallet_mpc_wasm_bg.wasm": {
-			"browser": "./dist/web/dwallet_mpc_wasm_bg.wasm",
-			"import": "./dist/web/dwallet_mpc_wasm_bg.wasm",
-			"require": "./dist/web/dwallet_mpc_wasm_bg.wasm"
+		"./node": {
+			"import": "./dist/node/dwallet_mpc_wasm.js",
+			"types": "./dist/node/dwallet_mpc_wasm.d.ts"
 		}
 	},
 	"devDependencies": {
@@ -48,7 +41,7 @@
 	"files": [
 		"LICENSE",
 		"README.md",
-		"dist",
+		"dist/**",
 		"index.js",
 		"index.mjs"
 	]

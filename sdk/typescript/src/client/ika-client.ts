@@ -677,7 +677,7 @@ export class IkaClient {
 			}
 		}
 
-		const protocolPublicParameters = networkDkgPublicOutputToProtocolPublicParameters(
+		const protocolPublicParameters = await networkDkgPublicOutputToProtocolPublicParameters(
 			await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 		);
 
