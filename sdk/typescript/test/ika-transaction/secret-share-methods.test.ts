@@ -4,7 +4,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { Hash, SignatureAlgorithm } from '../../src/client/types';
+import { Hash, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
 import {
 	createCompleteDWallet,
 	registerTestEncryptionKey,
@@ -147,14 +147,14 @@ describe('IkaTransaction Secret Share Methods', () => {
 		expect(activeDWallet.state.Active?.public_output).toBeDefined();
 		expect(activeDWallet.state.$kind).toBe('Active');
 
-		const { messageApproval } = ikaTransaction.approveMessage({
+		const messageApproval = ikaTransaction.approveMessage({
 			dWalletCap: activeDWallet.dwallet_cap_id,
 			signatureAlgorithm: SignatureAlgorithm.ECDSA,
 			hashScheme: Hash.KECCAK256,
 			message,
 		});
 
-		const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+		const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 			presign: presignObject as any,
 		});
 
@@ -164,9 +164,8 @@ describe('IkaTransaction Secret Share Methods', () => {
 		expect(secretShare).toBeInstanceOf(Uint8Array);
 		expect(secretShare.length).toBeGreaterThan(0);
 
-		// Use signWithSecretShare method
-		await ikaTransaction.signWithSecretShare({
-			dWallet: activeDWallet,
+		await ikaTransaction.requestSign({
+			dWallet: activeDWallet as ZeroTrustDWallet,
 			messageApproval,
 			hashScheme: Hash.KECCAK256,
 			verifiedPresignCap,
@@ -258,7 +257,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		const message = createTestMessage(testName);
 
-		const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+		const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 			presign: presignObject,
 		});
 
@@ -267,18 +266,17 @@ describe('IkaTransaction Secret Share Methods', () => {
 		expect(activeDWallet.state.Active?.public_output).toBeDefined();
 
 		// Use requestFutureSignWithSecretShare instead of regular requestFutureSign
-		const { unverifiedPartialUserSignatureCap } =
-			await ikaTransaction.requestFutureSignWithSecretShare({
-				dWallet: activeDWallet,
-				verifiedPresignCap,
-				presign: presignObject,
-				secretShare,
-				publicOutput: new Uint8Array(activeDWallet.state.Active?.public_output ?? []),
-				message,
-				hashScheme: Hash.KECCAK256,
-				ikaCoin: emptyIKACoin,
-				suiCoin: tx.gas,
-			});
+		const unverifiedPartialUserSignatureCap = await ikaTransaction.requestFutureSign({
+			dWallet: activeDWallet as ZeroTrustDWallet,
+			verifiedPresignCap,
+			presign: presignObject,
+			secretShare,
+			publicOutput: new Uint8Array(activeDWallet.state.Active?.public_output ?? []),
+			message,
+			hashScheme: Hash.KECCAK256,
+			ikaCoin: emptyIKACoin,
+			suiCoin: tx.gas,
+		});
 
 		// Transfer the capability to avoid UnusedValueWithoutDrop error
 		tx.transferObjects([unverifiedPartialUserSignatureCap], signerAddress);
@@ -342,7 +340,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		const message = createTestMessage(testName);
 
-		const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+		const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 			presign: presignObject,
 		});
 
@@ -350,19 +348,20 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		expect(activeDWallet.state.Active?.public_output).toBeDefined();
 
-		// Use requestFutureSignAndTransferCapWithSecretShare
-		await ikaTransaction.requestFutureSignAndTransferCapWithSecretShare({
-			dWallet: activeDWallet,
+		// Use requestFutureSign
+		const unverifiedPartialUserSignatureCap = await ikaTransaction.requestFutureSign({
+			dWallet: activeDWallet as ZeroTrustDWallet,
 			verifiedPresignCap,
 			presign: presignObject,
 			secretShare,
 			publicOutput: new Uint8Array(activeDWallet.state.Active?.public_output ?? []),
 			message,
 			hashScheme: Hash.KECCAK256,
-			receiver: signerAddress,
 			ikaCoin: emptyIKACoin,
 			suiCoin: tx.gas,
 		});
+
+		tx.transferObjects([unverifiedPartialUserSignatureCap], signerAddress);
 
 		destroyEmptyTestIkaToken(tx, ikaClient.ikaConfig, emptyIKACoin);
 
@@ -413,9 +412,9 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		const emptyIKACoin = createEmptyTestIkaToken(tx, ikaClient.ikaConfig);
 
-		// Use transferUserShareWithSecretShare
-		await ikaTransaction.transferUserShareWithSecretShare({
-			dWallet: activeDWallet,
+		// Use transferUserShare
+		await ikaTransaction.requestReEncryptUserShareFor({
+			dWallet: activeDWallet as ZeroTrustDWallet,
 			destinationEncryptionKeyAddress,
 			sourceSecretShare: secretShare,
 			sourceEncryptedUserSecretKeyShare: encryptedUserSecretKeyShare,
@@ -463,14 +462,14 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		const message = createTestMessage(testName);
 
-		const { messageApproval } = ikaTransaction.approveMessage({
+		const messageApproval = ikaTransaction.approveMessage({
 			dWalletCap: activeDWallet.dwallet_cap_id,
 			signatureAlgorithm: SignatureAlgorithm.ECDSA,
 			hashScheme: Hash.KECCAK256,
 			message,
 		});
 
-		const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+		const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 			presign: presignObject as any,
 		});
 
@@ -479,8 +478,8 @@ describe('IkaTransaction Secret Share Methods', () => {
 
 		// Should throw error with invalid secret share
 		await expect(
-			ikaTransaction.signWithSecretShare({
-				dWallet: activeDWallet,
+			ikaTransaction.requestSign({
+				dWallet: activeDWallet as ZeroTrustDWallet,
 				messageApproval,
 				hashScheme: Hash.KECCAK256,
 				verifiedPresignCap,
@@ -545,7 +544,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 		expect(hasNonZeroBytes).toBe(true);
 
 		// Validate message approval structure
-		const { messageApproval } = ikaTransaction.approveMessage({
+		const messageApproval = ikaTransaction.approveMessage({
 			dWalletCap: activeDWallet.dwallet_cap_id,
 			signatureAlgorithm: SignatureAlgorithm.ECDSA,
 			hashScheme: Hash.KECCAK256,
@@ -556,7 +555,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 		expect(typeof messageApproval).toBe('object');
 
 		// Validate presign cap verification
-		const { verifiedPresignCap } = ikaTransaction.verifyPresignCap({
+		const verifiedPresignCap = ikaTransaction.verifyPresignCap({
 			presign: presignObject as any,
 		});
 

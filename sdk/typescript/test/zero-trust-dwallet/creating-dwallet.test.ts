@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
+import { ZeroTrustDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
 	registerTestEncryptionKey,
@@ -108,10 +109,11 @@ describe('DWallet Creation', () => {
 		expect(awaitingKeyHolderSignatureDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
 
 		// Step 7: Accept encrypted user share
+		// Type assertion: DKG flow only creates ZeroTrust DWallets
 		await acceptTestEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			awaitingKeyHolderSignatureDWallet,
+			awaitingKeyHolderSignatureDWallet as ZeroTrustDWallet,
 			dkgSecondRoundRequestInput.userPublicOutput,
 			secondRoundMoveResponse,
 			userShareEncryptionKeys,

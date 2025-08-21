@@ -16,6 +16,8 @@ import type {
 	CoordinatorInner,
 	DWallet,
 	DWalletCap,
+	DWalletInternal,
+	DWalletKind,
 	DWalletState,
 	EncryptedUserSecretKeyShare,
 	EncryptedUserSecretKeyShareState,
@@ -278,7 +280,12 @@ export class IkaClient {
 				options: { showBcs: true },
 			})
 			.then((obj) => {
-				return CoordinatorInnerModule.DWallet.fromBase64(objResToBcs(obj));
+				const dWallet = CoordinatorInnerModule.DWallet.fromBase64(objResToBcs(obj));
+
+				return {
+					...dWallet,
+					kind: this.#getDWalletKind(dWallet),
+				};
 			});
 	}
 
@@ -508,7 +515,14 @@ export class IkaClient {
 				options: { showBcs: true },
 			})
 			.then((objs) => {
-				return objs.map((obj) => CoordinatorInnerModule.DWallet.fromBase64(objResToBcs(obj)));
+				return objs.map((obj) => {
+					const dWallet = CoordinatorInnerModule.DWallet.fromBase64(objResToBcs(obj));
+
+					return {
+						...dWallet,
+						kind: this.#getDWalletKind(dWallet),
+					};
+				});
 			});
 	}
 
@@ -1070,5 +1084,21 @@ export class IkaClient {
 			}
 			throw new NetworkError('Failed to process batched objects', error as Error);
 		}
+	}
+
+	#getDWalletKind(dWallet: DWalletInternal): DWalletKind {
+		if (dWallet.is_imported_key_dwallet && dWallet.public_user_secret_key_share) {
+			return 'imported-key-shared';
+		}
+
+		if (dWallet.is_imported_key_dwallet) {
+			return 'imported-key';
+		}
+
+		if (dWallet.public_user_secret_key_share) {
+			return 'shared';
+		}
+
+		return 'zero-trust';
 	}
 }

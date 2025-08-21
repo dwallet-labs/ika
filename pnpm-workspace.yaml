@@ -2,3 +2,4 @@ packages:
   - 'sdk/**'
   - '!**/dist/**'
   - '!**/.next/**'
+  - '!docs/**'
