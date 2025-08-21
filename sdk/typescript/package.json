@@ -1,9 +1,9 @@
 {
-	"name": "@mehmetkircal/ika-sdk",
+	"name": "@ika.xyz/ika-sdk",
 	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
 	"description": "Ika TypeScript SDK",
 	"homepage": "https://docs.ika.xyz/sdk",
-	"version": "5.0.0",
+	"version": "0.0.1",
 	"license": "BSD-3-Clause-Clear",
 	"sideEffects": false,
 	"files": [
