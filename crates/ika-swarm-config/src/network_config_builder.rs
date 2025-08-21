@@ -8,7 +8,7 @@ use crate::validator_initialization_config::ValidatorInitializationConfigBuilder
 use ika_config::initiation::InitiationParameters;
 use ika_config::node::{
     AuthorityOverloadConfig, LOCAL_DEFAULT_SUI_FAUCET_URL, LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL,
-    RunWithRange,
+    RunWithRange, get_testing_sui_faucet_url, get_testing_sui_fullnode_rpc_url,
 };
 use ika_protocol_config::ProtocolVersion;
 use ika_types::committee::Committee;
@@ -105,8 +105,8 @@ impl ConfigBuilder {
     }
 
     pub fn new_with_temp_dir() -> Self {
-        let sui_fullnode_rpc_url = LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL.to_string();
-        let sui_faucet_url = LOCAL_DEFAULT_SUI_FAUCET_URL.to_string();
+        let sui_fullnode_rpc_url = get_testing_sui_fullnode_rpc_url();
+        let sui_faucet_url = get_testing_sui_faucet_url();
         Self::new(
             nondeterministic!(tempfile::tempdir().unwrap()).keep(),
             sui_fullnode_rpc_url,

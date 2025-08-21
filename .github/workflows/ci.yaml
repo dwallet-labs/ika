@@ -99,4 +99,4 @@ jobs:
         run: rustup target add x86_64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
       - name: cargo check (ika-core tests)
-        run: cargo check -p ika-core --tests --target x86_64-unknown-linux-gnu
+        run: cargo check -p ika-core --features test-utils --tests --target x86_64-unknown-linux-gnu

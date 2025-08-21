@@ -4,6 +4,7 @@
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
 import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
+import { ZeroTrustDWallet } from '../../src/client/types.js';
 import {
 	acceptEncryptedUserShare,
 	acceptEncryptedUserShareForTransferredDWallet,
@@ -62,7 +63,7 @@ async function main() {
 	await acceptEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		awaitingKeyHolderSignatureDWallet,
+		awaitingKeyHolderSignatureDWallet as ZeroTrustDWallet,
 		dkgSecondRoundRequestInput.userPublicOutput,
 		secondRoundMoveResponse,
 		sourceUserShareEncryptionKeys,
@@ -77,7 +78,7 @@ async function main() {
 	const transferUserShareEvent = await transferEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		activeDWallet,
+		activeDWallet as ZeroTrustDWallet,
 		destinationUserShareEncryptionKeys.getSuiAddress(),
 		sourceEncryptedUserSecretKeyShare,
 		sourceUserShareEncryptionKeys,
@@ -96,7 +97,7 @@ async function main() {
 	await acceptEncryptedUserShareForTransferredDWallet(
 		ikaClient,
 		suiClient,
-		activeDWallet,
+		activeDWallet as ZeroTrustDWallet,
 		destinationUserShareEncryptionKeys,
 		sourceEncryptedUserSecretKeyShare,
 		sourceEncryptionKey,

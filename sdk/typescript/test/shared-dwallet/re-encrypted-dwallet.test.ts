@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { Hash, SignatureAlgorithm } from '../../src/client/types';
+import { Hash, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShareForTransferredDWallet,
 	createCompleteDWallet,
@@ -305,7 +305,7 @@ describe('DWallet Transfer', () => {
 			const transferUserShareEvent = await testTransferEncryptedUserShare(
 				ikaClient,
 				suiClient,
-				sourceDWallet,
+				sourceDWallet as ZeroTrustDWallet,
 				destinationKeys.getSuiAddress(),
 				sourceEncryptedUserSecretKeyShare,
 				sourceUserShareEncryptionKeys,
@@ -335,7 +335,7 @@ describe('DWallet Transfer', () => {
 			await acceptTestEncryptedUserShareForTransferredDWallet(
 				ikaClient,
 				suiClient,
-				sourceDWallet,
+				sourceDWallet as ZeroTrustDWallet,
 				destinationKeys,
 				sourceEncryptedUserSecretKeyShare,
 				sourceEncryptionKey,
@@ -381,7 +381,7 @@ describe('DWallet Transfer', () => {
 		const transferUserShareEvent = await testTransferEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			sourceDWallet,
+			sourceDWallet as ZeroTrustDWallet,
 			destinationUserShareEncryptionKeys.getSuiAddress(),
 			sourceEncryptedUserSecretKeyShare,
 			sourceUserShareEncryptionKeys,
@@ -408,7 +408,7 @@ describe('DWallet Transfer', () => {
 		await acceptTestEncryptedUserShareForTransferredDWallet(
 			ikaClient,
 			suiClient,
-			sourceDWallet,
+			sourceDWallet as ZeroTrustDWallet,
 			destinationUserShareEncryptionKeys,
 			sourceEncryptedUserSecretKeyShare,
 			sourceEncryptionKey,
@@ -443,7 +443,7 @@ describe('DWallet Transfer', () => {
 		await testSign(
 			ikaClient,
 			suiClient,
-			sourceDWallet,
+			sourceDWallet as ZeroTrustDWallet,
 			sourceUserShareEncryptionKeys,
 			sourcePresignObject,
 			sourceEncryptedUserSecretKeyShare,
@@ -491,7 +491,7 @@ describe('DWallet Transfer', () => {
 		await testSign(
 			ikaClient,
 			suiClient,
-			sourceDWallet,
+			sourceDWallet as ZeroTrustDWallet,
 			destinationUserShareEncryptionKeys,
 			destinationPresignObject,
 			destinationEncryptedUserSecretKeyShare2,
