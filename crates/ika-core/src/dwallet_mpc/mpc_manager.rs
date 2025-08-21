@@ -753,10 +753,10 @@ impl DWalletMPCManager {
 
     pub(crate) fn complete_mpc_session(&mut self, session_identifier: &SessionIdentifier) {
         if let Some(session) = self.mpc_sessions.get_mut(session_identifier) {
-            session.mark_mpc_session_as_completed();
             if let Some(request_data) = session.request_metric_data() {
                 self.dwallet_mpc_metrics.add_completion(&request_data);
             }
+            session.mark_mpc_session_as_completed();
             session.clear_data();
         }
     }
