@@ -14,7 +14,7 @@ pub(crate) use request::Request as ComputationRequest;
 const MPC_SIGN_SECOND_ROUND: u64 = 2;
 
 /// A unique key for a computation request.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, Hash)]
 pub(crate) struct ComputationId {
     pub(crate) session_identifier: SessionIdentifier,
     pub(crate) consensus_round: u64,
