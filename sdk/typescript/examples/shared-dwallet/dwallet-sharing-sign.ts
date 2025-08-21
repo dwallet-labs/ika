@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
-import { Hash, SignatureAlgorithm } from '../../src/client/index.js';
+import {
+	Hash,
+	SharedDWallet,
+	SignatureAlgorithm,
+	ZeroTrustDWallet,
+} from '../../src/client/index.js';
 import {
 	acceptEncryptedUserShare,
 	createIkaClient,
@@ -56,7 +61,7 @@ async function main() {
 	await acceptEncryptedUserShare(
 		ikaClient,
 		suiClient,
-		awaitingKeyHolderSignatureDWallet,
+		awaitingKeyHolderSignatureDWallet as ZeroTrustDWallet,
 		dkgSecondRoundRequestInput.userPublicOutput,
 		secondRoundMoveResponse,
 		userShareEncryptionKeys,
@@ -74,7 +79,12 @@ async function main() {
 		await ikaClient.getProtocolPublicParameters(activeDWallet),
 	);
 
-	await makeDWalletUserSecretKeySharesPublic(ikaClient, suiClient, activeDWallet, secretShare);
+	await makeDWalletUserSecretKeySharesPublic(
+		ikaClient,
+		suiClient,
+		activeDWallet as ZeroTrustDWallet,
+		secretShare,
+	);
 
 	const presignRequestEvent = await presign(
 		ikaClient,
@@ -93,7 +103,7 @@ async function main() {
 	await signPublicUserShare(
 		ikaClient,
 		suiClient,
-		publicDWallet,
+		publicDWallet as SharedDWallet,
 		presignObject,
 		new TextEncoder().encode('hello world'),
 		Hash.KECCAK256,
