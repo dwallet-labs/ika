@@ -3,32 +3,32 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { prepareImportDWalletVerification } from '../../src/client/cryptography';
-import { Curve } from '../../src/client/types';
+import { prepareImportedKeyDWalletVerification } from '../../src/client/cryptography';
+import { Curve, ImportedKeyDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
 	createTestSessionIdentifier,
 	registerTestEncryptionKey,
-	requestTestImportedDWalletVerification,
+	requestTestImportedKeyDWalletVerification,
 } from '../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
 	delay,
-	generateTestKeypairForImportedDWallet,
+	generateTestKeypairForImportedKeyDWallet,
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
 
-describe('Imported DWallet Creation', () => {
-	it('should create an imported DWallet and activate it', async () => {
+describe('Imported Key DWallet Creation', () => {
+	it('should create an Imported Key DWallet and activate it', async () => {
 		const testName = 'imported-dwallet-creation-test';
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedDWallet(testName);
+			generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -45,24 +45,25 @@ describe('Imported DWallet Creation', () => {
 
 		await delay(3);
 
-		const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+		const importDWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
 			ikaClient,
 			sessionIdentifierPreimage,
 			userShareEncryptionKeys,
 			dWalletKeypair,
 		);
 
-		const importedKeyDWalletVerificationRequestEvent = await requestTestImportedDWalletVerification(
-			ikaClient,
-			suiClient,
-			importDWalletVerificationRequestInput,
-			Curve.SECP256K1,
-			signerPublicKey,
-			sessionIdentifier,
-			userShareEncryptionKeys,
-			signerAddress,
-			testName,
-		);
+		const importedKeyDWalletVerificationRequestEvent =
+			await requestTestImportedKeyDWalletVerification(
+				ikaClient,
+				suiClient,
+				importDWalletVerificationRequestInput,
+				Curve.SECP256K1,
+				signerPublicKey,
+				sessionIdentifier,
+				userShareEncryptionKeys,
+				signerAddress,
+				testName,
+			);
 
 		expect(importedKeyDWalletVerificationRequestEvent).toBeDefined();
 		expect(importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id).toBeDefined();
@@ -84,7 +85,7 @@ describe('Imported DWallet Creation', () => {
 		await acceptTestEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			awaitingKeyHolderSignatureDWallet,
+			awaitingKeyHolderSignatureDWallet as ImportedKeyDWallet,
 			importDWalletVerificationRequestInput.userPublicOutput,
 			importedKeyDWalletVerificationRequestEvent,
 			userShareEncryptionKeys,
@@ -136,7 +137,7 @@ describe('Imported DWallet Creation', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedDWallet(testName);
+			generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -144,7 +145,7 @@ describe('Imported DWallet Creation', () => {
 
 		// Test with all zeros session identifier - should work (as evidenced by test output)
 		const zeroSessionIdentifierPreimage = new Uint8Array(32).fill(0);
-		const verificationInput = await prepareImportDWalletVerification(
+		const verificationInput = await prepareImportedKeyDWalletVerification(
 			ikaClient,
 			zeroSessionIdentifierPreimage,
 			userShareEncryptionKeys,
@@ -159,7 +160,7 @@ describe('Imported DWallet Creation', () => {
 
 		// Test with maximum values session identifier
 		const maxSessionIdentifierPreimage = new Uint8Array(32).fill(255);
-		const verificationInput2 = await prepareImportDWalletVerification(
+		const verificationInput2 = await prepareImportedKeyDWalletVerification(
 			ikaClient,
 			maxSessionIdentifierPreimage,
 			userShareEncryptionKeys,
@@ -180,7 +181,7 @@ describe('Imported DWallet Creation', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerAddress } =
-			generateTestKeypairForImportedDWallet(testName);
+			generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -197,7 +198,7 @@ describe('Imported DWallet Creation', () => {
 
 		// This should fail when trying to use uninitialized keypair
 		await expect(
-			prepareImportDWalletVerification(
+			prepareImportedKeyDWalletVerification(
 				ikaClient,
 				sessionIdentifierPreimage,
 				userShareEncryptionKeys,
@@ -213,7 +214,7 @@ describe('Imported DWallet Creation', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedDWallet(testName);
+			generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -228,7 +229,7 @@ describe('Imported DWallet Creation', () => {
 
 		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
 
-		const importDWalletVerificationRequestInput = await prepareImportDWalletVerification(
+		const importDWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
 			ikaClient,
 			sessionIdentifierPreimage,
 			userShareEncryptionKeys,
@@ -242,17 +243,18 @@ describe('Imported DWallet Creation', () => {
 
 		await delay(3);
 
-		const importedKeyDWalletVerificationRequestEvent = await requestTestImportedDWalletVerification(
-			ikaClient,
-			suiClient,
-			importDWalletVerificationRequestInput,
-			Curve.SECP256K1,
-			signerPublicKey,
-			sessionIdentifier,
-			userShareEncryptionKeys,
-			signerAddress,
-			testName,
-		);
+		const importedKeyDWalletVerificationRequestEvent =
+			await requestTestImportedKeyDWalletVerification(
+				ikaClient,
+				suiClient,
+				importDWalletVerificationRequestInput,
+				Curve.SECP256K1,
+				signerPublicKey,
+				sessionIdentifier,
+				userShareEncryptionKeys,
+				signerAddress,
+				testName,
+			);
 
 		// Validate event structure
 		expect(importedKeyDWalletVerificationRequestEvent.event_data).toBeDefined();
