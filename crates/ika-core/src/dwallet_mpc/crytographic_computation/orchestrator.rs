@@ -202,8 +202,8 @@ impl CryptographicComputationsOrchestrator {
             .currently_running_cryptographic_computations
             .contains(&computation_id)
             || self
-            .completed_cryptographic_computations
-            .contains(&computation_id)
+                .completed_cryptographic_computations
+                .contains(&computation_id)
         {
             // Don't run a task that we already spawned.
             return true;
