@@ -133,7 +133,7 @@ fn make_dwallet_user_secret_key_shares_public_request_event_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: make_dwallet_user_secret_key_shares_public_protocol_data(
@@ -151,7 +151,7 @@ fn dwallet_imported_key_verification_request_event_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: imported_key_verification_protocol_data(
@@ -169,7 +169,7 @@ fn dwallet_dkg_first_party_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: dwallet_dkg_first_protocol_data(deserialized_event.event_data.clone())?,
@@ -185,7 +185,7 @@ fn dwallet_dkg_second_party_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: dwallet_dkg_second_protocol_data(deserialized_event.event_data.clone())?,
@@ -201,7 +201,7 @@ fn presign_party_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: presign_protocol_data(deserialized_event.event_data.clone())?,
@@ -217,7 +217,7 @@ fn sign_party_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: sign_protocol_data(deserialized_event.event_data.clone())?,
@@ -233,7 +233,7 @@ fn get_verify_partial_signatures_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: partial_signature_verification_protocol_data(
@@ -266,7 +266,7 @@ fn network_dkg_secp256k1_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: network_encryption_key_dkg_protocol_data(
@@ -285,7 +285,7 @@ fn network_dkg_ristretto_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: network_encryption_key_dkg_protocol_data(
@@ -304,7 +304,7 @@ fn network_decryption_key_reconfiguration_session_request_from_event(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: network_encryption_key_reconfiguration_protocol_data(
@@ -322,7 +322,7 @@ fn start_encrypted_share_verification_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
+        session_src: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: encrypted_share_verification_protocol_data(

@@ -30,7 +30,7 @@ use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, SessionIdentifier,
-    SessionType,
+    SessionSource,
 };
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -401,12 +401,12 @@ impl DWalletMPCManager {
 
                 // Always advance system sessions, and only advance user session
                 // if they come before the last session to complete in the current epoch (at the current time).
-                let should_advance = match request.session_type {
-                    SessionType::User => {
+                let should_advance = match request.session_src {
+                    SessionSource::User => {
                         request.session_sequence_number
                             <= self.last_session_to_complete_in_current_epoch
                     }
-                    SessionType::System => true,
+                    SessionSource::System => true,
                 };
 
                 if should_advance {
@@ -667,16 +667,6 @@ impl DWalletMPCManager {
         }
     }
 
-    pub(crate) fn record_threshold_not_reached(
-        &mut self,
-        consensus_round: u64,
-        session_identifier: SessionIdentifier,
-    ) {
-        if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
-            session.record_threshold_not_reached(consensus_round)
-        }
-    }
-
     pub(crate) fn is_malicious_actor(&self, authority: &AuthorityName) -> bool {
         self.malicious_actors.contains(authority)
     }
@@ -740,7 +730,6 @@ impl DWalletMPCManager {
                     .collect();
                 Some((malicious_authorities, output))
             }
-            Err(mpc::Error::ThresholdNotReached) => None,
             Err(e) => {
                 error!(
                     ?session_identifier,

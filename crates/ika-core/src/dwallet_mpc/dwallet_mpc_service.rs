@@ -655,22 +655,6 @@ impl DWalletMPCService {
                         );
                     }
                 }
-                Err(DwalletMPCError::MPCError(mpc::Error::ThresholdNotReached)) => {
-                    error!(
-                        error=?DwalletMPCError::MPCError(mpc::Error::ThresholdNotReached),
-                            ?session_identifier,
-                        validator=?validator_name,
-                        mpc_round,
-                        party_id,
-                        "MPC session failed"
-                    );
-
-                    let consensus_round = computation_id.consensus_round;
-                    self.dwallet_mpc_manager.record_threshold_not_reached(
-                        consensus_round,
-                        computation_id.session_identifier,
-                    )
-                }
                 Err(err) => {
                     error!(
                         ?session_identifier,

@@ -41,12 +41,6 @@ pub(crate) struct DWalletMPCSession {
     /// In round `1` We start the flow, without messages, from the event trigger.
     pub(super) current_mpc_round: u64,
 
-    /// A map between an MPC round, and the list of consensus rounds at which we tried to
-    /// advance and failed.
-    /// The total number of attempts to advance that failed in the session can be
-    /// computed by summing the number of failed attempts.
-    pub(crate) mpc_round_to_threshold_not_reached_consensus_rounds: HashMap<u64, HashSet<u64>>,
-
     /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
     /// Used to build the input of messages to advance each round of the session.
     pub(super) messages_by_consensus_round: HashMap<u64, HashMap<PartyID, MPCMessage>>,
@@ -67,7 +61,6 @@ impl DWalletMPCSession {
             outputs_by_consensus_round: HashMap::new(),
             session_identifier,
             current_mpc_round: 1,
-            mpc_round_to_threshold_not_reached_consensus_rounds: HashMap::new(),
             party_id,
             validator_name,
         }
@@ -148,35 +141,6 @@ impl DWalletMPCSession {
         if let Vacant(e) = consensus_round_messages_map.entry(sender_party_id) {
             e.insert(message.message);
         }
-    }
-
-    /// Records a threshold not reached error that we got when advancing
-    /// this session with messages up to `consensus_round`.
-    pub(crate) fn record_threshold_not_reached(&mut self, consensus_round: u64) {
-        let MPCSessionStatus::Active { request, .. } = &self.status else {
-            error!(
-                should_never_happen=true,
-                session_identifier=?self.session_identifier,
-                "tried to record threshold not reached for a non-active MPC session"
-            );
-            return;
-        };
-
-        let protocol_name =
-            DWalletSessionRequestMetricData::from(&request.protocol_data).to_string();
-
-        error!(
-            mpc_protocol=?protocol_name,
-            validator=?self.validator_name,
-            session_identifier=?self.session_identifier,
-            mpc_round=?self.current_mpc_round,
-            "threshold was not reached for session"
-        );
-
-        self.mpc_round_to_threshold_not_reached_consensus_rounds
-            .entry(self.current_mpc_round)
-            .or_default()
-            .insert(consensus_round);
     }
 
     /// Add an output received from a party for the current consensus round.
@@ -378,7 +342,7 @@ impl DWalletMPCManager {
             warn!(
                 session_identifier=?session_identifier,
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                session_type=?request.session_type,
+                session_source=?request.session_src,
                 event_epoch=?request.epoch,
                 "received an event for a different epoch, skipping"
             );
@@ -398,7 +362,7 @@ impl DWalletMPCManager {
                     // so we add it to the queue.
                     debug!(
                         session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                        session_type=?request.session_type,
+                        session_source=?request.session_src,
                         network_encryption_key_id=?network_encryption_key_id,
                         "Adding request to pending for the network key"
                     );
@@ -426,7 +390,7 @@ impl DWalletMPCManager {
             // so we have to add this request to the pending queue until it arrives.
             debug!(
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                session_type=?request.session_type,
+                session_source=?request.session_src,
                 "Adding request to pending for the next epoch active committee"
             );
 

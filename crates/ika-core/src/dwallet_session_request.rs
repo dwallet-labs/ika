@@ -1,13 +1,13 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, SignatureAlgorithm};
-use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionSource};
 use message_digest::message_digest::Hash;
 use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequest {
-    pub session_type: SessionType,
+    pub session_src: SessionSource,
     /// Unique identifier for the MPC session.
     pub session_identifier: SessionIdentifier,
     pub session_sequence_number: u64,
@@ -39,15 +39,15 @@ impl Ord for DWalletSessionRequest {
     fn cmp(&self, other: &Self) -> Ordering {
         // System sessions have a higher priority than user session and therefore come first (are smaller).
         // Both system and user sessions are sorted by their sequence number between themselves.
-        match (self.session_type, other.session_type) {
-            (SessionType::User, SessionType::User) => self
+        match (self.session_src, other.session_src) {
+            (SessionSource::User, SessionSource::User) => self
                 .session_sequence_number
                 .cmp(&other.session_sequence_number),
-            (SessionType::System, SessionType::User) => Ordering::Less,
-            (SessionType::System, SessionType::System) => self
+            (SessionSource::System, SessionSource::User) => Ordering::Less,
+            (SessionSource::System, SessionSource::System) => self
                 .session_sequence_number
                 .cmp(&other.session_sequence_number),
-            (SessionType::User, SessionType::System) => Ordering::Greater,
+            (SessionSource::User, SessionSource::System) => Ordering::Greater,
         }
     }
 }
