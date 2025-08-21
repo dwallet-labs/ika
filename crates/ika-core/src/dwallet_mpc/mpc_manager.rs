@@ -687,6 +687,16 @@ impl DWalletMPCManager {
         }
     }
 
+    pub(crate) fn record_threshold_not_reached(
+        &mut self,
+        consensus_round: u64,
+        session_identifier: SessionIdentifier,
+    ) {
+        if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
+            session.record_threshold_not_reached(consensus_round)
+        }
+    }
+
     pub(crate) fn is_malicious_actor(&self, authority: &AuthorityName) -> bool {
         self.malicious_actors.contains(authority)
     }
@@ -750,6 +760,7 @@ impl DWalletMPCManager {
                     .collect();
                 Some((malicious_authorities, output))
             }
+            Err(mpc::Error::ThresholdNotReached) => None,
             Err(e) => {
                 error!(
                     ?session_identifier,

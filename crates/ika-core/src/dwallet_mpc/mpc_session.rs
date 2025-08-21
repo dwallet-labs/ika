@@ -8,8 +8,8 @@ use group::PartyID;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
-use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
@@ -39,6 +39,13 @@ pub(crate) struct DWalletSession {
     pub(super) status: SessionStatus,
 
     pub(super) session_type: SessionType,
+
+    // Todo (#1452): Remove threshold not reached.
+    /// A map between an MPC round, and the list of consensus rounds at which we tried to
+    /// advance and failed.
+    /// The total number of attempts to advance that failed in the session can be
+    /// computed by summing the number of failed attempts.
+    pub(crate) mpc_round_to_threshold_not_reached_consensus_rounds: HashMap<u64, HashSet<u64>>,
 
     outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
 }
@@ -102,6 +109,7 @@ impl DWalletSession {
             outputs_by_consensus_round: HashMap::new(),
             session_identifier,
             party_id,
+            mpc_round_to_threshold_not_reached_consensus_rounds: HashMap::new(),
             validator_name,
             session_type,
         }
@@ -201,6 +209,36 @@ impl DWalletSession {
         if let Vacant(e) = consensus_round_messages_map.entry(sender_party_id) {
             e.insert(message.message);
         }
+    }
+
+    // Todo (#1452): Remove.
+    /// Records a threshold not reached error that we got when advancing
+    /// this session with messages up to `consensus_round`.
+    pub(crate) fn record_threshold_not_reached(&mut self, consensus_round: u64) {
+        let SessionStatus::Active { request, .. } = &self.status else {
+            error!(
+                should_never_happen=true,
+                session_identifier=?self.session_identifier,
+                "tried to record threshold not reached for a non-active MPC session"
+            );
+            return;
+        };
+
+        let protocol_name =
+            DWalletSessionRequestMetricData::from(&request.protocol_data).to_string();
+
+        error!(
+            mpc_protocol=?protocol_name,
+            validator=?self.validator_name,
+            session_identifier=?self.session_identifier,
+            mpc_round=?self.session_type.current_round(),
+            "threshold was not reached for session"
+        );
+
+        self.mpc_round_to_threshold_not_reached_consensus_rounds
+            .entry(self.session_type.current_round())
+            .or_default()
+            .insert(consensus_round);
     }
 
     /// Add an output received from a party for the current consensus round.
