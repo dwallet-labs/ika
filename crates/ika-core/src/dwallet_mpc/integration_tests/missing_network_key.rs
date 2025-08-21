@@ -5,7 +5,6 @@ use crate::dwallet_mpc::integration_tests::utils::{
 };
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
     DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,

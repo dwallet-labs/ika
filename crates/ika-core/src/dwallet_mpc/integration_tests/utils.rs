@@ -509,7 +509,6 @@ use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
     DKGFirstData, DKGSecondData, NetworkEncryptionKeyDkgData, PresignData, ProtocolData, SignData,
 };
-use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use message_digest::message_digest::Hash;
 
 pub(crate) fn send_start_network_dkg_event_to_all_parties(

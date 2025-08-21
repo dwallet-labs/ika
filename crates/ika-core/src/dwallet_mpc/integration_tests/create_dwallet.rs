@@ -10,7 +10,6 @@ use dwallet_mpc_centralized_party::{
 };
 use ika_types::committee::Committee;
 use ika_types::message::{DKGSecondRoundOutput, DWalletCheckpointMessageKind};
-use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
     DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,
