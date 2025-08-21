@@ -205,7 +205,7 @@ async fn future_sign() {
     );
     let (consensus_round, sign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
-    let DWalletCheckpointMessageKind::RespondDWalletSign(sign_output) =
+    let DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(sign_output) =
         sign_checkpoint.messages().clone().pop().unwrap()
     else {
         panic!("Expected DWallet future sign output message");
