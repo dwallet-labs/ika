@@ -183,7 +183,7 @@ impl DWalletMPCService {
 
     #[cfg(feature = "test-utils")]
     pub(crate) fn dwallet_mpc_manager_mut(&mut self) -> &mut DWalletMPCManager {
-        &self.dwallet_mpc_manager
+        &mut self.dwallet_mpc_manager
     }
 
     async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
