@@ -23,6 +23,12 @@ pub(crate) struct ComputationId {
     pub(crate) attempt_number: u64,
 }
 
+/// Do not include the consensus round in the equality check. A new computation is created
+/// every few consensus rounds when
+/// [`crate::dwallet_mpc::mpc_manager::DWalletMPCManager::perform_cryptographic_computation`]
+/// is called. Then, the chain checks if this computation has already been spawned.
+/// If the consensus round were part of the equality check, the chain would always treat it
+/// as a new computation and spawn one unnecessarily.
 impl PartialEq for ComputationId {
     fn eq(&self, other: &Self) -> bool {
         self.session_identifier == other.session_identifier
@@ -33,6 +39,12 @@ impl PartialEq for ComputationId {
 
 impl Eq for ComputationId {}
 
+/// Do not include the consensus round in the hash. A new computation is created
+/// every few consensus rounds when
+/// [`crate::dwallet_mpc::mpc_manager::DWalletMPCManager::perform_cryptographic_computation`]
+/// is called. Then, the chain checks if this computation has already been spawned.
+/// If the consensus round were part of the hash, the chain would always treat it
+/// as a new computation and spawn one unnecessarily.
 impl Hash for ComputationId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.session_identifier.hash(state);
