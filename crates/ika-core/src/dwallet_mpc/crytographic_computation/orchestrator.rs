@@ -198,18 +198,6 @@ impl CryptographicComputationsOrchestrator {
         computation_request: ComputationRequest,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> bool {
-        if !self.has_available_cores_to_perform_computation() {
-            info!(
-                session_identifier=?computation_id.session_identifier,
-                mpc_round=?computation_id.mpc_round,
-                attempt_number=?computation_id.attempt_number,
-                mpc_protocol=?computation_request.protocol_data.to_string(),
-                "No available CPU cores to perform cryptographic computation"
-            );
-
-            return false;
-        }
-
         if self
             .currently_running_cryptographic_computations
             .contains(&computation_id)
@@ -221,6 +209,19 @@ impl CryptographicComputationsOrchestrator {
             return true;
         }
 
+        if !self.has_available_cores_to_perform_computation() {
+            info!(
+                session_identifier=?computation_id.session_identifier,
+                mpc_round=?computation_id.mpc_round,
+                attempt_number=?computation_id.attempt_number,
+                mpc_protocol=?computation_request.protocol_data.to_string(),
+                available_cores=?self.available_cores_for_cryptographic_computations,
+                currently_running_sessions_count =? self.currently_running_cryptographic_computations.len(),
+                "No available CPU cores to perform cryptographic computation"
+            );
+
+            return false;
+        }
         let handle = Handle::current();
 
         let party_id = computation_request.party_id;

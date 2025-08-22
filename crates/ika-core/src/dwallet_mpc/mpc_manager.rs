@@ -257,10 +257,11 @@ impl DWalletMPCManager {
                     sender_authority=?sender_authority,
                     receiver_authority=?self.validator_name,
                     serialized_message=?message.message,
-                    "got a threshold not reached message, ignoring",
+                    "got a threshold not reached message",
                 );
 
-                return;
+                let serialized_mpc_round_number = &message.message[1..=8];
+                bcs::from_bytes::<u64>(serialized_mpc_round_number).ok()
             }
             _ => None,
         }) else {
