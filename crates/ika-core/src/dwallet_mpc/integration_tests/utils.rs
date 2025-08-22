@@ -523,6 +523,7 @@ pub(crate) fn send_start_network_dkg_event_to_all_parties(
         &(0..sui_data_senders.len()).collect::<Vec<_>>(),
         key_id,
     );
+    
 }
 
 pub(crate) fn send_start_network_dkg_event_to_some_parties(
