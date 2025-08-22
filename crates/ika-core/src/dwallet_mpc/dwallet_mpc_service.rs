@@ -25,6 +25,7 @@ use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage};
+#[cfg(feature = "test-utils")]
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
@@ -44,11 +45,13 @@ use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
 use mpc::GuaranteedOutputDeliveryRoundResult;
+#[cfg(feature = "test-utils")]
 use prometheus::Registry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::messages_consensus::Round;
+#[cfg(feature = "test-utils")]
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
@@ -135,7 +138,7 @@ impl DWalletMPCService {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-utils")]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         seed: RootSeed,
@@ -173,12 +176,12 @@ impl DWalletMPCService {
         }
     }
 
-    #[feature("test_helpers")]
+    #[cfg(feature = "test-utils")]
     pub(crate) fn dwallet_mpc_manager(&self) -> &DWalletMPCManager {
         &self.dwallet_mpc_manager
     }
 
-    #[feature("test_helpers")]
+    #[cfg(feature = "test-utils")]
     pub(crate) fn dwallet_mpc_manager_mut(&mut self) -> &mut DWalletMPCManager {
         &mut self.dwallet_mpc_manager
     }
@@ -565,160 +568,11 @@ impl DWalletMPCService {
             let mpc_round = computation_id.mpc_round;
             let consensus_adapter = self.dwallet_submit_to_consensus.clone();
 
-            if let Some(session) = self
+            let Some(session) = self
                 .dwallet_mpc_manager
                 .mpc_sessions
                 .get(&session_identifier)
-            {
-                if let MPCSessionStatus::Active { .. } = &session.status {
-                    if let Some(session_request) = session.request_data.clone() {
-                        match computation_result {
-                            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message }) => {
-                                info!(
-                                    ?session_identifier,
-                                    validator=?validator_name,
-                                    ?mpc_round,
-                                    "Advanced MPC session"
-                                );
-
-                                let message =
-                                    self.new_dwallet_mpc_message(session_identifier, message);
-
-                                if let Err(err) =
-                                    consensus_adapter.submit_to_consensus(&[message]).await
-                                {
-                                    error!(
-                                        ?session_identifier,
-                                        validator=?validator_name,
-                                        ?mpc_round,
-                                        error=?err,
-                                        "failed to submit an MPC message to consensus"
-                                    );
-                                }
-                            }
-                            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                                malicious_parties,
-                                private_output: _,
-                                public_output_value,
-                            }) => {
-                                info!(
-                                    ?session_identifier,
-                                    validator=?validator_name,
-                                    "Reached output for session"
-                                );
-                                let consensus_adapter = self.dwallet_submit_to_consensus.clone();
-                                let malicious_authorities = if !malicious_parties.is_empty() {
-                                    let malicious_authorities = party_ids_to_authority_names(
-                                        &malicious_parties,
-                                        &committee,
-                                    );
-
-                                    error!(
-                                        ?session_identifier,
-                                            validator=?validator_name,
-                                            ?malicious_parties,
-                                            ?malicious_authorities,
-                                        "malicious parties detected upon MPC session finalize",
-                                    );
-                                    malicious_authorities
-                                } else {
-                                    vec![]
-                                };
-
-                                self.dwallet_mpc_manager
-                                    .record_malicious_actors(&malicious_authorities);
-
-                                let rejected = false;
-
-                                let consensus_message = self.new_dwallet_mpc_output(
-                                    session_identifier,
-                                    &session_request,
-                                    public_output_value,
-                                    malicious_authorities,
-                                    rejected,
-                                );
-
-                                if let Err(err) = consensus_adapter
-                                    .submit_to_consensus(&[consensus_message])
-                                    .await
-                                {
-                                    error!(
-                                        ?session_identifier,
-                                        validator=?validator_name,
-                                        error=?err,
-                                        "failed to submit an MPC output message to consensus",
-                                    );
-                                }
-                            }
-                            Err(DwalletMPCError::MPCError(mpc::Error::ThresholdNotReached)) => {
-                                error!(
-                                    error=?DwalletMPCError::MPCError(mpc::Error::ThresholdNotReached),
-                                        ?session_identifier,
-                                    validator=?validator_name,
-                                    mpc_round,
-                                    party_id,
-                                    "MPC session failed"
-                                );
-
-                                let consensus_round = computation_id.consensus_round;
-                                self.dwallet_mpc_manager.record_threshold_not_reached(
-                                    consensus_round,
-                                    computation_id.session_identifier,
-                                )
-                            }
-                            Err(err) => {
-                                error!(
-                                    ?session_identifier,
-                                    validator=?validator_name,
-                                    ?mpc_round,
-                                    party_id,
-                                    error=?err,
-                                    "failed to advance the MPC session, rejecting."
-                                );
-
-                                let consensus_adapter = self.dwallet_submit_to_consensus.clone();
-
-                                let rejected = true;
-
-                                let consensus_message = self.new_dwallet_mpc_output(
-                                    session_identifier,
-                                    &session_request,
-                                    vec![],
-                                    vec![],
-                                    rejected,
-                                );
-
-                                if let Err(err) = consensus_adapter
-                                    .submit_to_consensus(&[consensus_message])
-                                    .await
-                                {
-                                    error!(
-                                        ?session_identifier,
-                                        validator=?validator_name,
-                                        error=?err,
-                                        "failed to submit an MPC SessionFailed message to consensus"
-                                    );
-                                }
-                            }
-                        }
-                    } else {
-                        error!(
-                            should_never_happen =? true,
-                            ?session_identifier,
-                            validator=?validator_name,
-                            ?mpc_round,
-                            "no session_request for a session for which a computation update was received"
-                        );
-                    }
-                } else {
-                    warn!(
-                        ?session_identifier,
-                        validator=?validator_name,
-                        ?mpc_round,
-                        "received a computation update for an non-active MPC session"
-                    );
-                }
-            } else {
+            else {
                 error!(
                     should_never_happen =? true,
                     ?session_identifier,
@@ -726,6 +580,142 @@ impl DWalletMPCService {
                     ?mpc_round,
                     "failed to retrieve MPC session for which a computation update was received"
                 );
+                return;
+            };
+
+            let MPCSessionStatus::Active { request, .. } = session.status.clone() else {
+                warn!(
+                    ?session_identifier,
+                    validator=?validator_name,
+                    ?mpc_round,
+                    "received a computation update for an non-active MPC session"
+                );
+                return;
+            };
+
+            match computation_result {
+                Ok(GuaranteedOutputDeliveryRoundResult::Advance { message }) => {
+                    info!(
+                        ?session_identifier,
+                        validator=?validator_name,
+                        ?mpc_round,
+                        "Advanced MPC session"
+                    );
+
+                    let message = self.new_dwallet_mpc_message(session_identifier, message);
+
+                    if let Err(err) = consensus_adapter.submit_to_consensus(&[message]).await {
+                        error!(
+                            ?session_identifier,
+                            validator=?validator_name,
+                            ?mpc_round,
+                            error=?err,
+                            "failed to submit an MPC message to consensus"
+                        );
+                    }
+                }
+                Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                    malicious_parties,
+                    private_output: _,
+                    public_output_value,
+                }) => {
+                    info!(
+                        ?session_identifier,
+                        validator=?validator_name,
+                        "Reached output for session"
+                    );
+                    let consensus_adapter = self.dwallet_submit_to_consensus.clone();
+                    let malicious_authorities = if !malicious_parties.is_empty() {
+                        let malicious_authorities =
+                            party_ids_to_authority_names(&malicious_parties, &committee);
+
+                        error!(
+                            ?session_identifier,
+                                validator=?validator_name,
+                                ?malicious_parties,
+                                ?malicious_authorities,
+                            "malicious parties detected upon MPC session finalize",
+                        );
+                        malicious_authorities
+                    } else {
+                        vec![]
+                    };
+
+                    self.dwallet_mpc_manager
+                        .record_malicious_actors(&malicious_authorities);
+
+                    let rejected = false;
+
+                    let consensus_message = self.new_dwallet_mpc_output(
+                        session_identifier,
+                        &request,
+                        public_output_value,
+                        malicious_authorities,
+                        rejected,
+                    );
+
+                    if let Err(err) = consensus_adapter
+                        .submit_to_consensus(&[consensus_message])
+                        .await
+                    {
+                        error!(
+                            ?session_identifier,
+                            validator=?validator_name,
+                            error=?err,
+                            "failed to submit an MPC output message to consensus",
+                        );
+                    }
+                }
+                Err(DwalletMPCError::MPCError(mpc::Error::ThresholdNotReached)) => {
+                    error!(
+                        error=?DwalletMPCError::MPCError(mpc::Error::ThresholdNotReached),
+                            ?session_identifier,
+                        validator=?validator_name,
+                        mpc_round,
+                        party_id,
+                        "MPC session failed"
+                    );
+
+                    let consensus_round = computation_id.consensus_round;
+                    self.dwallet_mpc_manager.record_threshold_not_reached(
+                        consensus_round,
+                        computation_id.session_identifier,
+                    )
+                }
+                Err(err) => {
+                    error!(
+                        ?session_identifier,
+                        validator=?validator_name,
+                        ?mpc_round,
+                        party_id,
+                        error=?err,
+                        "failed to advance the MPC session, rejecting."
+                    );
+
+                    let consensus_adapter = self.dwallet_submit_to_consensus.clone();
+
+                    let rejected = true;
+
+                    let consensus_message = self.new_dwallet_mpc_output(
+                        session_identifier,
+                        &request,
+                        vec![],
+                        vec![],
+                        rejected,
+                    );
+
+                    if let Err(err) = consensus_adapter
+                        .submit_to_consensus(&[consensus_message])
+                        .await
+                    {
+                        error!(
+                            ?session_identifier,
+                            validator=?validator_name,
+                            error=?err,
+                            "failed to submit an MPC SessionFailed message to consensus"
+                        );
+                    }
+                }
             }
         }
     }

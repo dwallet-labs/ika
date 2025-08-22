@@ -154,7 +154,8 @@ const EInvalidMigration: u64 = 1;
 ///
 /// Version History:
 /// - V1: Initial SystemInner implementation with core functionality
-const VERSION: u64 = 1;
+/// - V2: expose new functions: `epoch`, `validator_stake_amount`
+const VERSION: u64 = 2;
 
 // === Structs ===
 

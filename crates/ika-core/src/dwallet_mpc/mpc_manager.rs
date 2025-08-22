@@ -257,10 +257,11 @@ impl DWalletMPCManager {
                     sender_authority=?sender_authority,
                     receiver_authority=?self.validator_name,
                     serialized_message=?message.message,
-                    "got a threshold not reached message, ignoring",
+                    "got a threshold not reached message",
                 );
 
-                return;
+                let serialized_mpc_round_number = &message.message[1..=8];
+                bcs::from_bytes::<u64>(serialized_mpc_round_number).ok()
             }
             _ => None,
         }) else {
@@ -335,9 +336,7 @@ impl DWalletMPCManager {
             }
         };
 
-        if let MPCSessionStatus::Active { .. } = session.status {
-            session.add_message(consensus_round, mpc_round_number, sender_party_id, message);
-        }
+        session.add_message(consensus_round, mpc_round_number, sender_party_id, message);
     }
 
     /// Creates a new session with SID `session_identifier`,
@@ -360,7 +359,6 @@ impl DWalletMPCManager {
             status,
             *session_identifier,
             self.party_id,
-            request,
         );
 
         info!(
@@ -398,28 +396,25 @@ impl DWalletMPCManager {
             .mpc_sessions
             .iter()
             .filter_map(|(_, session)| {
-                if !matches!(session.status, MPCSessionStatus::Active { .. }) {
+                let MPCSessionStatus::Active { request, .. } = &session.status else {
                     return None;
-                }
+                };
 
-                // Only sessions with MPC event data should be advanced
-                session.request_data.clone().and_then(|request_data| {
-                    // Always advance system sessions, and only advance user session
-                    // if they come before the last session to complete in the current epoch (at the current time).
-                    let should_advance = match request_data.session_type {
-                        SessionType::User => {
-                            request_data.session_sequence_number
-                                <= self.last_session_to_complete_in_current_epoch
-                        }
-                        SessionType::System => true,
-                    };
-
-                    if should_advance {
-                        Some((session, request_data))
-                    } else {
-                        None
+                // Always advance system sessions, and only advance user session
+                // if they come before the last session to complete in the current epoch (at the current time).
+                let should_advance = match request.session_type {
+                    SessionType::User => {
+                        request.session_sequence_number
+                            <= self.last_session_to_complete_in_current_epoch
                     }
-                })
+                    SessionType::System => true,
+                };
+
+                if should_advance {
+                    Some((session, request))
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -428,10 +423,11 @@ impl DWalletMPCManager {
 
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
-            .flat_map(|(session, request_data)| {
+            .flat_map(|(session, _)| {
                 let MPCSessionStatus::Active {
                     public_input,
                     private_input: _,
+                    request,
                 } = &session.status
                 else {
                     error!(
@@ -443,7 +439,7 @@ impl DWalletMPCManager {
                 };
 
                 ProtocolCryptographicData::try_new(
-                    &request_data.protocol_data,
+                    &request.protocol_data,
                     self.party_id,
                     &self.access_structure,
                     last_read_consensus_round,
@@ -470,7 +466,7 @@ impl DWalletMPCManager {
 
                     let computation_request = ComputationRequest {
                         party_id: self.party_id,
-                        protocol_data: (&request_data.protocol_data).into(),
+                        protocol_data: (&request.protocol_data).into(),
                         validator_name: self.validator_name,
                         access_structure: self.access_structure.clone(),
                         protocol_cryptographic_data: advance_specific_data,
@@ -736,7 +732,7 @@ impl DWalletMPCManager {
                         ?malicious_voters,
                         ?malicious_authorities,
                         committee=?self.committee,
-                        "Failed to convert some malicious party IDs to authority names"
+                        "failed to convert some malicious party IDs to authority names"
                     );
                 }
                 let malicious_authorities: HashSet<AuthorityName> = malicious_authorities
@@ -758,11 +754,10 @@ impl DWalletMPCManager {
 
     pub(crate) fn complete_mpc_session(&mut self, session_identifier: &SessionIdentifier) {
         if let Some(session) = self.mpc_sessions.get_mut(session_identifier) {
-            session.mark_mpc_session_as_completed();
-            if let Some(request_data) = session.request_data() {
-                self.dwallet_mpc_metrics
-                    .add_completion(&(&request_data.protocol_data).into());
+            if let Some(request_data) = session.request_metric_data() {
+                self.dwallet_mpc_metrics.add_completion(&request_data);
             }
+            session.mark_mpc_session_as_completed();
             session.clear_data();
         }
     }

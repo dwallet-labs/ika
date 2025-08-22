@@ -6,7 +6,9 @@ use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{PresignData, ProtocolData, SignData};
+use crate::request_protocol_data::{
+    PartialSignatureVerificationData, PresignData, ProtocolData, SignData,
+};
 use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, network_dkg_public_output_to_protocol_pp_inner,
 };
@@ -144,7 +146,7 @@ async fn future_sign() {
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 4;
+            .last_session_to_complete_in_current_epoch = 40;
     }
     let (consensus_round, network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
@@ -189,6 +191,25 @@ async fn future_sign() {
         0,
     )
     .unwrap();
+    send_start_partial_signature_verification_event(
+        epoch_id,
+        &test_state.sui_data_senders,
+        [5; 32],
+        5,
+        network_key_id,
+        ObjectID::from_bytes(dwallet_dkg_second_round_output.dwallet_id.clone()).unwrap(),
+        dwallet_dkg_second_round_output.output.clone(),
+        presign_output.presign.clone(),
+        centralized_sign.clone(),
+        message_to_sign.clone(),
+    );
+    let (consensus_round, sign_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
+    let DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(sign_output) =
+        sign_checkpoint.messages().clone().pop().unwrap()
+    else {
+        panic!("Expected DWallet future sign output message");
+    };
     send_start_future_sign_event(
         epoch_id,
         &test_state.sui_data_senders,
@@ -201,10 +222,10 @@ async fn future_sign() {
         centralized_sign,
         message_to_sign,
     );
-    let (consensus_round, presign_checkpoint) =
+    let (consensus_round, sign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
-    let DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(sign_output) =
-        presign_checkpoint.messages().clone().pop().unwrap()
+    let DWalletCheckpointMessageKind::RespondDWalletSign(sign_output) =
+        sign_checkpoint.messages().clone().pop().unwrap()
     else {
         panic!("Expected DWallet future sign output message");
     };
@@ -293,6 +314,52 @@ pub(crate) fn send_start_future_sign_event(
                     message: message.clone(),
                     presign: presign.clone(),
                     message_centralized_signature: message_centralized_signature.clone(),
+                },
+                epoch: epoch_id,
+                requires_network_key_data: true,
+                requires_next_active_committee: false,
+                pulled: false,
+            }],
+            epoch_id,
+        ));
+    });
+}
+
+pub(crate) fn send_start_partial_signature_verification_event(
+    epoch_id: EpochId,
+    sui_data_senders: &Vec<SuiDataSenders>,
+    session_identifier_preimage: [u8; 32],
+    session_sequence_number: u64,
+    dwallet_network_encryption_key_id: ObjectID,
+    dwallet_id: ObjectID,
+    dwallet_public_output: Vec<u8>,
+    presign: Vec<u8>,
+    message_centralized_signature: Vec<u8>,
+    message: Vec<u8>,
+) {
+    let sign_id = ObjectID::random();
+    sui_data_senders.iter().for_each(|sui_data_sender| {
+        let _ = sui_data_sender.uncompleted_events_sender.send((
+            vec![DWalletSessionRequest {
+                session_type: SessionType::User,
+                session_identifier: SessionIdentifier::new(
+                    SessionType::User,
+                    session_identifier_preimage,
+                ),
+                session_sequence_number,
+                protocol_data: ProtocolData::PartialSignatureVerification {
+                    data: PartialSignatureVerificationData {
+                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        message: message.clone(),
+                        hash_type: Hash::KECCAK256,
+                        signature_algorithm: SignatureAlgorithm::ECDSA,
+                        dwallet_decentralized_output: dwallet_public_output.clone(),
+                        presign: presign.clone(),
+                        partially_signed_message: message_centralized_signature.clone(),
+                    },
+                    dwallet_id,
+                    partial_centralized_signed_message_id: sign_id,
+                    dwallet_network_encryption_key_id,
                 },
                 epoch: epoch_id,
                 requires_network_key_data: true,

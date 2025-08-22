@@ -181,7 +181,7 @@ async fn make_dwallet_public() {
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 4;
+            .last_session_to_complete_in_current_epoch = 40;
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
@@ -247,7 +247,7 @@ async fn create_imported_dwallet() {
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 4;
+            .last_session_to_complete_in_current_epoch = 40;
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
@@ -259,7 +259,7 @@ async fn create_imported_dwallet() {
     let (user_secret_share, user_public_output, user_message) =
         create_imported_dwallet_centralized_step_inner(
             protocol_pp.clone(),
-            import_dwallet_session_id.to_vec(),
+            SessionIdentifier::new(SessionType::User, import_dwallet_session_id).to_vec(),
             dwallet_secret_key.clone(),
         )
         .unwrap();

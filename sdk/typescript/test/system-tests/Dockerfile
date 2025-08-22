@@ -4,16 +4,12 @@
 FROM rust:1.88-bullseye AS builder
 
 ARG GIT_REVISION=unknown
-ARG GITHUB_TOKEN
 ARG WORKDIR=/opt
 ARG CARGO_BUILD_FLAGS
 
 # Environment
 ENV CARGO_HOME=/usr/local/cargo
 ENV GIT_REVISION=$GIT_REVISION
-
-# Setup GitHub token for private repos
-RUN git config --global url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y cmake clang pkg-config libssl-dev
