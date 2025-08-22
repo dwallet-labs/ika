@@ -57,6 +57,7 @@ impl Request {
             session_identifier=?computation_id.session_identifier,
             mpc_round=?computation_id.mpc_round,
             access_structure=?self.access_structure,
+            party_id=?self.party_id,
             "Advancing an MPC session"
         );
         let session_id =
