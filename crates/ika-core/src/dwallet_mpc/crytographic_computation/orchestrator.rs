@@ -154,17 +154,24 @@ impl CryptographicComputationsOrchestrator {
                     "Cryptographic computation completed successfully"
                 );
 
-                dwallet_mpc_metrics.add_advance_completion(
-                    &computation_update.protocol_metadata,
-                    &mpc_round.to_string(),
-                    elapsed_ms as i64,
-                );
+                if let Some(mpc_round) = mpc_round {
+                    dwallet_mpc_metrics.add_advance_completion(
+                        &computation_update.protocol_metadata,
+                        &mpc_round.to_string(),
+                        elapsed_ms as i64,
+                    );
 
-                dwallet_mpc_metrics.set_last_completion_duration(
-                    &computation_update.protocol_metadata,
-                    &mpc_round.to_string(),
-                    elapsed_ms as i64,
-                );
+                    dwallet_mpc_metrics.set_last_completion_duration(
+                        &computation_update.protocol_metadata,
+                        &mpc_round.to_string(),
+                        elapsed_ms as i64,
+                    );
+                } else {
+                    dwallet_mpc_metrics.add_native_completion(
+                        &computation_update.protocol_metadata,
+                        elapsed_ms as i64,
+                    );
+                }
             }
 
             self.currently_running_cryptographic_computations
@@ -227,9 +234,6 @@ impl CryptographicComputationsOrchestrator {
         let party_id = computation_request.party_id;
         let protocol_metadata: DWalletSessionRequestMetricData =
             (&computation_request.protocol_cryptographic_data).into();
-
-        dwallet_mpc_metrics
-            .add_advance_call(&protocol_metadata, &computation_id.mpc_round.to_string());
 
         info!(
             party_id,

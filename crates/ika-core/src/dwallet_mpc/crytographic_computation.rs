@@ -11,7 +11,6 @@ use derivative::Derivative;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
 pub(crate) use orchestrator::CryptographicComputationsOrchestrator;
 pub(crate) use request::Request as ComputationRequest;
-use std::hash::Hash;
 
 const MPC_SIGN_SECOND_ROUND: u64 = 2;
 

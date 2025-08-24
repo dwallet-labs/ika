@@ -2,6 +2,7 @@ use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
 };
+use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::dwallet_mpc::make_dwallet_user_secret_key_shares_public::verify_secret_share;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
@@ -26,7 +27,6 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedPresignOutput, VersionedSignOutput,
 };
 use dwallet_rng::RootSeed;
-use futures::future::err;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
@@ -36,6 +36,7 @@ use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::error;
 use twopc_mpc::sign::Protocol;
 
@@ -425,7 +426,12 @@ impl ProtocolCryptographicData {
         consensus_round: u64,
         session_identifier: SessionIdentifier,
         root_seed: RootSeed,
+        dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+        let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
+
+        dwallet_mpc_metrics.add_advance_mpc_call(&protocol_metadata, &mpc_round.to_string());
+
         let session_id = CommitmentSizedNumber::from_le_slice(&session_identifier.into_bytes());
 
         // Derive a one-time use, MPC protocol and round specific, deterministic random generator
@@ -716,8 +722,6 @@ impl ProtocolCryptographicData {
                 }
             }
             _ => {
-                let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
-
                 error!(
                     session_type=?protocol_metadata,
                     session_identifier=?session_identifier,
@@ -729,7 +733,11 @@ impl ProtocolCryptographicData {
     pub(crate) fn compute_native(
         &self,
         session_identifier: SessionIdentifier,
+        dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+        let protocol_metadata: DWalletSessionRequestMetricData = self.into();
+        dwallet_mpc_metrics.add_compute_native_call(&protocol_metadata);
+
         let public_output_value = match self {
             ProtocolCryptographicData::EncryptedShareVerification {
                 data,
@@ -788,8 +796,6 @@ impl ProtocolCryptographicData {
                 }
             }
             _ => {
-                let protocol_metadata: DWalletSessionRequestMetricData = self.into();
-
                 error!(
                     session_type=?protocol_metadata,
                     session_identifier=?session_identifier,
