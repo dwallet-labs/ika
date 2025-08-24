@@ -340,7 +340,6 @@ impl DWalletMPCManager {
                     SessionStatus::WaitingForSessionRequest,
                     // only MPC sessions have messages.
                     ComputationType::MPC {
-                        current_mpc_round: 1,
                         messages_by_consensus_round: HashMap::new(),
                     },
                 );
@@ -685,16 +684,6 @@ impl DWalletMPCManager {
                 Some((malicious_authorities, majority_vote))
             }
             None => None,
-        }
-    }
-
-    pub(crate) fn record_threshold_not_reached(
-        &mut self,
-        consensus_round: u64,
-        session_identifier: SessionIdentifier,
-    ) {
-        if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
-            session.record_threshold_not_reached(consensus_round)
         }
     }
 

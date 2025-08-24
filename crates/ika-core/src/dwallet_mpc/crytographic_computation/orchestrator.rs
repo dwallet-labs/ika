@@ -212,7 +212,7 @@ impl CryptographicComputationsOrchestrator {
         if !self.has_available_cores_to_perform_computation() {
             info!(
                 session_identifier=?computation_id.session_identifier,
-                mpc_round=?computation_id.mpc_round,
+                mpc_round=?computation_id.current_round,
                 attempt_number=?computation_id.attempt_number,
                 mpc_protocol=?computation_request.protocol_data.to_string(),
                 available_cores=?self.available_cores_for_cryptographic_computations,

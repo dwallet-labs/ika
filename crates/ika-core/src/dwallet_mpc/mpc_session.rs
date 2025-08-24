@@ -40,13 +40,6 @@ pub(crate) struct DWalletSession {
 
     pub(super) computation_type: ComputationType,
 
-    // Todo (#1452): Remove threshold not reached.
-    /// A map between an MPC round, and the list of consensus rounds at which we tried to
-    /// advance and failed.
-    /// The total number of attempts to advance that failed in the session can be
-    /// computed by summing the number of failed attempts.
-    pub(crate) mpc_round_to_threshold_not_reached_consensus_rounds: HashMap<u64, HashSet<u64>>,
-
     outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
 }
 
@@ -84,11 +77,6 @@ pub enum SessionStatus {
 #[derive(Clone, Debug)]
 pub enum ComputationType {
     MPC {
-        /// The current MPC round number of the session.
-        /// Starts at `1` and increments after each successful advance of the session.
-        /// In round `1` We start the flow, without messages, from the event trigger.
-        current_mpc_round: u64,
-
         /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
         /// Used to build the input of messages to advance each round of the session.
         messages_by_consensus_round: HashMap<u64, HashMap<PartyID, MPCMessage>>,
@@ -109,7 +97,6 @@ impl DWalletSession {
             outputs_by_consensus_round: HashMap::new(),
             session_identifier,
             party_id,
-            mpc_round_to_threshold_not_reached_consensus_rounds: HashMap::new(),
             validator_name,
             computation_type,
         }
@@ -173,7 +160,6 @@ impl DWalletSession {
         );
 
         let ComputationType::MPC {
-            current_mpc_round,
             messages_by_consensus_round,
         } = &mut self.computation_type
         else {
@@ -186,21 +172,21 @@ impl DWalletSession {
             return;
         };
 
-        if sender_party_id == self.party_id && *current_mpc_round <= mpc_round_number {
-            // Received a message from ourselves from the consensus, so it's safe to advance the round.
-            let new_mpc_round = mpc_round_number + 1;
-            info!(
-                session_identifier=?message.session_identifier,
-                authority=?self.validator_name,
-                message_mpc_round=?mpc_round_number,
-                current_mpc_round,
-                new_mpc_round,
-                mpc_protocol,
-                "Advancing current MPC round",
-            );
-
-            *current_mpc_round = new_mpc_round;
-        }
+        // if sender_party_id == self.party_id && *current_mpc_round <= mpc_round_number {
+        //     // Received a message from ourselves from the consensus, so it's safe to advance the round.
+        //     let new_mpc_round = mpc_round_number + 1;
+        //     info!(
+        //         session_identifier=?message.session_identifier,
+        //         authority=?self.validator_name,
+        //         message_mpc_round=?mpc_round_number,
+        //         current_mpc_round,
+        //         new_mpc_round,
+        //         mpc_protocol,
+        //         "Advancing current MPC round",
+        //     );
+        //
+        //     *current_mpc_round = new_mpc_round;
+        // }
 
         let consensus_round_messages_map = messages_by_consensus_round
             .entry(consensus_round)
@@ -209,36 +195,6 @@ impl DWalletSession {
         if let Vacant(e) = consensus_round_messages_map.entry(sender_party_id) {
             e.insert(message.message);
         }
-    }
-
-    // Todo (#1452): Remove.
-    /// Records a threshold not reached error that we got when advancing
-    /// this session with messages up to `consensus_round`.
-    pub(crate) fn record_threshold_not_reached(&mut self, consensus_round: u64) {
-        let SessionStatus::Active { request, .. } = &self.status else {
-            error!(
-                should_never_happen=true,
-                session_identifier=?self.session_identifier,
-                "tried to record threshold not reached for a non-active MPC session"
-            );
-            return;
-        };
-
-        let protocol_name =
-            DWalletSessionRequestMetricData::from(&request.protocol_data).to_string();
-
-        error!(
-            mpc_protocol=?protocol_name,
-            validator=?self.validator_name,
-            session_identifier=?self.session_identifier,
-            mpc_round=?self.computation_type.current_round(),
-            "threshold was not reached for session"
-        );
-
-        self.mpc_round_to_threshold_not_reached_consensus_rounds
-            .entry(self.computation_type.current_round())
-            .or_default()
-            .insert(consensus_round);
     }
 
     /// Add an output received from a party for the current consensus round.
@@ -266,7 +222,7 @@ impl DWalletSession {
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
                 authority=?self.validator_name,
-                computation_type=self.computation_type.current_round(),
+                // computation_type=self.computation_type, // yael
                 status =? self.status,
                 "Received our output from consensus, marking MPC session as computation completed",
             );
@@ -327,24 +283,12 @@ impl Debug for SessionStatus {
     }
 }
 
-impl ComputationType {
-    pub(crate) fn current_round(&self) -> u64 {
-        match self {
-            ComputationType::MPC {
-                current_mpc_round, ..
-            } => *current_mpc_round,
-            ComputationType::Native => 1, // Native sessions do not have rounds.
-        }
-    }
-}
-
 impl From<&ProtocolData> for ComputationType {
     fn from(value: &ProtocolData) -> Self {
         match value {
             ProtocolData::MakeDWalletUserSecretKeySharesPublic { .. }
             | ProtocolData::PartialSignatureVerification { .. } => ComputationType::Native,
             _ => ComputationType::MPC {
-                current_mpc_round: 1,
                 messages_by_consensus_round: HashMap::new(),
             },
         }
@@ -370,7 +314,6 @@ impl TryFrom<&DWalletCheckpointMessageKind> for ComputationType {
             | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(_)
             | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(_) => {
                 Ok(ComputationType::MPC {
-                    current_mpc_round: 1,
                     messages_by_consensus_round: HashMap::new(),
                 })
             }
