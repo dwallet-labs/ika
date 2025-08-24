@@ -20,7 +20,7 @@ const MPC_SIGN_SECOND_ROUND: u64 = 2;
 #[derivative(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub(crate) struct ComputationId {
     pub(crate) session_identifier: SessionIdentifier,
-    pub(crate) current_round: u64,
+    pub(crate) mpc_round: Option<u64>,
     pub(crate) attempt_number: u64,
 
     /// Do not include the consensus round in the equality check. A new computation is created

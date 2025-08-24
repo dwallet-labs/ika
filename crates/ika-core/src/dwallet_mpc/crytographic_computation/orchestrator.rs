@@ -120,13 +120,13 @@ impl CryptographicComputationsOrchestrator {
             let party_id = computation_update.party_id;
             let protocol_name = computation_update.protocol_metadata.to_string();
             let session_identifier = computation_update.computation_id.session_identifier;
-            let mpc_round = computation_update.computation_id.current_round;
+            let mpc_round = computation_update.computation_id.mpc_round;
             let attempt_number = computation_update.computation_id.attempt_number;
             let elapsed_ms = computation_update.elapsed_ms;
 
             debug!(
                 session_identifier=?computation_update.computation_id.session_identifier,
-                current_round=?computation_update.computation_id.current_round,
+                current_round=?computation_update.computation_id.mpc_round,
                 attempt_number=?computation_update.computation_id.attempt_number,
                 currently_running_sessions_count =? self.currently_running_cryptographic_computations.len(),
                 "Received a cryptographic computation completed update"
@@ -212,7 +212,7 @@ impl CryptographicComputationsOrchestrator {
         if !self.has_available_cores_to_perform_computation() {
             info!(
                 session_identifier=?computation_id.session_identifier,
-                mpc_round=?computation_id.current_round,
+                mpc_round=?computation_id.mpc_round,
                 attempt_number=?computation_id.attempt_number,
                 mpc_protocol=?computation_request.protocol_data.to_string(),
                 available_cores=?self.available_cores_for_cryptographic_computations,
@@ -228,15 +228,13 @@ impl CryptographicComputationsOrchestrator {
         let protocol_metadata: DWalletSessionRequestMetricData =
             (&computation_request.protocol_cryptographic_data).into();
 
-        dwallet_mpc_metrics.add_advance_call(
-            &protocol_metadata,
-            &computation_id.current_round.to_string(),
-        );
+        dwallet_mpc_metrics
+            .add_advance_call(&protocol_metadata, &computation_id.mpc_round.to_string());
 
         info!(
             party_id,
             session_identifier=?computation_id.session_identifier,
-            current_round=?computation_id.current_round,
+            current_round=?computation_id.mpc_round,
             attempt_number=?computation_id.attempt_number,
             mpc_protocol=?protocol_metadata.to_string(),
             "Starting cryptographic computation",

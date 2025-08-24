@@ -570,7 +570,7 @@ impl DWalletMPCService {
 
         for (computation_id, computation_result) in completed_computation_results {
             let session_identifier = computation_id.session_identifier;
-            let mpc_round = computation_id.current_round;
+            let mpc_round = computation_id.mpc_round;
             let consensus_adapter = self.dwallet_submit_to_consensus.clone();
 
             let Some(session) = self
