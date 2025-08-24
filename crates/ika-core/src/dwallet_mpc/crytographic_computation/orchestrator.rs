@@ -70,7 +70,7 @@ pub(crate) struct CryptographicComputationsOrchestrator {
     /// The currently running cryptographic computations.
     /// Tracks tasks that have been spawned with [`rayon::spawn_fifo`] but haven't completed yet.
     /// Used to prevent exceeding available CPU cores.
-    currently_running_cryptographic_computations: HashSet<ComputationId>,
+    pub(crate) currently_running_cryptographic_computations: HashSet<ComputationId>,
 
     /// The list of completed cryptographic computations in the current epoch.
     completed_cryptographic_computations: HashSet<ComputationId>,

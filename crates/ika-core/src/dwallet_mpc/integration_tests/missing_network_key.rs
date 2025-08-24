@@ -3,6 +3,7 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event_to_all_parties,
 };
+use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
@@ -27,22 +28,33 @@ async fn network_key_received_after_start_event() {
 
     let epoch_id = 1;
     let (
-        mut dwallet_mpc_services,
-        mut sui_data_senders,
-        mut sent_consensus_messages_collectors,
-        mut epoch_stores,
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
-    send_start_network_dkg_event_to_all_parties(epoch_id, &mut sui_data_senders);
+    let mut test_state = utils::IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee: committee.clone(),
+        sui_data_senders,
+    };
+
+    send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state).await;
     let mut consensus_round = 1;
     let mut network_key_checkpoint = None;
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
-            &mut dwallet_mpc_services,
-            &mut sent_consensus_messages_collectors,
-            &epoch_stores,
-            &notify_services,
+            &mut test_state.dwallet_mpc_services,
+            &mut test_state.sent_consensus_messages_collectors,
+            &test_state.epoch_stores,
+            &test_state.notify_services,
         )
         .await
         {
@@ -57,8 +69,8 @@ async fn network_key_received_after_start_event() {
 
         utils::send_advance_results_between_parties(
             &committee,
-            &mut sent_consensus_messages_collectors,
-            &mut epoch_stores,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
             consensus_round,
         );
         consensus_round += 1;
@@ -83,23 +95,35 @@ async fn network_key_received_after_start_event() {
         .collect::<Vec<_>>();
     send_network_key_to_parties(
         parties_that_receive_network_key_early,
-        &mut sui_data_senders,
+        &mut test_state.sui_data_senders,
         network_key_bytes.clone(),
         key_id,
     );
     send_start_dwallet_dkg_first_round_event(
         epoch_id,
-        &mut sui_data_senders,
+        &mut test_state.sui_data_senders,
         [2; 32],
         2,
         key_id.unwrap(),
     );
-    for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
+    for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
         dwallet_mpc_service.run_service_loop_iteration().await;
+    }
+    for i in &parties_that_receive_network_key_after_start_event {
+        let dwallet_mpc_service = &mut test_state.dwallet_mpc_services[*i];
+        assert_eq!(
+            dwallet_mpc_service
+                .dwallet_mpc_manager()
+                .requests_pending_for_network_key
+                .get(&key_id.unwrap())
+                .unwrap()
+                .len(),
+            1
+        );
     }
     send_network_key_to_parties(
         parties_that_receive_network_key_after_start_event,
-        &mut sui_data_senders,
+        &mut test_state.sui_data_senders,
         network_key_bytes,
         key_id,
     );
@@ -107,10 +131,10 @@ async fn network_key_received_after_start_event() {
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
-            &mut dwallet_mpc_services,
-            &mut sent_consensus_messages_collectors,
-            &epoch_stores,
-            &notify_services,
+            &mut test_state.dwallet_mpc_services,
+            &mut test_state.sent_consensus_messages_collectors,
+            &test_state.epoch_stores,
+            &test_state.notify_services,
         )
         .await
         {
@@ -120,8 +144,8 @@ async fn network_key_received_after_start_event() {
 
         utils::send_advance_results_between_parties(
             &committee,
-            &mut sent_consensus_messages_collectors,
-            &mut epoch_stores,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
             consensus_round,
         );
         consensus_round += 1;
