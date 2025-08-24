@@ -7,7 +7,7 @@ use crate::dwallet_mpc::crytographic_computation::{
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_session::{
-    DWalletMPCSessionOutput, DWalletSession, SessionStatus, SessionType,
+    ComputationType, DWalletMPCSessionOutput, DWalletSession, SessionStatus,
 };
 use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
@@ -29,7 +29,7 @@ use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, SessionIdentifier,
-    SessionSource,
+    SessionType,
 };
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -183,7 +183,7 @@ impl DWalletMPCManager {
         messages: Vec<DWalletMPCMessage>,
     ) {
         for (_, session) in self.mpc_sessions.iter_mut() {
-            let SessionType::MPC {
+            let ComputationType::MPC {
                 messages_by_consensus_round,
                 ..
             } = &mut session.session_type
@@ -339,7 +339,7 @@ impl DWalletMPCManager {
                     &session_identifier,
                     SessionStatus::WaitingForSessionRequest,
                     // only MPC sessions have messages.
-                    SessionType::MPC {
+                    ComputationType::MPC {
                         current_mpc_round: 1,
                         messages_by_consensus_round: HashMap::new(),
                     },
@@ -358,7 +358,7 @@ impl DWalletMPCManager {
         &mut self,
         session_identifier: &SessionIdentifier,
         status: SessionStatus,
-        session_type: SessionType,
+        session_type: ComputationType,
     ) {
         info!(
             status=?status,
@@ -416,12 +416,12 @@ impl DWalletMPCManager {
 
                 //   Always advance system sessions, and only advance user session
                 // if they come before the last session to complete in the current epoch (at the current time).
-                let should_advance = match request.session_src {
-                    SessionSource::User => {
+                let should_advance = match request.session_type {
+                    SessionType::User => {
                         request.session_sequence_number
                             <= self.last_session_to_complete_in_current_epoch
                     }
-                    SessionSource::System => true,
+                    SessionType::System => true,
                 };
 
                 if should_advance {
@@ -635,7 +635,7 @@ impl DWalletMPCManager {
 
         // All output kinds are constructed from the same type, so we can safely use the first one.
         let Ok(session_type) =
-            SessionType::try_from(output.output.first().expect("output must have a kind"))
+            ComputationType::try_from(output.output.first().expect("output must have a kind"))
         else {
             error!(
                 session_identifier=?session_identifier,
@@ -784,7 +784,7 @@ impl DWalletMPCManager {
     pub(crate) fn complete_computation_mpc_session_and_create_if_not_exists(
         &mut self,
         session_identifier: &SessionIdentifier,
-        session_type: SessionType,
+        session_type: ComputationType,
     ) {
         match self.mpc_sessions.entry(*session_identifier) {
             Entry::Occupied(session) => session

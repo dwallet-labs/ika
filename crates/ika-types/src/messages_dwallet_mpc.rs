@@ -95,14 +95,14 @@ pub trait DWalletSessionEventTrait {
 #[derive(
     Debug, Serialize, Deserialize, Clone, Copy, JsonSchema, Eq, PartialEq, Hash, Ord, PartialOrd,
 )]
-pub enum SessionSource {
+pub enum SessionType {
     User,
     System,
 }
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct SessionIdentifier {
-    session_type: SessionSource,
+    session_type: SessionType,
     session_identifier: [u8; SessionIdentifier::LENGTH],
     session_identifier_preimage: [u8; SessionIdentifier::LENGTH],
 }
@@ -111,10 +111,7 @@ impl SessionIdentifier {
     /// Instantiate a [`SessionIdentifier`] from the pre-image session identifier.
     /// It is hashed together with its distinguisher and the version.
     /// Guarantees same values of `session_identifier_preimage` yield different output for `User` and `System`
-    pub fn new(
-        session_type: SessionSource,
-        session_identifier_preimage: [u8; Self::LENGTH],
-    ) -> Self {
+    pub fn new(session_type: SessionType, session_identifier_preimage: [u8; Self::LENGTH]) -> Self {
         let version = 0u64;
 
         // We are adding a string distinguisher between
@@ -122,13 +119,13 @@ impl SessionIdentifier {
         // in the two different options will yield a different output, thus guaranteeing
         // user-initiated sessions can never block or reuse session IDs for system sessions.
         let session_type_unique_prefix = match session_type {
-            SessionSource::User => [
+            SessionType::User => [
                 version.to_be_bytes().as_slice(),
                 b"USER",
                 &session_identifier_preimage,
             ]
             .concat(),
-            SessionSource::System => [
+            SessionType::System => [
                 version.to_be_bytes().as_slice(),
                 b"SYSTEM",
                 &session_identifier_preimage,
@@ -240,7 +237,7 @@ pub type AsyncProtocol = twopc_mpc::secp256k1::class_groups::AsyncProtocol;
 pub struct DWalletSessionEvent<E: DWalletSessionEventTrait> {
     pub epoch: u64,
     pub session_object_id: ObjectID,
-    pub session_type: SessionSource,
+    pub session_type: SessionType,
     pub session_sequence_number: u64,
     // DO NOT MAKE THIS PUBLIC! ONLY CALL `session_identifier_digest`
     session_identifier_preimage: Vec<u8>,
@@ -700,9 +697,9 @@ pub mod test_helpers {
         event_data: E,
     ) -> DWalletSessionEvent<E> {
         let session_type = if is_system {
-            SessionSource::System
+            SessionType::System
         } else {
-            SessionSource::User
+            SessionType::User
         };
 
         DWalletSessionEvent {
@@ -722,9 +719,9 @@ pub mod test_helpers {
         event_data: E,
     ) -> DWalletSessionEvent<E> {
         let session_type = if is_system {
-            SessionSource::System
+            SessionType::System
         } else {
-            SessionSource::User
+            SessionType::User
         };
 
         DWalletSessionEvent {

@@ -38,7 +38,7 @@ pub(crate) struct DWalletSession {
     /// The status of the MPC session.
     pub(super) status: SessionStatus,
 
-    pub(super) session_type: SessionType,
+    pub(super) session_type: ComputationType,
 
     // Todo (#1452): Remove threshold not reached.
     /// A map between an MPC round, and the list of consensus rounds at which we tried to
@@ -82,7 +82,7 @@ pub enum SessionStatus {
 }
 
 #[derive(Clone, Debug)]
-pub enum SessionType {
+pub enum ComputationType {
     MPC {
         /// The current MPC round number of the session.
         /// Starts at `1` and increments after each successful advance of the session.
@@ -102,7 +102,7 @@ impl DWalletSession {
         status: SessionStatus,
         session_identifier: SessionIdentifier,
         party_id: PartyID,
-        session_type: SessionType,
+        session_type: ComputationType,
     ) -> Self {
         Self {
             status,
@@ -117,11 +117,11 @@ impl DWalletSession {
 
     pub(crate) fn clear_data(&mut self) {
         match &mut self.session_type {
-            SessionType::MPC {
+            ComputationType::MPC {
                 messages_by_consensus_round,
                 ..
             } => messages_by_consensus_round.clear(),
-            SessionType::Native => {}
+            ComputationType::Native => {}
         }
         self.outputs_by_consensus_round = HashMap::new();
     }
@@ -172,7 +172,7 @@ impl DWalletSession {
             "Received a dWallet MPC message",
         );
 
-        let SessionType::MPC {
+        let ComputationType::MPC {
             current_mpc_round,
             messages_by_consensus_round,
         } = &mut self.session_type
@@ -327,23 +327,23 @@ impl Debug for SessionStatus {
     }
 }
 
-impl SessionType {
+impl ComputationType {
     pub(crate) fn current_round(&self) -> u64 {
         match self {
-            SessionType::MPC {
+            ComputationType::MPC {
                 current_mpc_round, ..
             } => *current_mpc_round,
-            SessionType::Native => 1, // Native sessions do not have rounds.
+            ComputationType::Native => 1, // Native sessions do not have rounds.
         }
     }
 }
 
-impl From<&ProtocolData> for SessionType {
+impl From<&ProtocolData> for ComputationType {
     fn from(value: &ProtocolData) -> Self {
         match value {
             ProtocolData::MakeDWalletUserSecretKeySharesPublic { .. }
-            | ProtocolData::PartialSignatureVerification { .. } => SessionType::Native,
-            _ => SessionType::MPC {
+            | ProtocolData::PartialSignatureVerification { .. } => ComputationType::Native,
+            _ => ComputationType::MPC {
                 current_mpc_round: 1,
                 messages_by_consensus_round: HashMap::new(),
             },
@@ -351,14 +351,14 @@ impl From<&ProtocolData> for SessionType {
     }
 }
 
-impl TryFrom<&DWalletCheckpointMessageKind> for SessionType {
+impl TryFrom<&DWalletCheckpointMessageKind> for ComputationType {
     type Error = ();
 
     fn try_from(value: &DWalletCheckpointMessageKind) -> Result<Self, Self::Error> {
         match value {
             DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(_)
             | DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(_) => {
-                Ok(SessionType::Native)
+                Ok(ComputationType::Native)
             }
 
             DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(_)
@@ -369,7 +369,7 @@ impl TryFrom<&DWalletCheckpointMessageKind> for SessionType {
             | DWalletCheckpointMessageKind::RespondDWalletSign(_)
             | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(_)
             | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(_) => {
-                Ok(SessionType::MPC {
+                Ok(ComputationType::MPC {
                     current_mpc_round: 1,
                     messages_by_consensus_round: HashMap::new(),
                 })
@@ -463,7 +463,7 @@ impl DWalletMPCManager {
             warn!(
                 session_identifier=?session_identifier,
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                session_source=?request.session_src,
+                session_source=?request.session_type,
                 event_epoch=?request.epoch,
                 "received an event for a different epoch, skipping"
             );
@@ -483,7 +483,7 @@ impl DWalletMPCManager {
                     // so we add it to the queue.
                     debug!(
                         session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                        session_source=?request.session_src,
+                        session_source=?request.session_type,
                         network_encryption_key_id=?network_encryption_key_id,
                         "Adding request to pending for the network key"
                     );
@@ -511,7 +511,7 @@ impl DWalletMPCManager {
             // so we have to add this request to the pending queue until it arrives.
             debug!(
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                session_source=?request.session_src,
+                session_source=?request.session_type,
                 "Adding request to pending for the next epoch active committee"
             );
 
@@ -565,7 +565,7 @@ impl DWalletMPCManager {
             self.new_session(
                 &session_identifier,
                 status,
-                SessionType::from(&request.protocol_data),
+                ComputationType::from(&request.protocol_data),
             );
         }
     }
