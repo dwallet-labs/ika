@@ -5,6 +5,7 @@ use crate::dwallet_mpc::integration_tests::utils::{
 };
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
+use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
     DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,
@@ -80,7 +81,7 @@ async fn network_key_received_after_start_event() {
     let parties_that_receive_network_key_early = (0..committee.voting_rights.len())
         .filter(|i| !parties_that_receive_network_key_after_start_event.contains(i))
         .collect::<Vec<_>>();
-    utils::send_network_key_to_parties(
+    send_network_key_to_parties(
         parties_that_receive_network_key_early,
         &mut sui_data_senders,
         network_key_bytes.clone(),
@@ -96,7 +97,7 @@ async fn network_key_received_after_start_event() {
     for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
         dwallet_mpc_service.run_service_loop_iteration().await;
     }
-    utils::send_network_key_to_parties(
+    send_network_key_to_parties(
         parties_that_receive_network_key_after_start_event,
         &mut sui_data_senders,
         network_key_bytes,
@@ -126,4 +127,30 @@ async fn network_key_received_after_start_event() {
         consensus_round += 1;
     }
     info!("DWallet DKG first round completed");
+}
+
+pub(crate) fn send_network_key_to_parties(
+    parties_to_send_network_key_to: Vec<usize>,
+    sui_data_senders: &mut Vec<SuiDataSenders>,
+    network_key_bytes: Vec<u8>,
+    key_id: Option<ObjectID>,
+) {
+    sui_data_senders
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| parties_to_send_network_key_to.contains(i))
+        .for_each(|(i, mut sui_data_sender)| {
+            let _ = sui_data_sender
+                .network_keys_sender
+                .send(Arc::new(HashMap::from([(
+                    key_id.clone().unwrap(),
+                    DWalletNetworkEncryptionKeyData {
+                        id: key_id.clone().unwrap(),
+                        current_epoch: 1,
+                        current_reconfiguration_public_output: vec![],
+                        network_dkg_public_output: network_key_bytes.clone(),
+                        state: DWalletNetworkEncryptionKeyState::NetworkDKGCompleted,
+                    },
+                )])));
+        });
 }

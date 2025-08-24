@@ -19,8 +19,8 @@ use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkDKGEncryptionKeyRequestEvent,
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, DWalletSessionEvent,
-    DWalletSessionEventTrait, IkaNetworkConfig, PresignRequestEvent, SessionIdentifier,
-    SessionType,
+    DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent, IkaNetworkConfig,
+    PresignRequestEvent, SessionIdentifier, SessionType,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -509,6 +509,7 @@ use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
     DKGFirstData, DKGSecondData, NetworkEncryptionKeyDkgData, PresignData, ProtocolData, SignData,
 };
+use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use message_digest::message_digest::Hash;
 
 pub(crate) fn send_start_network_dkg_event_to_all_parties(
@@ -660,101 +661,6 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
     });
 }
 
-pub(crate) async fn advance_parties_and_send_result_messages(
-    mut test_state: &mut IntegrationTestState,
-    parties_to_advance: &[usize],
-    malicious_parties: &[usize],
-) -> bool {
-    if let Some(pending_checkpoint) = advance_some_parties_and_wait_for_completions(
-        &test_state.committee,
-        &mut test_state.dwallet_mpc_services,
-        &mut test_state.sent_consensus_messages_collectors,
-        &test_state.epoch_stores,
-        &test_state.notify_services,
-        &parties_to_advance,
-    )
-    .await
-    {
-        info!(?pending_checkpoint, "MPC flow completed successfully");
-        return true;
-    }
-    override_legit_messages_with_false_messages(
-        malicious_parties,
-        &mut test_state.sent_consensus_messages_collectors,
-        test_state.crypto_round as u64,
-    );
-    send_advance_results_between_parties(
-        &test_state.committee,
-        &mut test_state.sent_consensus_messages_collectors,
-        &mut test_state.epoch_stores,
-        test_state.consensus_round as Round,
-    );
-    false
-}
-
-pub(crate) fn replace_party_message_with_other_party_message(
-    party_to_replace: usize,
-    other_party: usize,
-    crypto_round: u64,
-    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
-) {
-    let original_message = sent_consensus_messages_collectors[party_to_replace]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .pop()
-        .unwrap();
-
-    let mut other_party_message = sent_consensus_messages_collectors[other_party]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .first()
-        .unwrap()
-        .clone();
-    let ConsensusTransactionKind::DWalletMPCMessage(ref mut other_party_message_content) =
-        other_party_message.kind
-    else {
-        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
-    };
-    let ConsensusTransactionKind::DWalletMPCMessage(mut original_message) = original_message.kind
-    else {
-        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
-    };
-    other_party_message_content.authority = original_message.authority;
-    sent_consensus_messages_collectors[party_to_replace]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .push(other_party_message)
-}
-
-pub(crate) fn send_network_key_to_parties(
-    parties_to_send_network_key_to: Vec<usize>,
-    sui_data_senders: &mut Vec<SuiDataSenders>,
-    network_key_bytes: Vec<u8>,
-    key_id: Option<ObjectID>,
-) {
-    sui_data_senders
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| parties_to_send_network_key_to.contains(i))
-        .for_each(|(i, mut sui_data_sender)| {
-            let _ = sui_data_sender
-                .network_keys_sender
-                .send(Arc::new(HashMap::from([(
-                    key_id.clone().unwrap(),
-                    DWalletNetworkEncryptionKeyData {
-                        id: key_id.clone().unwrap(),
-                        current_epoch: 1,
-                        current_reconfiguration_public_output: vec![],
-                        network_dkg_public_output: network_key_bytes.clone(),
-                        state: DWalletNetworkEncryptionKeyState::NetworkDKGCompleted,
-                    },
-                )])));
-        });
-}
-
 pub(crate) async fn advance_mpc_flow_until_completion(
     mut test_state: &mut IntegrationTestState,
     start_consensus_round: Round,
@@ -782,90 +688,4 @@ pub(crate) async fn advance_mpc_flow_until_completion(
         );
         consensus_round += 1;
     }
-}
-
-pub(crate) fn send_start_presign_event(
-    epoch_id: EpochId,
-    sui_data_senders: &Vec<SuiDataSenders>,
-    session_identifier_preimage: [u8; 32],
-    session_sequence_number: u64,
-    dwallet_network_encryption_key_id: ObjectID,
-    dwallet_id: Option<ObjectID>,
-    dwallet_public_output: Option<Vec<u8>>,
-) {
-    let presign_id = ObjectID::random();
-    sui_data_senders.iter().for_each(|sui_data_sender| {
-        let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DWalletSessionRequest {
-                session_type: SessionType::User,
-                session_identifier: SessionIdentifier::new(
-                    SessionType::User,
-                    session_identifier_preimage,
-                ),
-                session_sequence_number,
-                protocol_data: ProtocolData::Presign {
-                    data: PresignData {
-                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
-                        signature_algorithm: SignatureAlgorithm::ECDSA,
-                    },
-                    dwallet_id,
-                    presign_id,
-                    dwallet_public_output: dwallet_public_output.clone(),
-                    dwallet_network_encryption_key_id,
-                },
-                epoch: 1,
-                requires_network_key_data: true,
-                requires_next_active_committee: false,
-                pulled: false,
-            }],
-            epoch_id,
-        ));
-    });
-}
-
-pub(crate) fn send_start_sign_event(
-    epoch_id: EpochId,
-    sui_data_senders: &Vec<SuiDataSenders>,
-    session_identifier_preimage: [u8; 32],
-    session_sequence_number: u64,
-    dwallet_network_encryption_key_id: ObjectID,
-    dwallet_id: ObjectID,
-    dwallet_public_output: Vec<u8>,
-    presign: Vec<u8>,
-    message_centralized_signature: Vec<u8>,
-    message: Vec<u8>,
-) {
-    let sign_id = ObjectID::random();
-    sui_data_senders.iter().for_each(|sui_data_sender| {
-        let _ = sui_data_sender.uncompleted_events_sender.send((
-            vec![DWalletSessionRequest {
-                session_type: SessionType::User,
-                session_identifier: SessionIdentifier::new(
-                    SessionType::User,
-                    session_identifier_preimage,
-                ),
-                session_sequence_number,
-                protocol_data: ProtocolData::Sign {
-                    data: SignData {
-                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
-                        hash_scheme: Hash::KECCAK256,
-                        signature_algorithm: SignatureAlgorithm::ECDSA,
-                    },
-                    dwallet_id,
-                    sign_id,
-                    is_future_sign: false,
-                    dwallet_network_encryption_key_id,
-                    dwallet_decentralized_public_output: dwallet_public_output.clone(),
-                    message: message.clone(),
-                    presign: presign.clone(),
-                    message_centralized_signature: message_centralized_signature.clone(),
-                },
-                epoch: epoch_id,
-                requires_network_key_data: true,
-                requires_next_active_committee: false,
-                pulled: false,
-            }],
-            epoch_id,
-        ));
-    });
 }

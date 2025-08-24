@@ -1,4 +1,5 @@
 use crate::dwallet_mpc::integration_tests::utils;
+use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
 use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
@@ -10,6 +11,7 @@ use ika_types::messages_dwallet_mpc::{
 };
 use itertools::Itertools;
 use std::collections::HashMap;
+use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tracing::info;
 
@@ -196,7 +198,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
     .await;
 
     for (copying_party, copied_party) in copying_parties.iter() {
-        utils::replace_party_message_with_other_party_message(
+        replace_party_message_with_other_party_message(
             *copying_party as usize,
             *copied_party as usize,
             mpc_round,
@@ -246,4 +248,41 @@ async fn test_party_copies_other_party_message_dkg_round() {
             malicious_actor_name
         );
     }
+}
+
+pub(crate) fn replace_party_message_with_other_party_message(
+    party_to_replace: usize,
+    other_party: usize,
+    crypto_round: u64,
+    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
+) {
+    let original_message = sent_consensus_messages_collectors[party_to_replace]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    let mut other_party_message = sent_consensus_messages_collectors[other_party]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .first()
+        .unwrap()
+        .clone();
+    let ConsensusTransactionKind::DWalletMPCMessage(ref mut other_party_message_content) =
+        other_party_message.kind
+    else {
+        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
+    };
+    let ConsensusTransactionKind::DWalletMPCMessage(mut original_message) = original_message.kind
+    else {
+        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
+    };
+    other_party_message_content.authority = original_message.authority;
+    sent_consensus_messages_collectors[party_to_replace]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .push(other_party_message)
 }
