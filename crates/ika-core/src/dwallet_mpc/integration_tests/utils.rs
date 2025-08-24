@@ -418,7 +418,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
             if !parties_to_advance.contains(&i) || completed_parties.contains(&i) {
                 continue;
             }
-            let mut dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
+            let dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
             let _ = dwallet_mpc_service.run_service_loop_iteration().await;
             let consensus_messages_store = sent_consensus_messages_collectors[i]
                 .submitted_messages
@@ -454,8 +454,6 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 completed_parties.push(i);
                 continue;
             }
-
-            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -688,4 +686,45 @@ pub(crate) async fn advance_mpc_flow_until_completion(
         );
         consensus_round += 1;
     }
+}
+
+pub(crate) fn replace_party_message_with_other_party_message(
+    party_to_replace: usize,
+    other_party: usize,
+    crypto_round: u64,
+    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
+) {
+    info!(
+        "Replacing party {} message with party {} message for crypto round {}",
+        party_to_replace, other_party, crypto_round
+    );
+    let original_message = sent_consensus_messages_collectors[party_to_replace]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    let mut other_party_message = sent_consensus_messages_collectors[other_party]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .first()
+        .unwrap()
+        .clone();
+    let ConsensusTransactionKind::DWalletMPCMessage(ref mut other_party_message_content) =
+        other_party_message.kind
+    else {
+        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
+    };
+    let ConsensusTransactionKind::DWalletMPCMessage(mut original_message) = original_message.kind
+    else {
+        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
+    };
+    other_party_message_content.authority = original_message.authority;
+    sent_consensus_messages_collectors[party_to_replace]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .push(other_party_message)
 }
