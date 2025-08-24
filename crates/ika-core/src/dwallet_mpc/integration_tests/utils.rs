@@ -478,6 +478,22 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
         "Pending checkpoints are not equal across all parties: {:?}",
         pending_checkpoints
     );
+
+    for i in 0..committee.voting_rights.len() {
+        if !parties_to_advance.contains(&i) {
+            continue;
+        }
+        let dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
+        assert_eq!(
+            dwallet_mpc_service
+                .dwallet_mpc_manager()
+                .cryptographic_computations_orchestrator
+                .currently_running_cryptographic_computations
+                .len(),
+            0
+        );
+    }
+
     None
 }
 
