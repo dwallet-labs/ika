@@ -454,6 +454,15 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 completed_parties.push(i);
                 continue;
             }
+            assert_eq!(
+                dwallet_mpc_service
+                    .dwallet_mpc_manager()
+                    .cryptographic_computations_orchestrator
+                    .currently_running_cryptographic_computations
+                    .len(),
+                1,
+                "Pending for a non existent computation"
+            );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
