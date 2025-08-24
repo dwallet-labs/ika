@@ -38,7 +38,7 @@ pub(crate) struct DWalletSession {
     /// The status of the MPC session.
     pub(super) status: SessionStatus,
 
-    pub(super) session_type: ComputationType,
+    pub(super) computation_type: ComputationType,
 
     // Todo (#1452): Remove threshold not reached.
     /// A map between an MPC round, and the list of consensus rounds at which we tried to
@@ -102,7 +102,7 @@ impl DWalletSession {
         status: SessionStatus,
         session_identifier: SessionIdentifier,
         party_id: PartyID,
-        session_type: ComputationType,
+        computation_type: ComputationType,
     ) -> Self {
         Self {
             status,
@@ -111,12 +111,12 @@ impl DWalletSession {
             party_id,
             mpc_round_to_threshold_not_reached_consensus_rounds: HashMap::new(),
             validator_name,
-            session_type,
+            computation_type,
         }
     }
 
     pub(crate) fn clear_data(&mut self) {
-        match &mut self.session_type {
+        match &mut self.computation_type {
             ComputationType::MPC {
                 messages_by_consensus_round,
                 ..
@@ -175,12 +175,12 @@ impl DWalletSession {
         let ComputationType::MPC {
             current_mpc_round,
             messages_by_consensus_round,
-        } = &mut self.session_type
+        } = &mut self.computation_type
         else {
             error!(
                 should_never_happen=true,
                 session_identifier=?self.session_identifier,
-                session_type=?self.session_type,
+                computation_type=?self.computation_type,
                 "tried to add a message to a non-MPC session"
             );
             return;
@@ -231,12 +231,12 @@ impl DWalletSession {
             mpc_protocol=?protocol_name,
             validator=?self.validator_name,
             session_identifier=?self.session_identifier,
-            mpc_round=?self.session_type.current_round(),
+            mpc_round=?self.computation_type.current_round(),
             "threshold was not reached for session"
         );
 
         self.mpc_round_to_threshold_not_reached_consensus_rounds
-            .entry(self.session_type.current_round())
+            .entry(self.computation_type.current_round())
             .or_default()
             .insert(consensus_round);
     }
@@ -266,7 +266,7 @@ impl DWalletSession {
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
                 authority=?self.validator_name,
-                current_mpc_round=self.session_type.current_round(),
+                computation_type=self.computation_type.current_round(),
                 status =? self.status,
                 "Received our output from consensus, marking MPC session as computation completed",
             );

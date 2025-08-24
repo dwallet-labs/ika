@@ -186,12 +186,12 @@ impl DWalletMPCManager {
             let ComputationType::MPC {
                 messages_by_consensus_round,
                 ..
-            } = &mut session.session_type
+            } = &mut session.computation_type
             else {
                 error!(
                     should_never_happen=true,
                     session_identifier=?session.session_identifier,
-                    session_type=?session.session_type,
+                    computation_type=?session.computation_type,
                     "tried to add a message to a non-MPC session"
                 );
                 return;
@@ -453,7 +453,7 @@ impl DWalletMPCManager {
                 };
 
                 self.generate_protocol_cryptographic_data(
-                    &session.session_type,
+                    &session.computation_type,
                     &request.protocol_data,
                     last_read_consensus_round,
                     public_input.clone(),
@@ -465,7 +465,7 @@ impl DWalletMPCManager {
                     let computation_id = ComputationId {
                         session_identifier: session.session_identifier,
                         consensus_round: last_read_consensus_round,
-                        current_round: session.session_type.current_round(),
+                        current_round: session.computation_type.current_round(),
                         attempt_number,
                     };
 

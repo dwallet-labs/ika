@@ -91,55 +91,23 @@ impl ProtocolCryptographicData {
         public_input: PublicInput,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
-            ProtocolData::MakeDWalletUserSecretKeySharesPublic {
-                data:
-                    MakeDWalletUserSecretKeySharesPublicData {
-                        curve,
-                        public_user_secret_key_shares,
-                        dwallet_decentralized_output,
-                    },
-                ..
-            } => {
+            ProtocolData::MakeDWalletUserSecretKeySharesPublic { data, .. } => {
                 let PublicInput::MakeDWalletUserSecretKeySharesPublic(public_input) = public_input
                 else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
                 ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic {
-                    data: MakeDWalletUserSecretKeySharesPublicData {
-                        curve: *curve,
-                        public_user_secret_key_shares: public_user_secret_key_shares.clone(),
-                        dwallet_decentralized_output: dwallet_decentralized_output.clone(),
-                    },
+                    data: data.clone(),
                     protocol_public_parameters: public_input.clone(),
                 }
             }
-            ProtocolData::PartialSignatureVerification {
-                data:
-                    PartialSignatureVerificationData {
-                        curve,
-                        message,
-                        hash_type,
-                        signature_algorithm,
-                        dwallet_decentralized_output,
-                        presign,
-                        partially_signed_message,
-                    },
-                ..
-            } => {
+            ProtocolData::PartialSignatureVerification { data, .. } => {
                 let PublicInput::PartialSignatureVerification(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 ProtocolCryptographicData::PartialSignatureVerification {
-                    data: PartialSignatureVerificationData {
-                        curve: *curve,
-                        message: message.clone(),
-                        hash_type: hash_type.clone(),
-                        signature_algorithm: *signature_algorithm,
-                        dwallet_decentralized_output: dwallet_decentralized_output.clone(),
-                        presign: presign.clone(),
-                        partially_signed_message: partially_signed_message.clone(),
-                    },
+                    data: data.clone(),
                     protocol_public_parameters: public_input.clone(),
                 }
             }
@@ -163,15 +131,7 @@ impl ProtocolCryptographicData {
         decryption_key_shares: &Box<DwalletMPCNetworkKeys>,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
-            ProtocolData::ImportedKeyVerification {
-                data:
-                    ImportedKeyVerificationData {
-                        curve,
-                        encrypted_centralized_secret_share_and_proof,
-                        encryption_key,
-                    },
-                ..
-            } => {
+            ProtocolData::ImportedKeyVerification { data, .. } => {
                 let PublicInput::DWalletImportedKeyVerificationRequest(public_input) = public_input
                 else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
@@ -192,20 +152,12 @@ impl ProtocolCryptographicData {
                 };
 
                 ProtocolCryptographicData::ImportedKeyVerification {
-                    data: ImportedKeyVerificationData {
-                        curve: *curve,
-                        encrypted_centralized_secret_share_and_proof:
-                            encrypted_centralized_secret_share_and_proof.clone(),
-                        encryption_key: encryption_key.clone(),
-                    },
+                    data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
                 }
             }
-            ProtocolData::DKGFirst {
-                data: DKGFirstData { curve },
-                ..
-            } => {
+            ProtocolData::DKGFirst { data, .. } => {
                 let PublicInput::DKGFirst(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
@@ -224,20 +176,12 @@ impl ProtocolCryptographicData {
                 };
 
                 ProtocolCryptographicData::DKGFirst {
-                    data: DKGFirstData { curve: *curve },
+                    data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
                 }
             }
-            ProtocolData::DKGSecond {
-                data:
-                    DKGSecondData {
-                        curve,
-                        encrypted_centralized_secret_share_and_proof,
-                        encryption_key,
-                    },
-                ..
-            } => {
+            ProtocolData::DKGSecond { data, .. } => {
                 let PublicInput::DKGSecond(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
@@ -256,24 +200,12 @@ impl ProtocolCryptographicData {
                 };
 
                 ProtocolCryptographicData::DKGSecond {
-                    data: DKGSecondData {
-                        curve: *curve,
-                        encrypted_centralized_secret_share_and_proof:
-                            encrypted_centralized_secret_share_and_proof.clone(),
-                        encryption_key: encryption_key.clone(),
-                    },
+                    data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
                 }
             }
-            ProtocolData::Presign {
-                data:
-                    PresignData {
-                        curve,
-                        signature_algorithm,
-                    },
-                ..
-            } => {
+            ProtocolData::Presign { data, .. } => {
                 let PublicInput::Presign(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
@@ -292,21 +224,13 @@ impl ProtocolCryptographicData {
                 };
 
                 ProtocolCryptographicData::Presign {
-                    data: PresignData {
-                        curve: *curve,
-                        signature_algorithm: *signature_algorithm,
-                    },
+                    data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
                 }
             }
             ProtocolData::Sign {
-                data:
-                    SignData {
-                        curve,
-                        hash_scheme,
-                        signature_algorithm,
-                    },
+                data,
                 dwallet_network_encryption_key_id,
                 ..
             } => {
@@ -331,11 +255,7 @@ impl ProtocolCryptographicData {
                     .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                 ProtocolCryptographicData::Sign {
-                    data: SignData {
-                        curve: *curve,
-                        hash_scheme: hash_scheme.clone(),
-                        signature_algorithm: *signature_algorithm,
-                    },
+                    data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
                     decryption_key_shares: decryption_key_shares.clone(),
@@ -372,7 +292,7 @@ impl ProtocolCryptographicData {
                 }
             }
             ProtocolData::NetworkEncryptionKeyReconfiguration {
-                data: NetworkEncryptionKeyReconfigurationData {},
+                data,
                 dwallet_network_encryption_key_id,
             } => {
                 let PublicInput::NetworkEncryptionKeyReconfiguration(public_input) = public_input
@@ -398,34 +318,19 @@ impl ProtocolCryptographicData {
                     .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                 ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
-                    data: NetworkEncryptionKeyReconfigurationData {},
+                    data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
                     decryption_key_shares: decryption_key_shares.clone(),
                 }
             }
-            ProtocolData::EncryptedShareVerification {
-                data:
-                    EncryptedShareVerificationData {
-                        curve,
-                        encrypted_centralized_secret_share_and_proof,
-                        decentralized_public_output,
-                        encryption_key,
-                    },
-                ..
-            } => {
+            ProtocolData::EncryptedShareVerification { data, .. } => {
                 let PublicInput::EncryptedShareVerification(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
                 ProtocolCryptographicData::EncryptedShareVerification {
-                    data: EncryptedShareVerificationData {
-                        curve: *curve,
-                        encrypted_centralized_secret_share_and_proof:
-                            encrypted_centralized_secret_share_and_proof.clone(),
-                        decentralized_public_output: decentralized_public_output.clone(),
-                        encryption_key: encryption_key.clone(),
-                    },
+                    data: data.clone(),
                     protocol_public_parameters: public_input.clone(),
                 }
             }
