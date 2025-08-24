@@ -151,7 +151,7 @@ pub(crate) async fn create_network_key_test(
         .first()
         .expect("At least one service should exist")
         .epoch;
-    send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state);
+    send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state).await;
     let (consensus_round, network_key_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, 1).await;
     info!(?network_key_checkpoint, "Network key checkpoint received");

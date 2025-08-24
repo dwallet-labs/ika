@@ -541,9 +541,7 @@ pub(crate) async fn send_start_network_dkg_event_to_all_parties(
             matches!(session.status, MPCSessionStatus::Active { .. }),
             "Session should be active"
         );
-        assert_eq!(
-            session.current_mpc_round, 1, "Session should be in round 1"
-        )
+        assert_eq!(session.current_mpc_round, 1, "Session should be in round 1")
     }
 }
 
