@@ -111,7 +111,7 @@ async fn test_some_malicious_validators_flows_succeed() {
         )
         .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
+            assert_eq!(mpc_round, 5, "Network DKG should complete after 5 rounds");
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }

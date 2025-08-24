@@ -4,6 +4,7 @@ use crate::dwallet_mpc::integration_tests::utils::{
     send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event_to_all_parties,
     send_start_network_dkg_event_to_some_parties,
 };
+use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
@@ -66,6 +67,20 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         dwallet_mpc_service.run_service_loop_iteration().await;
     }
     consensus_round += 1;
+    for i in &parties_that_receive_session_message_before_start_event {
+        let dwallet_mpc_service = &mut dwallet_mpc_services[*i];
+        let pending_event_session = dwallet_mpc_service
+            .dwallet_mpc_manager()
+            .mpc_sessions
+            .values()
+            .next()
+            .clone()
+            .unwrap();
+        assert!(matches!(
+            pending_event_session.status,
+            MPCSessionStatus::WaitingForSessionRequest
+        ));
+    }
     send_start_network_dkg_event_to_some_parties(
         &ika_network_config,
         epoch_id,
