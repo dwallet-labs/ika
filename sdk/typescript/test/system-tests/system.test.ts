@@ -122,6 +122,8 @@ describe('system tests', () => {
 
 		console.log('deployed new validators, running a full flow test');
 
+		
+
 		await runSignFullFlow(ikaClient, suiClient, `system-test-full-flow`);
 	}, 3_600_000);
 });
