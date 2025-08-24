@@ -503,6 +503,7 @@ pub(crate) fn override_legit_messages_with_false_messages(
         });
     }
 }
+use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
     DKGFirstData, DKGSecondData, NetworkEncryptionKeyDkgData, PresignData, ProtocolData, SignData,
@@ -510,9 +511,10 @@ use crate::request_protocol_data::{
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use message_digest::message_digest::Hash;
 
-pub(crate) fn send_start_network_dkg_event_to_all_parties(
+pub(crate) async fn send_start_network_dkg_event_to_all_parties(
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
+    dwallet_mpc_services: &mut Vec<DWalletMPCService>,
 ) {
     let key_id = ObjectID::random();
     send_configurable_start_network_dkg_event(
@@ -523,7 +525,26 @@ pub(crate) fn send_start_network_dkg_event_to_all_parties(
         &(0..sui_data_senders.len()).collect::<Vec<_>>(),
         key_id,
     );
-    
+    for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
+        dwallet_mpc_service.run_service_loop_iteration().await;
+        assert_eq!(
+            dwallet_mpc_service.dwallet_mpc_manager().mpc_sessions.len(),
+            1
+        );
+        let session = dwallet_mpc_service
+            .dwallet_mpc_manager()
+            .mpc_sessions
+            .values()
+            .next()
+            .unwrap();
+        assert!(
+            matches!(session.status, MPCSessionStatus::Active { .. }),
+            "Session should be active"
+        );
+        assert_eq!(
+            session.current_mpc_round, 1, "Session should be in round 1"
+        )
+    }
 }
 
 pub(crate) fn send_start_network_dkg_event_to_some_parties(
