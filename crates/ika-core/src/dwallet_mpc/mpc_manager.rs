@@ -461,11 +461,12 @@ impl DWalletMPCManager {
                 .ok()?
                 .map(|advance_specific_data| {
                     let attempt_number = advance_specific_data.get_attempt_number();
+                    let current_round = advance_specific_data.get_current_round();
 
                     let computation_id = ComputationId {
                         session_identifier: session.session_identifier,
                         consensus_round: last_read_consensus_round,
-                        current_round: session.computation_type.current_round(),
+                        current_round,
                         attempt_number,
                     };
 

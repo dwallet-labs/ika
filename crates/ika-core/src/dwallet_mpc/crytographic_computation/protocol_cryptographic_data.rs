@@ -370,6 +370,36 @@ impl ProtocolCryptographicData {
             } => advance_request.attempt_number,
         }
     }
+
+    pub fn get_current_round(&self) -> u64 {
+        match self {
+            ProtocolCryptographicData::DKGFirst {
+                advance_request, ..
+            } => advance_request.mpc_round_number,
+            ProtocolCryptographicData::DKGSecond {
+                advance_request, ..
+            } => advance_request.mpc_round_number,
+            ProtocolCryptographicData::Presign {
+                advance_request, ..
+            } => advance_request.mpc_round_number,
+            ProtocolCryptographicData::Sign {
+                advance_request, ..
+            } => advance_request.mpc_round_number,
+            ProtocolCryptographicData::NetworkEncryptionKeyDkg {
+                advance_request, ..
+            } => advance_request.mpc_round_number,
+            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
+                advance_request,
+                ..
+            } => advance_request.mpc_round_number,
+            ProtocolCryptographicData::ImportedKeyVerification {
+                advance_request, ..
+            } => advance_request.mpc_round_number,
+            ProtocolCryptographicData::EncryptedShareVerification { .. } => 1,
+            ProtocolCryptographicData::PartialSignatureVerification { .. } => 1,
+            ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => 1,
+        }
+    }
 }
 
 impl DWalletMPCManager {
