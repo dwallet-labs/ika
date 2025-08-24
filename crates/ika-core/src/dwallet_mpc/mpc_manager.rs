@@ -260,6 +260,7 @@ impl DWalletMPCManager {
                     "got a threshold not reached message",
                 );
 
+                // TODO: temporary, remove this
                 let serialized_mpc_round_number = &message.message[1..=8];
                 bcs::from_bytes::<u64>(serialized_mpc_round_number).ok()
             }
