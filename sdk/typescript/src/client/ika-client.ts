@@ -745,6 +745,14 @@ export class IkaClient {
 	}
 
 	/**
+	 * Get the size of the active committee for the current epoch.
+	 */
+	async getActiveCommitteeSize(): Promise<number> {
+		const objects = await this.ensureInitialized();
+		return Number(objects.coordinatorInner.active_committee.members.length);
+	}
+
+	/**
 	 * Get the core network objects (coordinator inner and system inner objects).
 	 * Uses caching to avoid redundant network requests.
 	 *

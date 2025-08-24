@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
 import { execa } from 'execa';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
 	createTestIkaClient,
@@ -98,7 +98,15 @@ describe('system tests', () => {
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
+		expect(
+			(await ikaClient.getActiveCommitteeSize()) === startCommitteeSize,
+			'initial committee size incorrect',
+		);
 		await waitForEpochSwitch(ikaClient);
+		expect(
+			(await ikaClient.getActiveCommitteeSize()) === startCommitteeSize + numOfValidatorsToAdd,
+			'validators have not been added to the committee',
+		);
 		console.log('Epoch switched, start new validators & kill old ones');
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
@@ -121,8 +129,6 @@ describe('system tests', () => {
 		}
 
 		console.log('deployed new validators, running a full flow test');
-
-		
 
 		await runSignFullFlow(ikaClient, suiClient, `system-test-full-flow`);
 	}, 3_600_000);
