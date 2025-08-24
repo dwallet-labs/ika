@@ -73,6 +73,7 @@ sui-types.workspace = true
 backoff.workspace = true
 strum_macros.workspace = true
 derive_more.workspace = true
+derivative = "2.2.0"
 
 [dev-dependencies]
 ika-types = {workspace = true, features = ["test_helpers"]}
