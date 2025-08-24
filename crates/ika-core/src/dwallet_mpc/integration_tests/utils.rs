@@ -513,19 +513,19 @@ use message_digest::message_digest::Hash;
 
 pub(crate) async fn send_start_network_dkg_event_to_all_parties(
     epoch_id: EpochId,
-    sui_data_senders: &mut Vec<SuiDataSenders>,
-    dwallet_mpc_services: &mut Vec<DWalletMPCService>,
+    test_state: &mut IntegrationTestState,
 ) {
     let key_id = ObjectID::random();
+    let all_parties = &(0..test_state.sui_data_senders.len()).collect::<Vec<_>>();
     send_configurable_start_network_dkg_event(
         epoch_id,
-        sui_data_senders,
+        &mut test_state.sui_data_senders,
         [1u8; 32],
         1,
-        &(0..sui_data_senders.len()).collect::<Vec<_>>(),
+        all_parties,
         key_id,
     );
-    for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
+    for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
         dwallet_mpc_service.run_service_loop_iteration().await;
         assert_eq!(
             dwallet_mpc_service.dwallet_mpc_manager().mpc_sessions.len(),

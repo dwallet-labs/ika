@@ -33,7 +33,18 @@ async fn network_key_received_after_start_event() {
         mut epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
-    send_start_network_dkg_event_to_all_parties(epoch_id, &mut sui_data_senders);
+    let mut test_state = utils::IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee: committee.clone(),
+        sui_data_senders,
+    };
+    
+    send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state);
     let mut consensus_round = 1;
     let mut network_key_checkpoint = None;
     loop {
