@@ -5,4 +5,5 @@ mod message_before_event;
 mod missing_network_key;
 mod network_dkg;
 mod sign;
+mod threshold_not_reached;
 mod utils;
