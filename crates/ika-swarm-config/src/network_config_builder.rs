@@ -7,8 +7,8 @@ use crate::validator_initialization_config::ValidatorInitializationConfig;
 use crate::validator_initialization_config::ValidatorInitializationConfigBuilder;
 use ika_config::initiation::InitiationParameters;
 use ika_config::node::{
-    AuthorityOverloadConfig, LOCAL_DEFAULT_SUI_FAUCET_URL, LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL,
-    RunWithRange, get_testing_sui_faucet_url, get_testing_sui_fullnode_rpc_url,
+    AuthorityOverloadConfig, RunWithRange, get_testing_sui_faucet_url,
+    get_testing_sui_fullnode_rpc_url,
 };
 use ika_protocol_config::ProtocolVersion;
 use ika_types::committee::Committee;

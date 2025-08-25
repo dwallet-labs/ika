@@ -14,8 +14,8 @@ use std::{
 
 use ika_config::NodeConfig;
 use ika_config::node::{
-    AuthorityOverloadConfig, LOCAL_DEFAULT_SUI_FAUCET_URL, LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL,
-    RunWithRange, get_testing_sui_fullnode_rpc_url,
+    AuthorityOverloadConfig, LOCAL_DEFAULT_SUI_FAUCET_URL, RunWithRange,
+    get_testing_sui_fullnode_rpc_url,
 };
 use ika_node::IkaNodeHandle;
 use ika_protocol_config::ProtocolVersion;
