@@ -594,7 +594,7 @@ impl DWalletMPCManager {
         };
 
         // All output kinds are constructed from the same type, so we can safely use the first one.
-        let Ok(session_type) = SessionComputationType::try_from(
+        let Ok(session_computation_type) = SessionComputationType::try_from(
             output.output.first().expect("output must have a kind"),
         ) else {
             error!(
@@ -623,14 +623,19 @@ impl DWalletMPCManager {
                 self.new_session(
                     &session_identifier,
                     SessionStatus::WaitingForSessionRequest,
-                    session_type,
+                    session_computation_type.clone(),
                 );
                 // Safe to `unwrap()`: we just created the session.
                 self.mpc_sessions.get_mut(&session_identifier).unwrap()
             }
         };
 
-        session.add_output(consensus_round, sender_party_id, output);
+        session.add_output(
+            consensus_round,
+            sender_party_id,
+            output,
+            &session_computation_type,
+        );
 
         let outputs_by_consensus_round = session.outputs_by_consensus_round().clone();
 
