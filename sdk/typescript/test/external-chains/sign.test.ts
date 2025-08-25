@@ -1,21 +1,54 @@
+;
+
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
+import { public_key_from_dwallet_output } from '@ika.xyz/mpc-wasm';
 import { Transaction } from '@mysten/sui/transactions';
+import * as bitcoin from 'bitcoinjs-lib';
+import { networks, payments, Psbt } from 'bitcoinjs-lib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Psbt, networks, payments } from 'bitcoinjs-lib'
 
-import { Hash, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
+
+
+import { Hash, SignatureAlgorithm } from '../../src/client/types';
 import { createCompleteDWallet, testPresign } from '../helpers/dwallet-test-helpers';
 import { createIndividualTestSetup, getSharedTestSetup } from '../helpers/shared-test-setup';
-import {
-	createEmptyTestIkaToken,
-	createTestIkaTransaction,
-	createTestMessage,
-	delay,
-	destroyEmptyTestIkaToken,
-	executeTestTransaction,
-	retryUntil,
-} from '../helpers/test-utils';
+import { createEmptyTestIkaToken, createTestIkaTransaction, createTestMessage, destroyEmptyTestIkaToken, executeTestTransaction, retryUntil } from '../helpers/test-utils';
+
+
+;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Setup shared resources before all tests
 beforeAll(async () => {
@@ -84,6 +117,27 @@ async function testSignWithResult(
 }
 
 describe('DWallet Signing', () => {
+	it('should create a DWallet and print its address', async () => {
+		const testName = 'dwallet-sign-test';
+
+		// Use shared clients but create individual DWallet to avoid gas conflicts
+		const { suiClient, ikaClient } = await createIndividualTestSetup(testName);
+		const {
+			dWallet: activeDWallet,
+			encryptedUserSecretKeyShare,
+			userShareEncryptionKeys,
+			signerAddress,
+		} = await createCompleteDWallet(ikaClient, suiClient, testName);
+		let dwalletPubKey = public_key_from_dwallet_output(
+			Uint8Array.from(activeDWallet.state.Active.public_output),
+		);
+		const address = bitcoin.payments.p2wpkh({
+			pubkey: dwalletPubKey,
+			network: bitcoin.networks.regtest,
+		}).address!
+		console.log(`DWallet Address: ${address}`);
+	});
+	
 	it('should create a DWallet and sign a message', async () => {
 		const testName = 'dwallet-sign-test';
 
