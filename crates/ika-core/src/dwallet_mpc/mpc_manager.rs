@@ -459,7 +459,6 @@ impl DWalletMPCManager {
                         .class_groups_decryption_key
                         .clone(),
                     &self.network_keys,
-                    &self.protocol_config
                 )
                 .ok()?
                 .map(|advance_specific_data| {
