@@ -148,6 +148,8 @@ pub fn create_dkg_output(
         }
     }
 }
+use k256::elliptic_curve::group::GroupEncoding;
+use k256::{AffinePoint, PublicKey};
 
 pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::Result<Vec<u8>> {
     let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput = bcs::from_bytes(&dwallet_output)?;
@@ -155,7 +157,9 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
             let dkg_output: DKGDecentralizedOutput = bcs::from_bytes(&dkg_output)?;
             let public_key = dkg_output.public_key;
-            Ok(bcs::to_bytes(&public_key)?)
+            let pk = PublicKey::from_affine(AffinePoint::from(public_key))
+                .expect("creation of public key from affine failed");
+            Ok(pk.to_sec1_bytes().to_vec())
         }
     }
 }

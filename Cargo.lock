@@ -3635,6 +3635,7 @@ dependencies = [
  "getrandom 0.2.16",
  "group 0.1.0",
  "homomorphic_encryption",
+ "k256 0.14.0-pre.9",
  "message-digest",
  "mpc",
  "rand_chacha 0.9.0",
