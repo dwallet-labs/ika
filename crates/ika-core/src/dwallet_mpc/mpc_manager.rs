@@ -566,7 +566,7 @@ impl DWalletMPCManager {
                                     info!(key_id=?key_id, "Updating (decrypting new shares) network key for key_id");
                                     if let Err(e) = self
                                         .network_keys
-                                        .update_network_key(key_id, &key, &self.access_structure)
+                                        .update_network_key_v1(key_id, &key, &self.access_structure)
                                         .await
                                     {
                                         error!(error=?e, key_id=?key_id, "failed to update the network key");

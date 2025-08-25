@@ -77,7 +77,7 @@ pub struct ValidatorPrivateDecryptionKeyData {
         HashMap<ObjectID, HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>>,
 }
 
-async fn get_decryption_key_shares_from_public_output(
+async fn get_decryption_key_shares_from_public_output_v1(
     shares: NetworkEncryptionKeyPublicDataV1,
     party_id: PartyID,
     personal_decryption_key: ClassGroupsDecryptionKey,
@@ -140,13 +140,13 @@ impl ValidatorPrivateDecryptionKeyData {
     /// Stores the new decryption key shares of the validator.
     /// Decrypts the decryption key shares (for all the virtual parties)
     /// from the public output of the network DKG protocol.
-    pub async fn decrypt_and_store_secret_key_shares(
+    pub async fn decrypt_and_store_secret_key_shares_v1(
         &mut self,
         key_id: ObjectID,
         key: NetworkEncryptionKeyPublicDataV1,
         access_structure: &WeightedThresholdAccessStructure,
     ) -> DwalletMPCResult<()> {
-        let secret_key_shares = get_decryption_key_shares_from_public_output(
+        let secret_key_shares = get_decryption_key_shares_from_public_output_v1(
             key.clone(),
             self.party_id,
             self.class_groups_decryption_key,
@@ -194,7 +194,7 @@ impl DwalletMPCNetworkKeys {
         }
     }
 
-    pub async fn update_network_key(
+    pub async fn update_network_key_v1(
         &mut self,
         key_id: ObjectID,
         key: &NetworkEncryptionKeyPublicDataV1,
@@ -205,7 +205,7 @@ impl DwalletMPCNetworkKeys {
             VersionedNetworkEncryptionKeyPublicData::V1(key.clone()),
         );
         self.validator_private_dec_key_data
-            .decrypt_and_store_secret_key_shares(key_id, key.clone(), access_structure)
+            .decrypt_and_store_secret_key_shares_v1(key_id, key.clone(), access_structure)
             .await
     }
 
