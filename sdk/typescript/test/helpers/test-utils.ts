@@ -358,9 +358,13 @@ export async function runSignFullFlow(
 }
 
 export async function waitForEpochSwitch(ikaClient: IkaClient) {
+	ikaClient.invalidateCache();
+	await ikaClient.initialize();
 	const startEpoch = await ikaClient.getEpoch();
 	let epochSwitched = false;
 	while (!epochSwitched) {
+		ikaClient.invalidateCache();
+		await ikaClient.initialize();
 		if ((await ikaClient.getEpoch()) > startEpoch) {
 			epochSwitched = true;
 		} else {
