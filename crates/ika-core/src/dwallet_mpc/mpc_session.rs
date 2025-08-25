@@ -84,6 +84,12 @@ pub enum ComputationType {
     Native,
 }
 
+#[derive(Clone, Debug)]
+pub enum ComputationResultData {
+    MPC { mpc_round: u64 },
+    Native,
+}
+
 impl DWalletSession {
     pub(crate) fn new(
         validator_name: AuthorityPublicKeyBytes,
@@ -136,6 +142,9 @@ impl DWalletSession {
             }
             SessionStatus::WaitingForSessionRequest => {
                 "Unknown - waiting for session request".to_string()
+            }
+            SessionStatus::ComputationCompleted => {
+                "Unknown - session computation completed".to_string()
             }
             _ => {
                 error!(

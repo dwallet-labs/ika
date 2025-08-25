@@ -19,6 +19,7 @@
 
 use crate::dwallet_mpc::crytographic_computation::{ComputationId, ComputationRequest};
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
+use crate::dwallet_mpc::mpc_session::ComputationResultData;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
@@ -124,9 +125,15 @@ impl CryptographicComputationsOrchestrator {
             let attempt_number = computation_update.computation_id.attempt_number;
             let elapsed_ms = computation_update.elapsed_ms;
 
+            let computation_result_data = if let Some(mpc_round) = mpc_round {
+                ComputationResultData::MPC { mpc_round }
+            } else {
+                ComputationResultData::Native
+            };
+
             debug!(
                 session_identifier=?computation_update.computation_id.session_identifier,
-                current_round=?computation_update.computation_id.mpc_round,
+                ?computation_result_data,
                 attempt_number=?computation_update.computation_id.attempt_number,
                 currently_running_sessions_count =? self.currently_running_cryptographic_computations.len(),
                 "Received a cryptographic computation completed update"
@@ -136,7 +143,7 @@ impl CryptographicComputationsOrchestrator {
                 error!(
                     party_id,
                     ?session_identifier,
-                    mpc_round,
+                    ?computation_result_data,
                     attempt_number,
                     mpc_protocol=?protocol_name,
                     error=?err,
@@ -146,7 +153,7 @@ impl CryptographicComputationsOrchestrator {
                 info!(
                     party_id,
                     ?session_identifier,
-                    mpc_round,
+                    ?computation_result_data,
                     attempt_number,
                     mpc_protocol=?protocol_name,
                     duration_ms = elapsed_ms,
@@ -154,23 +161,26 @@ impl CryptographicComputationsOrchestrator {
                     "Cryptographic computation completed successfully"
                 );
 
-                if let Some(mpc_round) = mpc_round {
-                    dwallet_mpc_metrics.add_advance_completion(
-                        &computation_update.protocol_metadata,
-                        &mpc_round.to_string(),
-                        elapsed_ms as i64,
-                    );
+                match computation_result_data {
+                    ComputationResultData::MPC { mpc_round } => {
+                        dwallet_mpc_metrics.add_advance_completion(
+                            &computation_update.protocol_metadata,
+                            &mpc_round.to_string(),
+                            elapsed_ms as i64,
+                        );
 
-                    dwallet_mpc_metrics.set_last_completion_duration(
-                        &computation_update.protocol_metadata,
-                        &mpc_round.to_string(),
-                        elapsed_ms as i64,
-                    );
-                } else {
-                    dwallet_mpc_metrics.add_native_completion(
-                        &computation_update.protocol_metadata,
-                        elapsed_ms as i64,
-                    );
+                        dwallet_mpc_metrics.set_last_completion_duration(
+                            &computation_update.protocol_metadata,
+                            &mpc_round.to_string(),
+                            elapsed_ms as i64,
+                        );
+                    }
+                    ComputationResultData::Native => {
+                        dwallet_mpc_metrics.add_native_completion(
+                            &computation_update.protocol_metadata,
+                            elapsed_ms as i64,
+                        );
+                    }
                 }
             }
 

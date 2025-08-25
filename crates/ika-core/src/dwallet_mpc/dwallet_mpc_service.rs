@@ -17,7 +17,7 @@ use crate::dwallet_checkpoints::{
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::mpc_session::{ComputationType, SessionStatus};
+use crate::dwallet_mpc::mpc_session::{ComputationResultData, ComputationType, SessionStatus};
 use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
@@ -573,6 +573,12 @@ impl DWalletMPCService {
             let mpc_round = computation_id.mpc_round;
             let consensus_adapter = self.dwallet_submit_to_consensus.clone();
 
+            let computation_result_data = if let Some(mpc_round) = mpc_round {
+                ComputationResultData::MPC { mpc_round }
+            } else {
+                ComputationResultData::Native
+            };
+
             let Some(session) = self
                 .dwallet_mpc_manager
                 .mpc_sessions
@@ -582,8 +588,8 @@ impl DWalletMPCService {
                     should_never_happen =? true,
                     ?session_identifier,
                     validator=?validator_name,
-                    ?mpc_round,
-                    "failed to retrieve MPC session for which a computation update was received"
+                    ?computation_result_data,
+                    "failed to retrieve session for which a computation update was received"
                 );
                 return;
             };
@@ -592,8 +598,8 @@ impl DWalletMPCService {
                 warn!(
                     ?session_identifier,
                     validator=?validator_name,
-                    ?mpc_round,
-                    "received a computation update for an non-active MPC session"
+                    ?computation_result_data,
+                    "received a computation update for an non-active session"
                 );
                 return;
             };
@@ -603,8 +609,8 @@ impl DWalletMPCService {
                     info!(
                         ?session_identifier,
                         validator=?validator_name,
-                        ?mpc_round,
-                        "Advanced MPC session"
+                        ?computation_result_data,
+                        "Advanced session"
                     );
 
                     let message = self.new_dwallet_mpc_message(session_identifier, message);
@@ -613,9 +619,9 @@ impl DWalletMPCService {
                         error!(
                             ?session_identifier,
                             validator=?validator_name,
-                            ?mpc_round,
+                            ?computation_result_data,
                             error=?err,
-                            "failed to submit an MPC message to consensus"
+                            "failed to submit a message to consensus"
                         );
                     }
                 }
@@ -675,10 +681,10 @@ impl DWalletMPCService {
                     error!(
                         ?session_identifier,
                         validator=?validator_name,
-                        ?mpc_round,
+                        ?computation_result_data,
                         party_id,
                         error=?err,
-                        "failed to advance the MPC session, rejecting."
+                        "failed to advance session, rejecting."
                     );
 
                     let consensus_adapter = self.dwallet_submit_to_consensus.clone();
