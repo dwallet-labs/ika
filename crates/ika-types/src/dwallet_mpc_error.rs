@@ -172,8 +172,8 @@ pub enum DwalletMPCError {
     #[error("checkpoint message is empty")]
     CheckpointMessageIsEmpty,
 
-    #[error("Invalid session type")]
-    InvalidSessionType,
+    #[error("Invalid dWallet protocol type")]
+    InvalidDWalletProtocolType,
 }
 
 /// A wrapper type for the result of a runtime operation.

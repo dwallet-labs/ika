@@ -2,7 +2,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::mpc_session::{ComputationType, PublicInput};
+use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
 use crate::dwallet_mpc::sign::SignParty;
@@ -148,16 +148,16 @@ impl ProtocolCryptographicData {
 impl DWalletMPCManager {
     pub fn generate_protocol_cryptographic_data(
         &self,
-        session_type: &ComputationType,
+        session_type: &SessionComputationType,
         protocol_data: &ProtocolData,
         consensus_round: u64,
         public_input: PublicInput,
     ) -> Result<Option<ProtocolCryptographicData>, DwalletMPCError> {
         match session_type {
-            ComputationType::Native => {
+            SessionComputationType::Native => {
                 ProtocolCryptographicData::try_new_native(protocol_data, public_input)
             }
-            ComputationType::MPC {
+            SessionComputationType::MPC {
                 messages_by_consensus_round,
                 ..
             } => ProtocolCryptographicData::try_new_mpc(

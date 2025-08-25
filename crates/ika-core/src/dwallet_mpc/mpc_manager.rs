@@ -7,7 +7,7 @@ use crate::dwallet_mpc::crytographic_computation::{
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_session::{
-    ComputationType, DWalletMPCSessionOutput, DWalletSession, SessionStatus,
+    DWalletMPCSessionOutput, DWalletSession, SessionComputationType, SessionStatus,
 };
 use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
@@ -287,7 +287,7 @@ impl DWalletMPCManager {
                     &session_identifier,
                     SessionStatus::WaitingForSessionRequest,
                     // only MPC sessions have messages.
-                    ComputationType::MPC {
+                    SessionComputationType::MPC {
                         messages_by_consensus_round: HashMap::new(),
                     },
                 );
@@ -296,7 +296,7 @@ impl DWalletMPCManager {
             }
         };
 
-        let ComputationType::MPC { .. } = &mut session.computation_type else {
+        let SessionComputationType::MPC { .. } = &mut session.computation_type else {
             error!(
                 session_identifier=?session_identifier,
                 sender_authority=?sender_authority,
@@ -317,7 +317,7 @@ impl DWalletMPCManager {
         &mut self,
         session_identifier: &SessionIdentifier,
         status: SessionStatus,
-        session_type: ComputationType,
+        session_type: SessionComputationType,
     ) {
         info!(
             status=?status,
@@ -594,9 +594,9 @@ impl DWalletMPCManager {
         };
 
         // All output kinds are constructed from the same type, so we can safely use the first one.
-        let Ok(session_type) =
-            ComputationType::try_from(output.output.first().expect("output must have a kind"))
-        else {
+        let Ok(session_type) = SessionComputationType::try_from(
+            output.output.first().expect("output must have a kind"),
+        ) else {
             error!(
                 session_identifier=?session_identifier,
                 sender_authority=?sender_authority,
@@ -734,7 +734,7 @@ impl DWalletMPCManager {
     pub(crate) fn complete_computation_mpc_session_and_create_if_not_exists(
         &mut self,
         session_identifier: &SessionIdentifier,
-        session_type: ComputationType,
+        session_type: SessionComputationType,
     ) {
         match self.mpc_sessions.entry(*session_identifier) {
             Entry::Occupied(session) => session

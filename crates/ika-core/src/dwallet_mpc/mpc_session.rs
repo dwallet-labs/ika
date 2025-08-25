@@ -39,7 +39,7 @@ pub(crate) struct DWalletSession {
     /// The status of the MPC session.
     pub(super) status: SessionStatus,
 
-    pub(super) computation_type: ComputationType,
+    pub(super) computation_type: SessionComputationType,
 
     outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
 }
@@ -76,7 +76,7 @@ pub enum SessionStatus {
 }
 
 #[derive(Clone, Debug)]
-pub enum ComputationType {
+pub enum SessionComputationType {
     MPC {
         /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
         /// Used to build the input of messages to advance each round of the session.
@@ -97,7 +97,7 @@ impl DWalletSession {
         status: SessionStatus,
         session_identifier: SessionIdentifier,
         party_id: PartyID,
-        computation_type: ComputationType,
+        computation_type: SessionComputationType,
     ) -> Self {
         Self {
             status,
@@ -111,11 +111,11 @@ impl DWalletSession {
 
     pub(crate) fn clear_data(&mut self) {
         match &mut self.computation_type {
-            ComputationType::MPC {
+            SessionComputationType::MPC {
                 messages_by_consensus_round,
                 ..
             } => messages_by_consensus_round.clear(),
-            ComputationType::Native => {}
+            SessionComputationType::Native => {}
         }
         self.outputs_by_consensus_round = HashMap::new();
     }
@@ -167,7 +167,7 @@ impl DWalletSession {
             "Received a dWallet MPC message",
         );
 
-        let ComputationType::MPC {
+        let SessionComputationType::MPC {
             messages_by_consensus_round,
         } = &mut self.computation_type
         else {
@@ -275,26 +275,26 @@ impl Debug for SessionStatus {
     }
 }
 
-impl From<&ProtocolData> for ComputationType {
+impl From<&ProtocolData> for SessionComputationType {
     fn from(value: &ProtocolData) -> Self {
         match value {
             ProtocolData::MakeDWalletUserSecretKeySharesPublic { .. }
-            | ProtocolData::PartialSignatureVerification { .. } => ComputationType::Native,
-            _ => ComputationType::MPC {
+            | ProtocolData::PartialSignatureVerification { .. } => SessionComputationType::Native,
+            _ => SessionComputationType::MPC {
                 messages_by_consensus_round: HashMap::new(),
             },
         }
     }
 }
 
-impl TryFrom<&DWalletCheckpointMessageKind> for ComputationType {
+impl TryFrom<&DWalletCheckpointMessageKind> for SessionComputationType {
     type Error = ();
 
     fn try_from(value: &DWalletCheckpointMessageKind) -> Result<Self, Self::Error> {
         match value {
             DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(_)
             | DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(_) => {
-                Ok(ComputationType::Native)
+                Ok(SessionComputationType::Native)
             }
 
             DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(_)
@@ -305,7 +305,7 @@ impl TryFrom<&DWalletCheckpointMessageKind> for ComputationType {
             | DWalletCheckpointMessageKind::RespondDWalletSign(_)
             | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(_)
             | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(_) => {
-                Ok(ComputationType::MPC {
+                Ok(SessionComputationType::MPC {
                     messages_by_consensus_round: HashMap::new(),
                 })
             }
@@ -494,15 +494,15 @@ impl DWalletMPCManager {
         self.dwallet_mpc_metrics
             .add_received_request_start(&(&request.protocol_data).into());
 
-        let new_type = ComputationType::from(&request.protocol_data);
+        let new_type = SessionComputationType::from(&request.protocol_data);
 
         if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
             match &session.computation_type {
                 // Existing session is MPC; new request must also be MPC (variant-only check)
-                ComputationType::MPC {
+                SessionComputationType::MPC {
                     messages_by_consensus_round,
                 } => {
-                    if !matches!(new_type, ComputationType::MPC { .. }) {
+                    if !matches!(new_type, SessionComputationType::MPC { .. }) {
                         // Collect all party IDs that sent messages for this session,
                         // map them to authority names, and deduplicate via HashSet.
                         let malicious_parties: HashSet<_> = messages_by_consensus_round
@@ -532,8 +532,8 @@ impl DWalletMPCManager {
                 }
 
                 // Existing session is Native; new request must also be Native
-                ComputationType::Native => {
-                    if !matches!(new_type, ComputationType::Native) {
+                SessionComputationType::Native => {
+                    if !matches!(new_type, SessionComputationType::Native) {
                         error!(
                             should_never_happen=true,
                             session_identifier=?session_identifier,

@@ -249,7 +249,7 @@ impl ProtocolCryptographicData {
                 }
             }
             _ => {
-                return Err(DwalletMPCError::InvalidSessionType);
+                return Err(DwalletMPCError::InvalidDWalletProtocolType);
             }
         };
         Ok(Some(res))
@@ -563,7 +563,7 @@ impl ProtocolCryptographicData {
                     session_type=?protocol_metadata,
                     session_identifier=?session_identifier,
                     "Invalid session type for mpc computation");
-                Err(DwalletMPCError::InvalidSessionType)
+                Err(DwalletMPCError::InvalidDWalletProtocolType)
             }
         }
     }

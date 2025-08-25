@@ -56,7 +56,7 @@ impl ProtocolCryptographicData {
                 }
             }
             _ => {
-                return Err(DwalletMPCError::InvalidSessionType);
+                return Err(DwalletMPCError::InvalidDWalletProtocolType);
             }
         };
 
@@ -133,7 +133,7 @@ impl ProtocolCryptographicData {
                     session_type=?protocol_metadata,
                     session_identifier=?session_identifier,
                     "Invalid session type for native computation");
-                return Err(DwalletMPCError::InvalidSessionType);
+                return Err(DwalletMPCError::InvalidDWalletProtocolType);
             }
         };
 

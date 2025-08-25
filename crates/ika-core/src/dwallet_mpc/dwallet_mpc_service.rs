@@ -17,7 +17,9 @@ use crate::dwallet_checkpoints::{
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::mpc_session::{ComputationResultData, ComputationType, SessionStatus};
+use crate::dwallet_mpc::mpc_session::{
+    ComputationResultData, SessionComputationType, SessionStatus,
+};
 use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
@@ -316,7 +318,7 @@ impl DWalletMPCService {
                         self.dwallet_mpc_manager
                             .complete_computation_mpc_session_and_create_if_not_exists(
                                 &session_identifier,
-                                ComputationType::from(&request.protocol_data),
+                                SessionComputationType::from(&request.protocol_data),
                             );
 
                         info!(
