@@ -129,9 +129,15 @@ importers:
       '@noble/hashes':
         specifier: ^1.8.0
         version: 1.8.0
+      '@types/axios':
+        specifier: ^0.14.4
+        version: 0.14.4
       '@types/bitcoinjs-lib':
         specifier: ^5.0.4
         version: 5.0.4
+      axios:
+        specifier: ^1.11.0
+        version: 1.11.0
       bitcoinjs-lib:
         specifier: ^6.1.7
         version: 6.1.7
@@ -1662,6 +1668,10 @@ packages:
   '@tybys/wasm-util@0.9.0':
     resolution: {integrity: sha512-6+7nlbMVX/PVDCwaIQ8nTOPveOcFLSt8GcXdx8hD0bt39uWxYT88uXzqTd4fTvqta7oeUJqudepapKNt2DYJFw==}
 
+  '@types/axios@0.14.4':
+    resolution: {integrity: sha512-9JgOaunvQdsQ/qW2OPmE5+hCeUB52lQSolecrFrthct55QekhmXEwT203s20RL+UHtCQc15y3VXpby9E7Kkh/g==}
+    deprecated: This is a stub types definition. axios provides its own type definitions, so you do not need this installed.
+
   '@types/bitcoinjs-lib@5.0.4':
     resolution: {integrity: sha512-4IXPR8tIDNZPsWk6TQxOpbZnpZsoRCuwuUzlqw8aO1hQEDi1J5x46+HlI4Xh7ECmdoIwnAB8bGvTdnVuBSDZXQ==}
     deprecated: This is a stub types definition. bitcoinjs-lib provides its own type definitions, so you do not need this installed.
@@ -2137,6 +2147,9 @@ packages:
   axe-core@4.9.1:
     resolution: {integrity: sha512-QbUdXJVTpvUTHU7871ppZkdOLBeGUKBQWHkHrvN2V9IQWGMt61zf3B45BtzjxEJzYuj0JBjBZP/hmYS/R9pmAw==}
     engines: {node: '>=4'}
+
+  axios@1.11.0:
+    resolution: {integrity: sha512-1Lx3WLFQWm3ooKDYZD1eXmoGO9fxYQjrycfHFC8P0sCfQVXyROp0p9PFWBehewBOdCwHc+f/b8I0fMto5eSfwA==}
 
   axobject-query@2.2.0:
     resolution: {integrity: sha512-Td525n+iPOOyUQIeBfcASuG6uJsDOITl7Mds5gFyerkWiX7qhUTdYUBlSgNMyVqtSJqwpt1kXGLdUt6SykLMRA==}
@@ -2872,6 +2885,15 @@ packages:
 
   flatted@3.3.3:
     resolution: {integrity: sha512-GX+ysw4PBCz0PzosHDepZGANEuFCMLrnRTiEy9McGjmkCQYwRq4A/X786G/fjM/+OjsWSU1ZrY5qyARZmO/uwg==}
+
+  follow-redirects@1.15.11:
+    resolution: {integrity: sha512-deG2P0JfjrTxl50XGCDyfI97ZGVCxIpfKYmfyrQ54n5FO/0gfIES8C/Psl6kWVDolizcaaxZJnTS0QSMxvnsBQ==}
+    engines: {node: '>=4.0'}
+    peerDependencies:
+      debug: '*'
+    peerDependenciesMeta:
+      debug:
+        optional: true
 
   for-each@0.3.3:
     resolution: {integrity: sha512-jqYfLp7mo9vIyQf8ykW2v7A+2N4QjeCeI5+Dz9XraiO1ign81wjiH7Fb9vSOWvQfNtmSa4H2RoQTrrXivdUZmw==}
@@ -3784,6 +3806,9 @@ packages:
 
   proto-list@1.2.4:
     resolution: {integrity: sha512-vtK/94akxsTMhe0/cbfpR+syPuszcuwhqVjJq26CuNDgFGj682oRBXOP5MJpv2r7JtE8MsiepGIqvvOTBwn2vA==}
+
+  proxy-from-env@1.1.0:
+    resolution: {integrity: sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg==}
 
   pump@3.0.3:
     resolution: {integrity: sha512-todwxLMY7/heScKmntwQG8CXVkWUOdYxIvY2s0VWAAMh/nd8SoYiRaKjlr7+iCs984f2P8zvrfWcDDYVb73NfA==}
@@ -6355,6 +6380,12 @@ snapshots:
       tslib: 2.7.0
     optional: true
 
+  '@types/axios@0.14.4':
+    dependencies:
+      axios: 1.11.0
+    transitivePeerDependencies:
+      - debug
+
   '@types/bitcoinjs-lib@5.0.4':
     dependencies:
       bitcoinjs-lib: 6.1.7
@@ -6923,6 +6954,14 @@ snapshots:
       possible-typed-array-names: 1.0.0
 
   axe-core@4.9.1: {}
+
+  axios@1.11.0:
+    dependencies:
+      follow-redirects: 1.15.11
+      form-data: 4.0.4
+      proxy-from-env: 1.1.0
+    transitivePeerDependencies:
+      - debug
 
   axobject-query@2.2.0: {}
 
@@ -7874,6 +7913,8 @@ snapshots:
 
   flatted@3.3.3: {}
 
+  follow-redirects@1.15.11: {}
+
   for-each@0.3.3:
     dependencies:
       is-callable: 1.2.7
@@ -8683,6 +8724,8 @@ snapshots:
       react-is: 16.13.1
 
   proto-list@1.2.4: {}
+
+  proxy-from-env@1.1.0: {}
 
   pump@3.0.3:
     dependencies:
