@@ -366,9 +366,10 @@ impl Request {
                     .map(|(party_id, share)| (*party_id, share.decryption_key_share))
                     .collect::<HashMap<_, _>>();
 
-                if key_version == 1 && protocol_config.reconfiguration_version() == Some(2) {
-                    let result =
-                        Party::<twopc_mpc::reconfiguration_v1_to_v2::Party>::advance_with_guaranteed_output(
+                let result = if key_version == 1
+                    && protocol_config.reconfiguration_version() == Some(2)
+                {
+                    Party::<twopc_mpc::reconfiguration_v1_to_v2::Party>::advance_with_guaranteed_output(
                             session_id,
                             self.party_id,
                             &self.access_structure,
@@ -376,32 +377,8 @@ impl Request {
                             Some(decryption_key_shares.clone()),
                             &public_input,
                             &mut rng,
-                        )?;
-
-                    return match result {
-                        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-                            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-                        }
-                        GuaranteedOutputDeliveryRoundResult::Finalize {
-                            public_output_value,
-                            malicious_parties,
-                            private_output,
-                        } => {
-                            // Wrap the public output with its version.
-                            let public_output_value =
-                                bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V1(
-                                    public_output_value,
-                                ))?;
-
-                            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                                public_output_value,
-                                malicious_parties,
-                                private_output,
-                            })
-                        }
-                    };
-                }
-                let result =
+                        )?
+                } else {
                     Party::<ReconfigurationSecp256k1Party>::advance_with_guaranteed_output(
                         session_id,
                         self.party_id,
@@ -410,7 +387,8 @@ impl Request {
                         Some(decryption_key_shares.clone()),
                         &public_input,
                         &mut rng,
-                    )?;
+                    )?
+                };
 
                 match result {
                     GuaranteedOutputDeliveryRoundResult::Advance { message } => {
