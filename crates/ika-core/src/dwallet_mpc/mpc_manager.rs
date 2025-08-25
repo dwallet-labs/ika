@@ -296,7 +296,7 @@ impl DWalletMPCManager {
             }
         };
 
-        let SessionComputationType::MPC { .. } = &mut session.computation_type else {
+        if !matches!(session.computation_type, SessionComputationType::MPC { .. }) {
             error!(
                 session_identifier=?session_identifier,
                 sender_authority=?sender_authority,
