@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
+import {
+	prepareDKGSecondRoundAsync,
+	publicKeyFromDWalletOutput,
+} from '../../src/client/cryptography';
 import { ZeroTrustDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
@@ -150,6 +153,10 @@ describe('DWallet Creation', () => {
 		expect(finalDWallet).toBeDefined();
 		expect(finalDWallet.state.$kind).toBe('Active');
 		expect(finalDWallet.id.id).toBe(dwalletID);
+		let public_key = publicKeyFromDWalletOutput(
+			Uint8Array.from(finalDWallet.state.Active.public_output),
+		);
+		console.log('DWallet Public Key:', Buffer.from(public_key).toString('hex'));
 	});
 
 	it('should create multiple DWallets with different deterministic seeds', async () => {

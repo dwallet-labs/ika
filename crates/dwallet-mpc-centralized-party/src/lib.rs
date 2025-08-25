@@ -155,6 +155,9 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
             let dkg_output: DKGDecentralizedOutput = bcs::from_bytes(&dkg_output)?;
             let public_key = dkg_output.public_key;
+            let public_key_ser = bcs::to_bytes(&public_key)?;
+            let testush: secp256k1::group_element::Value = bcs::from_bytes(&public_key_ser)?;
+            let pk = secp256k1::PublicKey::from_slice(&bytes).unwrap();
             Ok(bcs::to_bytes(&public_key)?)
         }
     }
