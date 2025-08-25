@@ -151,6 +151,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 decryption_key_share_public_parameters,
                 protocol_public_parameters,
                 network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
+                key_version: 1,
             })
         }
     }

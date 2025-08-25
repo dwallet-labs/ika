@@ -23,6 +23,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use dwallet_rng::RootSeed;
 use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use message_digest::message_digest::message_digest;
@@ -50,6 +51,7 @@ impl Request {
         computation_id: ComputationId,
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        protocol_config: &ProtocolConfig,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         info!(
             mpc_protocol=?self.protocol_data.to_string(),
@@ -356,6 +358,7 @@ impl Request {
                 public_input,
                 advance_request,
                 decryption_key_shares,
+                key_version,
                 ..
             } => {
                 let decryption_key_shares = decryption_key_shares
@@ -363,7 +366,20 @@ impl Request {
                     .map(|(party_id, share)| (*party_id, share.decryption_key_share))
                     .collect::<HashMap<_, _>>();
 
-                let result =
+                // TODO: Understand what should be done to run a v2/v1 reconfiguration. 
+                let result = if key_version == 1
+                    && protocol_config.reconfiguration_version() == Some(2)
+                {
+                    Party::<twopc_mpc::reconfiguration_v1_to_v2::Party>::advance_with_guaranteed_output(
+                            session_id,
+                            self.party_id,
+                            &self.access_structure,
+                            advance_request,
+                            Some(decryption_key_shares.clone()),
+                            &public_input,
+                            &mut rng,
+                        )?
+                } else {
                     Party::<ReconfigurationSecp256k1Party>::advance_with_guaranteed_output(
                         session_id,
                         self.party_id,
@@ -372,7 +388,8 @@ impl Request {
                         Some(decryption_key_shares.clone()),
                         &public_input,
                         &mut rng,
-                    )?;
+                    )?
+                };
 
                 match result {
                     GuaranteedOutputDeliveryRoundResult::Advance { message } => {

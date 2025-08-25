@@ -244,6 +244,20 @@ impl DwalletMPCNetworkKeys {
         Ok(result.protocol_public_parameters.clone())
     }
 
+    pub fn get_network_key_version(
+        &self,
+        key_id: &ObjectID,
+    ) -> DwalletMPCResult<usize> {
+        let Some(result) = self.network_encryption_keys.get(key_id) else {
+            error!(
+                ?key_id,
+                "failed to fetch the network decryption key shares for key ID"
+            );
+            return Err(DwalletMPCError::WaitingForNetworkKey(*key_id));
+        };
+        Ok(result.key_version.clone())
+    }
+
     pub fn get_network_dkg_public_output(
         &self,
         key_id: &ObjectID,
@@ -411,6 +425,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                     decryption_key_share_public_parameters,
                     network_dkg_output: mpc_public_output,
                     protocol_public_parameters,
+                    key_version: 1,
                 })
             }
         },

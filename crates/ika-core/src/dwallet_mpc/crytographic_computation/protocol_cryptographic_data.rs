@@ -21,6 +21,7 @@ use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResul
 use mpc::{GuaranteesOutputDelivery, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
 use twopc_mpc::sign::Protocol;
+use ika_protocol_config::ProtocolConfig;
 
 pub enum ProtocolCryptographicData {
     ImportedKeyVerification {
@@ -71,6 +72,7 @@ pub enum ProtocolCryptographicData {
         public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+        key_version: usize
     },
 
     EncryptedShareVerification {
@@ -332,6 +334,9 @@ impl ProtocolCryptographicData {
                 data: NetworkEncryptionKeyReconfigurationData {},
                 dwallet_network_encryption_key_id,
             } => {
+                let key_version = decryption_key_shares
+                    .get_network_key_version(dwallet_network_encryption_key_id)?;
+                
                 let PublicInput::NetworkEncryptionKeyReconfiguration(public_input) = public_input
                 else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
@@ -359,6 +364,7 @@ impl ProtocolCryptographicData {
                     public_input: public_input.clone(),
                     advance_request,
                     decryption_key_shares: decryption_key_shares.clone(),
+                    key_version
                 }
             }
             ProtocolData::EncryptedShareVerification {

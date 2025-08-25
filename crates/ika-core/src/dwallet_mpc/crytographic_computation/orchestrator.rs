@@ -20,9 +20,11 @@
 use crate::dwallet_mpc::crytographic_computation::{ComputationId, ComputationRequest};
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
+use crate::request_protocol_data::ProtocolData;
 use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
 use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -79,11 +81,15 @@ pub(crate) struct CryptographicComputationsOrchestrator {
     /// advancing this session.
     /// SECURITY NOTICE: *MUST KEEP PRIVATE*.
     root_seed: RootSeed,
+    protocol_config: ProtocolConfig,
 }
 
 impl CryptographicComputationsOrchestrator {
     /// Creates a new orchestrator for cryptographic computations.
-    pub(crate) fn try_new(root_seed: RootSeed) -> DwalletMPCResult<Self> {
+    pub(crate) fn try_new(
+        root_seed: RootSeed,
+        protocol_config: ProtocolConfig,
+    ) -> DwalletMPCResult<Self> {
         let (report_computation_completed_sender, report_computation_completed_receiver) =
             tokio::sync::mpsc::channel(COMPUTATION_UPDATE_CHANNEL_SIZE);
         let mut available_cores_for_computations =
@@ -107,6 +113,7 @@ impl CryptographicComputationsOrchestrator {
             currently_running_cryptographic_computations: HashSet::new(),
             completed_cryptographic_computations: HashSet::new(),
             root_seed,
+            protocol_config,
         })
     }
 
@@ -245,8 +252,12 @@ impl CryptographicComputationsOrchestrator {
         rayon::spawn_fifo(move || {
             let advance_start_time = Instant::now();
 
-            let computation_result =
-                computation_request.compute(computation_id, root_seed, dwallet_mpc_metrics.clone());
+            let computation_result = computation_request.compute(
+                computation_id,
+                root_seed,
+                dwallet_mpc_metrics.clone(),
+                &self.protocol_config,
+            );
 
             let elapsed = advance_start_time.elapsed();
             let elapsed_ms = elapsed.as_millis();
