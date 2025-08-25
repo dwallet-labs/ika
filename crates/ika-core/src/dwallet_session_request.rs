@@ -92,12 +92,6 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
                     signature_algorithm: None,
                 }
             }
-            ProtocolData::DKGFirst { data, .. } => DWalletSessionRequestMetricData {
-                name: data.to_string(),
-                curve: Some(data.curve.clone()),
-                hash_scheme: None,
-                signature_algorithm: None,
-            },
             ProtocolData::DKGSecond { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve.clone()),

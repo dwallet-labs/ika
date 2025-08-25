@@ -3,7 +3,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
+     DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
     DWalletNetworkDKGEncryptionKeyRequestEvent, EncryptedShareVerificationRequestEvent,
     FutureSignRequestEvent, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
@@ -194,18 +194,6 @@ pub fn imported_key_verification_protocol_data(
     })
 }
 
-pub fn dwallet_dkg_first_protocol_data(
-    request_event_data: DWalletDKGFirstRoundRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
-    Ok(ProtocolData::DKGFirst {
-        data: DKGFirstData {
-            curve: request_event_data.curve.try_into()?,
-        },
-        dwallet_id: request_event_data.dwallet_id,
-        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
-    })
-}
-
 pub fn dwallet_dkg_second_protocol_data(
     request_event_data: DWalletDKGSecondRoundRequestEvent,
 ) -> DwalletMPCResult<ProtocolData> {
@@ -318,11 +306,7 @@ pub fn partial_signature_verification_protocol_data(
 impl ProtocolData {
     pub fn network_encryption_key_id(&self) -> Option<ObjectID> {
         match self {
-            ProtocolData::DKGFirst {
-                dwallet_network_encryption_key_id,
-                ..
-            }
-            | ProtocolData::DKGSecond {
+            ProtocolData::DKGSecond {
                 dwallet_network_encryption_key_id,
                 ..
             }

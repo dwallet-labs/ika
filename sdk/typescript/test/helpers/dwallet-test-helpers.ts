@@ -178,7 +178,7 @@ export async function requestTestDKGFirstRound(
 			event.type.includes('DWalletDKGFirstRoundRequestEvent') &&
 			event.type.includes('DWalletSessionEvent')
 				? SessionsManagerModule.DWalletSessionEvent(
-						CoordinatorInnerModule.DWalletDKGFirstRoundRequestEvent,
+						CoordinatorInnerModule.
 					).fromBase64(event.bcs)
 				: null,
 		)

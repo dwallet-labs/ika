@@ -1,7 +1,7 @@
 use crate::SuiDataSenders;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event_to_all_parties,
+     send_start_network_dkg_event_to_all_parties,
 };
 use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
 use ika_types::committee::Committee;
@@ -99,13 +99,7 @@ async fn network_key_received_after_start_event() {
         network_key_bytes.clone(),
         key_id,
     );
-    send_start_dwallet_dkg_first_round_event(
-        epoch_id,
-        &mut test_state.sui_data_senders,
-        [2; 32],
-        2,
-        key_id.unwrap(),
-    );
+    // todo: start dwallet first round
     for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
         dwallet_mpc_service.run_service_loop_iteration().await;
     }

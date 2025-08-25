@@ -4,7 +4,7 @@
 use crate::dwallet_mpc::crytographic_computation::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::crytographic_computation::{ComputationId, MPC_SIGN_SECOND_ROUND};
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
+     DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
@@ -116,43 +116,6 @@ impl Request {
                         // Wrap the public output with its version.
                         let public_output_value = bcs::to_bytes(
                             &VersionedDWalletImportedKeyVerificationOutput::V1(public_output_value),
-                        )?;
-
-                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                            public_output_value,
-                            malicious_parties,
-                            private_output,
-                        })
-                    }
-                }
-            }
-            ProtocolCryptographicData::DKGFirst {
-                public_input,
-                advance_request,
-                ..
-            } => {
-                let result = Party::<DWalletDKGFirstParty>::advance_with_guaranteed_output(
-                    session_id,
-                    self.party_id,
-                    &self.access_structure,
-                    advance_request,
-                    None,
-                    &public_input,
-                    &mut rng,
-                )?;
-
-                match result {
-                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-                    }
-                    GuaranteedOutputDeliveryRoundResult::Finalize {
-                        public_output_value,
-                        malicious_parties,
-                        private_output,
-                    } => {
-                        // Wrap the public output with its version.
-                        let public_output_value = bcs::to_bytes(
-                            &VersionedDwalletDKGFirstRoundPublicOutput::V1(public_output_value),
                         )?;
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {

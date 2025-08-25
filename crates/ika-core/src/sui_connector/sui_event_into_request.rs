@@ -1,6 +1,6 @@
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
-    dwallet_dkg_first_protocol_data, dwallet_dkg_second_protocol_data,
+    dwallet_dkg_second_protocol_data,
     encrypted_share_verification_protocol_data, imported_key_verification_protocol_data,
     make_dwallet_user_secret_key_shares_public_protocol_data,
     network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data,
@@ -9,7 +9,7 @@ use crate::request_protocol_data::{
 use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
+     DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
     DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
     EncryptedShareVerificationRequestEvent, FutureSignRequestEvent, IkaNetworkConfig,
@@ -59,13 +59,6 @@ pub fn sui_event_into_session_request(
             deserialize_event_contents::<MakeDWalletUserSecretKeySharesPublicRequestEvent>(
                 &contents, pulled,
             )?,
-            pulled,
-        )?
-    } else if event_type
-        == DWalletSessionEvent::<DWalletDKGFirstRoundRequestEvent>::type_(packages_config)
-    {
-        dwallet_dkg_first_party_session_request(
-            deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(&contents, pulled)?,
             pulled,
         )?
     } else if event_type
@@ -157,22 +150,6 @@ fn dwallet_imported_key_verification_request_event_session_request(
         protocol_data: imported_key_verification_protocol_data(
             deserialized_event.event_data.clone(),
         )?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-        pulled,
-    })
-}
-
-fn dwallet_dkg_first_party_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletDKGFirstRoundRequestEvent>,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: dwallet_dkg_first_protocol_data(deserialized_event.event_data.clone())?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
@@ -353,40 +330,8 @@ fn deserialize_event_contents<T: DeserializeOwned + DWalletSessionEventTrait>(
 mod tests {
     use crate::sui_connector::sui_event_into_request::deserialize_event_contents;
     use ika_types::messages_dwallet_mpc::{
-        DWalletDKGFirstRoundRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent,
+         DWalletNetworkDKGEncryptionKeyRequestEvent,
     };
-
-    #[test]
-    fn deserializes_pushed_event() {
-        let contents: [u8; 182] = [
-            1, 0, 0, 0, 0, 0, 0, 0, 42, 125, 37, 180, 18, 118, 110, 162, 78, 250, 210, 254, 212,
-            113, 47, 204, 30, 77, 60, 26, 0, 223, 126, 59, 190, 182, 109, 198, 141, 60, 230, 72, 0,
-            5, 0, 0, 0, 0, 0, 0, 0, 32, 65, 13, 165, 26, 198, 19, 129, 225, 102, 181, 38, 127, 82,
-            227, 181, 17, 93, 110, 102, 157, 221, 147, 236, 191, 147, 63, 41, 90, 30, 150, 62, 45,
-            221, 150, 223, 223, 219, 76, 93, 29, 157, 231, 56, 171, 228, 227, 63, 176, 17, 19, 114,
-            143, 222, 30, 131, 125, 77, 147, 172, 250, 221, 12, 213, 49, 102, 7, 52, 69, 166, 204,
-            245, 69, 130, 39, 112, 223, 197, 227, 177, 154, 133, 137, 136, 110, 100, 148, 70, 108,
-            118, 245, 89, 113, 172, 32, 44, 251, 235, 242, 75, 50, 116, 215, 239, 218, 220, 35,
-            219, 184, 115, 253, 169, 181, 154, 210, 255, 84, 236, 13, 165, 22, 194, 214, 134, 253,
-            131, 133, 99, 183, 0, 0, 0, 0,
-        ];
-
-        let res = deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(&contents, false);
-
-        assert!(
-            res.is_ok(),
-            "should deserialize pushed event, got error {:?}",
-            res.err().unwrap()
-        );
-
-        let res = deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(&contents, true);
-
-        assert!(
-            res.is_err(),
-            "should fail to deserialize pushed event as a pulled event, got error {:?}",
-            res.err().unwrap()
-        );
-    }
 
     #[test]
     fn deserializes_pulled_event() {

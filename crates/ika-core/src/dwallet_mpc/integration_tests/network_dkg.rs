@@ -24,7 +24,7 @@ use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::ConsensusTransactionKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletDKGFirstRoundRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent,
+    DBSuiEvent,  DWalletEncryptionKeyReconfigurationRequestEvent,
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, IkaNetworkConfig,
     SessionIdentifier, SessionType,
 };

@@ -1,5 +1,5 @@
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
+     DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
 };
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::network_dkg::DwalletMPCNetworkKeys;
@@ -32,12 +32,6 @@ pub enum ProtocolCryptographicData {
     MakeDWalletUserSecretKeySharesPublic {
         data: MakeDWalletUserSecretKeySharesPublicData,
         protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    },
-
-    DKGFirst {
-        data: DKGFirstData,
-        public_input: <DWalletDKGFirstParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<DWalletDKGFirstParty as mpc::Party>::Message>,
     },
 
     DKGSecond {
@@ -157,33 +151,6 @@ impl ProtocolCryptographicData {
                             encrypted_centralized_secret_share_and_proof.clone(),
                         encryption_key: encryption_key.clone(),
                     },
-                    public_input: public_input.clone(),
-                    advance_request,
-                }
-            }
-            ProtocolData::DKGFirst {
-                data: DKGFirstData { curve },
-                ..
-            } => {
-                let PublicInput::DKGFirst(public_input) = public_input else {
-                    return Err(DwalletMPCError::InvalidSessionPublicInput);
-                };
-
-                let advance_request_result = Party::<DWalletDKGFirstParty>::ready_to_advance(
-                    party_id,
-                    access_structure,
-                    consensus_round,
-                    HashMap::new(),
-                    &serialized_messages_by_consensus_round,
-                )?;
-
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
-                    return Ok(None);
-                };
-
-                ProtocolCryptographicData::DKGFirst {
-                    data: DKGFirstData { curve: *curve },
                     public_input: public_input.clone(),
                     advance_request,
                 }

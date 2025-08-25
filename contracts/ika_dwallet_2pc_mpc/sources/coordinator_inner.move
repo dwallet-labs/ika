@@ -2599,7 +2599,7 @@ public(package) fun respond_dwallet_dkg_first_round(
     let (fee_charged_ika, gas_fee_reimbursement_sui) = self
         .sessions_manager
         .complete_user_session<
-            DWalletDKGFirstRoundRequestEvent,
+
             CompletedDWalletDKGFirstRoundEvent,
             RejectedDWalletDKGFirstRoundEvent,
         >(self.current_epoch, session_sequence_number, status);

@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
-    dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
+    DWalletDKGSecondParty, DWalletImportedKeyVerificationParty, dwallet_dkg_second_public_input,
 };
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_public_input};
 use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
@@ -30,7 +29,6 @@ pub enum PublicInput {
     DWalletImportedKeyVerificationRequest(
         <DWalletImportedKeyVerificationParty as mpc::Party>::PublicInput,
     ),
-    DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
     DKGSecond(<DWalletDKGSecondParty as mpc::Party>::PublicInput),
     Presign(<PresignParty as mpc::Party>::PublicInput),
     Sign(<SignParty as mpc::Party>::PublicInput),
@@ -144,21 +142,6 @@ pub(crate) fn session_input_from_request(
                         &class_groups_decryption_key
                     )?),
                 ))
-        }
-        ProtocolData::DKGFirst {
-            dwallet_network_encryption_key_id,
-            ..
-        } => {
-            let protocol_public_parameters = network_keys.get_protocol_public_parameters(
-                // The event is assign with a Secp256k1 dwallet.
-                // Todo (#473): Support generic network key scheme - take curve from event
-                dwallet_network_encryption_key_id,
-            )?;
-
-            Ok((
-                PublicInput::DKGFirst(dwallet_dkg_first_public_input(&protocol_public_parameters)?),
-                None,
-            ))
         }
         ProtocolData::DKGSecond {
             dwallet_network_encryption_key_id,

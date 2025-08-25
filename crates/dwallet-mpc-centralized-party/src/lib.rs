@@ -107,11 +107,10 @@ pub fn create_dkg_output(
     let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let decentralized_first_round_public_output =
         bcs::from_bytes(&decentralized_first_round_public_output)?;
+    let centralized_party_public_input =
+        (protocol_public_parameters.clone(), session_id).into();
     match decentralized_first_round_public_output {
         VersionedDwalletDKGFirstRoundPublicOutput::V1(decentralized_first_round_public_output) => {
-            let (decentralized_first_round_public_output, _): <<AsyncECDSAProtocol as Protocol>::EncryptionOfSecretKeyShareRoundParty as Party>::PublicOutput =
-                bcs::from_bytes(&decentralized_first_round_public_output)
-                    .context("failed to deserialize decentralized first round DKG output")?;
 
             let session_identifier = CommitmentSizedNumber::from_le_slice(&session_identifier);
 

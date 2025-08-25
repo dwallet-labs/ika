@@ -767,17 +767,6 @@ impl DWalletMPCService {
             "Creating session output message for checkpoint"
         );
         match &session_request.protocol_data {
-            ProtocolData::DKGFirst { dwallet_id, .. } => {
-                let tx = DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
-                    DKGFirstRoundOutput {
-                        dwallet_id: dwallet_id.to_vec(),
-                        output,
-                        session_sequence_number: session_request.session_sequence_number,
-                        rejected,
-                    },
-                );
-                vec![tx]
-            }
             ProtocolData::DKGSecond {
                 dwallet_id,
                 encrypted_secret_share_id,

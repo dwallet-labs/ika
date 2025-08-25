@@ -1,7 +1,7 @@
 use crate::SuiDataSenders;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event_to_all_parties,
+     send_start_network_dkg_event_to_all_parties,
     send_start_network_dkg_event_to_some_parties,
 };
 use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
