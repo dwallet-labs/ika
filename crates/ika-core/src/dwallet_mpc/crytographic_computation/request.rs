@@ -50,8 +50,7 @@ impl Request {
                 dwallet_mpc_metrics,
             )
         } else {
-            self
-                .protocol_cryptographic_data
+            self.protocol_cryptographic_data
                 .compute_native(computation_id.session_identifier, dwallet_mpc_metrics)
         }
     }
