@@ -148,7 +148,7 @@ pub enum ProtocolData {
         data: NetworkEncryptionKeyReconfigurationData,
         dwallet_network_encryption_key_id: ObjectID,
     },
-    
+
     NetworkEncryptionKeyReconfigurationV2 {
         data: NetworkEncryptionKeyReconfigurationData,
         dwallet_network_encryption_key_id: ObjectID,

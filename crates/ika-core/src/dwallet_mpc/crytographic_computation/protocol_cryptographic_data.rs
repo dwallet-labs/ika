@@ -72,6 +72,7 @@ pub enum ProtocolCryptographicData {
         public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+        key_version: usize
     },
 
     EncryptedShareVerification {
@@ -364,6 +365,7 @@ impl ProtocolCryptographicData {
                     public_input: public_input.clone(),
                     advance_request,
                     decryption_key_shares: decryption_key_shares.clone(),
+                    key_version
                 }
             }
             ProtocolData::EncryptedShareVerification {
