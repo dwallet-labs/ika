@@ -366,6 +366,7 @@ impl Request {
                     .map(|(party_id, share)| (*party_id, share.decryption_key_share))
                     .collect::<HashMap<_, _>>();
 
+                // TODO: Understand what should be done to run a v2/v1 reconfiguration. 
                 let result = if key_version == 1
                     && protocol_config.reconfiguration_version() == Some(2)
                 {
