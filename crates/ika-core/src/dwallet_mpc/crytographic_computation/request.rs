@@ -39,20 +39,20 @@ impl Request {
             "Advancing session"
         );
 
-        let Some(mpc_round) = computation_id.mpc_round else {
-            return self
+        if let Some(mpc_round) = computation_id.mpc_round {
+            self.protocol_cryptographic_data.compute_mpc(
+                self.party_id,
+                &self.access_structure,
+                mpc_round,
+                computation_id.consensus_round,
+                computation_id.session_identifier,
+                root_seed,
+                dwallet_mpc_metrics,
+            )
+        } else {
+            self
                 .protocol_cryptographic_data
-                .compute_native(computation_id.session_identifier, dwallet_mpc_metrics);
-        };
-
-        self.protocol_cryptographic_data.compute_mpc(
-            self.party_id,
-            &self.access_structure,
-            mpc_round,
-            computation_id.consensus_round,
-            computation_id.session_identifier,
-            root_seed,
-            dwallet_mpc_metrics,
-        )
+                .compute_native(computation_id.session_identifier, dwallet_mpc_metrics)
+        }
     }
 }

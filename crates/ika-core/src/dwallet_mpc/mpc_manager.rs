@@ -182,30 +182,6 @@ impl DWalletMPCManager {
         consensus_round: u64,
         messages: Vec<DWalletMPCMessage>,
     ) {
-        for (_, session) in self.mpc_sessions.iter_mut() {
-            let ComputationType::MPC {
-                messages_by_consensus_round,
-                ..
-            } = &mut session.computation_type
-            else {
-                error!(
-                    should_never_happen=true,
-                    session_identifier=?session.session_identifier,
-                    computation_type=?session.computation_type,
-                    "tried to add a message to a non-MPC session"
-                );
-                return;
-            };
-            if !messages_by_consensus_round.is_empty() {
-                // Set the `messages_by_consensus_round` for every open MPC session for the current consensus round to an empty map.
-                // This is important, as we count on the `messages_by_consensus_round` to hold entries for all consensus rounds since the session's inception,
-                // when we check for delay.
-                //
-                // Do this only from the first received message, for synchronicity between validators.
-                messages_by_consensus_round.insert(consensus_round, HashMap::new());
-            }
-        }
-
         for message in messages {
             self.handle_message(consensus_round, message);
         }

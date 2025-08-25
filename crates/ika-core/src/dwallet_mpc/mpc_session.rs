@@ -113,8 +113,7 @@ impl DWalletSession {
         self.outputs_by_consensus_round = HashMap::new();
     }
 
-    /// Adds an incoming message, and increases the `current_mpc_round` upon seeing a message
-    /// sent from us for the current round.
+    /// Adds an incoming message.
     /// This guarantees we are in sync, as our state mutates in sync with the view of the
     /// consensus, which is shared with the other validators.
     ///
