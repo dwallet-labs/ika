@@ -8,12 +8,13 @@ use group::PartyID;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
-use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
+use crate::dwallet_mpc::party_id_to_authority_name;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::request_protocol_data::ProtocolData;
 use ika_types::error::{IkaError, IkaResult};
@@ -493,14 +494,61 @@ impl DWalletMPCManager {
         self.dwallet_mpc_metrics
             .add_received_request_start(&(&request.protocol_data).into());
 
+        let new_type = ComputationType::from(&request.protocol_data);
+
         if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
+            match &session.computation_type {
+                // Existing session is MPC; new request must also be MPC (variant-only check)
+                ComputationType::MPC {
+                    messages_by_consensus_round,
+                } => {
+                    if !matches!(new_type, ComputationType::MPC { .. }) {
+                        // Collect all party IDs that sent messages for this session,
+                        // map them to authority names, and deduplicate via HashSet.
+                        let malicious_parties: HashSet<_> = messages_by_consensus_round
+                            .values() // iterate message maps per round
+                            .flat_map(|msgs| msgs.keys()) // keys are &PartyId
+                            .filter_map(|party_id| {
+                                party_id_to_authority_name(*party_id, &self.committee)
+                            })
+                            .collect();
+
+                        warn!(
+                            session_identifier = ?session_identifier,
+                            existing_computation_type = ?session.computation_type,
+                            new_computation_type = ?new_type,
+                            malicious_parties = ?malicious_parties,
+                            "Tried to update an existing session with a different computation type; \
+                             marking senders as malicious."
+                        );
+
+                        if !malicious_parties.is_empty() {
+                            // Convert HashSet -> Vec for the API (if that’s what it expects)
+                            let malicious_vec: Vec<_> = malicious_parties.iter().cloned().collect();
+                            self.record_malicious_actors(&malicious_vec);
+                        }
+                        return;
+                    }
+                }
+
+                // Existing session is Native; new request must also be Native
+                ComputationType::Native => {
+                    if !matches!(new_type, ComputationType::Native) {
+                        error!(
+                            should_never_happen=true,
+                            session_identifier=?session_identifier,
+                            existing_computation_type=?session.computation_type,
+                            new_computation_type=?new_type,
+                            "tried to update an existing session with a different computation type"
+                        );
+                        return;
+                    }
+                }
+            };
+
             session.status = status;
         } else {
-            self.new_session(
-                &session_identifier,
-                status,
-                ComputationType::from(&request.protocol_data),
-            );
+            self.new_session(&session_identifier, status, new_type);
         }
     }
 }

@@ -296,6 +296,18 @@ impl DWalletMPCManager {
             }
         };
 
+        let ComputationType::MPC { .. } = &mut session.computation_type else {
+            error!(
+                session_identifier=?session_identifier,
+                sender_authority=?sender_authority,
+                receiver_authority=?self.validator_name,
+                consensus_round=?consensus_round,
+                "got a message for a non-MPC session",
+            );
+            self.record_malicious_actors(&[sender_authority]);
+            return;
+        };
+
         session.add_message(consensus_round, sender_party_id, message);
     }
 
