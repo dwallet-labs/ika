@@ -324,7 +324,7 @@ impl DWalletMPCManager {
             "Received start MPC flow request for session identifier {:?}",
             session_identifier,
         );
-        let with_request_data = matches!(status, SessionStatus::Active { .. });
+        let active = matches!(status, SessionStatus::Active { .. });
 
         let new_session = DWalletSession::new(
             self.validator_name,
@@ -337,7 +337,7 @@ impl DWalletMPCManager {
         info!(
             party_id=self.party_id,
             authority=?self.validator_name,
-            with_request_data,
+            active,
             ?session_identifier,
             last_session_to_complete_in_current_epoch=?self.last_session_to_complete_in_current_epoch,
             "Adding a new MPC session to the active sessions map",
