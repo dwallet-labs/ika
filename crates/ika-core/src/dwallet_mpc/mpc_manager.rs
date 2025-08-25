@@ -10,8 +10,11 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_session::{
     DWalletMPCSession, DWalletMPCSessionOutput, MPCSessionStatus,
 };
-use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
+use crate::dwallet_mpc::network_dkg::{
+    VersionedNetworkEncryptionKeyPublicData,
+    instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output,
+};
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
@@ -549,27 +552,29 @@ impl DWalletMPCManager {
                     let mut new_key_ids = vec![];
                     for (key_id, res) in results {
                         match res {
-                            Ok(key) => {
-                                if key.epoch != self.epoch_id {
-                                    info!(
-                                        key_id=?key_id,
-                                        epoch=?key.epoch,
-                                        "Network key epoch does not match current epoch, ignoring"
-                                    );
+                            Ok(key) => match key {
+                                VersionedNetworkEncryptionKeyPublicData::V1(key) => {
+                                    if key.epoch != self.epoch_id {
+                                        info!(
+                                            key_id=?key_id,
+                                            epoch=?key.epoch,
+                                            "Network key epoch does not match current epoch, ignoring"
+                                        );
 
-                                    continue;
+                                        continue;
+                                    }
+                                    info!(key_id=?key_id, "Updating (decrypting new shares) network key for key_id");
+                                    if let Err(e) = self
+                                        .network_keys
+                                        .update_network_key(key_id, &key, &self.access_structure)
+                                        .await
+                                    {
+                                        error!(error=?e, key_id=?key_id, "failed to update the network key");
+                                    } else {
+                                        new_key_ids.push(key_id);
+                                    }
                                 }
-                                info!(key_id=?key_id, "Updating (decrypting new shares) network key for key_id");
-                                if let Err(e) = self
-                                    .network_keys
-                                    .update_network_key(key_id, &key, &self.access_structure)
-                                    .await
-                                {
-                                    error!(error=?e, key_id=?key_id, "failed to update the network key");
-                                } else {
-                                    new_key_ids.push(key_id);
-                                }
-                            }
+                            },
                             Err(err) => {
                                 error!(
                                     error=?err,

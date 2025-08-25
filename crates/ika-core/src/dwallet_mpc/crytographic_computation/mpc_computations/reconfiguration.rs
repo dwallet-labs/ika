@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::dwallet_mpc::network_dkg::VersionedNetworkEncryptionKeyPublicData;
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
@@ -9,7 +10,7 @@ use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
 };
 use dwallet_mpc_types::dwallet_mpc::{
-    NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
+    NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataV1,
     SerializedWrappedMPCPublicOutput, VersionedNetworkDkgOutput,
 };
 use group::{PartyID, secp256k1};
@@ -118,7 +119,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_dkg_public_output: &SerializedWrappedMPCPublicOutput,
-) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
+) -> DwalletMPCResult<VersionedNetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
 
@@ -144,14 +145,16 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                     .clone(),
             );
 
-            Ok(NetworkEncryptionKeyPublicData {
-                epoch,
-                state: NetworkDecryptionKeyPublicOutputType::Reconfiguration,
-                latest_public_output: mpc_public_output,
-                decryption_key_share_public_parameters,
-                protocol_public_parameters,
-                network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
-            })
+            Ok(VersionedNetworkEncryptionKeyPublicData::V1(
+                NetworkEncryptionKeyPublicDataV1 {
+                    epoch,
+                    state: NetworkDecryptionKeyPublicOutputType::Reconfiguration,
+                    latest_public_output: mpc_public_output,
+                    decryption_key_share_public_parameters,
+                    protocol_public_parameters,
+                    network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
+                },
+            ))
         }
     }
 }
