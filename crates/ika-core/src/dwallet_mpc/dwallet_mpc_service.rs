@@ -894,7 +894,7 @@ impl DWalletMPCService {
                     .collect();
                 messages
             }
-            ProtocolData::NetworkEncryptionKeyReconfigurationV1 {
+            ProtocolData::NetworkEncryptionKeyReconfiguration {
                 dwallet_network_encryption_key_id,
                 ..
             } => {

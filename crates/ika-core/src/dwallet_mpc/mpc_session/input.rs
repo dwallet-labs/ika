@@ -116,7 +116,7 @@ pub(crate) fn session_input_from_request(
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
             ))
         }
-        ProtocolData::NetworkEncryptionKeyReconfigurationV1 {
+        ProtocolData::NetworkEncryptionKeyReconfiguration {
             dwallet_network_encryption_key_id,
             ..
         } => {

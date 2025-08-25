@@ -331,7 +331,7 @@ impl ProtocolCryptographicData {
                     class_groups_decryption_key,
                 }
             }
-            ProtocolData::NetworkEncryptionKeyReconfigurationV1 {
+            ProtocolData::NetworkEncryptionKeyReconfiguration {
                 data: NetworkEncryptionKeyReconfigurationData {},
                 dwallet_network_encryption_key_id,
             } => {
