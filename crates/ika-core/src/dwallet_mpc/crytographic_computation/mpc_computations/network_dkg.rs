@@ -26,7 +26,7 @@ use group::{OsCsRng, PartyID, secp256k1};
 use homomorphic_encryption::AdditivelyHomomorphicDecryptionKeyShare;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::AsyncProtocol;
+use ika_types::messages_dwallet_mpc::AsyncECDSAProtocol;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
@@ -69,7 +69,7 @@ pub struct ValidatorPrivateDecryptionKeyData {
     /// NOTE: EACH PARTY IN HERE IS A **VIRTUAL PARTY**.
     /// NOTE 2: `ObjectID` is the ID of the network decryption key, not the party.
     pub validator_decryption_key_shares:
-        HashMap<ObjectID, HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>>,
+        HashMap<ObjectID, HashMap<PartyID, <AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>>,
 }
 
 async fn get_decryption_key_shares_from_public_output(
@@ -163,17 +163,19 @@ impl ValidatorPrivateDecryptionKeyData {
     fn convert_secret_key_shares_type_to_decryption_shares(
         secret_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
         public_parameters: &Secp256k1DecryptionKeySharePublicParameters,
-    ) -> DwalletMPCResult<HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>> {
+    ) -> DwalletMPCResult<HashMap<PartyID, <AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>>
+    {
         secret_shares
             .into_iter()
             .map(|(virtual_party_id, secret_key_share)| {
-                let decryption_key_share = <AsyncProtocol as Protocol>::DecryptionKeyShare::new(
-                    virtual_party_id,
-                    secret_key_share,
-                    public_parameters,
-                    &mut OsCsRng,
-                )
-                .map_err(DwalletMPCError::from)?;
+                let decryption_key_share =
+                    <AsyncECDSAProtocol as Protocol>::DecryptionKeyShare::new(
+                        virtual_party_id,
+                        secret_key_share,
+                        public_parameters,
+                        &mut OsCsRng,
+                    )
+                    .map_err(DwalletMPCError::from)?;
 
                 Ok((virtual_party_id, decryption_key_share))
             })
@@ -217,7 +219,8 @@ impl DwalletMPCNetworkKeys {
     pub(crate) fn get_decryption_key_shares(
         &self,
         key_id: &ObjectID,
-    ) -> DwalletMPCResult<HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>> {
+    ) -> DwalletMPCResult<HashMap<PartyID, <AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>>
+    {
         self.validator_private_dec_key_data
             .validator_decryption_key_shares
             .get(key_id)

@@ -9,16 +9,18 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedPublicKeyShareAndProof,
 };
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::AsyncProtocol;
+use ika_types::messages_dwallet_mpc::AsyncECDSAProtocol;
 use mpc::Party;
 use twopc_mpc::dkg::Protocol;
 
 /// This struct represents the initial round of the DKG protocol.
-pub type DWalletDKGFirstParty = <AsyncProtocol as Protocol>::EncryptionOfSecretKeyShareRoundParty;
+pub type DWalletDKGFirstParty =
+    <AsyncECDSAProtocol as Protocol>::;
 pub(crate) type DWalletImportedKeyVerificationParty =
-    <AsyncProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
+    <AsyncECDSAProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
 /// This struct represents the final round of the DKG protocol.
-pub(crate) type DWalletDKGSecondParty = <AsyncProtocol as Protocol>::ProofVerificationRoundParty;
+pub(crate) type DWalletDKGSecondParty =
+    <AsyncECDSAProtocol as Protocol>::ProofVerificationRoundParty;
 
 pub(crate) fn dwallet_dkg_first_public_input(
     protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,

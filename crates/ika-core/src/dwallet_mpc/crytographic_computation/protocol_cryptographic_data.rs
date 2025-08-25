@@ -16,7 +16,7 @@ use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
-use ika_types::messages_dwallet_mpc::AsyncProtocol;
+use ika_types::messages_dwallet_mpc::AsyncECDSAProtocol;
 use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResult};
 use mpc::{GuaranteesOutputDelivery, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
@@ -56,7 +56,8 @@ pub enum ProtocolCryptographicData {
         data: SignData,
         public_input: <SignParty as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<SignParty as mpc::Party>::Message>,
-        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+        decryption_key_shares:
+            HashMap<PartyID, <AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
     },
 
     NetworkEncryptionKeyDkg {
@@ -70,7 +71,8 @@ pub enum ProtocolCryptographicData {
         data: NetworkEncryptionKeyReconfigurationData,
         public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
-        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+        decryption_key_shares:
+            HashMap<PartyID, <AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
     },
 
     EncryptedShareVerification {

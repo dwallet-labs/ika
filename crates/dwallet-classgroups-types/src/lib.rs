@@ -14,9 +14,9 @@ use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, ClassGroupsProof};
 use serde::{Deserialize, Serialize};
 
 pub type ClassGroupsDecryptionKey = [Uint<{ CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS }>; MAX_PRIMES];
-type AsyncProtocol = twopc_mpc::secp256k1::class_groups::AsyncProtocol;
+type AsyncECDSAProtocol = twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol;
 pub type DKGDecentralizedOutput =
-    <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
+    <AsyncECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 pub type SingleEncryptionKeyAndProof = (
     CompactIbqf<{ CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>,
     ClassGroupsProof,

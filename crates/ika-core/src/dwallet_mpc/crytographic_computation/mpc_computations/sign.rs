@@ -13,7 +13,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{AsyncECDSAProtocol, SessionIdentifier};
 use message_digest::message_digest::{Hash, message_digest};
 use mpc::{Party, Weight, WeightedThresholdAccessStructure};
 use rand_core::SeedableRng;
@@ -24,9 +24,10 @@ use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
-pub(crate) type SignParty = <AsyncProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
+pub(crate) type SignParty =
+    <AsyncECDSAProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
 pub(crate) type SignPublicInput =
-    <AsyncProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedPartyPublicInput;
+    <AsyncECDSAProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedPartyPublicInput;
 
 /// Deterministically determine the set of expected decrypters for an optimization of the
 /// threshold decryption in the Sign protocol.
@@ -134,7 +135,7 @@ pub(crate) trait SignPartyPublicInputGenerator: Party {
         message: Vec<u8>,
         presign: &SerializedWrappedMPCPublicOutput,
         centralized_signed_message: &Vec<u8>,
-        decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
+        decryption_key_share_public_parameters: <AsyncECDSAProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
     ) -> DwalletMPCResult<<SignParty as Party>::PublicInput>;
 }
@@ -146,7 +147,7 @@ impl SignPartyPublicInputGenerator for SignParty {
         message: Vec<u8>,
         presign: &SerializedWrappedMPCPublicOutput,
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
-        decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
+        decryption_key_share_public_parameters: <AsyncECDSAProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
     ) -> DwalletMPCResult<<SignParty as Party>::PublicInput> {
         let dkg_output = bcs::from_bytes(dkg_output)?;
@@ -160,18 +161,18 @@ impl SignPartyPublicInputGenerator for SignParty {
                 let public_input = SignPublicInput::from((
                     expected_decrypters,
                     protocol_public_parameters,
-                    bcs::from_bytes::<<AsyncProtocol as twopc_mpc::sign::Protocol>::HashedMessage>(
-                        &message,
-                    )?,
-                    bcs::from_bytes::<<AsyncProtocol as Protocol>::DecentralizedPartyDKGOutput>(
+                    bcs::from_bytes::<
+                        <AsyncECDSAProtocol as twopc_mpc::sign::Protocol>::HashedMessage,
+                    >(&message)?,
+                    bcs::from_bytes::<<AsyncECDSAProtocol as Protocol>::DecentralizedPartyDKGOutput>(
                         &output,
                     )?,
-                    bcs::from_bytes::<<AsyncProtocol as twopc_mpc::presign::Protocol>::Presign>(
+                    bcs::from_bytes::<<AsyncECDSAProtocol as twopc_mpc::presign::Protocol>::Presign>(
                         &presign,
                     )?,
-                    bcs::from_bytes::<<AsyncProtocol as twopc_mpc::sign::Protocol>::SignMessage>(
-                        &centralized_signed_message,
-                    )?,
+                    bcs::from_bytes::<
+                        <AsyncECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage,
+                    >(&centralized_signed_message)?,
                     decryption_key_share_public_parameters,
                 ));
 
@@ -202,11 +203,11 @@ pub(crate) fn verify_partial_signature(
             let VersionedUserSignedMessage::V1(partially_signed_message) = partially_signed_message;
             let message: secp256k1::Scalar = bcs::from_bytes(hashed_message)?;
             let dkg_output = bcs::from_bytes::<
-                <AsyncProtocol as Protocol>::DecentralizedPartyDKGOutput,
+                <AsyncECDSAProtocol as Protocol>::DecentralizedPartyDKGOutput,
             >(&dkg_output)?;
-            let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
+            let presign: <AsyncECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
                 bcs::from_bytes(&presign)?;
-            let partial: <AsyncProtocol as twopc_mpc::sign::Protocol>::SignMessage =
+            let partial: <AsyncECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage =
                 bcs::from_bytes(&partially_signed_message)?;
 
             twopc_mpc::sign::decentralized_party::signature_partial_decryption_round::Party::verify_encryption_of_signature_parts_prehash_class_groups(
