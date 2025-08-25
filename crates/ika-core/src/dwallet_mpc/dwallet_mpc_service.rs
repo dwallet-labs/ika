@@ -118,6 +118,7 @@ impl DWalletMPCService {
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics.clone(),
             sui_data_receivers.clone(),
+            protocol_config.clone()
         );
 
         Self {
@@ -164,6 +165,7 @@ impl DWalletMPCService {
                 0,
                 DWalletMPCMetrics::new(&Registry::new()),
                 sui_data_receivers.clone(),
+                ,
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
@@ -892,7 +894,7 @@ impl DWalletMPCService {
                     .collect();
                 messages
             }
-            ProtocolData::NetworkEncryptionKeyReconfiguration {
+            ProtocolData::NetworkEncryptionKeyReconfigurationV1 {
                 dwallet_network_encryption_key_id,
                 ..
             } => {

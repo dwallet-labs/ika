@@ -47,6 +47,8 @@ pub struct NetworkEncryptionKeyPublicData {
     /// The public output of the `NetworkDKG` process (the first and only one).
     /// On first instance it will be equal to `latest_public_output`.
     pub network_dkg_output: VersionedNetworkDkgOutput,
+    
+    pub key_version: usize
 }
 
 #[repr(u32)]

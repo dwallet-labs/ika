@@ -39,6 +39,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tracing::{debug, error, info, warn};
+use ika_protocol_config::ProtocolConfig;
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -84,6 +85,7 @@ pub(crate) struct DWalletMPCManager {
     network_dkg_third_round_delay: u64,
     decryption_key_reconfiguration_third_round_delay: u64,
     sui_data_receivers: SuiDataReceivers,
+    protocol_config: ProtocolConfig,
 }
 
 impl DWalletMPCManager {
@@ -96,6 +98,7 @@ impl DWalletMPCManager {
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
+        protocol_config: ProtocolConfig,
     ) -> Self {
         Self::try_new(
             validator_name,
@@ -106,6 +109,7 @@ impl DWalletMPCManager {
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics,
             sui_data_receivers,
+            protocol_config
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -123,6 +127,7 @@ impl DWalletMPCManager {
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
+        protocol_config: ProtocolConfig,
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
@@ -162,6 +167,7 @@ impl DWalletMPCManager {
             committee,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
+            protocol_config,
         })
     }
 
@@ -453,6 +459,7 @@ impl DWalletMPCManager {
                         .class_groups_decryption_key
                         .clone(),
                     &self.network_keys,
+                    &self.protocol_config
                 )
                 .ok()?
                 .map(|advance_specific_data| {

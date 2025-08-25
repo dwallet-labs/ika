@@ -21,6 +21,7 @@ use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResul
 use mpc::{GuaranteesOutputDelivery, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
 use twopc_mpc::sign::Protocol;
+use ika_protocol_config::ProtocolConfig;
 
 pub enum ProtocolCryptographicData {
     ImportedKeyVerification {
@@ -96,6 +97,7 @@ impl ProtocolCryptographicData {
         decryption_key_reconfiguration_third_round_delay: u64,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
         decryption_key_shares: &Box<DwalletMPCNetworkKeys>,
+        protocol_config: &ProtocolConfig,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
             ProtocolData::MakeDWalletUserSecretKeySharesPublic {
@@ -328,10 +330,13 @@ impl ProtocolCryptographicData {
                     class_groups_decryption_key,
                 }
             }
-            ProtocolData::NetworkEncryptionKeyReconfiguration {
+            ProtocolData::NetworkEncryptionKeyReconfigurationV1 {
                 data: NetworkEncryptionKeyReconfigurationData {},
                 dwallet_network_encryption_key_id,
             } => {
+                let key_version = decryption_key_shares
+                    .get_network_key_version(dwallet_network_encryption_key_id)?;
+                
                 let PublicInput::NetworkEncryptionKeyReconfiguration(public_input) = public_input
                 else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);

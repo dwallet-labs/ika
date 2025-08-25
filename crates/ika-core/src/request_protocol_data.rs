@@ -144,7 +144,17 @@ pub enum ProtocolData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
-    NetworkEncryptionKeyReconfiguration {
+    NetworkEncryptionKeyReconfigurationV1 {
+        data: NetworkEncryptionKeyReconfigurationData,
+        dwallet_network_encryption_key_id: ObjectID,
+    },
+    
+    NetworkEncryptionKeyReconfigurationV2 {
+        data: NetworkEncryptionKeyReconfigurationData,
+        dwallet_network_encryption_key_id: ObjectID,
+    },
+
+    NetworkEncryptionKeyReconfigurationV1ToV2 {
         data: NetworkEncryptionKeyReconfigurationData,
         dwallet_network_encryption_key_id: ObjectID,
     },
@@ -272,7 +282,7 @@ pub fn network_encryption_key_dkg_protocol_data(
 pub fn network_encryption_key_reconfiguration_protocol_data(
     request_event_data: DWalletEncryptionKeyReconfigurationRequestEvent,
 ) -> DwalletMPCResult<ProtocolData> {
-    Ok(ProtocolData::NetworkEncryptionKeyReconfiguration {
+    Ok(ProtocolData::NetworkEncryptionKeyReconfigurationV1 {
         data: NetworkEncryptionKeyReconfigurationData {},
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
     })
@@ -338,7 +348,7 @@ impl ProtocolData {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolData::NetworkEncryptionKeyReconfiguration {
+            | ProtocolData::NetworkEncryptionKeyReconfigurationV1 {
                 dwallet_network_encryption_key_id,
                 ..
             }
