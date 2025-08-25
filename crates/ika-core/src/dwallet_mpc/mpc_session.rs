@@ -128,7 +128,6 @@ impl DWalletSession {
     pub(crate) fn add_message(
         &mut self,
         consensus_round: u64,
-        mpc_round_number: u64,
         sender_party_id: PartyID,
         message: DWalletMPCMessage,
     ) {
@@ -153,7 +152,7 @@ impl DWalletSession {
             session_identifier=?message.session_identifier,
             from_authority=?message.authority,
             receiving_authority=?self.validator_name,
-            mpc_round=?mpc_round_number,
+            consensus_round=?consensus_round,
             message_size_bytes=?message.message.len(),
             ?mpc_protocol,
             "Received a dWallet MPC message",
@@ -171,22 +170,6 @@ impl DWalletSession {
             );
             return;
         };
-
-        // if sender_party_id == self.party_id && *current_mpc_round <= mpc_round_number {
-        //     // Received a message from ourselves from the consensus, so it's safe to advance the round.
-        //     let new_mpc_round = mpc_round_number + 1;
-        //     info!(
-        //         session_identifier=?message.session_identifier,
-        //         authority=?self.validator_name,
-        //         message_mpc_round=?mpc_round_number,
-        //         current_mpc_round,
-        //         new_mpc_round,
-        //         mpc_protocol,
-        //         "Advancing current MPC round",
-        //     );
-        //
-        //     *current_mpc_round = new_mpc_round;
-        // }
 
         let consensus_round_messages_map = messages_by_consensus_round
             .entry(consensus_round)
