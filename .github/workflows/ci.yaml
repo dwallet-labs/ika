@@ -44,7 +44,7 @@ jobs:
 
   fmt:
     name: Format Check
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
