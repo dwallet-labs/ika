@@ -8,13 +8,12 @@ use group::PartyID;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
+use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
-use std::collections::{HashMap, HashSet};
 use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
-use crate::dwallet_mpc::party_id_to_authority_name;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::request_protocol_data::ProtocolData;
 use ika_types::error::{IkaError, IkaResult};
