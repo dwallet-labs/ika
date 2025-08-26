@@ -40,7 +40,9 @@ use twopc_mpc::class_groups::{
 };
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::sign::verify_signature;
-use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use twopc_mpc::secp256k1::class_groups::{
+    FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, ProtocolPublicParameters,
+};
 
 type AsyncProtocol = twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol;
 type DKGCentralizedParty = <AsyncProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
@@ -106,21 +108,35 @@ pub fn create_dkg_output(
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
     session_identifier: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
+    let mut public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let decentralized_first_round_public_output =
         bcs::from_bytes(&decentralized_first_round_public_output)?;
     match decentralized_first_round_public_output {
         VersionedDwalletDKGFirstRoundPublicOutput::V1(decentralized_first_round_public_output) => {
-            let [decentralized_first_round_public_output, _]: <DWalletDKGFirstParty as Party>::PublicOutput =
+            let [first_part, second_part]: <DWalletDKGFirstParty as Party>::PublicOutput =
                 bcs::from_bytes(&decentralized_first_round_public_output)
                     .context("failed to deserialize decentralized first round DKG output")?;
-
+            let new_pp = ProtocolPublicParameters::new::<
+                { group::secp256k1::SCALAR_LIMBS },
+                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                group::secp256k1::GroupElement,
+            >(
+                // first_part,
+                // second_part,
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                public_parameters
+                    .encryption_scheme_public_parameters
+                    .clone(),
+            );
             let session_identifier = CommitmentSizedNumber::from_le_slice(&session_identifier);
-
             let round_result = DKGCentralizedParty::advance(
                 (),
                 &(),
-                &(public_parameters, session_identifier).into(),
+                &(new_pp, session_identifier).into(),
                 &mut OsCsRng,
             )
             .context("advance() failed on the DKGCentralizedParty")?;
@@ -267,7 +283,7 @@ pub fn advance_centralized_sign_party(
                     (
                         vec![],
                         message,
-                        HashType::KECCAK256,
+                        HashType::try_from(hash_type)?,
                         centralized_public_output.clone().into(),
                         presign,
                         bcs::from_bytes(&protocol_pp)?,
@@ -469,7 +485,7 @@ pub fn verify_secret_share(
                 &protocol_public_params,
                 dkg_output,
                 match secret_share {
-                    VersionedDwalletUserSecretShare::V1(secret_share) =>  bcs::from_bytes(&secret_share)?
+                    VersionedDwalletUserSecretShare::V1(secret_share) => bcs::from_bytes(&secret_share)?
                 },
             )
                 .is_ok())
