@@ -107,7 +107,10 @@ pub fn create_dkg_output(
         bcs::from_bytes(&decentralized_first_round_public_output)?;
     match decentralized_first_round_public_output {
         VersionedDwalletDKGFirstRoundPublicOutput::V1(decentralized_first_round_public_output) => {
-            let (decentralized_first_round_public_output, _): <<AsyncProtocol as Protocol>::EncryptionOfSecretKeyShareRoundParty as Party>::PublicOutput =
+            // let (decentralized_first_round_public_output, _): <<AsyncProtocol as Protocol>::EncryptionOfSecretKeyShareRoundParty as Party>::PublicOutput =
+            //     bcs::from_bytes(&decentralized_first_round_public_output)
+            //         .context("failed to deserialize decentralized first round DKG output")?;
+            let (decentralized_first_round_public_output, _): <twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty as Party>::PublicOutput =
                 bcs::from_bytes(&decentralized_first_round_public_output)
                     .context("failed to deserialize decentralized first round DKG output")?;
 
@@ -190,12 +193,8 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
         >,
     >(decentralized_dkg_output.as_slice())?;
 
-    let does_centralized_and_decentralized_parties_dkg_output_match = centralized_dkg_output
-        .public_key_share
-        == decentralized_dkg_output.centralized_party_public_key_share
-        && centralized_dkg_output.decentralized_party_public_key_share
-            == decentralized_dkg_output.public_key_share
-        && centralized_dkg_output.public_key == decentralized_dkg_output.public_key;
+    let does_centralized_and_decentralized_parties_dkg_output_match =
+        decentralized_dkg_output == centralized_dkg_output;
 
     Ok(does_centralized_and_decentralized_parties_dkg_output_match)
 }

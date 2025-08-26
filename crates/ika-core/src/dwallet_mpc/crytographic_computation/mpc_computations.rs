@@ -34,6 +34,7 @@ use mpc::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
+use ika_protocol_config::ProtocolConfig;
 
 pub(crate) mod dwallet_dkg;
 pub(crate) mod network_dkg;
@@ -264,6 +265,7 @@ impl ProtocolCryptographicData {
         session_identifier: SessionIdentifier,
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        protocol_config: &ProtocolConfig,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
 
@@ -518,6 +520,7 @@ impl ProtocolCryptographicData {
                 public_input,
                 advance_request,
                 decryption_key_shares,
+                key_version,
                 ..
             } => {
                 let decryption_key_shares = decryption_key_shares
@@ -525,17 +528,29 @@ impl ProtocolCryptographicData {
                     .map(|(party_id, share)| (*party_id, share.decryption_key_share))
                     .collect::<HashMap<_, _>>();
 
-                let result =
-                    Party::<ReconfigurationSecp256k1Party>::advance_with_guaranteed_output(
+                let result = if key_version == 1
+                    && protocol_config.reconfiguration_version() == Some(2)
+                {
+                    Party::<twopc_mpc::reconfiguration_v1_to_v2::Party>::advance_with_guaranteed_output(
                         session_id,
-                        party_id,
-                        access_structure,
+                        self.party_id,
+                        &self.access_structure,
                         advance_request,
                         Some(decryption_key_shares.clone()),
                         &public_input,
                         &mut rng,
-                    )?;
-
+                    )?
+                } else {
+                    Party::<ReconfigurationSecp256k1Party>::advance_with_guaranteed_output(
+                        session_id,
+                        self.party_id,
+                        &self.access_structure,
+                        advance_request,
+                        Some(decryption_key_shares.clone()),
+                        &public_input,
+                        &mut rng,
+                    )?
+                };
                 match result {
                     GuaranteedOutputDeliveryRoundResult::Advance { message } => {
                         Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })

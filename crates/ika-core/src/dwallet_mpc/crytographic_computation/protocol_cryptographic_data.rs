@@ -20,6 +20,7 @@ use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
 use twopc_mpc::sign::Protocol;
+use ika_protocol_config::ProtocolConfig;
 
 pub enum ProtocolCryptographicData {
     ImportedKeyVerification {
@@ -70,6 +71,7 @@ pub enum ProtocolCryptographicData {
         public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+        key_version: usize
     },
 
     EncryptedShareVerification {
