@@ -3171,7 +3171,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1145d32e826a7748b69ee8fc62d3e6355ff7f1051df53141e7048162fc90481b"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.104",
 ]
 
 [[package]]
@@ -3523,7 +3523,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3639,7 +3639,7 @@ dependencies = [
  "mpc",
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "twopc_mpc",
 ]
@@ -3650,7 +3650,7 @@ version = "1.0.0"
 dependencies = [
  "class_groups",
  "enum_dispatch",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "thiserror 2.0.12",
  "twopc_mpc",
@@ -4371,7 +4371,7 @@ dependencies = [
  "readonly",
  "rfc6979 0.4.0",
  "rsa",
- "schemars",
+ "schemars 0.8.21",
  "secp256k1",
  "serde",
  "serde_json",
@@ -4456,7 +4456,7 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest 0.12.12",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "serde_json",
  "typenum",
@@ -5914,7 +5914,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "insta",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "serde-env",
  "serde_with",
@@ -6057,7 +6057,7 @@ dependencies = [
  "prometheus",
  "rand 0.8.5",
  "roaring 0.11.1",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "serde-name",
  "serde_json",
@@ -7368,7 +7368,7 @@ dependencies = [
  "dwallet-mpc-types",
  "group 0.1.0",
  "k256 0.14.0-pre.9",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "sha2 0.11.0-rc.0",
  "sha3 0.11.0-rc.0",
@@ -11277,6 +11277,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "schemars"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cd191f9397d57d581cddd31014772520aa448f65ef991055d7f61582c65165f"
+dependencies = [
+ "dyn-clone",
+ "ref-cast",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82d20c4491bc164fa2f6c5d44565947a52ad80b9505d8e36f8d54c27c739fcd0"
+dependencies = [
+ "dyn-clone",
+ "ref-cast",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "schemars_derive"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11588,15 +11612,17 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.12.0"
+version = "3.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6b6f7f2fcb69f747921f79f3926bd1e203fce4fef62c268dd3abfb6d86029aa"
+checksum = "f2c45cd61fefa9db6f254525d46e392b852e0e61d9a1fd36e5bd183450a556d5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
  "hex",
  "indexmap 1.9.3",
  "indexmap 2.9.0",
+ "schemars 0.9.0",
+ "schemars 1.0.4",
  "serde",
  "serde_derive",
  "serde_json",
@@ -11606,9 +11632,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.12.0"
+version = "3.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d00caa5193a3c8362ac2b73be6b9e768aa5a4b2f721d8f4b339600c3cb51f8e"
+checksum = "de90945e6565ce0d9a25098082ed4ee4002e047cb59892c318d66821e14bb30f"
 dependencies = [
  "darling 0.20.10",
  "proc-macro2",
@@ -13194,7 +13220,7 @@ dependencies = [
  "move-binary-format",
  "move-bytecode-utils",
  "move-core-types",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "serde_json",
  "sui-types",
@@ -13298,7 +13324,7 @@ dependencies = [
  "move-disassembler",
  "move-ir-types",
  "mysten-metrics",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "serde_json",
  "serde_with",
@@ -13622,7 +13648,7 @@ version = "1.51.5"
 source = "git+https://github.com/MystenLabs/sui?tag=mainnet-v1.51.5#5a37455265117934dc0b3f56ecb79bd905a4f71e"
 dependencies = [
  "bcs",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "serde_json",
  "versions",
@@ -13723,7 +13749,7 @@ dependencies = [
  "fastcrypto",
  "move-core-types",
  "move-vm-config",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "serde-env",
  "serde_with",
@@ -14213,7 +14239,7 @@ dependencies = [
  "rand 0.8.5",
  "roaring 0.10.10",
  "rustls-pemfile 2.2.0",
- "schemars",
+ "schemars 0.8.21",
  "serde",
  "serde-name",
  "serde_json",
