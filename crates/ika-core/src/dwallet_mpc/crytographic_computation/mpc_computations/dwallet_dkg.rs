@@ -12,6 +12,7 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::Party;
 use twopc_mpc::dkg::Protocol;
+use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
@@ -106,6 +107,20 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
             VersionedCentralizedDKGPublicOutput::V1(first_round_output) => {
                 let first_round_output: <DWalletDKGFirstParty as Party>::PublicOutput =
                     bcs::from_bytes(&first_round_output).map_err(DwalletMPCError::BcsError)?;
+                let new_pp = ProtocolPublicParameters::new::<
+                    { group::secp256k1::SCALAR_LIMBS },
+                    { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                    { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                    group::secp256k1::GroupElement,
+                >(
+                    first_round_output[0].1,
+                    first_round_output[1].1,
+                    first_round_output[0].0,
+                    first_round_output[1].0,
+                    protocol_public_parameters
+                        .encryption_scheme_public_parameters
+                        .clone(),
+                );
 
                 let centralized_party_public_key_share = match centralized_party_public_key_share {
                     VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
@@ -114,11 +129,7 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
                     }
                 };
 
-                let input: Self::PublicInput = (
-                    protocol_public_parameters,
-                    centralized_party_public_key_share,
-                )
-                    .into();
+                let input: Self::PublicInput = (new_pp, centralized_party_public_key_share).into();
 
                 Ok(input)
             }
