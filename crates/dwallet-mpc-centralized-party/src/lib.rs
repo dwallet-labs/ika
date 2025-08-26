@@ -75,6 +75,8 @@ pub fn network_dkg_public_output_to_protocol_pp_inner(
     Ok(bcs::to_bytes(&public_parameters)?)
 }
 
+pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
+
 /// Executes the second phase of the DKG protocol, part of a three-phase DKG flow.
 ///
 /// This function is invoked by the centralized party to produce:
@@ -107,14 +109,14 @@ pub fn create_dkg_output(
         bcs::from_bytes(&decentralized_first_round_public_output)?;
     match decentralized_first_round_public_output {
         VersionedDwalletDKGFirstRoundPublicOutput::V1(decentralized_first_round_public_output) => {
-            let (decentralized_first_round_public_output, _): <<AsyncProtocol as Protocol>::EncryptionOfSecretKeyShareRoundParty as Party>::PublicOutput =
+            let [decentralized_first_round_public_output, _]: <DWalletDKGFirstParty as Party>::PublicOutput =
                 bcs::from_bytes(&decentralized_first_round_public_output)
                     .context("failed to deserialize decentralized first round DKG output")?;
 
             let session_identifier = CommitmentSizedNumber::from_le_slice(&session_identifier);
 
             let round_result = DKGCentralizedParty::advance(
-                decentralized_first_round_public_output,
+                (),
                 &(),
                 &(public_parameters, session_identifier).into(),
                 &mut OsCsRng,
