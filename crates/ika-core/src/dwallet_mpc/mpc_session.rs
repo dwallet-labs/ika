@@ -170,11 +170,12 @@ impl DWalletSession {
             messages_by_consensus_round,
         } = &mut self.computation_type
         else {
-            error!(
-                should_never_happen=true,
+            warn!(
                 session_identifier=?self.session_identifier,
-                computation_type=?self.computation_type,
-                "tried to add a message to a non-MPC session"
+                sender_authority=?message.authority,
+                receiver_authority=?self.validator_name,
+                consensus_round=?consensus_round,
+                "got a message for a non-MPC session",
             );
             return;
         };

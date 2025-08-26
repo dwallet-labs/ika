@@ -296,17 +296,6 @@ impl DWalletMPCManager {
             }
         };
 
-        if !matches!(session.computation_type, SessionComputationType::MPC { .. }) {
-            warn!(
-                session_identifier=?session_identifier,
-                sender_authority=?sender_authority,
-                receiver_authority=?self.validator_name,
-                consensus_round=?consensus_round,
-                "got a message for a non-MPC session",
-            );
-            return;
-        };
-
         session.add_message(consensus_round, sender_party_id, message);
     }
 
