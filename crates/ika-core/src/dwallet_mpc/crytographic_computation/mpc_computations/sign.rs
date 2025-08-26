@@ -211,7 +211,7 @@ pub(crate) fn verify_partial_signature(
 
             twopc_mpc::ecdsa::sign::decentralized_party::signature_partial_decryption_round::Party::verify_encryption_of_signature_parts_prehash_class_groups(
                 protocol_public_parameters,
-                dkg_output,
+                dkg_output.into(),
                 presign,
                 partial,
                 message,
