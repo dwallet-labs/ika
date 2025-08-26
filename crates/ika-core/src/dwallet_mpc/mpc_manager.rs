@@ -37,7 +37,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -297,14 +297,13 @@ impl DWalletMPCManager {
         };
 
         if !matches!(session.computation_type, SessionComputationType::MPC { .. }) {
-            error!(
+            warn!(
                 session_identifier=?session_identifier,
                 sender_authority=?sender_authority,
                 receiver_authority=?self.validator_name,
                 consensus_round=?consensus_round,
                 "got a message for a non-MPC session",
             );
-            self.record_malicious_actors(&[sender_authority]);
             return;
         };
 

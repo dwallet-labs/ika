@@ -498,38 +498,12 @@ impl DWalletMPCManager {
 
         if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
             session.status = status;
-            // Existing session is MPC; new request must also be MPC (variant-only check)
-            if let SessionComputationType::MPC {
-                messages_by_consensus_round,
-            } = &session.computation_type
-            {
+            if let SessionComputationType::MPC { .. } = &session.computation_type {
                 if !matches!(new_type, SessionComputationType::MPC { .. }) {
-                    // Collect all party IDs that sent messages for this session,
-                    // map them to authority names, and deduplicate via HashSet.
-                    let malicious_parties: HashSet<_> = messages_by_consensus_round
-                        .values() // iterate message maps per round
-                        .flat_map(|msgs| msgs.keys()) // keys are &PartyId
-                        .filter_map(|party_id| {
-                            party_id_to_authority_name(*party_id, &self.committee)
-                        })
-                        .collect();
-
-                    warn!(
-                        session_identifier = ?session_identifier,
-                        existing_computation_type = ?session.computation_type,
-                        new_computation_type = ?new_type,
-                        malicious_parties = ?malicious_parties,
-                        "Tried to update an existing session with a different computation type; \
-                         marking senders as malicious."
-                    );
-
                     session.computation_type = new_type;
-                    if !malicious_parties.is_empty() {
-                        // Convert HashSet -> Vec for the API (if that’s what it expects)
-                        let malicious_vec: Vec<_> = malicious_parties.iter().cloned().collect();
-                        self.record_malicious_actors(&malicious_vec);
-                    }
                 }
+            } else {
+                session.computation_type = new_type;
             }
         } else {
             self.new_session(&session_identifier, status, new_type);
