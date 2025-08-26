@@ -14,7 +14,7 @@ use mpc::Party;
 use twopc_mpc::dkg::Protocol;
 
 /// This struct represents the initial round of the DKG protocol.
-pub type DWalletDKGFirstParty = <AsyncProtocol as Protocol>::EncryptionOfSecretKeyShareRoundParty;
+pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
 pub(crate) type DWalletImportedKeyVerificationParty =
     <AsyncProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
 /// This struct represents the final round of the DKG protocol.
@@ -74,7 +74,20 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
     fn generate_public_input(
         protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
     ) -> DwalletMPCResult<<DWalletDKGFirstParty as Party>::PublicInput> {
-        let input: Self::PublicInput = protocol_public_parameters;
+        let secp256k1_public_input =
+            twopc_mpc::dkg::encryption_of_secret_key_share::PublicInput::<
+                group::secp256k1::scalar::PublicParameters,
+                group::secp256k1::group_element::PublicParameters,
+                class_groups::Secp256k1EncryptionSchemePublicParameters,
+            > {
+                scalar_group_public_parameters:
+                group::secp256k1::scalar::PublicParameters::default(),
+                group_public_parameters:
+                group::secp256k1::group_element::PublicParameters::default(),
+                encryption_scheme_public_parameters:
+                protocol_public_parameters.encryption_scheme_public_parameters,
+            };
+        let input: Self::PublicInput = secp256k1_public_input;
         Ok(input)
     }
 }
