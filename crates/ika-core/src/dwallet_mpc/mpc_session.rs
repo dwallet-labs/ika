@@ -8,18 +8,20 @@ use group::PartyID;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
+use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
-use std::collections::{HashMap, HashSet};
 use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
+use crate::request_protocol_data::ProtocolData;
 use ika_types::error::{IkaError, IkaResult};
 pub(crate) use input::{PublicInput, session_input_from_request};
 use std::fmt::{Debug, Formatter};
 use std::{fmt, mem};
 use tokio::sync::broadcast;
+
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) struct DWalletMPCSessionOutput {
     pub(crate) output: Vec<DWalletCheckpointMessageKind>,
@@ -28,58 +30,96 @@ pub(crate) struct DWalletMPCSessionOutput {
 
 /// A dWallet MPC session.
 #[derive(Clone)]
-pub(crate) struct DWalletMPCSession {
+pub(crate) struct DWalletSession {
     pub(super) session_identifier: SessionIdentifier,
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) party_id: PartyID,
 
     /// The status of the MPC session.
-    pub(super) status: MPCSessionStatus,
+    pub(super) status: SessionStatus,
 
-    /// The current MPC round number of the session.
-    /// Starts at `1` and increments after each successful advance of the session.
-    /// In round `1` We start the flow, without messages, from the event trigger.
-    pub(super) current_mpc_round: u64,
-
-    /// A map between an MPC round, and the list of consensus rounds at which we tried to
-    /// advance and failed.
-    /// The total number of attempts to advance that failed in the session can be
-    /// computed by summing the number of failed attempts.
-    pub(crate) mpc_round_to_threshold_not_reached_consensus_rounds: HashMap<u64, HashSet<u64>>,
-
-    /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
-    /// Used to build the input of messages to advance each round of the session.
-    pub(super) messages_by_consensus_round: HashMap<u64, HashMap<PartyID, MPCMessage>>,
+    pub(super) computation_type: SessionComputationType,
 
     outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
 }
 
-impl DWalletMPCSession {
+/// Possible statuses of a session:
+///
+/// - `WaitingForSessionRequest`:
+///   Either a message was received before the session request was received
+///   or session loaded from tables.
+///
+/// - `Active`:
+///   The session is currently running, and new messages are forwarded to it
+///   for processing.
+///
+/// - `Finished`:
+///   The session has been removed from the active instances.
+///   Incoming messages are no longer forwarded to the session,
+///   but they are not flagged as malicious.
+///
+/// - `Failed`:
+///   The session has failed due to an unrecoverable error.
+///   This status indicates that the session cannot proceed further.
+#[derive(Clone, PartialEq)]
+pub enum SessionStatus {
+    Active {
+        public_input: PublicInput,
+        private_input: MPCPrivateInput,
+        request: DWalletSessionRequest,
+    },
+    WaitingForSessionRequest,
+    ComputationCompleted,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug)]
+pub enum SessionComputationType {
+    MPC {
+        /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
+        /// Used to build the input of messages to advance each round of the session.
+        messages_by_consensus_round: HashMap<u64, HashMap<PartyID, MPCMessage>>,
+    },
+    Native,
+}
+
+#[derive(Clone, Debug)]
+pub enum ComputationResultData {
+    MPC { mpc_round: u64 },
+    Native,
+}
+
+impl DWalletSession {
     pub(crate) fn new(
         validator_name: AuthorityPublicKeyBytes,
-        status: MPCSessionStatus,
+        status: SessionStatus,
         session_identifier: SessionIdentifier,
         party_id: PartyID,
+        computation_type: SessionComputationType,
     ) -> Self {
         Self {
             status,
-            messages_by_consensus_round: HashMap::new(),
             outputs_by_consensus_round: HashMap::new(),
             session_identifier,
-            current_mpc_round: 1,
-            mpc_round_to_threshold_not_reached_consensus_rounds: HashMap::new(),
             party_id,
             validator_name,
+            computation_type,
         }
     }
 
     pub(crate) fn clear_data(&mut self) {
-        self.messages_by_consensus_round = HashMap::new();
+        match &mut self.computation_type {
+            SessionComputationType::MPC {
+                messages_by_consensus_round,
+                ..
+            } => messages_by_consensus_round.clear(),
+            SessionComputationType::Native => {}
+        }
         self.outputs_by_consensus_round = HashMap::new();
     }
 
-    /// Adds an incoming message, and increases the `current_mpc_round` upon seeing a message
-    /// sent from us for the current round.
+    /// Adds an incoming message.
     /// This guarantees we are in sync, as our state mutates in sync with the view of the
     /// consensus, which is shared with the other validators.
     ///
@@ -93,16 +133,18 @@ impl DWalletMPCSession {
     pub(crate) fn add_message(
         &mut self,
         consensus_round: u64,
-        mpc_round_number: u64,
         sender_party_id: PartyID,
         message: DWalletMPCMessage,
     ) {
         let mpc_protocol = match &self.status {
-            MPCSessionStatus::Active { request, .. } => {
+            SessionStatus::Active { request, .. } => {
                 DWalletSessionRequestMetricData::from(&request.protocol_data).to_string()
             }
-            MPCSessionStatus::WaitingForSessionRequest => {
+            SessionStatus::WaitingForSessionRequest => {
                 "Unknown - waiting for session request".to_string()
+            }
+            SessionStatus::ComputationCompleted => {
+                "Unknown - session computation completed".to_string()
             }
             _ => {
                 error!(
@@ -118,65 +160,33 @@ impl DWalletMPCSession {
             session_identifier=?message.session_identifier,
             from_authority=?message.authority,
             receiving_authority=?self.validator_name,
-            mpc_round=?mpc_round_number,
+            consensus_round=?consensus_round,
             message_size_bytes=?message.message.len(),
             ?mpc_protocol,
             "Received a dWallet MPC message",
         );
 
-        if sender_party_id == self.party_id && self.current_mpc_round <= mpc_round_number {
-            // Received a message from ourselves from the consensus, so it's safe to advance the round.
-            let new_mpc_round = mpc_round_number + 1;
-            info!(
-                session_identifier=?message.session_identifier,
-                authority=?self.validator_name,
-                message_mpc_round=?mpc_round_number,
-                current_mpc_round=self.current_mpc_round,
-                new_mpc_round,
-                mpc_protocol,
-                "Advancing current MPC round",
+        let SessionComputationType::MPC {
+            messages_by_consensus_round,
+        } = &mut self.computation_type
+        else {
+            warn!(
+                session_identifier=?self.session_identifier,
+                sender_authority=?message.authority,
+                receiver_authority=?self.validator_name,
+                consensus_round=?consensus_round,
+                "got a message for a non-MPC session",
             );
+            return;
+        };
 
-            self.current_mpc_round = new_mpc_round;
-        }
-
-        let consensus_round_messages_map = self
-            .messages_by_consensus_round
+        let consensus_round_messages_map = messages_by_consensus_round
             .entry(consensus_round)
             .or_default();
 
         if let Vacant(e) = consensus_round_messages_map.entry(sender_party_id) {
             e.insert(message.message);
         }
-    }
-
-    /// Records a threshold not reached error that we got when advancing
-    /// this session with messages up to `consensus_round`.
-    pub(crate) fn record_threshold_not_reached(&mut self, consensus_round: u64) {
-        let MPCSessionStatus::Active { request, .. } = &self.status else {
-            error!(
-                should_never_happen=true,
-                session_identifier=?self.session_identifier,
-                "tried to record threshold not reached for a non-active MPC session"
-            );
-            return;
-        };
-
-        let protocol_name =
-            DWalletSessionRequestMetricData::from(&request.protocol_data).to_string();
-
-        error!(
-            mpc_protocol=?protocol_name,
-            validator=?self.validator_name,
-            session_identifier=?self.session_identifier,
-            mpc_round=?self.current_mpc_round,
-            "threshold was not reached for session"
-        );
-
-        self.mpc_round_to_threshold_not_reached_consensus_rounds
-            .entry(self.current_mpc_round)
-            .or_default()
-            .insert(consensus_round);
     }
 
     /// Add an output received from a party for the current consensus round.
@@ -204,9 +214,9 @@ impl DWalletMPCSession {
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
                 authority=?self.validator_name,
-                current_mpc_round=self.current_mpc_round,
+                computation_type=?self.computation_type,
                 status =? self.status,
-                "Received our output from consensus, marking MPC session as computation completed",
+                "Received our output from consensus, marking session as computation completed",
             );
 
             self.mark_mpc_session_as_computation_completed()
@@ -232,68 +242,78 @@ impl DWalletMPCSession {
     }
 
     pub(crate) fn mark_mpc_session_as_completed(&mut self) {
-        self.status = MPCSessionStatus::Completed;
+        self.status = SessionStatus::Completed;
     }
 
     pub(crate) fn mark_mpc_session_as_computation_completed(&mut self) {
-        self.status = MPCSessionStatus::ComputationCompleted;
+        self.status = SessionStatus::ComputationCompleted;
     }
 
     pub(crate) fn request_metric_data(&self) -> Option<DWalletSessionRequestMetricData> {
-        let MPCSessionStatus::Active { request, .. } = &self.status else {
+        let SessionStatus::Active { request, .. } = &self.status else {
             return None;
         };
         Some((&request.protocol_data).into())
     }
 }
 
-/// Possible statuses of an MPC Session:
-///
-/// - `Pending`:
-///   The instance is queued because the maximum number of active MPC instances
-///   [`DWalletMPCManager::max_active_mpc_instances`] has been reached.
-///   It is waiting for active instances to complete before activation.
-///
-/// - `Active`:
-///   The session is currently running, and new messages are forwarded to it
-///   for processing.
-///
-/// - `Finished`:
-///   The session has been removed from the active instances.
-///   Incoming messages are no longer forwarded to the session,
-///   but they are not flagged as malicious.
-///
-/// - `Failed`:
-///   The session has failed due to an unrecoverable error.
-///   This status indicates that the session cannot proceed further.
-#[derive(Clone, PartialEq)]
-pub enum MPCSessionStatus {
-    Active {
-        public_input: PublicInput,
-        private_input: MPCPrivateInput,
-        request: DWalletSessionRequest,
-    },
-    WaitingForSessionRequest,
-    ComputationCompleted,
-    Completed,
-    Failed,
-}
-
-impl fmt::Display for MPCSessionStatus {
+impl fmt::Display for SessionStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MPCSessionStatus::Active { .. } => write!(f, "Active"),
-            MPCSessionStatus::WaitingForSessionRequest => write!(f, "Waiting for Session Request"),
-            MPCSessionStatus::ComputationCompleted => write!(f, "Computation Completed"),
-            MPCSessionStatus::Completed => write!(f, "Completed"),
-            MPCSessionStatus::Failed => write!(f, "Failed"),
+            SessionStatus::Active { .. } => write!(f, "Active"),
+            SessionStatus::WaitingForSessionRequest => write!(f, "Waiting for Session Request"),
+            SessionStatus::ComputationCompleted => write!(f, "Computation Completed"),
+            SessionStatus::Completed => write!(f, "Completed"),
+            SessionStatus::Failed => write!(f, "Failed"),
         }
     }
 }
 
-impl Debug for MPCSessionStatus {
+impl Debug for SessionStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
+    }
+}
+
+impl From<&ProtocolData> for SessionComputationType {
+    fn from(value: &ProtocolData) -> Self {
+        match value {
+            ProtocolData::MakeDWalletUserSecretKeySharesPublic { .. }
+            | ProtocolData::PartialSignatureVerification { .. } => SessionComputationType::Native,
+            _ => SessionComputationType::MPC {
+                messages_by_consensus_round: HashMap::new(),
+            },
+        }
+    }
+}
+
+impl TryFrom<&DWalletCheckpointMessageKind> for SessionComputationType {
+    type Error = ();
+
+    fn try_from(value: &DWalletCheckpointMessageKind) -> Result<Self, Self::Error> {
+        match value {
+            DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(_)
+            | DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(_) => {
+                Ok(SessionComputationType::Native)
+            }
+
+            DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(_)
+            | DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletPresign(_)
+            | DWalletCheckpointMessageKind::RespondDWalletSign(_)
+            | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(_) => {
+                Ok(SessionComputationType::MPC {
+                    messages_by_consensus_round: HashMap::new(),
+                })
+            }
+
+            DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(_)
+            | DWalletCheckpointMessageKind::SetGasFeeReimbursementSuiSystemCallValue(_)
+            | DWalletCheckpointMessageKind::EndOfPublish => Err(()),
+        }
     }
 }
 
@@ -378,7 +398,7 @@ impl DWalletMPCManager {
             warn!(
                 session_identifier=?session_identifier,
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                session_type=?request.session_type,
+                session_source=?request.session_type,
                 event_epoch=?request.epoch,
                 "received an event for a different epoch, skipping"
             );
@@ -398,7 +418,7 @@ impl DWalletMPCManager {
                     // so we add it to the queue.
                     debug!(
                         session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                        session_type=?request.session_type,
+                        session_source=?request.session_type,
                         network_encryption_key_id=?network_encryption_key_id,
                         "Adding request to pending for the network key"
                     );
@@ -426,7 +446,7 @@ impl DWalletMPCManager {
             // so we have to add this request to the pending queue until it arrives.
             debug!(
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                session_type=?request.session_type,
+                session_source=?request.session_type,
                 "Adding request to pending for the next epoch active committee"
             );
 
@@ -444,7 +464,7 @@ impl DWalletMPCManager {
         }
 
         if let Some(session) = self.mpc_sessions.get(&session_identifier) {
-            if !matches!(session.status, MPCSessionStatus::WaitingForSessionRequest) {
+            if !matches!(session.status, SessionStatus::WaitingForSessionRequest) {
                 // The corresponding session already has its data set, nothing to do.
                 return;
             }
@@ -465,7 +485,7 @@ impl DWalletMPCManager {
             }
         };
 
-        let status = MPCSessionStatus::Active {
+        let status = SessionStatus::Active {
             public_input,
             private_input,
             request: request.clone(),
@@ -474,10 +494,19 @@ impl DWalletMPCManager {
         self.dwallet_mpc_metrics
             .add_received_request_start(&(&request.protocol_data).into());
 
+        let new_type = SessionComputationType::from(&request.protocol_data);
+
         if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
             session.status = status;
+            if let SessionComputationType::MPC { .. } = &session.computation_type {
+                if !matches!(new_type, SessionComputationType::MPC { .. }) {
+                    session.computation_type = new_type;
+                }
+            } else {
+                session.computation_type = new_type;
+            }
         } else {
-            self.new_mpc_session(&session_identifier, Some(request), status);
+            self.new_session(&session_identifier, status, new_type);
         }
     }
 }
