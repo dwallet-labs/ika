@@ -122,12 +122,10 @@ pub fn create_dkg_output(
                 SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
                 group::secp256k1::GroupElement,
             >(
-                // first_part,
-                // second_part,
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
+                first_part.1,
+                second_part.1,
+                first_part.0,
+                second_part.0,
                 public_parameters
                     .encryption_scheme_public_parameters
                     .clone(),
@@ -179,7 +177,7 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
                 SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
                 SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
                 group::secp256k1::GroupElement,
-            >::V2 {
+            >::UniversalPublicDKGOutput {
                 output: dkg_output,
                 ..
             } = dkg_output
@@ -261,7 +259,7 @@ pub fn advance_centralized_sign_party(
                 SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
                 SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
                 group::secp256k1::GroupElement,
-            >::V2 {
+            >::UniversalPublicDKGOutput {
                 output: decentralized_output,
                 ..
             } = decentralized_output
