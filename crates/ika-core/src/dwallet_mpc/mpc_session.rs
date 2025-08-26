@@ -199,7 +199,6 @@ impl DWalletSession {
         consensus_round: u64,
         sender_party_id: PartyID,
         output: DWalletMPCOutput,
-        session_computation_type: &SessionComputationType,
     ) {
         debug!(
             session_identifier=?output.session_identifier,
@@ -215,9 +214,9 @@ impl DWalletSession {
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
                 authority=?self.validator_name,
-                computation_type=?session_computation_type,
+                computation_type=?self.computation_type,
                 status =? self.status,
-                "Received our output from consensus, marking MPC session as computation completed",
+                "Received our output from consensus, marking session as computation completed",
             );
 
             self.mark_mpc_session_as_computation_completed()

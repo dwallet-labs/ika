@@ -593,20 +593,6 @@ impl DWalletMPCManager {
             return None;
         };
 
-        // All output kinds are constructed from the same type, so we can safely use the first one.
-        let Ok(session_computation_type) = SessionComputationType::try_from(
-            output.output.first().expect("output must have a kind"),
-        ) else {
-            error!(
-                session_identifier=?session_identifier,
-                sender_authority=?sender_authority,
-                receiver_authority=?self.validator_name,
-                "got a output for an invalid session type",
-            );
-
-            return None;
-        };
-
         let session = match self.mpc_sessions.entry(session_identifier) {
             Entry::Occupied(session) => session.into_mut(),
             Entry::Vacant(_) => {
@@ -616,6 +602,20 @@ impl DWalletMPCManager {
                     receiver_authority=?self.validator_name,
                     "received a output for an MPC session before receiving an event requesting it"
                 );
+
+                // All output kinds are constructed from the same type, so we can safely use the first one.
+                let Ok(session_computation_type) = SessionComputationType::try_from(
+                    output.output.first().expect("output must have a kind"),
+                ) else {
+                    error!(
+                        session_identifier=?session_identifier,
+                        sender_authority=?sender_authority,
+                        receiver_authority=?self.validator_name,
+                        "got a output for an invalid computation type",
+                    );
+
+                    return None;
+                };
 
                 // This can happen if the session is not in the active sessions,
                 // but we still want to store the message.
@@ -630,12 +630,7 @@ impl DWalletMPCManager {
             }
         };
 
-        session.add_output(
-            consensus_round,
-            sender_party_id,
-            output,
-            &session_computation_type,
-        );
+        session.add_output(consensus_round, sender_party_id, output);
 
         let outputs_by_consensus_round = session.outputs_by_consensus_round().clone();
 
