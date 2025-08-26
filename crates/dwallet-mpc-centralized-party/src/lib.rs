@@ -116,7 +116,9 @@ pub fn create_dkg_output(
             let [first_part, second_part]: <DWalletDKGFirstParty as Party>::PublicOutput =
                 bcs::from_bytes(&decentralized_first_round_public_output)
                     .context("failed to deserialize decentralized first round DKG output")?;
-            let new_pp = ProtocolPublicParameters::new::<
+            // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.
+            // TODO (#1470): Use one network round in the dWallet DKG flow.
+            let protocol_pp_with_decentralized_dkg_output = ProtocolPublicParameters::new::<
                 { group::secp256k1::SCALAR_LIMBS },
                 SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
                 SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -134,7 +136,11 @@ pub fn create_dkg_output(
             let round_result = DKGCentralizedParty::advance(
                 (),
                 &(),
-                &(new_pp, session_identifier).into(),
+                &(
+                    protocol_pp_with_decentralized_dkg_output,
+                    session_identifier,
+                )
+                    .into(),
                 &mut OsCsRng,
             )
             .context("advance() failed on the DKGCentralizedParty")?;
