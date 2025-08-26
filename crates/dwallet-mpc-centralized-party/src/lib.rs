@@ -35,7 +35,7 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
 use message_digest::message_digest::message_digest;
-use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGDecentralizedPartyOutput};
+use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput};
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 use twopc_mpc::ecdsa::sign::verify_signature;
@@ -226,6 +226,12 @@ pub fn advance_centralized_sign_party(
             let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
                 centralized_party_secret_key_share;
             let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&decentralized_party_dkg_public_output)?;
+            let DKGDecentralizedPartyVersionedOutput::V2 {
+                output: decentralized_output,
+                ..
+            } = decentralized_output else {
+                panic!("whoaaa");
+            };
             let centralized_public_output = twopc_mpc::class_groups::DKGCentralizedPartyOutput::<
                 { secp256k1::SCALAR_LIMBS },
                 secp256k1::GroupElement,
