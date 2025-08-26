@@ -83,18 +83,12 @@ pub(crate) fn sign_session_public_input(
     <SignParty as SignPartyPublicInputGenerator>::generate_public_input(
         protocol_public_parameters,
         dwallet_decentralized_public_output,
-        bcs::to_bytes(
-            &message_digest(
-                &message.clone(),
-                &Hash::try_from(hash_scheme)
-                    .map_err(|e| DwalletMPCError::SignatureVerificationFailed(e.to_string()))?,
-            )
-            .map_err(|e| DwalletMPCError::SignatureVerificationFailed(e.to_string()))?,
-        )?,
+        message,
         presign,
         message_centralized_signature,
         decryption_pp,
         expected_decrypters,
+        hash_scheme,
     )
 }
 
@@ -136,6 +130,7 @@ pub(crate) trait SignPartyPublicInputGenerator: Party {
         centralized_signed_message: &Vec<u8>,
         decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
+        hash_scheme: Hash,
     ) -> DwalletMPCResult<<SignParty as Party>::PublicInput>;
 }
 
@@ -148,6 +143,7 @@ impl SignPartyPublicInputGenerator for SignParty {
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
+        hash_scheme: Hash,
     ) -> DwalletMPCResult<<SignParty as Party>::PublicInput> {
         let dkg_output = bcs::from_bytes(dkg_output)?;
         let presign = bcs::from_bytes(presign)?;
@@ -162,7 +158,8 @@ impl SignPartyPublicInputGenerator for SignParty {
                     protocol_public_parameters,
                     vec![],
                     message,
-                    HashType::KECCAK256,
+                    HashType::try_from(hash_scheme as u32)
+                        .map_err(|_| DwalletMPCError::InvalidSessionPublicInput)?,
                     bcs::from_bytes::<<AsyncProtocol as Protocol>::DecentralizedPartyDKGOutput>(
                         &output,
                     )?,
