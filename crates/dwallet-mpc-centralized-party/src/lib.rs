@@ -270,7 +270,7 @@ pub fn advance_centralized_sign_party(
                 ..
             } = decentralized_output
             else {
-                return Err(anyhow!("whoaaa 1"));
+                return Err(anyhow!("Only universal DKG output is supported"));
             };
             let centralized_public_output = twopc_mpc::class_groups::DKGCentralizedPartyOutput::<
                 { secp256k1::SCALAR_LIMBS },
