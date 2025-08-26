@@ -50,6 +50,7 @@ impl Request {
                 computation_id.session_identifier,
                 root_seed,
                 dwallet_mpc_metrics,
+                protocol_config,
             )
         } else {
             self.protocol_cryptographic_data
