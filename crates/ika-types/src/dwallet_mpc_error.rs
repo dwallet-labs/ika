@@ -174,6 +174,9 @@ pub enum DwalletMPCError {
 
     #[error("Invalid dWallet protocol type")]
     InvalidDWalletProtocolType,
+    
+    #[error("Invalid hash scheme")]
+    InvalidHashScheme,
 }
 
 /// A wrapper type for the result of a runtime operation.

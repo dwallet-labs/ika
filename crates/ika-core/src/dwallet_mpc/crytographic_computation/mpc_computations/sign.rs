@@ -159,7 +159,7 @@ impl SignPartyPublicInputGenerator for SignParty {
                     vec![],
                     message,
                     HashType::try_from(hash_scheme as u32)
-                        .map_err(|_| DwalletMPCError::InvalidSessionPublicInput)?,
+                        .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
                     bcs::from_bytes::<<AsyncProtocol as Protocol>::DecentralizedPartyDKGOutput>(
                         &output,
                     )?,
