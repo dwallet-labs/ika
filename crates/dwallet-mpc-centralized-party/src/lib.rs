@@ -38,7 +38,7 @@ use message_digest::message_digest::message_digest;
 use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGDecentralizedPartyOutput};
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
-use twopc_mpc::sign::verify_signature;
+use twopc_mpc::ecdsa::sign::verify_signature;
 
 type AsyncProtocol = twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol;
 type DKGCentralizedParty = <AsyncProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
