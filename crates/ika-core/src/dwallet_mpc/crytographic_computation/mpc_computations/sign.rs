@@ -209,7 +209,7 @@ pub(crate) fn verify_partial_signature(
             let partial: <AsyncProtocol as twopc_mpc::sign::Protocol>::SignMessage =
                 bcs::from_bytes(&partially_signed_message)?;
 
-            twopc_mpc::sign::decentralized_party::signature_partial_decryption_round::Party::verify_encryption_of_signature_parts_prehash_class_groups(
+            twopc_mpc::ecdsa::sign::decentralized_party::signature_partial_decryption_round::Party::verify_encryption_of_signature_parts_prehash_class_groups(
                 protocol_public_parameters,
                 dkg_output,
                 presign,
