@@ -22,7 +22,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedImportedDwalletOutgoingMessage, VersionedNetworkDkgOutput, VersionedPresignOutput,
     VersionedPublicKeyShareAndProof, VersionedSignOutput, VersionedUserSignedMessage,
 };
-use group::{CyclicGroupElement, GroupElement, OsCsRng, Samplable, secp256k1};
+use group::{CyclicGroupElement, GroupElement, HashType, OsCsRng, Samplable, secp256k1};
 use homomorphic_encryption::{
     AdditivelyHomomorphicDecryptionKey, AdditivelyHomomorphicEncryptionKey,
     GroupsPublicParametersAccessors,
@@ -240,7 +240,12 @@ pub fn advance_centralized_sign_party(
             let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
                 centralized_party_secret_key_share;
             let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&decentralized_party_dkg_public_output)?;
-            let DKGDecentralizedPartyVersionedOutput::V2 {
+            let DKGDecentralizedPartyVersionedOutput::<
+                { group::secp256k1::SCALAR_LIMBS },
+                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                group::secp256k1::GroupElement,
+            >::V2 {
                 output: decentralized_output,
                 ..
             } = decentralized_output
@@ -257,13 +262,13 @@ pub fn advance_centralized_sign_party(
             };
             let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
                 bcs::from_bytes(&presign)?;
-            let hashed_message = message_digest(&message, &hash_type.try_into()?)
-                .context("Message digest failed")?;
             let centralized_party_public_input =
                 <AsyncProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from(
                     (
-                        hashed_message,
-                        centralized_public_output.clone(),
+                        vec![],
+                        message,
+                        HashType::KECCAK256,
+                        centralized_public_output.clone().into(),
                         presign,
                         bcs::from_bytes(&protocol_pp)?,
                     ),
