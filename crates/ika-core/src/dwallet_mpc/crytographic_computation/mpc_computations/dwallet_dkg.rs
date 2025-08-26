@@ -18,7 +18,7 @@ pub type DWalletDKGFirstParty = <AsyncProtocol as Protocol>::EncryptionOfSecretK
 pub(crate) type DWalletImportedKeyVerificationParty =
     <AsyncProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
 /// This struct represents the final round of the DKG protocol.
-pub(crate) type DWalletDKGSecondParty = <AsyncProtocol as Protocol>::ProofVerificationRoundParty;
+pub(crate) type DWalletDKGSecondParty = <AsyncProtocol as Protocol>::DKGDecentralizedParty;
 
 pub(crate) fn dwallet_dkg_first_public_input(
     protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,

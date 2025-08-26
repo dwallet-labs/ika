@@ -399,6 +399,10 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                     { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                     secp256k1::GroupElement,
                 >(
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
                     decryption_key_share_public_parameters
                         .encryption_scheme_public_parameters
                         .clone(),

@@ -11,7 +11,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedUserSignedMessage,
 };
-use group::PartyID;
+use group::{HashType, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
 use message_digest::message_digest::{Hash, message_digest};
@@ -160,9 +160,9 @@ impl SignPartyPublicInputGenerator for SignParty {
                 let public_input = SignPublicInput::from((
                     expected_decrypters,
                     protocol_public_parameters,
-                    bcs::from_bytes::<<AsyncProtocol as twopc_mpc::sign::Protocol>::HashedMessage>(
-                        &message,
-                    )?,
+                    vec![],
+                    message,
+                    HashType::KECCAK256,
                     bcs::from_bytes::<<AsyncProtocol as Protocol>::DecentralizedPartyDKGOutput>(
                         &output,
                     )?,

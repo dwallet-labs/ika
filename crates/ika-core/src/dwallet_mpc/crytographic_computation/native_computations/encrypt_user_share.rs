@@ -8,7 +8,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use twopc_mpc::dkg::Protocol;
-use twopc_mpc::secp256k1::class_groups::AsyncProtocol;
+use twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol;
 
 /// Verifies that the given encrypted secret key share matches the encryption of the dWallet's
 /// secret share, validates the signature on the dWallet's public share,
@@ -43,7 +43,7 @@ fn verify_centralized_secret_key_share_proof(
     let dkg_public_output = bcs::from_bytes(serialized_dkg_public_output)?;
     match dkg_public_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_public_output) => {
-            <AsyncProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
+            <AsyncECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
                 &protocol_public_parameters,
                 bcs::from_bytes(&dkg_public_output)?,
                 bcs::from_bytes(encryption_key)?,
