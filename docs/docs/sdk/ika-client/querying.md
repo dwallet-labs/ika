@@ -34,8 +34,9 @@ Retrieve a single dWallet by its ID:
 
 ```typescript
 try {
-	const dWallet = await ikaClient.getdWallet(dWalletID);
+	const dWallet = await ikaClient.getDWallet(dWalletID);
 	console.log('dWallet state:', dWallet.state.$kind);
+	console.log('dWallet kind:', dWallet.kind);
 } catch (error) {
 	if (error instanceof ObjectNotFoundError) {
 		console.error('dWallet not found:', dWalletID);
@@ -51,11 +52,11 @@ Efficiently retrieve multiple dWallets in a single batch request:
 
 ```typescript
 const dWalletIDs = ['0x123...', '0x456...', '0x789...'];
-const dWallets = await ikaClient.getMultipledWallets(dWalletIDs);
+const dWallets = await ikaClient.getMultipleDWallets(dWalletIDs);
 
 // Process each dWallet
 dWallets.forEach((dWallet, index) => {
-	console.log(`dWallet ${dWalletIDs[index]}: ${dWallet.state.$kind}`);
+	console.log(`dWallet ${dWalletIDs[index]}: ${dWallet.state.$kind} (${dWallet.kind})`);
 });
 ```
 
@@ -65,14 +66,14 @@ Query dWallet capabilities owned by an address with pagination support:
 
 ```typescript
 let cursor: string | null | undefined = undefined;
-const allCaps: dWalletCap[] = [];
+const allCaps: DWalletCap[] = [];
 
 do {
 	const {
 		dWalletCaps,
 		cursor: nextCursor,
 		hasNextPage,
-	} = await ikaClient.getOwneddWalletCaps(
+	} = await ikaClient.getOwnedDWalletCaps(
 		address,
 		cursor,
 		50, // limit per page
@@ -123,7 +124,7 @@ Query objects in specific states with customizable polling behavior:
 ```typescript
 // Wait for dWallet to become active with custom timeout and interval
 try {
-	const dWallet = await ikaClient.getdWalletInParticularState(dWalletID, dWalletState.ACTIVE, {
+	const dWallet = await ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
 		timeout: 60000, // 60 seconds
 		interval: 2000, // poll every 2 seconds
 	});
@@ -136,7 +137,7 @@ try {
 ### Presign State Polling
 
 ```typescript
-const presign = await ikaClient.getPresignInParticularState(presignID, PresignState.ACTIVE, {
+const presign = await ikaClient.getPresignInParticularState(presignID, 'Completed', {
 	timeout: 30000,
 	interval: 1000,
 });
@@ -147,7 +148,7 @@ const presign = await ikaClient.getPresignInParticularState(presignID, PresignSt
 ```typescript
 const encryptedShare = await ikaClient.getEncryptedUserSecretKeyShareInParticularState(
 	encryptedUserSecretKeyShareID,
-	EncryptedUserSecretKeyShareState.ACTIVE,
+	'KeyHolderSigned',
 	{ timeout: 45000, interval: 1500 },
 );
 ```
@@ -157,7 +158,7 @@ const encryptedShare = await ikaClient.getEncryptedUserSecretKeyShareInParticula
 ```typescript
 const partialSignature = await ikaClient.getPartialUserSignatureInParticularState(
 	partialUserSignatureID,
-	PartialUserSignatureState.ACTIVE,
+	'Completed',
 );
 ```
 
@@ -214,7 +215,7 @@ try {
 Automatically detect which encryption key a dWallet uses:
 
 ```typescript
-const dwalletEncryptionKey = await ikaClient.getdWalletNetworkEncryptionKey(dWalletID);
+const dwalletEncryptionKey = await ikaClient.getDWalletNetworkEncryptionKey(dWalletID);
 console.log('dWallet uses encryption key:', dwalletEncryptionKey.id);
 ```
 
@@ -226,7 +227,7 @@ Retrieve cryptographic parameters for the network:
 
 ```typescript
 // Get parameters for a specific dWallet
-const dWallet = await ikaClient.getdWallet(dWalletID);
+const dWallet = await ikaClient.getDWallet(dWalletID);
 const parameters = await ikaClient.getProtocolPublicParameters(dWallet);
 
 // Or get parameters using client's configured encryption key

@@ -1,7 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { decrypt_user_share } from '@ika.xyz/mpc-wasm';
 import { bcs, toHex } from '@mysten/bcs';
 import { Ed25519Keypair, Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { keccak_256 } from '@noble/hashes/sha3';
@@ -13,6 +12,7 @@ import {
 } from './cryptography.js';
 import type { Curve, DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './types.js';
 import { encodeToASCII } from './utils.js';
+import { decrypt_user_share } from './wasm-loader.js';
 
 /**
  * BCS enum for UserShareEncryptionKeys.
@@ -43,68 +43,21 @@ export class UserShareEncryptionKeys {
 	/** The curve used to generate the encryption/decryption keys */
 	curve: Curve;
 
-	private domainSeparators = {
+	static domainSeparators = {
 		classGroups: 'CLASS_GROUPS_DECRYPTION_KEY_V1',
 		encryptionSignerKey: 'ED25519_SIGNING_KEY_V1',
 	};
 
-	private constructor(rootSeedKey: Uint8Array, curve: Curve);
 	private constructor(
 		encryptionKey: Uint8Array,
 		decryptionKey: Uint8Array,
-		secretShareSigningSecretKey: Uint8Array,
+		secretShareSigningSecretKey: Ed25519Keypair,
 		curve: Curve,
-	);
-	private constructor(arg1: Uint8Array, arg2: Curve | Uint8Array, arg3?: Uint8Array, arg4?: Curve) {
-		if (arg3 === undefined && arg4 === undefined) {
-			// First overload: rootSeedKey and curve
-			const rootSeedKey = arg1;
-			const curve = arg2 as Curve;
-			this.curve = curve;
-
-			const classGroupsSeed = this.#hash(this.domainSeparators.classGroups, rootSeedKey, curve);
-			const encryptionSignerKeySeed = this.#hash(
-				this.domainSeparators.encryptionSignerKey,
-				rootSeedKey,
-				curve,
-			);
-
-			const classGroupsKeypair = createClassGroupsKeypair(classGroupsSeed, curve);
-			this.encryptionKey = new Uint8Array(classGroupsKeypair.encryptionKey);
-			this.decryptionKey = new Uint8Array(classGroupsKeypair.decryptionKey);
-			this.#encryptedSecretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
-				toHex(encryptionSignerKeySeed),
-			);
-		} else {
-			// Second overload: encryptionKey, decryptionKey, secretShareSigningSecretKey, curve
-			if (arg3 === undefined || arg4 === undefined) {
-				throw new Error(
-					'encryptionKey, decryptionKey, secretShareSigningSecretKey, and curve must be provided',
-				);
-			}
-
-			const encryptionKey = arg1;
-			const decryptionKey = arg2 as Uint8Array;
-			const secretShareSigningSecretKey = arg3;
-			const curve = arg4;
-			this.curve = curve;
-
-			if (
-				encryptionKey.length !== 32 ||
-				decryptionKey.length !== 32 ||
-				secretShareSigningSecretKey.length !== 32
-			) {
-				throw new Error(
-					'encryptionKey, decryptionKey, and secretShareSigningSecretKey must be 32 bytes',
-				);
-			}
-
-			this.encryptionKey = encryptionKey;
-			this.decryptionKey = decryptionKey;
-			this.#encryptedSecretShareSigningKeypair = Ed25519Keypair.fromSecretKey(
-				secretShareSigningSecretKey,
-			);
-		}
+	) {
+		this.encryptionKey = encryptionKey;
+		this.decryptionKey = decryptionKey;
+		this.#encryptedSecretShareSigningKeypair = secretShareSigningSecretKey;
+		this.curve = curve;
 	}
 
 	/**
@@ -114,8 +67,33 @@ export class UserShareEncryptionKeys {
 	 * @param curve - The curve to use for key generation
 	 * @returns A new UserShareEncryptionKeys instance
 	 */
-	static fromRootSeedKey(rootSeedKey: Uint8Array, curve: Curve): UserShareEncryptionKeys {
-		return new UserShareEncryptionKeys(rootSeedKey, curve);
+	static async fromRootSeedKey(
+		rootSeedKey: Uint8Array,
+		curve: Curve,
+	): Promise<UserShareEncryptionKeys> {
+		const classGroupsSeed = UserShareEncryptionKeys.hash(
+			UserShareEncryptionKeys.domainSeparators.classGroups,
+			rootSeedKey,
+			curve,
+		);
+
+		const encryptionSignerKeySeed = UserShareEncryptionKeys.hash(
+			UserShareEncryptionKeys.domainSeparators.encryptionSignerKey,
+			rootSeedKey,
+			curve,
+		);
+
+		const classGroupsKeypair = await createClassGroupsKeypair(classGroupsSeed, curve);
+		const encryptionSignerKey = Ed25519Keypair.deriveKeypairFromSeed(
+			toHex(encryptionSignerKeySeed),
+		);
+
+		return new UserShareEncryptionKeys(
+			new Uint8Array(classGroupsKeypair.encryptionKey),
+			new Uint8Array(classGroupsKeypair.decryptionKey),
+			encryptionSignerKey,
+			curve,
+		);
 	}
 
 	static fromShareEncryptionKeysBytes(
@@ -124,10 +102,14 @@ export class UserShareEncryptionKeys {
 		const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve } =
 			this.#parseShareEncryptionKeys(shareEncryptionKeysBytes);
 
+		const secretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+			toHex(secretShareSigningSecretKey),
+		);
+
 		return new UserShareEncryptionKeys(
 			encryptionKey,
 			decryptionKey,
-			secretShareSigningSecretKey,
+			secretShareSigningKeypair,
 			curve,
 		);
 	}
@@ -268,7 +250,7 @@ export class UserShareEncryptionKeys {
 		return {
 			verifiedPublicOutput: dWalletPublicOutput,
 			secretShare: Uint8Array.from(
-				decrypt_user_share(
+				await decrypt_user_share(
 					this.decryptionKey,
 					this.encryptionKey,
 					dWalletPublicOutput,
@@ -286,7 +268,7 @@ export class UserShareEncryptionKeys {
 	 * @param rootSeed - The root seed to use
 	 * @returns The hashed seed as a Uint8Array
 	 */
-	#hash(domainSeparator: string, rootSeed: Uint8Array, curve: Curve): Uint8Array {
+	static hash(domainSeparator: string, rootSeed: Uint8Array, curve: Curve): Uint8Array {
 		return new Uint8Array(
 			keccak_256(Uint8Array.from([...encodeToASCII(domainSeparator), curve, ...rootSeed])),
 		);

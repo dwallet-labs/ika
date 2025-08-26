@@ -39,7 +39,7 @@ describe('Shared Imported Key DWallet Signing (public user shares)', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedKeyDWallet(testName);
+			await generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 

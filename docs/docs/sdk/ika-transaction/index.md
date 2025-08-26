@@ -43,7 +43,7 @@ const ikaClient = new IkaClient({...});
 await ikaClient.initialize();
 
 // Optional: Set up user share encryption keys for encrypted operations
-const userKeys = UserShareEncryptionKeys.fromRootSeedKey(seedKey);
+const userKeys = await UserShareEncryptionKeys.fromRootSeedKey(seedKey, Curve.SECP256K1);
 
 // Get user's IKA coin for transaction fees
 const userIkaCoin = tx.object('0x...'); // User's IKA coin object ID
@@ -125,7 +125,7 @@ ikaTx.requestDWalletDKGSecondRound({
 Requests a presign operation for faster signature generation.
 
 ```typescript
-const { unverifiedPresignCap } = ikaTx.requestPresign({
+const unverifiedPresignCap = ikaTx.requestPresign({
 	dWallet: dwalletObject,
 	signatureAlgorithm: SignatureAlgorithm.ECDSA,
 	ikaCoin: userIkaCoin, // User's IKA coin object

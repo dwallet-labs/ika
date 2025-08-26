@@ -677,7 +677,7 @@ export class IkaClient {
 			}
 		}
 
-		const protocolPublicParameters = networkDkgPublicOutputToProtocolPublicParameters(
+		const protocolPublicParameters = await networkDkgPublicOutputToProtocolPublicParameters(
 			await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 		);
 
@@ -742,14 +742,6 @@ export class IkaClient {
 	async getEpoch(): Promise<number> {
 		const objects = await this.ensureInitialized();
 		return Number(objects.coordinatorInner.current_epoch);
-	}
-
-	/**
-	 * Get the size of the active committee for the current epoch.
-	 */
-	async getActiveCommitteeSize(): Promise<number> {
-		const objects = await this.ensureInitialized();
-		return Number(objects.coordinatorInner.active_committee.members.length);
 	}
 
 	/**

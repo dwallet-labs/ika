@@ -386,7 +386,7 @@ describe('IkaTransaction Secret Share Methods', () => {
 		} = await createCompleteDWallet(ikaClient, suiClient, testName);
 
 		// Generate destination encryption keys and register them
-		const destinationKeypair = generateTestKeypair(testName + '-destination');
+		const destinationKeypair = await generateTestKeypair(testName + '-destination');
 		const destinationEncryptionKeyAddress =
 			destinationKeypair.userShareEncryptionKeys.getSuiAddress();
 

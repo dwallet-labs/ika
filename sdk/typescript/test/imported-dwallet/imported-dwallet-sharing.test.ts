@@ -29,7 +29,7 @@ describe('Imported Key DWallet Sharing (make shares public)', () => {
 		await ikaClient.initialize();
 
 		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
-			generateTestKeypairForImportedKeyDWallet(testName);
+			await generateTestKeypairForImportedKeyDWallet(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 

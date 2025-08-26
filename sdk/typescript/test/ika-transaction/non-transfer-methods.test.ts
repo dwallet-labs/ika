@@ -35,7 +35,7 @@ describe('IkaTransaction Non-Transfer Methods', () => {
 		const testName = 'non-transfer-dkg-first-round-test';
 		const { suiClient, ikaClient } = await createIndividualTestSetup(testName);
 
-		const { userShareEncryptionKeys, signerAddress } = generateTestKeypair(testName);
+		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName);
 		await requestTestFaucetFunds(signerAddress);
 
 		// Get the latest network encryption key for manual specification
@@ -93,7 +93,7 @@ describe('IkaTransaction Non-Transfer Methods', () => {
 		});
 
 		// Get the signer address from the dWallet creation
-		const { signerAddress } = generateTestKeypair(testName);
+		const { signerAddress } = await generateTestKeypair(testName);
 
 		// Transfer the unverifiedPresignCap to the signer address to avoid UnusedValueWithoutDrop error
 		tx.transferObjects([unverifiedPresignCap], signerAddress);

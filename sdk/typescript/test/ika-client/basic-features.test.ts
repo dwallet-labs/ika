@@ -198,7 +198,7 @@ describe('IkaClient Basic Features', () => {
 		const { suiClient, ikaClient } = await createIndividualTestSetup('dwallet-caps-test');
 
 		// Generate a test address using shared setup to reduce memory usage
-		const { signerAddress } = generateTestKeypair('dwallet-caps-test');
+		const { signerAddress } = await generateTestKeypair('dwallet-caps-test');
 
 		// Test getting owned dWallet caps and validate result structure
 		const capsResult = await ikaClient.getOwnedDWalletCaps(signerAddress);

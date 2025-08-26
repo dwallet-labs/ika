@@ -31,7 +31,7 @@ describe('Shared DWallet Signing (public user shares)', () => {
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
 
-		const { userShareEncryptionKeys, signerAddress } = generateTestKeypair(testName);
+		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName);
 
 		await requestTestFaucetFunds(signerAddress);
 
