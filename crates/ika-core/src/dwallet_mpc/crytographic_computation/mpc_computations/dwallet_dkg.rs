@@ -105,7 +105,7 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
 
         match first_round_output_buf {
             VersionedCentralizedDKGPublicOutput::V1(first_round_output) => {
-                let first_round_output: <DWalletDKGFirstParty as Party>::PublicOutput =
+                let [first_part, second_part]: <DWalletDKGFirstParty as Party>::PublicOutput =
                     bcs::from_bytes(&first_round_output).map_err(DwalletMPCError::BcsError)?;
                 // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.
                 // TODO (#1470): Use one network round in the dWallet DKG flow.
@@ -116,10 +116,10 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
                         { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                         group::secp256k1::GroupElement,
                     >(
-                        first_round_output[0].1,
-                        first_round_output[1].1,
-                        first_round_output[0].0,
-                        first_round_output[1].0,
+                        first_part.1,
+                        second_part.1,
+                        first_part.0,
+                        second_part.0,
                         protocol_public_parameters
                             .encryption_scheme_public_parameters
                             .clone(),
