@@ -29,7 +29,7 @@ pub enum NetworkDecryptionKeyPublicOutputType {
 /// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
 /// Created for each DKG protocol and modified for each Reconfiguration Protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NetworkEncryptionKeyPublicData {
+pub struct NetworkEncryptionKeyPublicDataV1 {
     /// The epoch of the last version update.
     pub epoch: u64,
 
