@@ -35,10 +35,12 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
 use message_digest::message_digest::message_digest;
-use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput};
+use twopc_mpc::class_groups::{
+    DKGCentralizedPartyOutput, DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput,
+};
 use twopc_mpc::dkg::Protocol;
-use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 use twopc_mpc::ecdsa::sign::verify_signature;
+use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
 type AsyncProtocol = twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol;
 type DKGCentralizedParty = <AsyncProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
@@ -156,6 +158,18 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
     match dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
             let dkg_output: DKGDecentralizedOutput = bcs::from_bytes(&dkg_output)?;
+            let DKGDecentralizedPartyVersionedOutput::<
+                { group::secp256k1::SCALAR_LIMBS },
+                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                group::secp256k1::GroupElement,
+            >::V2 {
+                output: dkg_output,
+                ..
+            } = dkg_output
+            else {
+                panic!("whoaaa 2");
+            };
             let public_key = dkg_output.public_key;
             Ok(bcs::to_bytes(&public_key)?)
         }
@@ -229,7 +243,8 @@ pub fn advance_centralized_sign_party(
             let DKGDecentralizedPartyVersionedOutput::V2 {
                 output: decentralized_output,
                 ..
-            } = decentralized_output else {
+            } = decentralized_output
+            else {
                 panic!("whoaaa");
             };
             let centralized_public_output = twopc_mpc::class_groups::DKGCentralizedPartyOutput::<
@@ -363,20 +378,18 @@ fn protocol_public_parameters_by_key_scheme(
                     let encryption_scheme_public_parameters = network_dkg_public_output
                         .default_encryption_scheme_public_parameters::<secp256k1::GroupElement>(
                     )?;
-                    Ok(
-                        ProtocolPublicParameters::new::<
+                    Ok(ProtocolPublicParameters::new::<
                         { secp256k1::SCALAR_LIMBS },
                         { SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                         { SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                         secp256k1::GroupElement,
                     >(
-                            Default::default(),
-                            Default::default(),
-                            Default::default(),
-                            Default::default(),
-                            encryption_scheme_public_parameters
-                        )
-                    )
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                        encryption_scheme_public_parameters,
+                    ))
                 }
                 DWalletMPCNetworkKeyScheme::Ristretto => {
                     // To add support here, we need to either make this
