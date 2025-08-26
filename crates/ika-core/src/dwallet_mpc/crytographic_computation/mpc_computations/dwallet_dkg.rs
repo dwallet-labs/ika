@@ -107,7 +107,7 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
             VersionedCentralizedDKGPublicOutput::V1(first_round_output) => {
                 let first_round_output: <DWalletDKGFirstParty as Party>::PublicOutput =
                     bcs::from_bytes(&first_round_output).map_err(DwalletMPCError::BcsError)?;
-                // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism. 
+                // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.
                 // TODO (#1470): Use one network round in the dWallet DKG flow.
                 let protocol_public_parameters_with_dkg_centralized_output =
                     ProtocolPublicParameters::new::<
