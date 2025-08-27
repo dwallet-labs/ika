@@ -4,6 +4,8 @@
 //! This module provides a wrapper around the DKG protocol from the 2PC-MPC library.
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
+
+use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
     VersionedPublicKeyShareAndProof,
@@ -96,6 +98,9 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
         first_round_output_buf: &SerializedWrappedMPCPublicOutput,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
     ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
+        let session_identifier = CommitmentSizedNumber::from_be_hex(
+            "0xC70D778BCCEF36A81AED8DA0B819D2BD28BD8653E56A5D40903DF1A0ADE0B876",
+        );
         let first_round_output_buf: VersionedCentralizedDKGPublicOutput =
             bcs::from_bytes(first_round_output_buf).map_err(DwalletMPCError::BcsError)?;
 

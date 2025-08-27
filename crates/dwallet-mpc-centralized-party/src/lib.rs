@@ -108,6 +108,10 @@ pub fn create_dkg_output(
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
     session_identifier: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
+    let session_identifier = CommitmentSizedNumber::from_be_hex(
+        "0xC70D778BCCEF36A81AED8DA0B819D2BD28BD8653E56A5D40903DF1A0ADE0B876",
+    );
+    println!("session_id: {:?}", session_identifier);
     let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let decentralized_first_round_public_output =
         bcs::from_bytes(&decentralized_first_round_public_output)?;

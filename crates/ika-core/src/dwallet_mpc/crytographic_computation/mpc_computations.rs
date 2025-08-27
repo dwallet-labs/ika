@@ -336,8 +336,11 @@ impl ProtocolCryptographicData {
                 advance_request,
                 ..
             } => {
+                let session_identifier = CommitmentSizedNumber::from_be_hex(
+                    "0xC70D778BCCEF36A81AED8DA0B819D2BD28BD8653E56A5D40903DF1A0ADE0B876",
+                );
                 let result = Party::<DWalletDKGFirstParty>::advance_with_guaranteed_output(
-                    session_id,
+                    session_identifier,
                     party_id,
                     access_structure,
                     advance_request,
@@ -374,8 +377,11 @@ impl ProtocolCryptographicData {
                 advance_request,
                 ..
             } => {
+                let session_identifier = CommitmentSizedNumber::from_be_hex(
+                    "0xC70D778BCCEF36A81AED8DA0B819D2BD28BD8653E56A5D40903DF1A0ADE0B876",
+                );
                 let result = Party::<DWalletDKGSecondParty>::advance_with_guaranteed_output(
-                    session_id,
+                    session_identifier,
                     party_id,
                     access_structure,
                     advance_request,
