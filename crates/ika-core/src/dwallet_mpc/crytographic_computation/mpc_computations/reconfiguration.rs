@@ -133,9 +133,6 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                     access_structure,
                 )
                 .map_err(DwalletMPCError::from)?;
-            let encryption_scheme_public_parameters = decryption_key_share_public_parameters
-                .encryption_scheme_public_parameters
-                .clone();
             let protocol_public_parameters = ProtocolPublicParameters::new::<
                 { secp256k1::SCALAR_LIMBS },
                 { FUNDAMENTAL_DISCRIMINANT_LIMBS },
