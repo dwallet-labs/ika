@@ -65,7 +65,7 @@ pub(crate) trait DWalletDKGFirstPartyPublicInputGenerator: Party {
 pub(crate) trait DWalletDKGSecondPartyPublicInputGenerator: Party {
     /// Generates the public input required for the second round of the DKG protocol.
     fn generate_public_input(
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+        protocol_public_parameters: ProtocolPublicParameters,
         first_round_output: &SerializedWrappedMPCPublicOutput,
         centralized_party_public_key_share: &SerializedWrappedMPCPublicOutput,
     ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput>;
@@ -73,7 +73,7 @@ pub(crate) trait DWalletDKGSecondPartyPublicInputGenerator: Party {
 
 impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
     fn generate_public_input(
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+        protocol_public_parameters: ProtocolPublicParameters,
     ) -> DwalletMPCResult<<DWalletDKGFirstParty as Party>::PublicInput> {
         let secp256k1_public_input = twopc_mpc::dkg::encryption_of_secret_key_share::PublicInput::<
             group::secp256k1::scalar::PublicParameters,
