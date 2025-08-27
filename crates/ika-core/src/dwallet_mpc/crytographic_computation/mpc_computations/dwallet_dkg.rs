@@ -80,8 +80,10 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
             group::secp256k1::group_element::PublicParameters,
             class_groups::Secp256k1EncryptionSchemePublicParameters,
         > {
-            scalar_group_public_parameters: group::secp256k1::scalar::PublicParameters::default(),
-            group_public_parameters: group::secp256k1::group_element::PublicParameters::default(),
+            scalar_group_public_parameters: protocol_public_parameters
+                .scalar_group_public_parameters
+                .clone(),
+            group_public_parameters: protocol_public_parameters.group_public_parameters.clone(),
             encryption_scheme_public_parameters: protocol_public_parameters
                 .encryption_scheme_public_parameters,
         };
