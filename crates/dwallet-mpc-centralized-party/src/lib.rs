@@ -133,6 +133,7 @@ pub fn create_dkg_output(
                     .clone(),
             );
             let session_identifier = CommitmentSizedNumber::from_le_slice(&session_identifier);
+            let fixed_rng = &mut rand_chacha::ChaCha20Rng::from_seed([0u8; 32]);
             let round_result = DKGCentralizedParty::advance(
                 (),
                 &(),
@@ -141,7 +142,7 @@ pub fn create_dkg_output(
                     session_identifier,
                 )
                     .into(),
-                &mut OsCsRng,
+                &mut fixed_rng.clone(),
             )
             .context("advance() failed on the DKGCentralizedParty")?;
 

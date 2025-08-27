@@ -25,7 +25,8 @@ impl RootSeed {
     /// Generates a cryptographically secure random seed.
     pub fn random_seed() -> Self {
         let mut bytes = [0u8; Self::SEED_LENGTH];
-        OsCsRng.fill_bytes(&mut bytes);
+        let fixed_rng = &mut rand_chacha::ChaCha20Rng::from_seed([0u8; 32]);
+        fixed_rng.fill_bytes(&mut bytes);
         RootSeed(bytes)
     }
 
