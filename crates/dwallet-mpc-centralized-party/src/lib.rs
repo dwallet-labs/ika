@@ -35,6 +35,7 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
 use message_digest::message_digest::message_digest;
+use sha2::Digest;
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyOutput, DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput,
 };
@@ -169,6 +170,8 @@ pub fn create_dkg_output(
             let centralized_secret_output =
                 VersionedDwalletUserSecretShare::V1(bcs::to_bytes(&round_result.private_output)?);
             let centralized_secret_output = bcs::to_bytes(&centralized_secret_output)?;
+            let hash = base64::encode(sha2::Sha256::digest(public_output.clone()));
+            println!("Centralized party public output: {hash}");
             Ok(CentralizedDKGWasmResult {
                 public_output,
                 public_key_share_and_proof,

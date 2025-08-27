@@ -3629,6 +3629,7 @@ name = "dwallet-mpc-centralized-party"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bcs",
  "class_groups",
  "commitment",
@@ -3642,6 +3643,7 @@ dependencies = [
  "rand_core 0.9.3",
  "schemars",
  "serde",
+ "sha2 0.11.0-rc.0",
  "twopc_mpc",
 ]
 
