@@ -34,6 +34,7 @@ Create a unique session identifier for the import process:
 
 ```typescript
 import { IkaTransaction } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
@@ -52,6 +53,8 @@ await signAndExecuteTransaction(tx);
 Register your encryption key if you haven't done so before:
 
 ```typescript
+import { Transaction } from '@mysten/sui/transactions';
+
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,
@@ -88,6 +91,8 @@ Choose one approach based on whether you want to keep or transfer the dWallet ca
 ### Keep dWallet Capability
 
 ```typescript
+import { Transaction } from '@mysten/sui/transactions';
+
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,
@@ -120,6 +125,8 @@ await signAndExecuteTransaction(tx);
 Accept your encrypted share to complete the import process:
 
 ```typescript
+import { Transaction } from '@mysten/sui/transactions';
+
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
 	ikaClient,

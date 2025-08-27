@@ -53,7 +53,8 @@ export async function createCompleteDWallet(
 	signerAddress: string;
 }> {
 	// Generate deterministic keypair for this test
-	const { userShareEncryptionKeys, signerPublicKey, signerAddress } = generateTestKeypair(testName);
+	const { userShareEncryptionKeys, signerPublicKey, signerAddress } =
+		await generateTestKeypair(testName);
 
 	// Request faucet funds for the test address
 	await requestTestFaucetFunds(signerAddress);

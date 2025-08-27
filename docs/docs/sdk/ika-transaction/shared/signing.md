@@ -30,6 +30,7 @@ Create a presign request for performance optimization:
 
 ```typescript
 import { IkaTransaction, SignatureAlgorithm } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({
@@ -63,6 +64,7 @@ Sign using the public dWallet's accessible secret shares:
 
 ```typescript
 import { Hash } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({

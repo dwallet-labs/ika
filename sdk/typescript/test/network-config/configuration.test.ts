@@ -89,27 +89,9 @@ describe('Network Configuration', () => {
 		expect(config.objects.ikaDWalletCoordinator.objectID).toMatch(/^0x[a-f0-9]+$/);
 	});
 
-	it('should load localnet configuration', async () => {
-		const config = getNetworkConfig('localnet');
-
-		expect(config).toBeDefined();
-		expect(config.packages).toBeDefined();
-		expect(config.objects).toBeDefined();
-
-		// Test that localnet config has the same structure as other networks
-		expect(config.packages.ikaPackage).toBeDefined();
-		expect(config.packages.ikaCommonPackage).toBeDefined();
-		expect(config.packages.ikaDwallet2pcMpcPackage).toBeDefined();
-		expect(config.packages.ikaSystemPackage).toBeDefined();
-
-		expect(config.objects.ikaSystemObject).toBeDefined();
-		expect(config.objects.ikaDWalletCoordinator).toBeDefined();
-	});
-
 	it('should have different configurations for different networks with specific expected differences', async () => {
 		const mainnetConfig = getNetworkConfig('mainnet');
 		const testnetConfig = getNetworkConfig('testnet');
-		const localnetConfig = getNetworkConfig('localnet');
 
 		// Verify exact differences between mainnet and testnet
 		expect(mainnetConfig.packages.ikaPackage).toBe(
@@ -137,16 +119,6 @@ describe('Network Configuration', () => {
 		expect(mainnetConfig.objects.ikaSystemObject.initialSharedVersion).not.toBe(
 			testnetConfig.objects.ikaSystemObject.initialSharedVersion,
 		);
-
-		// Localnet should be different from both mainnet and testnet
-		expect(localnetConfig.packages.ikaPackage).not.toBe(mainnetConfig.packages.ikaPackage);
-		expect(localnetConfig.packages.ikaPackage).not.toBe(testnetConfig.packages.ikaPackage);
-		expect(localnetConfig.objects.ikaSystemObject.objectID).not.toBe(
-			mainnetConfig.objects.ikaSystemObject.objectID,
-		);
-		expect(localnetConfig.objects.ikaSystemObject.objectID).not.toBe(
-			testnetConfig.objects.ikaSystemObject.objectID,
-		);
 	});
 
 	it('should provide consistent results for repeated calls', async () => {
@@ -165,7 +137,7 @@ describe('Network Configuration', () => {
 
 	it('should handle network type validation', async () => {
 		// Test valid network types
-		const validNetworks: Network[] = ['mainnet', 'testnet', 'localnet'];
+		const validNetworks: Network[] = ['mainnet', 'testnet'];
 
 		validNetworks.forEach((network) => {
 			const config = getNetworkConfig(network);
@@ -176,7 +148,7 @@ describe('Network Configuration', () => {
 	});
 
 	it('should have consistent configuration structure', async () => {
-		const networks: Network[] = ['mainnet', 'testnet', 'localnet'];
+		const networks: Network[] = ['mainnet', 'testnet'];
 
 		networks.forEach((network) => {
 			const config = getNetworkConfig(network);
@@ -207,7 +179,7 @@ describe('Network Configuration', () => {
 	});
 
 	it('should have valid Sui address formats', async () => {
-		const networks: Network[] = ['mainnet', 'testnet', 'localnet'];
+		const networks: Network[] = ['mainnet', 'testnet'];
 
 		networks.forEach((network) => {
 			const config = getNetworkConfig(network);
@@ -224,7 +196,7 @@ describe('Network Configuration', () => {
 	});
 
 	it('should have logical initial shared versions', async () => {
-		const networks: Network[] = ['mainnet', 'testnet', 'localnet'];
+		const networks: Network[] = ['mainnet', 'testnet'];
 
 		networks.forEach((network) => {
 			const config = getNetworkConfig(network);
@@ -272,7 +244,6 @@ describe('Network Configuration', () => {
 			// Test all valid network types work
 			expect(() => getNetworkConfig('mainnet')).not.toThrow();
 			expect(() => getNetworkConfig('testnet')).not.toThrow();
-			expect(() => getNetworkConfig('localnet')).not.toThrow();
 		});
 
 		it('should maintain consistent network type behavior', () => {

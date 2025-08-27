@@ -2,7 +2,7 @@
 name = "dwallet-mpc-wasm"
 authors = ["dWallet Labs, Ltd. <dev@dwalletlabs.com>"]
 description = "Ika wasm bindings for dwallet MPC centralized party"
-version = "0.1.6"
+version = "0.1.0"
 edition = "2024"
 license = "BSD-3-Clause-Clear"
 publish = false

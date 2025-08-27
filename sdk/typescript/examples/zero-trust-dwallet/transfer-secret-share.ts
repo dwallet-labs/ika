@@ -23,10 +23,10 @@ const ikaClient = createIkaClient(suiClient);
 async function main() {
 	await ikaClient.initialize();
 
-	const { userShareEncryptionKeys: sourceUserShareEncryptionKeys } = generateKeypair();
+	const { userShareEncryptionKeys: sourceUserShareEncryptionKeys } = await generateKeypair();
 
 	// THIS IS NOT SOMETHING THAT YOU SHOULD DO, DESTINATION HAS IT'S OWN KEYS.
-	const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } = generateKeypair();
+	const { userShareEncryptionKeys: destinationUserShareEncryptionKeys } = await generateKeypair();
 
 	const { dwalletID, sessionIdentifierPreimage } = await requestDKGFirstRound(ikaClient, suiClient);
 

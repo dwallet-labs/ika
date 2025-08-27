@@ -31,7 +31,7 @@ export interface IkaConfig {
 	objects: IkaObjectsConfig;
 }
 
-export type Network = 'localnet' | 'testnet' | 'mainnet';
+export type Network = 'testnet' | 'mainnet';
 
 /**
  * Represents a network encryption key with its metadata
@@ -65,7 +65,6 @@ export interface IkaClientOptions {
 		protocolPublicParameters: Uint8Array;
 	};
 	cache?: boolean;
-	network: Network;
 	/** Default encryption key options for the client */
 	encryptionKeyOptions?: EncryptionKeyOptions;
 }
