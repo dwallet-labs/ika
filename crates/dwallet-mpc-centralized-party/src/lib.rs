@@ -409,24 +409,10 @@ fn protocol_public_parameters_by_key_scheme(
                         { SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                         secp256k1::GroupElement,
                     >(
-                        group::secp256k1::GroupElement::neutral_from_public_parameters(
-                            &Default::default(),
-                        )?
-                        .value(),
-                        group::secp256k1::GroupElement::neutral_from_public_parameters(
-                            &Default::default(),
-                        )?
-                        .value(),
-                        class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
-                            &encryption_scheme_public_parameters
-                                .ciphertext_space_public_parameters(),
-                        )?
-                        .value(),
-                        class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
-                            &encryption_scheme_public_parameters
-                                .ciphertext_space_public_parameters(),
-                        )?
-                        .value(),
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
                         encryption_scheme_public_parameters.clone(),
                     );
                     Ok(ppp)
