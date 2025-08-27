@@ -2,7 +2,7 @@
 resolver = "3"
 
 exclude = [
-    "sdk/mpc-wasm",
+    "sdk/ika-wasm",
 ]
 
 members = [
