@@ -92,7 +92,7 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
 
 impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
     fn generate_public_input(
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+        protocol_public_parameters: ProtocolPublicParameters,
         first_round_output_buf: &SerializedWrappedMPCPublicOutput,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
     ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {

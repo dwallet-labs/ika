@@ -174,7 +174,7 @@ pub enum DwalletMPCError {
 
     #[error("Invalid dWallet protocol type")]
     InvalidDWalletProtocolType,
-    
+
     #[error("Invalid hash scheme")]
     InvalidHashScheme,
 }
