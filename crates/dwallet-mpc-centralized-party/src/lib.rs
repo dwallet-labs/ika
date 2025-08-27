@@ -403,18 +403,33 @@ fn protocol_public_parameters_by_key_scheme(
                     let encryption_scheme_public_parameters = network_dkg_public_output
                         .default_encryption_scheme_public_parameters::<secp256k1::GroupElement>(
                     )?;
-                    Ok(ProtocolPublicParameters::new::<
+                    let ppp = ProtocolPublicParameters::new::<
                         { secp256k1::SCALAR_LIMBS },
                         { SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                         { SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                         secp256k1::GroupElement,
                     >(
-                        Default::default(),
-                        Default::default(),
-                        Default::default(),
-                        Default::default(),
-                        encryption_scheme_public_parameters,
-                    ))
+                        group::secp256k1::GroupElement::neutral_from_public_parameters(
+                            &Default::default(),
+                        )?
+                        .value(),
+                        group::secp256k1::GroupElement::neutral_from_public_parameters(
+                            &Default::default(),
+                        )?
+                        .value(),
+                        class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
+                            &encryption_scheme_public_parameters
+                                .ciphertext_space_public_parameters(),
+                        )?
+                        .value(),
+                        class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
+                            &encryption_scheme_public_parameters
+                                .ciphertext_space_public_parameters(),
+                        )?
+                        .value(),
+                        encryption_scheme_public_parameters.clone(),
+                    );
+                    Ok(ppp)
                 }
                 DWalletMPCNetworkKeyScheme::Ristretto => {
                     // To add support here, we need to either make this

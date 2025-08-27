@@ -12,7 +12,8 @@ use dwallet_mpc_types::dwallet_mpc::{
     NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
     SerializedWrappedMPCPublicOutput, VersionedNetworkDkgOutput,
 };
-use group::{PartyID, secp256k1};
+use group::{GroupElement, PartyID, secp256k1};
+use homomorphic_encryption::GroupsPublicParametersAccessors;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -132,17 +133,31 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                     access_structure,
                 )
                 .map_err(DwalletMPCError::from)?;
-
+            let encryption_scheme_public_parameters = decryption_key_share_public_parameters
+                .encryption_scheme_public_parameters
+                .clone();
             let protocol_public_parameters = ProtocolPublicParameters::new::<
                 { secp256k1::SCALAR_LIMBS },
                 { FUNDAMENTAL_DISCRIMINANT_LIMBS },
                 { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                 secp256k1::GroupElement,
             >(
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
+                group::secp256k1::GroupElement::neutral_from_public_parameters(&Default::default())
+                    .unwrap()
+                    .value(),
+                group::secp256k1::GroupElement::neutral_from_public_parameters(&Default::default())
+                    .unwrap()
+                    .value(),
+                class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
+                    &encryption_scheme_public_parameters.ciphertext_space_public_parameters(),
+                )
+                .unwrap()
+                .value(),
+                class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
+                    &encryption_scheme_public_parameters.ciphertext_space_public_parameters(),
+                )
+                .unwrap()
+                .value(),
                 decryption_key_share_public_parameters
                     .encryption_scheme_public_parameters
                     .clone(),
