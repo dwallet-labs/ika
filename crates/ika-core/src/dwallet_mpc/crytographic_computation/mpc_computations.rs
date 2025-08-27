@@ -24,6 +24,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedPresignOutput, VersionedSignOutput,
 };
 use dwallet_rng::RootSeed;
+use fastcrypto::hash::{HashFunction, Sha256};
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
@@ -362,6 +363,11 @@ impl ProtocolCryptographicData {
                         let public_output_value = bcs::to_bytes(
                             &VersionedDwalletDKGFirstRoundPublicOutput::V1(public_output_value),
                         )?;
+                        let base64_decentralized_party_dkg_output =
+                            base64::encode(Sha256::digest(public_output_value.clone()));
+                        println!(
+                            "Decentralized party DKG first round output: {base64_decentralized_party_dkg_output}"
+                        );
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,

@@ -10,6 +10,7 @@ edition = "2024"
 workspace = true
 
 [dependencies]
+base64 = "0.22.1"
 group.workspace = true
 mpc.workspace = true
 twopc_mpc.workspace = true
