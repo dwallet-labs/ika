@@ -422,6 +422,12 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
+                        let base64_decentralized_party_dkg_output = base64::encode(Sha256::digest(
+                            bcs::to_bytes(&public_output_value).unwrap(),
+                        ));
+                        println!(
+                            "Decentralized party DKG second round output: {base64_decentralized_party_dkg_output}"
+                        );
                         // Wrap the public output with its version.
                         let public_output_value = bcs::to_bytes(
                             &VersionedDwalletDKGSecondRoundPublicOutput::V1(public_output_value),
