@@ -210,7 +210,7 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
             else {
                 return Err(anyhow!("Only universal DKG output is supported"));
             };
-            Ok(bcs::to_bytes(&dkg_output.public_key;)?)
+            Ok(bcs::to_bytes(&dkg_output.public_key)?)
         }
     }
 }

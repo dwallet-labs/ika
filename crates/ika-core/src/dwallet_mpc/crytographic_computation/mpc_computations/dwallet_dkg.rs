@@ -4,7 +4,10 @@
 //! This module provides a wrapper around the DKG protocol from the 2PC-MPC library.
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
-use dwallet_mpc_types::dwallet_mpc::{SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput, VersionedPublicKeyShareAndProof};
+use dwallet_mpc_types::dwallet_mpc::{
+    SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
+    VersionedDwalletDKGFirstRoundPublicOutput, VersionedPublicKeyShareAndProof,
+};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::Party;
