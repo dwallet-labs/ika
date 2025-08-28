@@ -110,9 +110,9 @@ pub fn create_dkg_output(
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
     session_identifier: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .init();
+    // tracing_subscriber::fmt()
+    //     .with_max_level(tracing::Level::DEBUG)
+    //     .init();
     let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let decentralized_first_round_public_output =
         bcs::from_bytes(&decentralized_first_round_public_output)?;
