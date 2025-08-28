@@ -151,6 +151,8 @@ pub fn create_dkg_output(
                 VersionedPublicKeyShareAndProof::V1(bcs::to_bytes(&round_result.outgoing_message)?);
 
             let public_key_share_and_proof = bcs::to_bytes(&public_key_share_and_proof)?;
+            // TODO(#1470): Use one network round in the dWallet DKG flow.
+            // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.
             let DKGCentralizedPartyVersionedOutput::<
                 { group::secp256k1::SCALAR_LIMBS },
                 group::secp256k1::GroupElement,
@@ -159,7 +161,9 @@ pub fn create_dkg_output(
                 ..
             } = round_result.public_output
             else {
-                return Err(anyhow!(""));
+                return Err(anyhow!(
+                    "expected centralized step to produce universal output"
+                ));
             };
 
             // Public Output:
