@@ -420,7 +420,7 @@ fn protocol_public_parameters_by_key_scheme(
                     let encryption_scheme_public_parameters = network_dkg_public_output
                         .default_encryption_scheme_public_parameters::<secp256k1::GroupElement>(
                     )?;
-                    let ppp = ProtocolPublicParameters::new::<
+                    let protocol_public_parameters = ProtocolPublicParameters::new::<
                         { secp256k1::SCALAR_LIMBS },
                         { SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                         { SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
@@ -432,7 +432,7 @@ fn protocol_public_parameters_by_key_scheme(
                         Default::default(),
                         encryption_scheme_public_parameters.clone(),
                     );
-                    Ok(ppp)
+                    Ok(protocol_public_parameters)
                 }
                 DWalletMPCNetworkKeyScheme::Ristretto => {
                     // To add support here, we need to either make this
