@@ -177,6 +177,9 @@ pub enum DwalletMPCError {
 
     #[error("Invalid hash scheme")]
     InvalidHashScheme,
+
+    #[error("Unsupported centralized DKG output version")]
+    UnsupportedCentralizedDKGOutputVersion,
 }
 
 /// A wrapper type for the result of a runtime operation.

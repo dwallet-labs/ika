@@ -106,7 +106,10 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
                 .map_err(DwalletMPCError::BcsError)?;
 
         match first_round_output_buf {
-            VersionedCentralizedDKGPublicOutput::V1(first_round_output) => {
+            VersionedCentralizedDKGPublicOutput::V1(_) => {
+                Err(DwalletMPCError::UnsupportedCentralizedDKGOutputVersion)
+            }
+            VersionedCentralizedDKGPublicOutput::V2(first_round_output) => {
                 let [first_part, second_part]: <DWalletDKGFirstParty as Party>::PublicOutput =
                     bcs::from_bytes(&first_round_output).map_err(DwalletMPCError::BcsError)?;
                 // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.

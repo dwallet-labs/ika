@@ -153,7 +153,7 @@ pub fn create_dkg_output(
 
             // Public Output:
             // centralized_public_key_share + public_key + decentralized_party_public_key_share
-            let public_output = bcs::to_bytes(&VersionedCentralizedDKGPublicOutput::V1(
+            let public_output = bcs::to_bytes(&VersionedCentralizedDKGPublicOutput::V2(
                 bcs::to_bytes(&round_result.public_output)?,
             ))?;
             // Centralized Secret Key Share.
@@ -205,8 +205,11 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
 ) -> anyhow::Result<bool> {
     let versioned_centralized_dkg_output =
         bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(centralized_dkg_output)?;
-    let VersionedCentralizedDKGPublicOutput::V1(centralized_dkg_output) =
-        versioned_centralized_dkg_output;
+    let VersionedCentralizedDKGPublicOutput::V2(centralized_dkg_output) =
+        versioned_centralized_dkg_output
+    else {
+        return Err(anyhow!("Only V2 centralized DKG output is supported"));
+    };
 
     let centralized_dkg_output = bcs::from_bytes::<
         DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
@@ -214,8 +217,11 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
 
     let versioned_decentralized_dkg_output =
         bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(decentralized_dkg_output)?;
-    let VersionedCentralizedDKGPublicOutput::V1(decentralized_dkg_output) =
-        versioned_decentralized_dkg_output;
+    let VersionedCentralizedDKGPublicOutput::V2(decentralized_dkg_output) =
+        versioned_decentralized_dkg_output
+    else {
+        return Err(anyhow!("Only V2 decentralized DKG output is supported"));
+    };
 
     let decentralized_dkg_output = bcs::from_bytes::<
         DKGDecentralizedPartyOutput<

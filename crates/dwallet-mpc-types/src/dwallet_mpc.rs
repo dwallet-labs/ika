@@ -170,6 +170,7 @@ pub enum VersionedPublicKeyShareAndProof {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedCentralizedDKGPublicOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
