@@ -155,7 +155,7 @@ pub fn create_dkg_output(
                 { group::secp256k1::SCALAR_LIMBS },
                 group::secp256k1::GroupElement,
             >::UniversalPublicDKGOutput {
-                output: decentralized_output,
+                output: centralized_output,
                 ..
             } = round_result.public_output
             else {
@@ -164,8 +164,8 @@ pub fn create_dkg_output(
 
             // Public Output:
             // centralized_public_key_share + public_key + decentralized_party_public_key_share
-            let public_output = bcs::to_bytes(&VersionedCentralizedDKGPublicOutput::V2(
-                bcs::to_bytes(&decentralized_output)?,
+            let public_output = bcs::to_bytes(&VersionedCentralizedDKGPublicOutput::V1(
+                bcs::to_bytes(&centralized_output)?,
             ))?;
             // Centralized Secret Key Share.
             // Warning:
