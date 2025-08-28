@@ -9,6 +9,7 @@ use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::sign::verify_partial_signature;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::ProtocolData;
+use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
 use message_digest::message_digest::message_digest;
@@ -94,7 +95,8 @@ impl ProtocolCryptographicData {
             } => {
                 verify_partial_signature(
                     &data.message,
-                    &data.hash_type
+                    &HashType::try_from(data.hash_type.clone() as u32)
+                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
