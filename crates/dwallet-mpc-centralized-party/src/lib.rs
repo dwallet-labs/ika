@@ -35,7 +35,10 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
 use message_digest::message_digest::message_digest;
-use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput};
+use twopc_mpc::class_groups::{
+    DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyOutput,
+    DKGDecentralizedPartyVersionedOutput,
+};
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::sign::verify_signature;
 use twopc_mpc::secp256k1::class_groups::{
@@ -158,7 +161,7 @@ pub fn create_dkg_output(
             else {
                 return Err(anyhow!(""));
             };
-            
+
             // Public Output:
             // centralized_public_key_share + public_key + decentralized_party_public_key_share
             let public_output = bcs::to_bytes(&VersionedCentralizedDKGPublicOutput::V2(
