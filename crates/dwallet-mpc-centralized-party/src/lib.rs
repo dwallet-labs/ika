@@ -215,6 +215,20 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
     }
 }
 
+type SpecificDKGDecentralizedPartyOutput = DKGDecentralizedPartyOutput<
+    SCALAR_LIMBS,
+    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    group::secp256k1::GroupElement,
+>;
+
+type SpecificDKGDecentralizedPartyVersionedOutput = DKGDecentralizedPartyVersionedOutput<
+    SCALAR_LIMBS,
+    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    group::secp256k1::GroupElement,
+>;
+
 /// Check whether the centralized party (user)'s DKG output matches the decentralized party (network)'s DKG output.
 ///
 /// Required usage: when accepting an encrypted user share after DKG before we sign on the network's public output.
@@ -237,23 +251,12 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
     let versioned_decentralized_dkg_output =
         bcs::from_bytes::<VersionedDwalletDKGSecondRoundPublicOutput>(decentralized_dkg_output)?;
     let decentralized_dkg_output = match versioned_decentralized_dkg_output {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => bcs::from_bytes::<
-            DKGDecentralizedPartyOutput<
-                SCALAR_LIMBS,
-                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                group::secp256k1::GroupElement,
-            >,
-        >(output.as_slice())?
-        .into(),
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => bcs::from_bytes::<
-            DKGDecentralizedPartyVersionedOutput<
-                SCALAR_LIMBS,
-                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                group::secp256k1::GroupElement,
-            >,
-        >(output.as_slice())?,
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+            bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
+        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+        }
     };
 
     let does_centralized_and_decentralized_parties_dkg_output_match =
@@ -277,6 +280,10 @@ pub fn advance_centralized_sign_party(
 ) -> anyhow::Result<SignedMessage> {
     let decentralized_party_dkg_public_output =
         bcs::from_bytes(&decentralized_party_dkg_public_output)?;
+    let dwallet_output = match decentralized_party_dkg_public_output.clone() {
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(decentralized_party_dkg_public_output) => {}
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(decentralized_party_dkg_public_output) => {}
+    };
     match decentralized_party_dkg_public_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(decentralized_party_dkg_public_output) => {
             let presign = bcs::from_bytes(&presign)?;
