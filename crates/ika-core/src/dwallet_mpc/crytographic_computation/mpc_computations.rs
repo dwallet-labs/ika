@@ -393,20 +393,27 @@ impl ProtocolCryptographicData {
                     ..
                 } = &result
                 {
-                    let DKGCentralizedPartyVersionedOutput::<
-                        { group::secp256k1::SCALAR_LIMBS },
-                        group::secp256k1::GroupElement,
-                    >::UniversalPublicDKGOutput {
-                        output: decentralized_output,
-                        ..
-                    } = bcs::from_bytes(&public_output_value)?
-                    else {
-                        return Err(DwalletMPCError::InternalError(
-                            "expected universal public DKG output".to_string(),
-                        ));
+                    let decentralized_output = match bcs::from_bytes(&public_output_value)? {
+                        DKGDecentralizedPartyVersionedOutput::<
+                            { group::secp256k1::SCALAR_LIMBS },
+                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                            {
+                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
+                            },
+                            group::secp256k1::GroupElement,
+                        >::UniversalPublicDKGOutput {
+                            output: dkg_output,
+                            ..
+                        } => dkg_output,
+                        DKGDecentralizedPartyVersionedOutput::<
+                            { group::secp256k1::SCALAR_LIMBS },
+                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                            {
+                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
+                            },
+                            group::secp256k1::GroupElement,
+                        >::TargetedPublicDKGOutput(output) => output,
                     };
-                    // Verify the encrypted share before finalizing, guaranteeing a two-for-one
-                    // computation of both that the dkg was successful, and the encrypted user share is valid.
                     verify_encrypted_share(
                         &data.encrypted_centralized_secret_share_and_proof,
                         &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
