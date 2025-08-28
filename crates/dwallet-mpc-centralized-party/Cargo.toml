@@ -6,7 +6,8 @@ version.workspace = true
 [dependencies]
 mpc.workspace = true
 twopc_mpc.workspace = true
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "873c7efb" }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "af06d39385" }
+web-sys = "0.3.77"
 message-digest = { path = "../message-digest" }
 class_groups.workspace = true
 group.workspace = true
@@ -21,6 +22,8 @@ getrandom = { version = "0.2.16", features = ["js"], optional = true } # TODO: i
 serde = { version = "1.0", features = ["derive"] }
 tracing-subscriber = "0.3.19"
 tracing = "0.1.41"
+log = "0.4.27"
+console_log = "1.0.0"
 
 [features]
 wasm_js = ["group/wasm_js", "dep:getrandom"]
