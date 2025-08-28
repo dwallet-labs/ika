@@ -273,69 +273,64 @@ pub fn advance_centralized_sign_party(
     message: Vec<u8>,
     hash_type: u32,
 ) -> anyhow::Result<SignedMessage> {
-    let decentralized_party_dkg_public_output =
-        bcs::from_bytes(&decentralized_party_dkg_public_output)?;
-    let dwallet_output = match decentralized_party_dkg_public_output.clone() {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(decentralized_party_dkg_public_output) => {}
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(decentralized_party_dkg_public_output) => {}
-    };
-    match decentralized_party_dkg_public_output {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(decentralized_party_dkg_public_output) => {
-            let presign = bcs::from_bytes(&presign)?;
-            let VersionedPresignOutput::V1(presign) = presign;
-            let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
-                bcs::from_bytes(&centralized_party_secret_key_share)?;
-            let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
-                centralized_party_secret_key_share;
-            let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&decentralized_party_dkg_public_output)?;
-            let DKGDecentralizedPartyVersionedOutput::<
-                { group::secp256k1::SCALAR_LIMBS },
-                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                group::secp256k1::GroupElement,
-            >::UniversalPublicDKGOutput {
-                output: decentralized_output,
-                ..
-            } = decentralized_output
-            else {
-                return Err(anyhow!("Only universal DKG output is supported"));
-            };
-            let centralized_public_output = twopc_mpc::class_groups::DKGCentralizedPartyOutput::<
-                { secp256k1::SCALAR_LIMBS },
-                secp256k1::GroupElement,
-            > {
-                public_key_share: decentralized_output.centralized_party_public_key_share,
-                public_key: decentralized_output.public_key,
-                decentralized_party_public_key_share: decentralized_output.public_key_share,
-            };
-            let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
-                bcs::from_bytes(&presign)?;
-            let centralized_party_public_input =
-                <AsyncProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from(
-                    (
-                        vec![],
-                        message,
-                        HashType::try_from(hash_type)?,
-                        centralized_public_output.clone().into(),
-                        presign,
-                        bcs::from_bytes(&protocol_pp)?,
-                    ),
-                );
-
-            let round_result = SignCentralizedParty::advance(
-                (),
-                &bcs::from_bytes(&centralized_party_secret_key_share)?,
-                &centralized_party_public_input,
-                &mut OsCsRng,
-            )
-            .context("advance() failed on the SignCentralizedParty")?;
-
-            let signed_message =
-                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
-            let signed_message = bcs::to_bytes(&signed_message)?;
-            Ok(signed_message)
+    let decentralized_dkg_output = match bcs::from_bytes(&decentralized_party_dkg_public_output)? {
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+            bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
-    }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+        }
+    };
+    let presign = bcs::from_bytes(&presign)?;
+    let VersionedPresignOutput::V1(presign) = presign;
+    let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(&centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
+        centralized_party_secret_key_share;
+    let DKGDecentralizedPartyVersionedOutput::<
+        { group::secp256k1::SCALAR_LIMBS },
+        SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+        SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+        group::secp256k1::GroupElement,
+    >::UniversalPublicDKGOutput {
+        output: decentralized_output,
+        ..
+    } = decentralized_dkg_output
+    else {
+        return Err(anyhow!("Only universal DKG output is supported"));
+    };
+    let centralized_public_output = twopc_mpc::class_groups::DKGCentralizedPartyOutput::<
+        { secp256k1::SCALAR_LIMBS },
+        secp256k1::GroupElement,
+    > {
+        public_key_share: decentralized_output.centralized_party_public_key_share,
+        public_key: decentralized_output.public_key,
+        decentralized_party_public_key_share: decentralized_output.public_key_share,
+    };
+    let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(&presign)?;
+    let centralized_party_public_input =
+        <AsyncProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+            vec![],
+            message,
+            HashType::try_from(hash_type)?,
+            centralized_public_output.clone().into(),
+            presign,
+            bcs::from_bytes(&protocol_pp)?,
+        ));
+
+    let round_result = SignCentralizedParty::advance(
+        (),
+        &bcs::from_bytes(&centralized_party_secret_key_share)?,
+        &centralized_party_public_input,
+        &mut OsCsRng,
+    )
+    .context("advance() failed on the SignCentralizedParty")?;
+
+    let signed_message =
+        VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+    let signed_message = bcs::to_bytes(&signed_message)?;
+    Ok(signed_message)
 }
 
 pub fn sample_dwallet_keypair_inner(protocol_pp: Vec<u8>) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
