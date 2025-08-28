@@ -167,7 +167,7 @@ pub fn create_dkg_output(
                     group::secp256k1::GroupElement,
                 >::TargetedPublicDKGOutput(output) => output,
             };
-            
+
             // Public Output:
             // centralized_public_key_share + public_key + decentralized_party_public_key_share
             let public_output = bcs::to_bytes(&VersionedCentralizedDKGPublicOutput::V1(
