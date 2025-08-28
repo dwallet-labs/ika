@@ -35,9 +35,7 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
 use message_digest::message_digest::message_digest;
-use twopc_mpc::class_groups::{
-    DKGCentralizedPartyOutput, DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput,
-};
+use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput};
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::sign::verify_signature;
 use twopc_mpc::secp256k1::class_groups::{
@@ -150,11 +148,21 @@ pub fn create_dkg_output(
                 VersionedPublicKeyShareAndProof::V1(bcs::to_bytes(&round_result.outgoing_message)?);
 
             let public_key_share_and_proof = bcs::to_bytes(&public_key_share_and_proof)?;
-
+            let DKGCentralizedPartyVersionedOutput::<
+                { group::secp256k1::SCALAR_LIMBS },
+                group::secp256k1::GroupElement,
+            >::UniversalPublicDKGOutput {
+                output: decentralized_output,
+                ..
+            } = round_result.public_output
+            else {
+                return Err(anyhow!(""));
+            };
+            
             // Public Output:
             // centralized_public_key_share + public_key + decentralized_party_public_key_share
             let public_output = bcs::to_bytes(&VersionedCentralizedDKGPublicOutput::V2(
-                bcs::to_bytes(&round_result.public_output)?,
+                bcs::to_bytes(&decentralized_output)?,
             ))?;
             // Centralized Secret Key Share.
             // Warning:
