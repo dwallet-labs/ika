@@ -216,39 +216,42 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
 ) -> anyhow::Result<bool> {
     let versioned_centralized_dkg_output =
         bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(centralized_dkg_output)?;
-    let VersionedCentralizedDKGPublicOutput::V2(centralized_dkg_output) =
-        versioned_centralized_dkg_output
-    else {
-        return Err(anyhow!("Only V2 centralized DKG output is supported"));
+    let centralized_dkg_output = match versioned_centralized_dkg_output {
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let a = bcs::from_bytes::<
+                DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
+            >(output.as_slice())?;
+            a.into()
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => bcs::from_bytes::<
+            DKGCentralizedPartyVersionedOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
+        >(output.as_slice())?,
     };
-
-    let centralized_dkg_output = bcs::from_bytes::<
-        DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
-    >(centralized_dkg_output.as_slice())?;
 
     let versioned_decentralized_dkg_output =
         bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(decentralized_dkg_output)?;
-    let VersionedCentralizedDKGPublicOutput::V2(decentralized_dkg_output) =
-        versioned_decentralized_dkg_output
-    else {
-        return Err(anyhow!("Only V2 decentralized DKG output is supported"));
+    let decentralized_dkg_output = match versioned_decentralized_dkg_output {
+        VersionedCentralizedDKGPublicOutput::V1(output) => bcs::from_bytes::<
+            DKGDecentralizedPartyOutput<
+                SCALAR_LIMBS,
+                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                group::secp256k1::GroupElement,
+            >,
+        >(output.as_slice())?
+        .into(),
+        VersionedCentralizedDKGPublicOutput::V2(output) => bcs::from_bytes::<
+            DKGDecentralizedPartyVersionedOutput<
+                SCALAR_LIMBS,
+                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                group::secp256k1::GroupElement,
+            >,
+        >(output.as_slice())?,
     };
 
-    let decentralized_dkg_output = bcs::from_bytes::<
-        DKGDecentralizedPartyOutput<
-            SCALAR_LIMBS,
-            SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-            SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-            group::secp256k1::GroupElement,
-        >,
-    >(decentralized_dkg_output.as_slice())?;
-
-    let does_centralized_and_decentralized_parties_dkg_output_match = centralized_dkg_output
-        .public_key_share
-        == decentralized_dkg_output.centralized_party_public_key_share
-        && centralized_dkg_output.decentralized_party_public_key_share
-            == decentralized_dkg_output.public_key_share
-        && centralized_dkg_output.public_key == decentralized_dkg_output.public_key;
+    let does_centralized_and_decentralized_parties_dkg_output_match =
+        decentralized_dkg_output == centralized_dkg_output;
 
     Ok(does_centralized_and_decentralized_parties_dkg_output_match)
 }
