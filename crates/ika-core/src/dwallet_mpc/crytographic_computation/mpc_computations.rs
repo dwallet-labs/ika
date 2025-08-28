@@ -20,6 +20,7 @@ use class_groups::dkg::Secp256k1Party;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
+    SpecificDKGDecentralizedPartyOutput, SpecificDKGDecentralizedPartyVersionedOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedSignOutput,
@@ -439,20 +440,13 @@ impl ProtocolCryptographicData {
                         private_output,
                     } => {
                         let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
-                        // Wrap the public output with its version.
-                        let DKGDecentralizedPartyVersionedOutput::<
-                            { group::secp256k1::SCALAR_LIMBS },
-                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                            {
-                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
-                            },
-                            group::secp256k1::GroupElement,
-                        >::UniversalPublicDKGOutput {
-                            output: decentralized_output,
-                            ..
-                        } = decentralized_output
-                        else {
-                            return Err(DwalletMPCError::InvalidHashScheme);
+                        let decentralized_output = match decentralized_output {
+                            SpecificDKGDecentralizedPartyVersionedOutput::UniversalPublicDKGOutput {
+                                output, ..
+                            } => output,
+                            SpecificDKGDecentralizedPartyVersionedOutput::TargetedPublicDKGOutput (
+                                output
+                            ) => output,
                         };
                         let public_output_value =
                             bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
