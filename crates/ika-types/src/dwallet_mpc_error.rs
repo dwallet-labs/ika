@@ -178,9 +178,6 @@ pub enum DwalletMPCError {
     #[error("Invalid hash scheme")]
     InvalidHashScheme,
 
-    #[error("Unsupported centralized DKG output version")]
-    UnsupportedCentralizedDKGOutputVersion,
-
     #[error("Internal error: {0}")]
     InternalError(String),
 }
