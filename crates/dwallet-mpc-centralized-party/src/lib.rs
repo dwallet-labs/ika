@@ -505,20 +505,25 @@ pub fn verify_secret_share(
 ) -> anyhow::Result<bool> {
     let protocol_public_params: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let dkg_output = bcs::from_bytes(&dkg_output)?;
-    match dkg_output {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
-            let dkg_output = bcs::from_bytes(&dkg_output)?;
-            let secret_share: VersionedDwalletUserSecretShare = bcs::from_bytes(&secret_share)?;
-            Ok(<twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
+    let decentralized_dkg_output = match dkg_output {
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+            bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
+        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+        }
+    };
+
+    let secret_share: VersionedDwalletUserSecretShare = bcs::from_bytes(&secret_share)?;
+    Ok(
+        <twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
                 &protocol_public_params,
-                dkg_output,
+                decentralized_dkg_output,
                 match secret_share {
                     VersionedDwalletUserSecretShare::V1(secret_share) => bcs::from_bytes(&secret_share)?
                 },
             )
                 .is_ok())
-        }
-    }
 }
 
 /// Decrypts the given encrypted user share using the given decryption key.
@@ -532,12 +537,19 @@ pub fn decrypt_user_share_inner(
     let protocol_public_params: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let VersionedEncryptedUserShare::V1(encrypted_user_share_and_proof) =
         bcs::from_bytes(&encrypted_user_share_and_proof)?;
-    let VersionedDwalletDKGSecondRoundPublicOutput::V1(dwallet_dkg_output) =
-        bcs::from_bytes(&dwallet_dkg_output)?;
+    let dwallet_dkg_output = match bcs::from_bytes(&dwallet_dkg_output)? {
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+            bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
+        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+        }
+    };
+
     let (_, encryption_of_discrete_log): <AsyncProtocol as twopc_mpc::dkg::Protocol>::EncryptedSecretKeyShareMessage = bcs::from_bytes(&encrypted_user_share_and_proof)?;
     <twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_params,
-        bcs::from_bytes(&dwallet_dkg_output)?,
+        dwallet_dkg_output,
         bcs::from_bytes(&encryption_key)?,
         bcs::from_bytes(&encrypted_user_share_and_proof)?,
         &mut OsCsRng,
