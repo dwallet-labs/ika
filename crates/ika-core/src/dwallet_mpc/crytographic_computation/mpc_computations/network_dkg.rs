@@ -394,10 +394,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                         access_structure,
                     )
                     .map_err(DwalletMPCError::from)?;
-
-                let encryption_scheme_public_parameters = public_output
-                    .default_encryption_scheme_public_parameters::<secp256k1::GroupElement>()?;
-
+                
                 let protocol_public_parameters = ProtocolPublicParameters::new::<
                     { secp256k1::SCALAR_LIMBS },
                     { FUNDAMENTAL_DISCRIMINANT_LIMBS },
