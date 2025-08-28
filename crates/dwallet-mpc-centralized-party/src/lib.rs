@@ -109,9 +109,10 @@ pub fn create_dkg_output(
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
     session_identifier: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    let session_identifier = CommitmentSizedNumber::from_be_hex(
-        "0xC70D778BCCEF36A81AED8DA0B819D2BD28BD8653E56A5D40903DF1A0ADE0B876",
-    );
+    let session_identifier = [
+        199, 13, 119, 139, 204, 239, 54, 168, 26, 237, 141, 160, 184, 25, 210, 189, 40, 189, 134,
+        83, 229, 106, 93, 64, 144, 61, 241, 160, 173, 224, 184, 118,
+    ];
     println!("session_id: {:?}", session_identifier);
     let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let decentralized_first_round_public_output =
@@ -137,7 +138,7 @@ pub fn create_dkg_output(
                     .encryption_scheme_public_parameters
                     .clone(),
             );
-            let session_identifier = CommitmentSizedNumber::from_le_slice(&session_identifier);
+            let session_identifier = CommitmentSizedNumber::from_be_slice(&session_identifier);
             let fixed_rng = &mut rand_chacha::ChaCha20Rng::from_seed([0u8; 32]);
             let round_result = DKGCentralizedParty::advance(
                 (),

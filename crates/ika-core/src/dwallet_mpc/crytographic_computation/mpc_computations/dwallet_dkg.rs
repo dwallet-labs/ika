@@ -105,9 +105,6 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
         first_round_output_buf: &SerializedWrappedMPCPublicOutput,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
     ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
-        let session_identifier = CommitmentSizedNumber::from_be_hex(
-            "0xC70D778BCCEF36A81AED8DA0B819D2BD28BD8653E56A5D40903DF1A0ADE0B876",
-        );
         let first_round_output_buf: VersionedCentralizedDKGPublicOutput =
             bcs::from_bytes(first_round_output_buf).map_err(DwalletMPCError::BcsError)?;
 
