@@ -283,17 +283,22 @@ pub fn advance_centralized_sign_party(
         bcs::from_bytes(&centralized_party_secret_key_share)?;
     let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
         centralized_party_secret_key_share;
-    let DKGDecentralizedPartyVersionedOutput::<
-        { group::secp256k1::SCALAR_LIMBS },
-        SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-        SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-        group::secp256k1::GroupElement,
-    >::UniversalPublicDKGOutput {
-        output: decentralized_output,
-        ..
-    } = decentralized_dkg_output
-    else {
-        return Err(anyhow!("Only universal DKG output is supported"));
+    let decentralized_output = match decentralized_dkg_output {
+        DKGDecentralizedPartyVersionedOutput::<
+            { group::secp256k1::SCALAR_LIMBS },
+            SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+            SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+            group::secp256k1::GroupElement,
+        >::UniversalPublicDKGOutput {
+            output: dkg_output,
+            ..
+        } => dkg_output,
+        DKGDecentralizedPartyVersionedOutput::<
+            { group::secp256k1::SCALAR_LIMBS },
+            SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+            SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+            group::secp256k1::GroupElement,
+        >::TargetedPublicDKGOutput(output) => output,
     };
     let centralized_public_output = twopc_mpc::class_groups::DKGCentralizedPartyOutput::<
         { secp256k1::SCALAR_LIMBS },
