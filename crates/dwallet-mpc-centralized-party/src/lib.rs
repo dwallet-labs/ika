@@ -14,14 +14,7 @@ use class_groups::{
     SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
     Secp256k1DecryptionKey,
 };
-use dwallet_mpc_types::dwallet_mpc::{
-    DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput,
-    VersionedCentralizedDKGPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedDwalletUserSecretShare,
-    VersionedEncryptedUserShare, VersionedImportedDWalletPublicOutput,
-    VersionedImportedDwalletOutgoingMessage, VersionedNetworkDkgOutput, VersionedPresignOutput,
-    VersionedPublicKeyShareAndProof, VersionedSignOutput, VersionedUserSignedMessage,
-};
+use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput, SpecificDKGDecentralizedPartyOutput, SpecificDKGDecentralizedPartyVersionedOutput, VersionedCentralizedDKGPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare, VersionedImportedDWalletPublicOutput, VersionedImportedDwalletOutgoingMessage, VersionedNetworkDkgOutput, VersionedPresignOutput, VersionedPublicKeyShareAndProof, VersionedSignOutput, VersionedUserSignedMessage};
 use group::{CyclicGroupElement, GroupElement, HashType, OsCsRng, Samplable, secp256k1};
 use homomorphic_encryption::{
     AdditivelyHomomorphicDecryptionKey, AdditivelyHomomorphicEncryptionKey,
@@ -213,20 +206,6 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
         }
     }
 }
-
-type SpecificDKGDecentralizedPartyOutput = DKGDecentralizedPartyOutput<
-    SCALAR_LIMBS,
-    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    group::secp256k1::GroupElement,
->;
-
-type SpecificDKGDecentralizedPartyVersionedOutput = DKGDecentralizedPartyVersionedOutput<
-    SCALAR_LIMBS,
-    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    group::secp256k1::GroupElement,
->;
 
 /// Check whether the centralized party (user)'s DKG output matches the decentralized party (network)'s DKG output.
 ///

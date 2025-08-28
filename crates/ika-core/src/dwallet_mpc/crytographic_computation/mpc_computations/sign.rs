@@ -134,6 +134,8 @@ pub(crate) trait SignPartyPublicInputGenerator: Party {
     ) -> DwalletMPCResult<<SignParty as Party>::PublicInput>;
 }
 
+
+
 impl SignPartyPublicInputGenerator for SignParty {
     fn generate_public_input(
         protocol_public_parameters: ProtocolPublicParameters,
@@ -148,6 +150,15 @@ impl SignPartyPublicInputGenerator for SignParty {
         let dkg_output = bcs::from_bytes(dkg_output)?;
         let presign = bcs::from_bytes(presign)?;
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
+        let decentralized_dkg_output = match dkg_output {
+            VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+                bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
+            }
+            VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+                bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+            }
+        };
+
         match dkg_output {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
                 let VersionedPresignOutput::V1(presign) = presign;

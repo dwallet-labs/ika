@@ -240,6 +240,7 @@ version = "1.0.0"
 dependencies = [
  "class_groups",
  "enum_dispatch",
+ "group 0.1.0",
  "schemars",
  "serde",
  "strum_macros",
