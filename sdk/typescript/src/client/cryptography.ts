@@ -156,7 +156,7 @@ export async function encryptSecretShare(
 export async function prepareDKGSecondRound(
 	protocolPublicParameters: Uint8Array,
 	dWallet: DWallet,
-	sessionIdentifier: Uint8Array,
+	_sessionIdentifier: Uint8Array,
 	encryptionKey: Uint8Array,
 ): Promise<DKGSecondRoundRequestInput> {
 	const networkFirstRoundOutput =
@@ -169,7 +169,7 @@ export async function prepareDKGSecondRound(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
-		sessionIdentifierDigest(sessionIdentifier),
+		new TextEncoder().encode(dWallet.id.id.slice(2)),
 	);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(

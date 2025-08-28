@@ -109,7 +109,9 @@ impl ProtocolCryptographicData {
                     advance_request,
                 }
             }
-            ProtocolData::DKGSecond { data, .. } => {
+            ProtocolData::DKGSecond {
+                data, dwallet_id, ..
+            } => {
                 let PublicInput::DKGSecond(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
@@ -131,6 +133,7 @@ impl ProtocolCryptographicData {
                     data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
+                    dwallet_id: *dwallet_id,
                 }
             }
             ProtocolData::Presign { data, .. } => {
@@ -376,10 +379,12 @@ impl ProtocolCryptographicData {
                 public_input,
                 data,
                 advance_request,
+                dwallet_id,
                 ..
             } => {
+                let dwallet_id = CommitmentSizedNumber::from_le_slice(&dwallet_id.into_bytes());
                 let result = Party::<DWalletDKGSecondParty>::advance_with_guaranteed_output(
-                    session_id,
+                    dwallet_id,
                     party_id,
                     access_structure,
                     advance_request,
