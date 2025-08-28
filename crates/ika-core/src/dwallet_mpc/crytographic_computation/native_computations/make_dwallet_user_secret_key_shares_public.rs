@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use dwallet_mpc_types::dwallet_mpc::{
-    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    SerializedWrappedMPCPublicOutput, SpecificDKGDecentralizedPartyOutput,
+    SpecificDKGDecentralizedPartyVersionedOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedImportedSecretShare,
 };
 use twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol;
@@ -17,14 +18,18 @@ pub fn verify_secret_share(
     let secret_share: VersionedImportedSecretShare = bcs::from_bytes(&secret_share)?;
     let VersionedImportedSecretShare::V1(secret_share) = secret_share;
     let dkg_output = bcs::from_bytes(&dkg_output)?;
-    match dkg_output {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
-            <AsyncECDSAProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
-                &protocol_public_parameters,
-                bcs::from_bytes(&dkg_output)?,
-                bcs::from_bytes(&secret_share)?,
-            )
-            .map_err(Into::into)
+    let decentralized_dkg_output = match dkg_output {
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+            bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
-    }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+        }
+    };
+    <AsyncECDSAProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
+        &protocol_public_parameters,
+        decentralized_dkg_output,
+        bcs::from_bytes(&secret_share)?,
+    )
+    .map_err(Into::into)
 }
