@@ -140,6 +140,7 @@ pub enum VersionedDwalletDKGFirstRoundPublicOutput {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedDwalletDKGSecondRoundPublicOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

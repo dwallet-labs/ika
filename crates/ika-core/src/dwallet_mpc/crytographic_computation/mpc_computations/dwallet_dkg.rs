@@ -4,10 +4,7 @@
 //! This module provides a wrapper around the DKG protocol from the 2PC-MPC library.
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
-use dwallet_mpc_types::dwallet_mpc::{
-    SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
-    VersionedPublicKeyShareAndProof,
-};
+use dwallet_mpc_types::dwallet_mpc::{SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput, VersionedPublicKeyShareAndProof};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::Party;
@@ -98,7 +95,7 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
         first_round_output_buf: &SerializedWrappedMPCPublicOutput,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
     ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
-        let first_round_output_buf: VersionedCentralizedDKGPublicOutput =
+        let first_round_output_buf: VersionedDwalletDKGFirstRoundPublicOutput =
             bcs::from_bytes(first_round_output_buf).map_err(DwalletMPCError::BcsError)?;
 
         let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
@@ -106,10 +103,10 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
                 .map_err(DwalletMPCError::BcsError)?;
 
         match first_round_output_buf {
-            VersionedCentralizedDKGPublicOutput::V2(_) => {
+            VersionedDwalletDKGFirstRoundPublicOutput::V2(_) => {
                 Err(DwalletMPCError::UnsupportedCentralizedDKGOutputVersion)
             }
-            VersionedCentralizedDKGPublicOutput::V1(first_round_output) => {
+            VersionedDwalletDKGFirstRoundPublicOutput::V1(first_round_output) => {
                 let [first_part, second_part]: <DWalletDKGFirstParty as Party>::PublicOutput =
                     bcs::from_bytes(&first_round_output).map_err(DwalletMPCError::BcsError)?;
                 // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.

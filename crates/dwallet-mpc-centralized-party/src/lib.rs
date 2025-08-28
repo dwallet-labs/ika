@@ -188,6 +188,15 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
     let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput = bcs::from_bytes(&dwallet_output)?;
     match dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
+            let output: DKGDecentralizedPartyOutput<
+                { group::secp256k1::SCALAR_LIMBS },
+                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                group::secp256k1::GroupElement,
+            > = bcs::from_bytes(&dkg_output)?;
+            Ok(bcs::to_bytes(&output.public_key)?)
+        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) => {
             let dkg_output: DKGDecentralizedOutput = bcs::from_bytes(&dkg_output)?;
             let DKGDecentralizedPartyVersionedOutput::<
                 { group::secp256k1::SCALAR_LIMBS },
@@ -201,8 +210,7 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
             else {
                 return Err(anyhow!("Only universal DKG output is supported"));
             };
-            let public_key = dkg_output.public_key;
-            Ok(bcs::to_bytes(&public_key)?)
+            Ok(bcs::to_bytes(&dkg_output.public_key;)?)
         }
     }
 }
@@ -217,21 +225,19 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
     let versioned_centralized_dkg_output =
         bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(centralized_dkg_output)?;
     let centralized_dkg_output = match versioned_centralized_dkg_output {
-        VersionedCentralizedDKGPublicOutput::V1(output) => {
-            let a = bcs::from_bytes::<
-                DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
-            >(output.as_slice())?;
-            a.into()
-        }
+        VersionedCentralizedDKGPublicOutput::V1(output) => bcs::from_bytes::<
+            DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
+        >(output.as_slice())?
+        .into(),
         VersionedCentralizedDKGPublicOutput::V2(output) => bcs::from_bytes::<
             DKGCentralizedPartyVersionedOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
         >(output.as_slice())?,
     };
 
     let versioned_decentralized_dkg_output =
-        bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(decentralized_dkg_output)?;
+        bcs::from_bytes::<VersionedDwalletDKGSecondRoundPublicOutput>(decentralized_dkg_output)?;
     let decentralized_dkg_output = match versioned_decentralized_dkg_output {
-        VersionedCentralizedDKGPublicOutput::V1(output) => bcs::from_bytes::<
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => bcs::from_bytes::<
             DKGDecentralizedPartyOutput<
                 SCALAR_LIMBS,
                 SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -240,7 +246,7 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
             >,
         >(output.as_slice())?
         .into(),
-        VersionedCentralizedDKGPublicOutput::V2(output) => bcs::from_bytes::<
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => bcs::from_bytes::<
             DKGDecentralizedPartyVersionedOutput<
                 SCALAR_LIMBS,
                 SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
