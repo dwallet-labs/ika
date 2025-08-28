@@ -180,6 +180,9 @@ pub enum DwalletMPCError {
 
     #[error("Unsupported centralized DKG output version")]
     UnsupportedCentralizedDKGOutputVersion,
+    
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 
 /// A wrapper type for the result of a runtime operation.

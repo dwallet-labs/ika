@@ -35,7 +35,9 @@ use mpc::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
-use twopc_mpc::class_groups::DKGDecentralizedPartyVersionedOutput;
+use twopc_mpc::class_groups::{
+    DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
+};
 
 pub(crate) mod dwallet_dkg;
 pub(crate) mod network_dkg;
@@ -391,12 +393,24 @@ impl ProtocolCryptographicData {
                     ..
                 } = &result
                 {
+                    let DKGCentralizedPartyVersionedOutput::<
+                        { group::secp256k1::SCALAR_LIMBS },
+                        group::secp256k1::GroupElement,
+                    >::UniversalPublicDKGOutput {
+                        output: decentralized_output,
+                        ..
+                    } = bcs::from_bytes(&public_output_value)?
+                    else {
+                        return Err(DwalletMPCError::InternalError(
+                            "expected universal public DKG output".to_string(),
+                        ));
+                    };
                     // Verify the encrypted share before finalizing, guaranteeing a two-for-one
                     // computation of both that the dkg was successful, and the encrypted user share is valid.
                     verify_encrypted_share(
                         &data.encrypted_centralized_secret_share_and_proof,
                         &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
-                            public_output_value.clone(),
+                            bcs::to_bytes(&decentralized_output)?,
                         ))?,
                         &data.encryption_key,
                         public_input.protocol_public_parameters.clone(),
