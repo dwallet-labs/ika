@@ -6,11 +6,11 @@
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
 use commitment::CommitmentSizedNumber;
-use fastcrypto::hash::{HashFunction, Sha256};
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
     VersionedPublicKeyShareAndProof,
 };
+use fastcrypto::hash::{HashFunction, Sha256};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::Party;
@@ -81,9 +81,7 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
         let protocol_public_parameters_hash = base64::encode(Sha256::digest(
             bcs::to_bytes(&protocol_public_parameters).unwrap(),
         ));
-        println!(
-            "protocol public parameters hash: {protocol_public_parameters_hash}"
-        );
+        println!("protocol public parameters hash: {protocol_public_parameters_hash}");
         let secp256k1_public_input = twopc_mpc::dkg::encryption_of_secret_key_share::PublicInput::<
             group::secp256k1::scalar::PublicParameters,
             group::secp256k1::group_element::PublicParameters,
