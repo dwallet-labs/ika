@@ -92,13 +92,9 @@ impl ProtocolCryptographicData {
                 protocol_public_parameters,
                 ..
             } => {
-                let hashed_message = bcs::to_bytes(
-                    &message_digest(&data.message, &data.hash_type)
-                        .map_err(|err| DwalletMPCError::MessageDigest(err.to_string()))?,
-                )?;
-
                 verify_partial_signature(
-                    &hashed_message,
+                    &data.message,
+                    &data.hash_type
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
