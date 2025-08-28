@@ -12,19 +12,25 @@
 
 # Move build directory
 build
-!crates/ika-single-node-benchmark/tests/data/package_publish_from_bytecode/package_a/build
-!crates/ika-single-node-benchmark/tests/data/package_publish_from_bytecode/package_b/build
 storage
-!consensus/core/src/storage
 !crates/ika-types/src/storage
-!narwhal/storage
+
+# Move package summary
+package_summaries
+
+# Sui codegen
+generated
 
 # Move-related files
 Move.lock
-!crates/ika-framework/packages/move-stdlib/Move.lock
-!crates/ika-framework/packages/ika-framework/Move.lock
-!crates/ika-framework/packages/ika-system/Move.lock
-!crates/ika-framework/packages/deepbook/Move.lock
+!deployed_contracts/testnet/ika/Move.lock
+!deployed_contracts/testnet/ika_common/Move.lock
+!deployed_contracts/testnet/ika_dwallet_2pc_mpc/Move.lock
+!deployed_contracts/testnet/ika_system/Move.lock
+!deployed_contracts/mainnet/ika/Move.lock
+!deployed_contracts/mainnet/ika_common/Move.lock
+!deployed_contracts/mainnet/ika_dwallet_2pc_mpc/Move.lock
+!deployed_contracts/mainnet/ika_system/Move.lock
 .trace
 .coverage_map.mvcov
 
@@ -78,6 +84,11 @@ ika_config.json
 *.log
 *.seed
 
+# AI
+.cursor
+
+# TypeDoc
+sdk/typescript/docs
 # Chaos test auto-generated files
 sdk/typescript/test/chaos-test/ika-dns-service.ika.svc.cluster.local
 sdk/typescript/test/chaos-test/ika

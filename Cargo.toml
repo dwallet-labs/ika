@@ -1,8 +1,8 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 
 exclude = [
-    "sdk/dwallet-mpc-wasm",
+    "sdk/ika-wasm",
 ]
 
 members = [
@@ -22,7 +22,7 @@ members = [
     "crates/ika-swarm-config",
     "crates/ika-telemetry",
     "crates/ika-types",
-    "crates/ika-move-packages",
+    "crates/ika-move-contracts",
     "crates/ika-network",
     "crates/ika-archival",
 ]
@@ -74,13 +74,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 # Dependencies that should be kept in sync through the whole workspace
 [workspace.dependencies]
 k256 = { version = "0.14.0-pre.9", features = ["arithmetic", "critical-section", "precomputed-tables", "serde", "ecdsa", "hash2curve", "alloc"], default-features = false }
-mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "cc502b28"}
-proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "cc502b28"}
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "cc502b28", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "cc502b28" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["secp256k1", "class_groups"], rev = "cc502b28"}
-group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "cc502b28"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "cc502b28"}
+mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "bc0464c"}
+proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "bc0464c"}
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "bc0464c", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "bc0464c" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["secp256k1", "class_groups"], rev = "bc0464c"}
+group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "bc0464c"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "bc0464c"}
 anyhow = "1.0.71"
 arc-swap = { version = "1.5.1", features = ["serde"] }
 assert_cmd = "2.0.6"
@@ -324,7 +324,7 @@ ika-swarm = { path = "crates/ika-swarm" }
 ika-swarm-config = { path = "crates/ika-swarm-config" }
 ika-telemetry = { path = "crates/ika-telemetry" }
 ika-types = { path = "crates/ika-types" }
-ika-move-packages = { path = "crates/ika-move-packages" }
+ika-move-contracts = { path = "crates/ika-move-contracts" }
 ika-network = { path = "crates/ika-network" }
 ika-archival = { path = "crates/ika-archival" }
 

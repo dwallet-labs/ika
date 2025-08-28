@@ -53,18 +53,18 @@ pub struct EpochStats {
     pub transaction_count: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PendingDWalletCheckpointInfo {
     pub checkpoint_height: DWalletCheckpointHeight,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum PendingDWalletCheckpoint {
     // This is an enum for future upgradability, though at the moment there is only one variant.
     V1(PendingDWalletCheckpointV1),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PendingDWalletCheckpointV1 {
     pub messages: Vec<DWalletCheckpointMessageKind>,
     pub details: PendingDWalletCheckpointInfo,

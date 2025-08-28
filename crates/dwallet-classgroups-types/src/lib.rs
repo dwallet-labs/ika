@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 use class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::{
     CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS, CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, MAX_PRIMES,
     construct_knowledge_of_decryption_key_public_parameters_per_crt_prime,

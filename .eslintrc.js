@@ -158,5 +158,9 @@ module.exports = {
 				'require-extensions/require-extensions': 'off',
 			},
 		},
+		{
+			files: ['sdk/typescript/src/generated/**/*'],
+			rules: {},
+		},
 	],
 };

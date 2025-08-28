@@ -1,0 +1,20 @@
+Ika Limited Public License (IKA-LPL)
+This license is a modified version of the Microsoft Limited Public License (Ms-LPL).
+It incorporates a modified Section 3(F) to limit copyright and patent grants to specific uses within the Ika Network.
+The original Ms-LPL is available at: https://spdx.org/licenses/MS-LPL.html
+All other terms are derived from the Ms-LPL, with changes made for clarity and use-case specificity.
+This modified license should not be referred to as “Ms-LPL” or assumed to be approved by Microsoft.
+This license governs use of the accompanying software. If you use the software, you accept this license. If you do not accept the license, do not use the software.
+1. Definitions
+The terms “reproduce,” “reproduction,” “derivative works,” and “distribution” have the same meaning here as under U.S. copyright law. A “contribution” is the original software, or any additions or changes to the software. A “contributor” is any person that distributes its contribution under this license. “Licensed patents” are a contributor’s patent claims that read directly on its contribution.
+2. Grant of Rights
+(A) Copyright Grant- Subject to the terms of this license, including the license conditions and limitations in section 3, each contributor grants you a non-exclusive, worldwide, royalty-free copyright license to reproduce its contribution, prepare derivative works of its contribution, and distribute its contribution or any derivative works that you create.
+(B) Patent Grant- Subject to the terms of this license, including the license conditions and limitations in section 3, each contributor grants you a non-exclusive, worldwide, royalty-free license under its licensed patents to make, have made, use, sell, offer for sale, import, and/or otherwise dispose of its contribution in the software or derivative works of the contribution in the software.
+3. Conditions and Limitations
+(A) No Trademark License- This license does not grant you rights to use any contributors’ name, logo, or trademarks.
+(B) If you bring a patent claim against any contributor over patents that you claim are infringed by the software, your patent license from such contributor to the software ends automatically.
+(C) If you distribute any portion of the software, you must retain all copyright, patent, trademark, and attribution notices that are present in the software.
+(D) If you distribute any portion of the software in source code form, you may do so only under this license by including a complete copy of this license with your distribution. If you distribute any portion of the software in compiled or object code form, you may only do so under a license that complies with this license.
+(E) The software is licensed “as-is.” You bear the risk of using it. The contributors give no express warranties, guarantees, or conditions. You may have additional consumer rights under your local laws which this license cannot change. To the extent permitted under your local laws, the contributors exclude the implied warranties of merchantability, fitness for a particular purpose and non-infringement.
+(F) Limited Patent License for Ika Node Operators –
+The licenses granted in Sections 2(A) and 2(B) apply solely to use of the software in the operation of a node for the Ika Network as coordinated by the smart contract deployed on the Sui blockchain at contract addresses 0xdd24c62739923fbf582f49ef190b4a007f981ca6eb209ca94f3a8eaf7c611317, 0xb874c9b51b63e05425b74a22891c35b8da447900e577667b52e85a16d4d85486, originally deployed on July 24, 2025, and Sui objects 0x215de95d27454d102d6f82ff9c54d8071eb34d5706be85b5c73cbd8173013c80, 0x5ea59bce034008a006425df777da925633ef384ce25761657ea89e2a08ec75f3. This license does not extend to use of the software or any derivative works for any other purpose, including but not limited to operation of other networks, research platforms, or commercial services outside of the Ika Network, as defined above.

@@ -1,0 +1,16 @@
+[package]
+name = "ika_system"
+edition = "2024"
+license = "BSD-3-Clause-Clear"
+authors = ["dWallet Labs, Ltd. <dev@dwalletlabs.com>"]
+
+[dependencies]
+ika = { local = "../ika" }
+ika_common = { local = "../ika_common" }
+
+[addresses]
+ika_system = "0x0"
+
+[dev-dependencies]
+
+[dev-addresses]

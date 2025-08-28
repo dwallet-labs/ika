@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 use group::secp256k1;
 use k256::ecdsa::hazmat::bits2field;
 use k256::elliptic_curve::ops::Reduce;
@@ -6,9 +9,11 @@ use sha3::Digest;
 use sha3::digest::FixedOutput;
 
 /// Supported hash functions for message digest.
-#[derive(Clone, Debug)]
+#[derive(strum_macros::Display, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Hash {
+    #[strum(to_string = "KECCAK256")]
     KECCAK256 = 0,
+    #[strum(to_string = "SHA256")]
     SHA256 = 1,
 }
 

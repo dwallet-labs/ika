@@ -1,0 +1,68 @@
+[package]
+name = "dwallet-mpc-wasm"
+authors = ["dWallet Labs, Ltd. <dev@dwalletlabs.com>"]
+description = "Ika wasm bindings for dwallet MPC centralized party"
+version = "0.1.0"
+edition = "2024"
+license = "BSD-3-Clause-Clear"
+publish = false
+
+#[profile.dev]
+#wasm-opt = true
+#
+#[package.metadata.wasm-pack.profile.dev]
+## Should `wasm-opt` be used to further optimize the wasm binary generated after
+## the Rust compiler has finished? Using `wasm-opt` can often further decrease
+## binary size or do clever tricks that haven't made their way into LLVM yet.
+##
+## Configuration is set to `false` by default for the dev profile, but it can
+## be set to an array of strings which are explicit arguments to pass to
+## `wasm-opt`. For example `['-Os']` would optimize for size while `['-O4']`
+## would execute very expensive optimizations passes
+##
+## In most cases, the `-O[X]` flag is enough. However, if you require extreme
+## optimizations, see the full list of `wasm-opt` optimization flags
+## https://github.com/WebAssembly/binaryen/blob/version_117/test/lit/help/wasm-opt.test
+#wasm-opt = ['-O4']
+#
+#[profile.release]
+#opt-level = 3
+#lto = true
+#
+#[package.metadata.wasm-pack.profile.release]
+## Should `wasm-opt` be used to further optimize the wasm binary generated after
+## the Rust compiler has finished? Using `wasm-opt` can often further decrease
+## binary size or do clever tricks that haven't made their way into LLVM yet.
+##
+## Configuration is set to `false` by default for the dev profile, but it can
+## be set to an array of strings which are explicit arguments to pass to
+## `wasm-opt`. For example `['-Os']` would optimize for size while `['-O4']`
+## would execute very expensive optimizations passes
+#wasm-opt = [
+#    "--generate-global-effects",
+#    "--enable-memory64",
+#    "-O4",
+#    "-tnh",
+#    "--monomorphize",
+#    "--pass-arg=monomorphize-min-benefit@15",
+#    "-O4",
+#    "--flexible-inline-max-function-size",
+#    "4294967295",
+#]
+
+[dependencies]
+dwallet-mpc-centralized-party = { path = "../../crates/dwallet-mpc-centralized-party", features = ["wasm_js"] }
+anyhow = "1.0.95"
+wasm-bindgen = "0.2.100"
+serde-wasm-bindgen = "0.6.5"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[patch.crates-io]
+sha2 = { git = 'https://github.com/RustCrypto/hashes.git', tag = "sha2-v0.11.0-rc.0" }
+sha3 = { git = 'https://github.com/RustCrypto/hashes.git', tag = "sha3-v0.11.0-rc.0" }
+digest = { git = 'https://github.com/RustCrypto/traits.git', tag = "digest-v0.11.0-rc.0" }
+signature = { git = 'https://github.com/RustCrypto/traits.git', tag = "signature-v3.0.0-rc.1" }
+curve25519-dalek = { git = 'https://github.com/dalek-cryptography/curve25519-dalek', rev = "b7e4fc0" }
+crypto-bigint = { git = 'https://github.com/erik-3milabs/crypto-bigint.git', rev = "d0929d4" }

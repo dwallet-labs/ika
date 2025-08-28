@@ -15,6 +15,7 @@ use prometheus::{
     register_int_counter_vec_with_registry, register_int_counter_with_registry,
     register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
 };
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::{pin::Pin, sync::Arc, vec};
@@ -50,6 +51,7 @@ use crate::stake_aggregator::StakeAggregator;
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use crate::dwallet_checkpoints::DWalletCheckpointStore;
+use ika_types::messages_dwallet_mpc::SessionIdentifier;
 #[cfg(msim)]
 use sui_types::committee::CommitteeTrait;
 
@@ -621,6 +623,37 @@ pub(crate) struct AuthorityCapabilitiesVotingResults {
     pub(crate) protocol_version: ProtocolVersion,
     /// Move package ID -> Move package digest
     pub(crate) move_contracts_to_upgrade: Vec<(ObjectID, MovePackageDigest)>,
+}
+
+/// Trait for AuthorityState, which gets created once per validator (NOT recreated on epoch switch).
+pub trait AuthorityStateTrait: Sync + Send + 'static {
+    fn insert_dwallet_mpc_computation_completed_sessions(
+        &self,
+        newly_completed_session_ids: &[SessionIdentifier],
+    ) -> IkaResult;
+
+    fn get_dwallet_mpc_sessions_completed_status(
+        &self,
+        session_identifiers: Vec<SessionIdentifier>,
+    ) -> IkaResult<HashMap<SessionIdentifier, bool>>;
+}
+
+impl AuthorityStateTrait for AuthorityState {
+    fn insert_dwallet_mpc_computation_completed_sessions(
+        &self,
+        newly_completed_session_ids: &[SessionIdentifier],
+    ) -> IkaResult {
+        self.perpetual_tables
+            .insert_dwallet_mpc_computation_completed_sessions(newly_completed_session_ids)
+    }
+
+    fn get_dwallet_mpc_sessions_completed_status(
+        &self,
+        session_identifiers: Vec<SessionIdentifier>,
+    ) -> IkaResult<HashMap<SessionIdentifier, bool>> {
+        self.perpetual_tables
+            .get_dwallet_mpc_sessions_completed_status(session_identifiers)
+    }
 }
 
 pub struct AuthorityState {

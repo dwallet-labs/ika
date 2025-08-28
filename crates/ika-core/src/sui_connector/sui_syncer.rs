@@ -1,25 +1,28 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! The SuiSyncer module handles synchronizing Events emitted
 //! on the Sui blockchain from concerned modules of `ika_system` package.
+use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
+use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
-use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, StakeUnit};
+use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
-use ika_types::sui::{DWalletCoordinatorInner, SystemInner, SystemInnerTrait};
+use ika_types::sui::{
+    DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
+};
 use mysten_metrics::spawn_logged_monitored_task;
 use std::{collections::HashMap, sync::Arc};
-use sui_json_rpc_types::SuiEvent;
 use sui_types::base_types::ObjectID;
 use sui_types::{Identifier, event::EventID};
-use tokio::sync::watch::Sender;
+use tokio::sync::watch::{Receiver, Sender};
 use tokio::{
     sync::Notify,
     task::JoinHandle,
@@ -56,9 +59,15 @@ where
         query_interval: Duration,
         next_epoch_committee_sender: Sender<Committee>,
         is_validator: bool,
+        system_object_receiver: Receiver<Option<(System, SystemInner)>>,
+        dwallet_coordinator_object_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
+        new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
         end_of_publish_sender: Sender<Option<u64>>,
+        last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
+        uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
         info!("Starting SuiSyncer");
         let mut task_handles = vec![];
@@ -67,45 +76,170 @@ where
         info!("Starting network keys sync task");
         tokio::spawn(Self::sync_dwallet_network_keys(
             sui_client_clone.clone(),
+            system_object_receiver.clone(),
+            dwallet_coordinator_object_receiver.clone(),
             network_keys_sender,
         ));
         if is_validator {
             info!("Starting next epoch committee sync task");
             tokio::spawn(Self::sync_next_committee(
                 sui_client_clone.clone(),
-                next_epoch_committee_sender,
+                system_object_receiver.clone(),
+                next_epoch_committee_sender.clone(),
             ));
             info!("Starting end of publish sync task");
             tokio::spawn(Self::sync_dwallet_end_of_publish(
-                sui_client_clone,
+                system_object_receiver.clone(),
+                dwallet_coordinator_object_receiver.clone(),
                 end_of_publish_sender,
+            ));
+            info!("Syncing last session to complete in current epoch");
+            tokio::spawn(Self::sync_last_session_to_complete_in_current_epoch(
+                dwallet_coordinator_object_receiver.clone(),
+                last_session_to_complete_in_current_epoch_sender,
+            ));
+            info!("Syncing uncompleted events");
+            tokio::spawn(Self::sync_uncompleted_events(
+                sui_client_clone,
+                dwallet_coordinator_object_receiver.clone(),
+                uncompleted_requests_sender,
             ));
         }
 
         for module in self.modules {
             let metrics = self.metrics.clone();
             let sui_client_clone = self.sui_client.clone();
-            let new_events_sender_clone = new_events_sender.clone();
+            let new_requests_sender_clone = new_requests_sender.clone();
+            let system_object_receiver_clone = system_object_receiver.clone();
             task_handles.push(spawn_logged_monitored_task!(
                 Self::run_event_listening_task(
+                    system_object_receiver_clone,
                     module,
                     sui_client_clone,
                     query_interval,
                     metrics,
-                    new_events_sender_clone,
+                    new_requests_sender_clone,
                 )
             ));
         }
         Ok(task_handles)
     }
 
+    async fn sync_last_session_to_complete_in_current_epoch(
+        dwallet_coordinator_object_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
+        last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
+    ) {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        loop {
+            let Some((_, coordinator_inner)) = dwallet_coordinator_object_receiver
+                .borrow()
+                .as_ref()
+                .cloned()
+            else {
+                warn!("DWalletCoordinator object not available, retrying...");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            };
+
+            let DWalletCoordinatorInner::V1(inner) = coordinator_inner;
+            if let Err(err) = last_session_to_complete_in_current_epoch_sender.send((
+                inner.current_epoch,
+                inner
+                    .sessions_manager
+                    .last_user_initiated_session_to_complete_in_current_epoch,
+            )) {
+                error!(
+                    error=?err,
+                    epoch=?inner.current_epoch,
+                    last_session_to_complete_in_current_epoch=?inner.sessions_manager.last_user_initiated_session_to_complete_in_current_epoch,
+                    "failed to send last session to complete in current epoch",
+                )
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    async fn sync_uncompleted_events(
+        sui_client: Arc<SuiClient<C>>,
+        dwallet_coordinator_object_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
+        uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
+    ) {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        loop {
+            let Some((_, coordinator_inner)) = dwallet_coordinator_object_receiver
+                .borrow()
+                .as_ref()
+                .cloned()
+            else {
+                warn!("DWalletCoordinator object not available, retrying...");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            };
+
+            match sui_client
+                .pull_dwallet_mpc_uncompleted_events(&coordinator_inner)
+                .await
+            {
+                Ok((events, epoch)) => {
+                    let requests = events.iter().filter_map(|event| {
+                        debug!(
+                            event_type=?event.type_.clone(),
+                            current_epoch=?epoch,
+                            contents=?event.contents.clone(),
+                            "Processing an uncompleted event from Sui"
+                        );
+
+                        match sui_event_into_session_request(
+                            &sui_client.ika_network_config,
+                            event.type_.clone(),
+                            &event.contents,
+                            true,
+                        ) {
+                            Ok(Some(event)) => {
+                                Some(event)
+                            }
+                            Ok(None) => None,
+                            Err(e) => {
+                                error!(error=?e, event_type =? event.type_, "failed to parse Sui event");
+                                None
+                            }
+                        }
+                    }).collect::<Vec<_>>();
+
+                    if let Err(err) = uncompleted_requests_sender.send((requests, epoch)) {
+                        error!(
+                            error=?err,
+                            current_epoch=?epoch,
+                            "failed to send uncompleted events to the channel"
+                        );
+                    };
+                }
+                Err(err) => {
+                    warn!(
+                        error=?err,
+                         "failed to load missed events from Sui"
+                    );
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    }
+
     async fn sync_next_committee(
         sui_client: Arc<SuiClient<C>>,
+        system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         next_epoch_committee_sender: Sender<Committee>,
     ) {
         loop {
             time::sleep(Duration::from_secs(10)).await;
-            let system_inner = sui_client.must_get_system_inner_object().await;
+            let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
+                warn!("System object not available, retrying...");
+                continue;
+            };
             let SystemInner::V1(system_inner) = system_inner;
             let Some(new_next_bls_committee) = system_inner.get_ika_next_epoch_committee() else {
                 debug!("ika next epoch active committee not found, retrying...");
@@ -199,6 +333,10 @@ where
     /// Sync the DwalletMPC network keys from the Sui client to the local store.
     async fn sync_dwallet_network_keys(
         sui_client: Arc<SuiClient<C>>,
+        system_object_receiver: Receiver<Option<(System, SystemInner)>>,
+        dwallet_coordinator_object_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     ) {
         // Last fetched network keys (id to epoch) to avoid fetching the same keys repeatedly.
@@ -206,11 +344,22 @@ where
         'sync_network_keys: loop {
             time::sleep(Duration::from_secs(5)).await;
 
-            let system_inner = sui_client.must_get_system_inner_object().await;
+            let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
+                warn!("System object not available, retrying...");
+                continue;
+            };
+            let Some((_, dwallet_coordinator_inner)) = dwallet_coordinator_object_receiver
+                .borrow()
+                .as_ref()
+                .cloned()
+            else {
+                warn!("DWalletCoordinator object not available, retrying...");
+                continue;
+            };
             let current_epoch = system_inner.epoch();
 
             let network_encryption_keys = sui_client
-                .get_dwallet_mpc_network_keys()
+                .get_dwallet_mpc_network_keys(&dwallet_coordinator_inner)
                 .await
                 .unwrap_or_else(|e| {
                     warn!("failed to fetch dwallet MPC network keys: {e}");
@@ -235,8 +384,8 @@ where
                 info!("No new network keys to fetch");
                 continue;
             }
-
-            let mut all_fetched_network_keys_data = HashMap::new();
+            let mut all_fetched_network_keys_data: HashMap<_, _> =
+                (*network_keys_sender.borrow().clone()).clone();
             for (key_id, network_dec_key_shares) in keys_to_fetch.into_iter() {
                 match sui_client
                     .get_network_encryption_key_with_full_data_by_epoch(
@@ -267,15 +416,28 @@ where
     }
 
     async fn sync_dwallet_end_of_publish(
-        sui_client: Arc<SuiClient<C>>,
+        system_object_receiver: Receiver<Option<(System, SystemInner)>>,
+        dwallet_coordinator_object_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
         end_of_publish_sender: Sender<Option<u64>>,
     ) {
         loop {
             time::sleep(Duration::from_secs(10)).await;
 
-            let system_inner = sui_client.must_get_system_inner_object().await;
+            let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
+                warn!("System object not available, retrying...");
+                continue;
+            };
             let SystemInner::V1(system_inner_v1) = system_inner;
-            let coordinator_inner = sui_client.must_get_dwallet_coordinator_inner().await;
+            let Some((_, coordinator_inner)) = dwallet_coordinator_object_receiver
+                .borrow()
+                .as_ref()
+                .cloned()
+            else {
+                warn!("DWalletCoordinator object not available, retrying...");
+                continue;
+            };
             let DWalletCoordinatorInner::V1(coordinator) = coordinator_inner;
             // Check if we can advance the epoch.
             let all_epoch_sessions_finished = coordinator
@@ -320,11 +482,12 @@ where
     async fn run_event_listening_task(
         // The module where interested events are defined.
         // Module is always of ika system package.
+        system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         module: Identifier,
         sui_client: Arc<SuiClient<C>>,
         query_interval: Duration,
         metrics: Arc<SuiConnectorMetrics>,
-        new_events_sender: tokio::sync::broadcast::Sender<Vec<SuiEvent>>,
+        new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
     ) {
         info!(?module, "Starting sui events listening task");
         let mut interval = time::interval(query_interval);
@@ -360,7 +523,13 @@ where
             // as it is unexpected to change often.
             if loop_index % 10 == 0 {
                 debug!("Querying epoch start cursor from Sui");
-                let SystemInner::V1(system_inner) = sui_client.must_get_system_inner_object().await;
+                let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned()
+                else {
+                    warn!("System object not available, retrying...");
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                };
+                let SystemInner::V1(system_inner) = system_inner;
                 let Ok(epoch_start_tx_digest) = system_inner.epoch_start_tx_digest.try_into()
                 else {
                     // This should not happen, but if it does, we need to know about it.
@@ -393,7 +562,28 @@ where
                     // We can then update the latest checkpoint metric.
                     notify.notify_one();
                 }
-                if let Err(e) = new_events_sender.send(events.data) {
+
+                let requests = events
+                    .data
+                    .iter()
+                    .filter_map(|event| {
+                        match sui_event_into_session_request(
+                            &sui_client.ika_network_config,
+                            event.type_.clone(),
+                            &event.bcs.bytes(),
+                            false,
+                        ) {
+                            Ok(Some(request)) => Some(request),
+                            Ok(None) => None,
+                            Err(e) => {
+                                error!(error=?e, ?module, "failed to parse Sui event");
+                                None
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                if let Err(e) = new_requests_sender.send(requests) {
                     error!(error=?e, ?module, "failed to send new events to the channel");
                 }
 
