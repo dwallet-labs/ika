@@ -102,7 +102,6 @@ impl ProtocolCryptographicData {
                     &data.partially_signed_message,
                     &protocol_public_parameters,
                 )?;
-
                 Vec::new()
             }
             ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic {
