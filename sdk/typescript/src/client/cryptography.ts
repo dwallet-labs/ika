@@ -169,7 +169,12 @@ export async function prepareDKGSecondRound(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
-		new TextEncoder().encode(dWallet.id.id.slice(2)),
+		Uint8Array.from(
+			dWallet.id.id
+				.slice(2)
+				.match(/.{2}/g)!
+				.map((b) => parseInt(b, 16)),
+		),
 	);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(
