@@ -214,8 +214,7 @@ pub(crate) fn verify_partial_signature(
     <AsyncProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
         &[],
         message,
-        HashType::try_from(hash_type)
-            .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+        hash_type.clone(),
         decentralized_dkg_output,
         presign,
         partial,
