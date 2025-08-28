@@ -170,6 +170,7 @@ export async function prepareDKGSecondRound(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
 		Uint8Array.from(
+			// Remove '0x' prefix and convert hex string to byte array
 			dWallet.id.id
 				.slice(2)
 				.match(/.{2}/g)!
