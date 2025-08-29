@@ -110,7 +110,7 @@ extern crate web_sys;
 pub fn create_dkg_output(
     protocol_pp: Vec<u8>,
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
-    session_identifier: Vec<u8>,
+    dwallet_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
     let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let decentralized_first_round_public_output =
@@ -138,7 +138,7 @@ pub fn create_dkg_output(
                     .encryption_scheme_public_parameters
                     .clone(),
             );
-            let session_identifier = CommitmentSizedNumber::from_le_slice(&session_identifier);
+            let session_identifier = CommitmentSizedNumber::from_le_slice(&dwallet_id);
             let round_result = DKGCentralizedParty::advance(
                 (),
                 &(),
