@@ -83,8 +83,6 @@ pub fn network_dkg_public_output_to_protocol_pp_inner(
 
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
 
-extern crate web_sys;
-
 /// Executes the second phase of the DKG protocol, part of a three-phase DKG flow.
 ///
 /// This function is invoked by the centralized party to produce:
@@ -108,6 +106,100 @@ extern crate web_sys;
 /// Return an error if decoding or advancing the protocol fails.
 /// This is okay since a malicious blockchain can always block a client.
 pub fn create_dkg_output(
+    protocol_pp: Vec<u8>,
+    dwallet_id: Vec<u8>,
+) -> anyhow::Result<CentralizedDKGWasmResult> {
+    let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
+    let protocol_pp_with_decentralized_dkg_output = ProtocolPublicParameters::new::<
+        { group::secp256k1::SCALAR_LIMBS },
+        SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+        SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+        group::secp256k1::GroupElement,
+    >(
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        public_parameters
+            .encryption_scheme_public_parameters
+            .clone(),
+    );
+    let session_identifier = CommitmentSizedNumber::from_le_slice(&dwallet_id);
+    let round_result = DKGCentralizedParty::advance(
+        (),
+        &(),
+        &(
+            protocol_pp_with_decentralized_dkg_output,
+            session_identifier,
+        )
+            .into(),
+        &mut OsCsRng,
+    )
+    .context("advance() failed on the DKGCentralizedParty")?;
+
+    // Centralized Public Key Share and Proof.
+    let public_key_share_and_proof =
+        VersionedPublicKeyShareAndProof::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+
+    let public_key_share_and_proof = bcs::to_bytes(&public_key_share_and_proof)?;
+    // TODO(#1470): Use one network round in the dWallet DKG flow.
+    // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.
+    let centralized_output = match round_result.public_output {
+        DKGCentralizedPartyVersionedOutput::<
+            { group::secp256k1::SCALAR_LIMBS },
+            group::secp256k1::GroupElement,
+        >::UniversalPublicDKGOutput {
+            output: dkg_output,
+            ..
+        } => dkg_output,
+        DKGCentralizedPartyVersionedOutput::<
+            { group::secp256k1::SCALAR_LIMBS },
+            group::secp256k1::GroupElement,
+        >::TargetedPublicDKGOutput(output) => output,
+    };
+
+    // Public Output:
+    // centralized_public_key_share + public_key + decentralized_party_public_key_share
+    let public_output = bcs::to_bytes(&VersionedCentralizedDKGPublicOutput::V2(bcs::to_bytes(
+        &centralized_output,
+    )?))?;
+    // Centralized Secret Key Share.
+    // Warning:
+    // The secret (private)
+    // key share returned from this function should never be sent
+    // and should always be kept private.
+    let centralized_secret_output =
+        VersionedDwalletUserSecretShare::V1(bcs::to_bytes(&round_result.private_output)?);
+    let centralized_secret_output = bcs::to_bytes(&centralized_secret_output)?;
+    Ok(CentralizedDKGWasmResult {
+        public_output,
+        public_key_share_and_proof,
+        centralized_secret_output,
+    })
+}
+/// Executes the second phase of the DKG protocol, part of a three-phase DKG flow.
+///
+/// This function is invoked by the centralized party to produce:
+/// - A public key share and its proof.
+/// - Centralized DKG output required for further protocol steps.
+/// # Warning
+/// The secret (private) key returned from this function should never be sent
+/// and should always be kept private.
+///
+/// # Parameters
+/// — `decentralized_first_round_output`:
+///    Serialized output of the decentralized party from the first DKG round.
+/// — `session_id`: Unique hexadecimal string identifying the session.
+///
+/// # Returns
+/// A tuple containing:
+/// - Serialized public key share and proof.
+/// - Serialized centralized DKG output.
+///
+/// # Errors
+/// Return an error if decoding or advancing the protocol fails.
+/// This is okay since a malicious blockchain can always block a client.
+pub fn create_dkg_output_old(
     protocol_pp: Vec<u8>,
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
     dwallet_id: Vec<u8>,
