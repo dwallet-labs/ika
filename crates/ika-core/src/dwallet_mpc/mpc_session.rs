@@ -477,6 +477,7 @@ impl DWalletMPCManager {
             &self.network_keys,
             self.next_active_committee.clone(),
             self.validators_class_groups_public_keys_and_proofs.clone(),
+            &self.protocol_config,
         ) {
             Ok((public_input, private_input)) => (public_input, private_input),
             Err(e) => {

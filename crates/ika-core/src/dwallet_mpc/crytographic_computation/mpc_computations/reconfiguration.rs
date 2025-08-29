@@ -25,6 +25,7 @@ use twopc_mpc::secp256k1::class_groups::{
 };
 
 pub(crate) type ReconfigurationSecp256k1Party = Secp256k1Party;
+pub(crate) type ReconfigurationV1toV2Secp256k1Party = twopc_mpc::reconfiguration_v1_to_v2::Party;
 
 pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
     /// Generates the public input required for the reconfiguration protocol.

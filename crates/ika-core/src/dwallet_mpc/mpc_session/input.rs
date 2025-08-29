@@ -9,6 +9,7 @@ use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_public_
 use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationPartyPublicInputGenerator, ReconfigurationSecp256k1Party,
+    ReconfigurationV1toV2Secp256k1Party,
 };
 use crate::dwallet_mpc::sign::{SignParty, sign_session_public_input};
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -19,6 +20,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, MPCPrivateInput, VersionedImportedDWalletPublicOutput,
 };
 use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
@@ -38,6 +40,9 @@ pub enum PublicInput {
     EncryptedShareVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     PartialSignatureVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     NetworkEncryptionKeyReconfiguration(<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput),
+    NetworkEncryptionKeyReconfigurationV1ToV2(
+        <ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput,
+    ),
     MakeDWalletUserSecretKeySharesPublic(
         twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
     ),
@@ -59,6 +64,7 @@ pub(crate) fn session_input_from_request(
         PartyID,
         ClassGroupsEncryptionKeyAndProof,
     >,
+    protocol_config: &ProtocolConfig,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
