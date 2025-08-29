@@ -14,7 +14,7 @@ import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 import {
 	centralized_and_decentralized_parties_dkg_output_match,
-	create_dkg_centralized_output as create_dkg_user_output,
+	create_dkg_centralized_output_v1 as create_dkg_user_output,
 	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
 	create_sign_centralized_party_message as create_sign_user_message,
 	encrypt_secret_share,

@@ -105,7 +105,7 @@ pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOf
 /// # Errors
 /// Return an error if decoding or advancing the protocol fails.
 /// This is okay since a malicious blockchain can always block a client.
-pub fn create_dkg_output(
+pub fn create_dkg_output_v2(
     protocol_pp: Vec<u8>,
     dwallet_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
@@ -199,7 +199,7 @@ pub fn create_dkg_output(
 /// # Errors
 /// Return an error if decoding or advancing the protocol fails.
 /// This is okay since a malicious blockchain can always block a client.
-pub fn create_dkg_output_old(
+pub fn create_dkg_output_v1(
     protocol_pp: Vec<u8>,
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
     dwallet_id: Vec<u8>,
