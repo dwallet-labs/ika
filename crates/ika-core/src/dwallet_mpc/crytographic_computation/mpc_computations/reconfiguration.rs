@@ -6,7 +6,7 @@ use crate::dwallet_mpc::{
 };
 use class_groups::reconfiguration::{PublicInput, Secp256k1Party};
 use class_groups::{
-    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
+    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters, dkg,
 };
 use dwallet_mpc_types::dwallet_mpc::{
     NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
@@ -35,6 +35,51 @@ pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
         decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
         network_dkg_public_output: VersionedNetworkDkgOutput,
     ) -> DwalletMPCResult<<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput>;
+}
+
+pub(crate) trait ReconfigurationV1ToV2PartyPublicInputGenerator: Party {
+    /// Generates the public input required for the reconfiguration protocol.
+    fn generate_public_input(
+        committee: &Committee,
+        new_committee: Committee,
+        network_dkg_public_output: VersionedNetworkDkgOutput,
+    ) -> DwalletMPCResult<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput>;
+}
+
+impl ReconfigurationV1ToV2PartyPublicInputGenerator for ReconfigurationV1toV2Secp256k1Party {
+    fn generate_public_input(
+        current_committee: &Committee,
+        upcoming_committee: Committee,
+        network_dkg_public_output: VersionedNetworkDkgOutput,
+    ) -> DwalletMPCResult<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput> {
+        let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output;
+        let current_committee = current_committee.clone();
+
+        let current_access_structure =
+            generate_access_structure_from_committee(&current_committee)?;
+        let upcoming_access_structure =
+            generate_access_structure_from_committee(&upcoming_committee)?;
+
+        let current_encryption_keys_per_crt_prime_and_proofs =
+            extract_encryption_keys_from_committee(&current_committee)?;
+
+        let upcoming_encryption_keys_per_crt_prime_and_proofs =
+            extract_encryption_keys_from_committee(&upcoming_committee)?;
+
+        let public_input: <ReconfigurationV1toV2Secp256k1Party as Party>::PublicInput =
+            <ReconfigurationV1toV2Secp256k1Party as Party>::PublicInput::new(
+                &current_access_structure,
+                upcoming_access_structure,
+                current_encryption_keys_per_crt_prime_and_proofs.clone(),
+                upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
+                current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
+                    .clone(),
+                bcs::from_bytes(&network_dkg_public_output)?,
+            )
+            .map_err(DwalletMPCError::from)?;
+
+        Ok(public_input)
+    }
 }
 
 fn current_tangible_party_id_to_upcoming(
