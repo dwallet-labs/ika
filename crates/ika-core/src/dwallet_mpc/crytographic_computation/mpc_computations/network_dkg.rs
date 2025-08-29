@@ -215,6 +215,18 @@ impl DwalletMPCNetworkKeys {
             .clone())
     }
 
+    pub fn get_encryption_key_version(&self, key_id: &ObjectID) -> DwalletMPCResult<usize> {
+        let versionedOutput = self
+            .network_encryption_keys
+            .get(key_id)
+            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?
+            .network_dkg_output
+            .clone();
+        Ok(match versionedOutput {
+            VersionedNetworkDkgOutput::V1(_) => 1,
+        })
+    }
+
     /// Retrieves the decryption key shares for the current authority.
     pub(crate) fn get_decryption_key_shares(
         &self,

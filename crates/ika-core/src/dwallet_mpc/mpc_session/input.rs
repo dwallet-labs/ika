@@ -133,8 +133,27 @@ pub(crate) fn session_input_from_request(
             let next_active_committee = next_active_committee.ok_or(
                 DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
             )?;
-
-            Ok((
+            let current_key_version =
+                network_keys.get_encryption_key_version(dwallet_network_encryption_key_id)?;
+            if current_key_version == 1 && protocol_config.network_encryption_key_version == Some(2) {
+                Ok((
+                    PublicInput::NetworkEncryptionKeyReconfigurationV1ToV2(<ReconfigurationSecp256k1Party as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
+                        committee,
+                        next_active_committee,
+                        network_keys.get_decryption_key_share_public_parameters(
+                            dwallet_network_encryption_key_id,
+                        )?,
+                        network_keys
+                            .get_network_dkg_public_output(
+                                dwallet_network_encryption_key_id,
+                            )?,
+                    )?),
+                    Some(bcs::to_bytes(
+                        &class_groups_decryption_key
+                    )?),
+                ))
+            } else {
+                Ok((
                     PublicInput::NetworkEncryptionKeyReconfiguration(<ReconfigurationSecp256k1Party as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
@@ -150,6 +169,7 @@ pub(crate) fn session_input_from_request(
                         &class_groups_decryption_key
                     )?),
                 ))
+            }
         }
         ProtocolData::DKGFirst {
             dwallet_network_encryption_key_id,
