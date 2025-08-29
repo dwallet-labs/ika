@@ -15,10 +15,12 @@ use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
 use crate::dwallet_mpc::sign::SignParty;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
+use anyhow::anyhow;
 use class_groups::dkg::Secp256k1Party;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
+    SpecificDKGDecentralizedPartyOutput, SpecificDKGDecentralizedPartyVersionedOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedSignOutput,
@@ -26,7 +28,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::SessionIdentifier;
+use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
 use mpc::guaranteed_output_delivery::{Party, ReadyToAdvanceResult};
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
@@ -34,6 +36,9 @@ use mpc::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
+use twopc_mpc::class_groups::{
+    DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
+};
 
 pub(crate) mod dwallet_dkg;
 pub(crate) mod network_dkg;
@@ -105,7 +110,9 @@ impl ProtocolCryptographicData {
                     advance_request,
                 }
             }
-            ProtocolData::DKGSecond { data, .. } => {
+            ProtocolData::DKGSecond {
+                data, dwallet_id, ..
+            } => {
                 let PublicInput::DKGSecond(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
@@ -127,6 +134,7 @@ impl ProtocolCryptographicData {
                     data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
+                    dwallet_id: *dwallet_id,
                 }
             }
             ProtocolData::Presign { data, .. } => {
@@ -372,10 +380,12 @@ impl ProtocolCryptographicData {
                 public_input,
                 data,
                 advance_request,
+                dwallet_id,
                 ..
             } => {
+                let dwallet_id = CommitmentSizedNumber::from_le_slice(&dwallet_id.into_bytes());
                 let result = Party::<DWalletDKGSecondParty>::advance_with_guaranteed_output(
-                    session_id,
+                    dwallet_id,
                     party_id,
                     access_structure,
                     advance_request,
@@ -389,12 +399,31 @@ impl ProtocolCryptographicData {
                     ..
                 } = &result
                 {
-                    // Verify the encrypted share before finalizing, guaranteeing a two-for-one
-                    // computation of both that the dkg was successful, and the encrypted user share is valid.
+                    let decentralized_output = match bcs::from_bytes(&public_output_value)? {
+                        DKGDecentralizedPartyVersionedOutput::<
+                            { group::secp256k1::SCALAR_LIMBS },
+                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                            {
+                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
+                            },
+                            group::secp256k1::GroupElement,
+                        >::UniversalPublicDKGOutput {
+                            output: dkg_output,
+                            ..
+                        } => dkg_output,
+                        DKGDecentralizedPartyVersionedOutput::<
+                            { group::secp256k1::SCALAR_LIMBS },
+                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                            {
+                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
+                            },
+                            group::secp256k1::GroupElement,
+                        >::TargetedPublicDKGOutput(output) => output,
+                    };
                     verify_encrypted_share(
                         &data.encrypted_centralized_secret_share_and_proof,
                         &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
-                            public_output_value.clone(),
+                            bcs::to_bytes(&decentralized_output)?,
                         ))?,
                         &data.encryption_key,
                         public_input.protocol_public_parameters.clone(),
@@ -410,10 +439,19 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
-                        // Wrap the public output with its version.
-                        let public_output_value = bcs::to_bytes(
-                            &VersionedDwalletDKGSecondRoundPublicOutput::V1(public_output_value),
-                        )?;
+                        let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
+                        let decentralized_output = match decentralized_output {
+                            SpecificDKGDecentralizedPartyVersionedOutput::UniversalPublicDKGOutput {
+                                output, ..
+                            } => output,
+                            SpecificDKGDecentralizedPartyVersionedOutput::TargetedPublicDKGOutput (
+                                output
+                            ) => output,
+                        };
+                        let public_output_value =
+                            bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
+                                bcs::to_bytes(&decentralized_output).unwrap(),
+                            ))?;
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,

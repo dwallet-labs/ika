@@ -3,8 +3,9 @@
 
 use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
-    create_dkg_output, create_imported_dwallet_centralized_step_inner, decrypt_user_share_inner,
-    encrypt_secret_key_share_and_prove, generate_secp256k1_cg_keypair_from_seed_internal,
+    create_dkg_output_v1, create_dkg_output_v2, create_imported_dwallet_centralized_step_inner,
+    decrypt_user_share_inner, encrypt_secret_key_share_and_prove,
+    generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, public_key_from_dwallet_output_inner,
     sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share,
 };
@@ -12,17 +13,32 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
-pub fn create_dkg_centralized_output(
+pub fn create_dkg_centralized_output_v1(
     protocol_pp: Vec<u8>,
     decentralized_first_round_public_output: Vec<u8>,
     session_identifier: Vec<u8>,
 ) -> Result<JsValue, JsError> {
-    let dkg_centralized_result = &create_dkg_output(
+    let dkg_centralized_result = &create_dkg_output_v1(
         protocol_pp,
         decentralized_first_round_public_output,
         session_identifier,
     )
     .map_err(|e| JsError::new(&e.to_string()))?;
+    serde_wasm_bindgen::to_value(&(
+        dkg_centralized_result.public_key_share_and_proof.clone(),
+        dkg_centralized_result.public_output.clone(),
+        dkg_centralized_result.centralized_secret_output.clone(),
+    ))
+    .map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn create_dkg_centralized_output_v2(
+    protocol_pp: Vec<u8>,
+    session_identifier: Vec<u8>,
+) -> Result<JsValue, JsError> {
+    let dkg_centralized_result = &create_dkg_output_v2(protocol_pp, session_identifier)
+        .map_err(|e| JsError::new(&e.to_string()))?;
     serde_wasm_bindgen::to_value(&(
         dkg_centralized_result.public_key_share_and_proof.clone(),
         dkg_centralized_result.public_output.clone(),

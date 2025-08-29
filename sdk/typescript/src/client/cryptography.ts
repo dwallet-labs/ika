@@ -14,7 +14,7 @@ import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 import {
 	centralized_and_decentralized_parties_dkg_output_match,
-	create_dkg_centralized_output as create_dkg_user_output,
+	create_dkg_centralized_output_v1 as create_dkg_user_output,
 	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
 	create_sign_centralized_party_message as create_sign_user_message,
 	encrypt_secret_share,
@@ -156,7 +156,7 @@ export async function encryptSecretShare(
 export async function prepareDKGSecondRound(
 	protocolPublicParameters: Uint8Array,
 	dWallet: DWallet,
-	sessionIdentifier: Uint8Array,
+	_sessionIdentifier: Uint8Array,
 	encryptionKey: Uint8Array,
 ): Promise<DKGSecondRoundRequestInput> {
 	const networkFirstRoundOutput =
@@ -169,7 +169,13 @@ export async function prepareDKGSecondRound(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
-		sessionIdentifierDigest(sessionIdentifier),
+		Uint8Array.from(
+			// Remove '0x' prefix and convert hex string to byte array
+			dWallet.id.id
+				.slice(2)
+				.match(/.{2}/g)!
+				.map((b) => parseInt(b, 16)),
+		),
 	);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(

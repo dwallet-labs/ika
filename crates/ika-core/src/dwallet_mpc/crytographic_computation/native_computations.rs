@@ -9,6 +9,7 @@ use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::sign::verify_partial_signature;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::ProtocolData;
+use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
 use message_digest::message_digest::message_digest;
@@ -92,19 +93,15 @@ impl ProtocolCryptographicData {
                 protocol_public_parameters,
                 ..
             } => {
-                let hashed_message = bcs::to_bytes(
-                    &message_digest(&data.message, &data.hash_type)
-                        .map_err(|err| DwalletMPCError::MessageDigest(err.to_string()))?,
-                )?;
-
                 verify_partial_signature(
-                    &hashed_message,
+                    &data.message,
+                    &HashType::try_from(data.hash_type.clone() as u32)
+                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
                     &protocol_public_parameters,
                 )?;
-
                 Vec::new()
             }
             ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic {
