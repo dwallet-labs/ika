@@ -110,6 +110,7 @@ pub fn create_dkg_output_v2(
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
     let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
+    // TODO (#1476): Derive the dwallet dkg protocol public parameters from the reconfiguration public output
     let protocol_pp_with_decentralized_dkg_output = ProtocolPublicParameters::new::<
         { group::secp256k1::SCALAR_LIMBS },
         SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
