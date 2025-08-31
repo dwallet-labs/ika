@@ -44,7 +44,7 @@ pub enum ProtocolCryptographicData {
         data: DKGSecondData,
         public_input: <DWalletDKGSecondParty as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<DWalletDKGSecondParty as mpc::Party>::Message>,
-        dwallet_id: ObjectID,
+        first_round_output: Vec<u8>,
     },
 
     Presign {
