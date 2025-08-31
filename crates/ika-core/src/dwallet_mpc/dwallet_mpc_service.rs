@@ -765,10 +765,11 @@ impl DWalletMPCService {
         );
         match &session_request.protocol_data {
             ProtocolData::DKGFirst { dwallet_id, .. } => {
+                let output_with_session_identifier = (output, session_identifier);
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
                     DKGFirstRoundOutput {
                         dwallet_id: dwallet_id.to_vec(),
-                        output,
+                        output: bcs::to_bytes(&output_with_session_identifier).unwrap(),
                         session_sequence_number: session_request.session_sequence_number,
                         rejected,
                     },
