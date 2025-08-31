@@ -107,7 +107,7 @@ pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOf
 /// This is okay since a malicious blockchain can always block a client.
 pub fn create_dkg_output_v2(
     protocol_pp: Vec<u8>,
-    dwallet_id: Vec<u8>,
+    session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
     let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let protocol_pp_with_decentralized_dkg_output = ProtocolPublicParameters::new::<
@@ -124,7 +124,7 @@ pub fn create_dkg_output_v2(
             .encryption_scheme_public_parameters
             .clone(),
     );
-    let session_identifier = CommitmentSizedNumber::from_le_slice(&dwallet_id);
+    let session_identifier = CommitmentSizedNumber::from_le_slice(&session_id);
     let round_result = DKGCentralizedParty::advance(
         (),
         &(),
