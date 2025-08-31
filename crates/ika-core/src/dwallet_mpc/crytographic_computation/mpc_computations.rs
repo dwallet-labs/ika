@@ -389,8 +389,8 @@ impl ProtocolCryptographicData {
             } => {
                 let session_id = match bcs::from_bytes(&first_round_output)? {
                     VersionedDwalletDKGFirstRoundPublicOutput::V1(output) => {
-                        let (session_id, _) =
-                            bcs::from_bytes::<(CommitmentSizedNumber, Vec<u8>)>(&output)?;
+                        let (_, session_id) =
+                            bcs::from_bytes::<(Vec<u8>, CommitmentSizedNumber)>(&output)?;
                         session_id
                     }
                 };
