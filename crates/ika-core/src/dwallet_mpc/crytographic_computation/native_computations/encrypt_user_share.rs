@@ -3,8 +3,8 @@
 
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, SpecificDKGDecentralizedPartyOutput,
-    SpecificDKGDecentralizedPartyVersionedOutput, VersionedDwalletDKGSecondRoundPublicOutput,
-    VersionedEncryptedUserShare,
+    SpecificDKGDecentralizedPartyVersionedOutputSecp256k1,
+    VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare,
 };
 use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -46,9 +46,9 @@ fn verify_centralized_secret_key_share_proof(
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
-        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => bcs::from_bytes::<
+            SpecificDKGDecentralizedPartyVersionedOutputSecp256k1,
+        >(output.as_slice())?,
     };
     <AsyncECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_parameters,

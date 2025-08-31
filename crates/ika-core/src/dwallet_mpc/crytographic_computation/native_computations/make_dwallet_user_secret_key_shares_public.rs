@@ -3,8 +3,8 @@
 
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, SpecificDKGDecentralizedPartyOutput,
-    SpecificDKGDecentralizedPartyVersionedOutput, VersionedDwalletDKGSecondRoundPublicOutput,
-    VersionedImportedSecretShare,
+    SpecificDKGDecentralizedPartyVersionedOutputSecp256k1,
+    VersionedDwalletDKGSecondRoundPublicOutput, VersionedImportedSecretShare,
 };
 use twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol;
 
@@ -22,9 +22,9 @@ pub fn verify_secret_share(
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
-        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => bcs::from_bytes::<
+            SpecificDKGDecentralizedPartyVersionedOutputSecp256k1,
+        >(output.as_slice())?,
     };
     <AsyncECDSAProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
         &protocol_public_parameters,

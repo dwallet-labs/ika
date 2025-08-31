@@ -34,12 +34,13 @@ pub type SpecificDKGDecentralizedPartyOutput = DKGDecentralizedPartyOutput<
     group::secp256k1::GroupElement,
 >;
 
-pub type SpecificDKGDecentralizedPartyVersionedOutput = DKGDecentralizedPartyVersionedOutput<
-    { twopc_mpc::secp256k1::SCALAR_LIMBS },
-    { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
-    { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-    group::secp256k1::GroupElement,
->;
+pub type SpecificDKGDecentralizedPartyVersionedOutputSecp256k1 =
+    DKGDecentralizedPartyVersionedOutput<
+        { twopc_mpc::secp256k1::SCALAR_LIMBS },
+        { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+        { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+        group::secp256k1::GroupElement,
+    >;
 
 /// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
 /// Created for each DKG protocol and modified for each Reconfiguration Protocol.

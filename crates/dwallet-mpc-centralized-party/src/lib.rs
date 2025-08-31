@@ -16,7 +16,7 @@ use class_groups::{
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput,
-    SpecificDKGDecentralizedPartyOutput, SpecificDKGDecentralizedPartyVersionedOutput,
+    SpecificDKGDecentralizedPartyOutput, SpecificDKGDecentralizedPartyVersionedOutputSecp256k1,
     VersionedCentralizedDKGPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput, VersionedDwalletUserSecretShare,
     VersionedEncryptedUserShare, VersionedImportedDWalletPublicOutput,
@@ -342,9 +342,9 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
-        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => bcs::from_bytes::<
+            SpecificDKGDecentralizedPartyVersionedOutputSecp256k1,
+        >(output.as_slice())?,
     };
 
     let does_centralized_and_decentralized_parties_dkg_output_match =
@@ -370,9 +370,9 @@ pub fn advance_centralized_sign_party(
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
-        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => bcs::from_bytes::<
+            SpecificDKGDecentralizedPartyVersionedOutputSecp256k1,
+        >(output.as_slice())?,
     };
     let presign = bcs::from_bytes(&presign)?;
     let VersionedPresignOutput::V1(presign) = presign;
@@ -607,9 +607,9 @@ pub fn verify_secret_share(
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
-        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => bcs::from_bytes::<
+            SpecificDKGDecentralizedPartyVersionedOutputSecp256k1,
+        >(output.as_slice())?,
     };
 
     let secret_share: VersionedDwalletUserSecretShare = bcs::from_bytes(&secret_share)?;
@@ -639,9 +639,9 @@ pub fn decrypt_user_share_inner(
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
-        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => bcs::from_bytes::<
+            SpecificDKGDecentralizedPartyVersionedOutputSecp256k1,
+        >(output.as_slice())?,
     };
 
     let (_, encryption_of_discrete_log): <AsyncProtocol as twopc_mpc::dkg::Protocol>::EncryptedSecretKeyShareMessage = bcs::from_bytes(&encrypted_user_share_and_proof)?;

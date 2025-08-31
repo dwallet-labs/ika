@@ -20,7 +20,7 @@ use class_groups::dkg::Secp256k1Party;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    SpecificDKGDecentralizedPartyOutput, SpecificDKGDecentralizedPartyVersionedOutput,
+    SpecificDKGDecentralizedPartyOutput, SpecificDKGDecentralizedPartyVersionedOutputSecp256k1,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedSignOutput,
@@ -451,10 +451,10 @@ impl ProtocolCryptographicData {
                     } => {
                         let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
                         let decentralized_output = match decentralized_output {
-                            SpecificDKGDecentralizedPartyVersionedOutput::UniversalPublicDKGOutput {
+                            SpecificDKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
                                 output, ..
                             } => output,
-                            SpecificDKGDecentralizedPartyVersionedOutput::TargetedPublicDKGOutput (
+                            SpecificDKGDecentralizedPartyVersionedOutputSecp256k1::TargetedPublicDKGOutput (
                                 output
                             ) => output,
                         };
