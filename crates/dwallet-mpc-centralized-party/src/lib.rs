@@ -202,7 +202,6 @@ pub fn create_dkg_output_v2(
 pub fn create_dkg_output_v1(
     protocol_pp: Vec<u8>,
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
-    dwallet_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
     let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let decentralized_first_round_public_output =

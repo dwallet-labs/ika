@@ -100,7 +100,6 @@ export async function createClassGroupsKeypair(
 export async function createDKGUserOutput(
 	protocolPublicParameters: Uint8Array,
 	networkFirstRoundOutput: Uint8Array,
-	sessionIdentifier: Uint8Array,
 ): Promise<{
 	userDKGMessage: Uint8Array;
 	userPublicOutput: Uint8Array;
@@ -109,7 +108,6 @@ export async function createDKGUserOutput(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
-		sessionIdentifierDigest(sessionIdentifier),
 	);
 
 	return {
@@ -156,7 +154,6 @@ export async function encryptSecretShare(
 export async function prepareDKGSecondRound(
 	protocolPublicParameters: Uint8Array,
 	dWallet: DWallet,
-	_sessionIdentifier: Uint8Array,
 	encryptionKey: Uint8Array,
 ): Promise<DKGSecondRoundRequestInput> {
 	const networkFirstRoundOutput =
@@ -169,13 +166,6 @@ export async function prepareDKGSecondRound(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
-		Uint8Array.from(
-			// Remove '0x' prefix and convert hex string to byte array
-			dWallet.id.id
-				.slice(2)
-				.match(/.{2}/g)!
-				.map((b) => parseInt(b, 16)),
-		),
 	);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(
@@ -205,7 +195,6 @@ export async function prepareDKGSecondRound(
 export async function prepareDKGSecondRoundAsync(
 	ikaClient: IkaClient,
 	dWallet: DWallet,
-	sessionIdentifier: Uint8Array,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 ): Promise<DKGSecondRoundRequestInput> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
@@ -213,7 +202,6 @@ export async function prepareDKGSecondRoundAsync(
 	return prepareDKGSecondRound(
 		protocolPublicParameters,
 		dWallet,
-		sessionIdentifier,
 		userShareEncryptionKeys.encryptionKey,
 	);
 }

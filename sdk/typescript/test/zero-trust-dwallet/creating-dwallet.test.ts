@@ -75,7 +75,6 @@ describe('DWallet Creation', () => {
 		const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 			ikaClient,
 			dWallet,
-			sessionIdentifierPreimage,
 			userShareEncryptionKeys,
 		);
 
