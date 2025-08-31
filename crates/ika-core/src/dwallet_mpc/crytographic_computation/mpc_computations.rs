@@ -363,9 +363,11 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
+                        let output_with_session_id =
+                            bcs::to_bytes(&(public_output_value, session_id))?;
                         // Wrap the public output with its version.
                         let public_output_value = bcs::to_bytes(
-                            &VersionedDwalletDKGFirstRoundPublicOutput::V1(public_output_value),
+                            &VersionedDwalletDKGFirstRoundPublicOutput::V1(output_with_session_id),
                         )?;
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
