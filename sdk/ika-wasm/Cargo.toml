@@ -49,7 +49,8 @@ publish = false
 #    "--flexible-inline-max-function-size",
 #    "4294967295",
 #]
-
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
 [dependencies]
 dwallet-mpc-centralized-party = { path = "../../crates/dwallet-mpc-centralized-party", features = ["wasm_js"] }
 anyhow = "1.0.95"
