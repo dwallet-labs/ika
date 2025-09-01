@@ -160,10 +160,22 @@ impl SignPartyPublicInputGenerator for SignParty {
 
         let VersionedPresignOutput::V1(presign) = presign;
         let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
+
+        // (
+        //     expected_decrypters.clone(),
+        //     protocol_public_parameters.clone(),
+        //     message.to_vec(),
+        //     hash_type,
+        //     decentralized_party_dkg_output.clone(),
+        //     presign.clone(),
+        //     sign_message.clone(),
+        //     decryption_key_share_public_parameters.clone(),
+        // )
+        //     .into()
+
         let public_input = SignPublicInput::from((
             expected_decrypters,
             protocol_public_parameters,
-            vec![],
             message,
             HashType::try_from(hash_scheme as u32)
                 .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
