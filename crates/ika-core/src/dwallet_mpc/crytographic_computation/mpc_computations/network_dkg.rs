@@ -85,7 +85,7 @@ async fn get_decryption_key_shares_from_public_output(
     rayon::spawn_fifo(move || {
         let res = match shares.state {
             NetworkDecryptionKeyPublicOutputType::NetworkDkg => {
-                match &shares.latest_public_output {
+                match &shares.latest_network_dkg_public_output {
                     VersionedNetworkDkgOutput::V1(public_output) => {
                         match bcs::from_bytes::<<Secp256k1Party as mpc::Party>::PublicOutput>(
                             public_output,
@@ -103,7 +103,7 @@ async fn get_decryption_key_shares_from_public_output(
                 }
             }
             NetworkDecryptionKeyPublicOutputType::Reconfiguration => {
-                match &shares.latest_public_output {
+                match &shares.latest_network_dkg_public_output {
                     VersionedNetworkDkgOutput::V1(public_output) => {
                         match bcs::from_bytes::<
                             <ReconfigurationSecp256k1Party as mpc::Party>::PublicOutput,
@@ -413,7 +413,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 Ok(NetworkEncryptionKeyPublicData {
                     epoch,
                     state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
-                    latest_public_output: mpc_public_output.clone(),
+                    latest_network_reconfiguration_public_output: None,
                     decryption_key_share_public_parameters,
                     network_dkg_output: mpc_public_output,
                     protocol_public_parameters,
