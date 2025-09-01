@@ -136,16 +136,30 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
             let encryption_scheme_public_parameters = decryption_key_share_public_parameters
                 .encryption_scheme_public_parameters
                 .clone();
+
+            let neutral_group_value =
+                group::secp256k1::GroupElement::neutral_from_public_parameters(
+                    &group::secp256k1::group_element::PublicParameters::default(),
+                )
+                .map_err(twopc_mpc::Error::from)?
+                .value();
+            let neutral_ciphertext_value =
+                ::class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
+                    encryption_scheme_public_parameters.ciphertext_space_public_parameters(),
+                )
+                .map_err(twopc_mpc::Error::from)?
+                .value();
+
             let protocol_public_parameters = ProtocolPublicParameters::new::<
                 { secp256k1::SCALAR_LIMBS },
                 { FUNDAMENTAL_DISCRIMINANT_LIMBS },
                 { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                 secp256k1::GroupElement,
             >(
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
+                neutral_group_value,
+                neutral_group_value,
+                neutral_ciphertext_value,
+                neutral_ciphertext_value,
                 decryption_key_share_public_parameters
                     .encryption_scheme_public_parameters
                     .clone(),

@@ -10,9 +10,10 @@ use anyhow::{Context, anyhow};
 use class_groups::dkg::Secp256k1Party;
 use class_groups::setup::get_setup_parameters_secp256k1;
 use class_groups::{
-    CiphertextSpaceGroupElement, DecryptionKey, EncryptionKey,
-    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    Secp256k1DecryptionKey,
+    CiphertextSpaceGroupElement, DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, DecryptionKey,
+    EncryptionKey, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_SCALAR_LIMBS, Secp256k1DecryptionKey,
+    setup::DeriveFromPlaintextPublicParameters,
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
@@ -493,16 +494,36 @@ fn protocol_public_parameters_by_key_scheme(
                     let encryption_scheme_public_parameters = network_dkg_public_output
                         .default_encryption_scheme_public_parameters::<secp256k1::GroupElement>(
                     )?;
+
+                    let setup_parameters =
+                        class_groups::setup::SetupParameters::SetupParameters::<
+                            SECP256K1_SCALAR_LIMBS,
+                            SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                            SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                            group::secp256k1::scalar::PublicParameters,
+                        >::derive_from_plaintext_parameters::<group::secp256k1::Scalar>(
+                            group::secp256k1::scalar::PublicParameters::default(),
+                            DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
+                        )?;
+
+                    let neutral_group_value =
+                        group::secp256k1::GroupElement::neutral_from_public_parameters(
+                            &group::secp256k1::group_element::PublicParameters::default(),
+                        )
+                        .map_err(twopc_mpc::Error::from)?
+                        .value();
+                    let neutral_ciphertext_value = ::class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(&setup_parameters.ciphertext_space_public_parameters())?.value();
+
                     let protocol_public_parameters = ProtocolPublicParameters::new::<
                         { secp256k1::SCALAR_LIMBS },
                         { SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                         { SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                         secp256k1::GroupElement,
                     >(
-                        Default::default(),
-                        Default::default(),
-                        Default::default(),
-                        Default::default(),
+                        neutral_group_value,
+                        neutral_group_value,
+                        neutral_ciphertext_value,
+                        neutral_ciphertext_value,
                         encryption_scheme_public_parameters.clone(),
                     );
                     Ok(protocol_public_parameters)
