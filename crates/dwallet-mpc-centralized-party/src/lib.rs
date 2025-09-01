@@ -410,7 +410,6 @@ pub fn advance_centralized_sign_party(
         bcs::from_bytes(&presign)?;
     let centralized_party_public_input =
         <AsyncProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
-            vec![],
             message,
             HashType::try_from(hash_type)?,
             centralized_public_output.clone().into(),
