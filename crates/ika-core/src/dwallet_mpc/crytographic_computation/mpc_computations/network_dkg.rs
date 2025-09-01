@@ -84,26 +84,24 @@ async fn get_decryption_key_shares_from_public_output(
 
     rayon::spawn_fifo(move || {
         let res = match shares.state {
-            NetworkDecryptionKeyPublicOutputType::NetworkDkg => {
-                match &shares.latest_network_dkg_public_output {
-                    VersionedNetworkDkgOutput::V1(public_output) => {
-                        match bcs::from_bytes::<<Secp256k1Party as mpc::Party>::PublicOutput>(
-                            public_output,
-                        ) {
-                            Ok(dkg_public_output) => dkg_public_output
-                                .default_decryption_key_shares::<secp256k1::GroupElement>(
-                                    party_id,
-                                    &access_structure,
-                                    personal_decryption_key,
-                                )
-                                .map_err(DwalletMPCError::from),
-                            Err(e) => Err(e.into()),
-                        }
+            NetworkDecryptionKeyPublicOutputType::NetworkDkg => match &shares.network_dkg_output {
+                VersionedNetworkDkgOutput::V1(public_output) => {
+                    match bcs::from_bytes::<<Secp256k1Party as mpc::Party>::PublicOutput>(
+                        public_output,
+                    ) {
+                        Ok(dkg_public_output) => dkg_public_output
+                            .default_decryption_key_shares::<secp256k1::GroupElement>(
+                                party_id,
+                                &access_structure,
+                                personal_decryption_key,
+                            )
+                            .map_err(DwalletMPCError::from),
+                        Err(e) => Err(e.into()),
                     }
                 }
-            }
+            },
             NetworkDecryptionKeyPublicOutputType::Reconfiguration => {
-                match &shares.latest_network_dkg_public_output {
+                match &shares.latest_network_reconfiguration_public_output.unwrap() {
                     VersionedNetworkDkgOutput::V1(public_output) => {
                         match bcs::from_bytes::<
                             <ReconfigurationSecp256k1Party as mpc::Party>::PublicOutput,
