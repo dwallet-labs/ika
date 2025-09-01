@@ -171,6 +171,7 @@ pub enum VersionedSignOutput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedNetworkDkgOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
