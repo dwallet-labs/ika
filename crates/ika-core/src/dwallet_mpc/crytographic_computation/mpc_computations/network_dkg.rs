@@ -46,6 +46,7 @@ use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
 };
 use twopc_mpc::sign::Protocol;
+use ika_protocol_config::ProtocolConfig;
 
 /// Holds the network (decryption) keys of the network MPC protocols.
 pub struct DwalletMPCNetworkKeys {
@@ -281,6 +282,7 @@ pub(crate) fn advance_network_dkg(
     key_scheme: &DWalletMPCNetworkKeyScheme,
     advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
     class_groups_decryption_key: ClassGroupsDecryptionKey,
+    protocol_config: &ProtocolConfig,
     rng: &mut ChaCha20Rng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let res = match key_scheme {

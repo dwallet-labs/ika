@@ -39,6 +39,7 @@ use tracing::error;
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
 };
+use ika_protocol_config::ProtocolConfig;
 
 pub(crate) mod dwallet_dkg;
 pub(crate) mod network_dkg;
@@ -274,6 +275,7 @@ impl ProtocolCryptographicData {
         session_identifier: SessionIdentifier,
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        protocol_config: &ProtocolConfig
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
 
