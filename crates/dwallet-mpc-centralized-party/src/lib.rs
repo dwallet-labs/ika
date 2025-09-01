@@ -170,7 +170,7 @@ pub fn create_dkg_output_v1(
     protocol_pp: Vec<u8>,
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
+    let protocol_public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let decentralized_first_round_public_output =
         bcs::from_bytes(&decentralized_first_round_public_output)?;
     match decentralized_first_round_public_output {
@@ -194,7 +194,7 @@ pub fn create_dkg_output_v1(
                 second_second_part,
                 first_first_part,
                 second_first_part,
-                public_parameters
+                protocol_public_parameters
                     .encryption_scheme_public_parameters
                     .clone(),
             );
