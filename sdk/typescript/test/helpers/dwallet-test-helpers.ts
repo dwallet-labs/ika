@@ -84,7 +84,6 @@ export async function createCompleteDWallet(
 	const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 		ikaClient,
 		dWallet,
-		sessionIdentifierPreimage,
 		userShareEncryptionKeys,
 	);
 

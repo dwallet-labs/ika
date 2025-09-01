@@ -35,7 +35,6 @@ async function main() {
 	const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 		ikaClient,
 		dWallet,
-		sessionIdentifierPreimage,
 		userShareEncryptionKeys,
 	);
 

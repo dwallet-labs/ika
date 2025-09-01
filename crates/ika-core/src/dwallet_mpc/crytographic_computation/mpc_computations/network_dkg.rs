@@ -22,8 +22,10 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, NetworkDecryptionKeyPublicOutputType,
     NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput, VersionedNetworkDkgOutput,
 };
-use group::{OsCsRng, PartyID, secp256k1};
-use homomorphic_encryption::AdditivelyHomomorphicDecryptionKeyShare;
+use group::{GroupElement, OsCsRng, PartyID, secp256k1};
+use homomorphic_encryption::{
+    AdditivelyHomomorphicDecryptionKeyShare, GroupsPublicParametersAccessors,
+};
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
@@ -399,6 +401,10 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                     { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                     secp256k1::GroupElement,
                 >(
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
                     decryption_key_share_public_parameters
                         .encryption_scheme_public_parameters
                         .clone(),
