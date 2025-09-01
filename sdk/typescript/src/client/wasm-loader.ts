@@ -70,10 +70,7 @@ export async function create_dkg_centralized_output_v1(
 	networkFirstRoundOutput: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array, Uint8Array]> {
 	const wasm = await getWasmModule();
-	return wasm.create_dkg_centralized_output_v1(
-		protocolPublicParameters,
-		networkFirstRoundOutput,
-	);
+	return wasm.create_dkg_centralized_output_v1(protocolPublicParameters, networkFirstRoundOutput);
 }
 
 export async function create_sign_centralized_party_message(
