@@ -378,7 +378,6 @@ pub fn advance_centralized_sign_party(
         bcs::from_bytes(&presign)?;
     let centralized_party_public_input =
         <AsyncProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
-            vec![],
             message,
             HashType::try_from(hash_type)?,
             centralized_public_output.clone().into(),
@@ -432,15 +431,11 @@ pub fn verify_secp_signature_inner(
         bcs::from_bytes(&public_key)?,
         &protocol_public_parameters.group_public_parameters,
     )?;
-    let hashed_message =
-        message_digest(&message, &hash_type.try_into()?).context("Message digest failed")?;
-    let (r, s): (secp256k1::Scalar, secp256k1::Scalar) = bcs::from_bytes(&signature)?;
-    let r_ge = secp256k1::GroupElement::new(r, Default::default())?;
     Ok(public_key
         .verify(
             &message,
             HashType::try_from(hash_type)?,
-            &((r, s).try_into()?),
+            &bcs::from_bytes(&signature)?,
         )
         .is_ok())
 }
