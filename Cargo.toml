@@ -26,7 +26,6 @@ members = [
     "crates/ika-network",
     "crates/ika-archival",
 ]
-
 [workspace.package]
 # This version string will be inherited by ika-core, ika-node, ika-tools, ika-sdk, and ika crates.
 version = "1.0.0"

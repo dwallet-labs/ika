@@ -8,8 +8,8 @@
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::network_dkg::DwalletMPCNetworkKeys;
 use dwallet_mpc_types::dwallet_mpc::{
-    SerializedWrappedMPCPublicOutput, SpecificDKGDecentralizedPartyOutput,
-    SpecificDKGDecentralizedPartyVersionedOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    DKGDecentralizedPartyVersionedOutputSecp256k1, SerializedWrappedMPCPublicOutput,
+    SpecificDKGDecentralizedPartyOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedUserSignedMessage,
 };
 use group::{HashType, OsCsRng, PartyID};
@@ -154,7 +154,7 @@ impl SignPartyPublicInputGenerator for SignParty {
                 bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
             }
             VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-                bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+                bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
             }
         };
 
@@ -197,7 +197,7 @@ pub(crate) fn verify_partial_signature(
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+            bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
         }
     };
 

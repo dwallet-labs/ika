@@ -15,8 +15,8 @@ use class_groups::{
     Secp256k1DecryptionKey,
 };
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput,
-    SpecificDKGDecentralizedPartyOutput, SpecificDKGDecentralizedPartyVersionedOutput,
+    DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletMPCNetworkKeyScheme,
+    SerializedWrappedMPCPublicOutput, SpecificDKGDecentralizedPartyOutput,
     VersionedCentralizedDKGPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput, VersionedDwalletUserSecretShare,
     VersionedEncryptedUserShare, VersionedImportedDWalletPublicOutput,
@@ -107,9 +107,10 @@ pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOf
 /// This is okay since a malicious blockchain can always block a client.
 pub fn create_dkg_output_v2(
     protocol_pp: Vec<u8>,
-    dwallet_id: Vec<u8>,
+    session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
     let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
+    // TODO (#1476): Derive the dwallet dkg protocol public parameters from the reconfiguration public output
     let protocol_pp_with_decentralized_dkg_output = ProtocolPublicParameters::new::<
         { group::secp256k1::SCALAR_LIMBS },
         SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -124,7 +125,7 @@ pub fn create_dkg_output_v2(
             .encryption_scheme_public_parameters
             .clone(),
     );
-    let session_identifier = CommitmentSizedNumber::from_le_slice(&dwallet_id);
+    let session_identifier = CommitmentSizedNumber::from_le_slice(&session_id);
     let round_result = DKGCentralizedParty::advance(
         (),
         &(),
@@ -202,15 +203,16 @@ pub fn create_dkg_output_v2(
 pub fn create_dkg_output_v1(
     protocol_pp: Vec<u8>,
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
-    dwallet_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
     let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let decentralized_first_round_public_output =
         bcs::from_bytes(&decentralized_first_round_public_output)?;
     match decentralized_first_round_public_output {
         VersionedDwalletDKGFirstRoundPublicOutput::V1(decentralized_first_round_public_output) => {
+            let (output, session_identifier) =
+                bcs::from_bytes::<(Vec<u8>, _)>(&decentralized_first_round_public_output)?;
             let [first_part, second_part]: <DWalletDKGFirstParty as Party>::PublicOutput =
-                bcs::from_bytes(&decentralized_first_round_public_output)
+                bcs::from_bytes(&output)
                     .context("failed to deserialize decentralized first round DKG output")?;
             let (first_first_part, first_second_part) = first_part.into();
             let (second_first_part, second_second_part) = second_part.into();
@@ -230,7 +232,6 @@ pub fn create_dkg_output_v1(
                     .encryption_scheme_public_parameters
                     .clone(),
             );
-            let session_identifier = CommitmentSizedNumber::from_le_slice(&dwallet_id);
             let round_result = DKGCentralizedParty::advance(
                 (),
                 &(),
@@ -343,7 +344,7 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+            bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
         }
     };
 
@@ -371,7 +372,7 @@ pub fn advance_centralized_sign_party(
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+            bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
         }
     };
     let presign = bcs::from_bytes(&presign)?;
@@ -608,7 +609,7 @@ pub fn verify_secret_share(
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+            bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
         }
     };
 
@@ -640,7 +641,7 @@ pub fn decrypt_user_share_inner(
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+            bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
         }
     };
 

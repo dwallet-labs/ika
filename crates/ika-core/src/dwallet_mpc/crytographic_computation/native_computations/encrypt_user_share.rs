@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use dwallet_mpc_types::dwallet_mpc::{
-    SerializedWrappedMPCPublicOutput, SpecificDKGDecentralizedPartyOutput,
-    SpecificDKGDecentralizedPartyVersionedOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    DKGDecentralizedPartyVersionedOutputSecp256k1, SerializedWrappedMPCPublicOutput,
+    SpecificDKGDecentralizedPartyOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedEncryptedUserShare,
 };
 use group::OsCsRng;
@@ -47,7 +47,7 @@ fn verify_centralized_secret_key_share_proof(
             bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyVersionedOutput>(output.as_slice())?
+            bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
         }
     };
     <AsyncECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(

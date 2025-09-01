@@ -34,7 +34,7 @@ pub type SpecificDKGDecentralizedPartyOutput = DKGDecentralizedPartyOutput<
     group::secp256k1::GroupElement,
 >;
 
-pub type SpecificDKGDecentralizedPartyVersionedOutput = DKGDecentralizedPartyVersionedOutput<
+pub type DKGDecentralizedPartyVersionedOutputSecp256k1 = DKGDecentralizedPartyVersionedOutput<
     { twopc_mpc::secp256k1::SCALAR_LIMBS },
     { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
     { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
