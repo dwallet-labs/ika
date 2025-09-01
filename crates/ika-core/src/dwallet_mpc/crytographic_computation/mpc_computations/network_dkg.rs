@@ -20,7 +20,8 @@ use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, NetworkDecryptionKeyPublicOutputType,
-    NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput, VersionedNetworkDkgOutput,
+    NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
+    VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
 };
 use group::{GroupElement, OsCsRng, PartyID, secp256k1};
 use homomorphic_encryption::{
@@ -102,13 +103,28 @@ async fn get_decryption_key_shares_from_public_output(
             },
             NetworkDecryptionKeyPublicOutputType::Reconfiguration => {
                 match &shares.latest_network_reconfiguration_public_output.unwrap() {
-                    VersionedNetworkDkgOutput::V1(public_output) => {
+                    VersionedDecryptionKeyReconfigurationOutput::V1(public_output) => {
                         match bcs::from_bytes::<
                             <ReconfigurationSecp256k1Party as mpc::Party>::PublicOutput,
                         >(public_output)
                         {
                             Ok(public_output) => public_output
                                 .decrypt_decryption_key_shares::<secp256k1::GroupElement>(
+                                    party_id,
+                                    &access_structure,
+                                    personal_decryption_key,
+                                )
+                                .map_err(DwalletMPCError::from),
+                            Err(e) => Err(e.into()),
+                        }
+                    }
+                    VersionedDecryptionKeyReconfigurationOutput::V2(public_output) => {
+                        match bcs::from_bytes::<
+                            <twopc_mpc::reconfiguration::Party as mpc::Party>::PublicOutput,
+                        >(public_output)
+                        {
+                            Ok(public_output) => public_output
+                                .decrypt_decryption_key_shares(
                                     party_id,
                                     &access_structure,
                                     personal_decryption_key,
