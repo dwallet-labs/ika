@@ -27,7 +27,7 @@ pub enum NetworkDecryptionKeyPublicOutputType {
     Reconfiguration,
 }
 
-pub type SpecificDKGDecentralizedPartyOutput = DKGDecentralizedPartyOutput<
+pub type DKGDecentralizedPartyOutputSecp256k1 = DKGDecentralizedPartyOutput<
     { twopc_mpc::secp256k1::SCALAR_LIMBS },
     { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
     { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },

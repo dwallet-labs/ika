@@ -8,8 +8,8 @@
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::network_dkg::DwalletMPCNetworkKeys;
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyVersionedOutputSecp256k1, SerializedWrappedMPCPublicOutput,
-    SpecificDKGDecentralizedPartyOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
+    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedUserSignedMessage,
 };
 use group::{HashType, OsCsRng, PartyID};
@@ -194,7 +194,7 @@ pub(crate) fn verify_partial_signature(
         bcs::from_bytes(dwallet_decentralized_output)?;
     let decentralized_dkg_output = match dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-            bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
+            bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice())?.into()
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
             bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?

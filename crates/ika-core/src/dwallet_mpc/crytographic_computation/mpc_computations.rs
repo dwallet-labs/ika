@@ -20,7 +20,7 @@ use class_groups::dkg::Secp256k1Party;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyVersionedOutputSecp256k1, SpecificDKGDecentralizedPartyOutput,
+    DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedSignOutput,
@@ -387,6 +387,7 @@ impl ProtocolCryptographicData {
                 first_round_output,
                 ..
             } => {
+                // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
                 let session_id = match bcs::from_bytes(&first_round_output)? {
                     VersionedDwalletDKGFirstRoundPublicOutput::V1(output) => {
                         let (_, session_id) =
@@ -409,6 +410,7 @@ impl ProtocolCryptographicData {
                     ..
                 } = &result
                 {
+                    // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
                     let decentralized_output = match bcs::from_bytes(&public_output_value)? {
                         DKGDecentralizedPartyVersionedOutput::<
                             { group::secp256k1::SCALAR_LIMBS },
@@ -432,6 +434,8 @@ impl ProtocolCryptographicData {
                     };
                     verify_encrypted_share(
                         &data.encrypted_centralized_secret_share_and_proof,
+                        // TODO (#1482): Check the protocol config and use this hack only for V1
+                        // DWallets.
                         &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
                             bcs::to_bytes(&decentralized_output)?,
                         ))?,
@@ -449,6 +453,7 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
+                        // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
                         let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
                         let decentralized_output = match decentralized_output {
                             DKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
