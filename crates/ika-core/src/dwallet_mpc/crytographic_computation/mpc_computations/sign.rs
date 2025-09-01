@@ -160,10 +160,10 @@ impl SignPartyPublicInputGenerator for SignParty {
 
         let VersionedPresignOutput::V1(presign) = presign;
         let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
+
         let public_input = SignPublicInput::from((
             expected_decrypters,
             protocol_public_parameters,
-            vec![],
             message,
             HashType::try_from(hash_scheme as u32)
                 .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
@@ -212,7 +212,6 @@ pub(crate) fn verify_partial_signature(
         bcs::from_bytes(&partially_signed_message)?;
 
     <AsyncProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
-        &[],
         message,
         hash_type.clone(),
         decentralized_dkg_output,
