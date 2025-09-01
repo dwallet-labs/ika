@@ -262,11 +262,16 @@ impl CryptographicComputationsOrchestrator {
 
         let computation_channel_sender = self.completed_computation_sender.clone();
         let root_seed = self.root_seed.clone();
+        let protocol_config = self.protocol_config.clone();
         rayon::spawn_fifo(move || {
             let advance_start_time = Instant::now();
 
-            let computation_result =
-                computation_request.compute(computation_id, root_seed, dwallet_mpc_metrics.clone());
+            let computation_result = computation_request.compute(
+                computation_id,
+                root_seed,
+                dwallet_mpc_metrics.clone(),
+                protocol_config,
+            );
 
             let elapsed = advance_start_time.elapsed();
             let elapsed_ms = elapsed.as_millis();
