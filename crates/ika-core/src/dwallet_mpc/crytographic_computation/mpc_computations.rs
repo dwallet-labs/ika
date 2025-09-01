@@ -409,6 +409,7 @@ impl ProtocolCryptographicData {
                     ..
                 } = &result
                 {
+                    // TODO (#1473): Use this hack only for V1 dWallet DKG outputs
                     let decentralized_output = match bcs::from_bytes(&public_output_value)? {
                         DKGDecentralizedPartyVersionedOutput::<
                             { group::secp256k1::SCALAR_LIMBS },
