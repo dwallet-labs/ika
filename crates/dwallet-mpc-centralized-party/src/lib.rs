@@ -381,7 +381,7 @@ pub fn advance_centralized_sign_party(
         bcs::from_bytes(&centralized_party_secret_key_share)?;
     let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
         centralized_party_secret_key_share;
-    let decentralized_output = match decentralized_dkg_output {
+    let centralized_output = match decentralized_dkg_output {
         DKGDecentralizedPartyVersionedOutput::<
             { group::secp256k1::SCALAR_LIMBS },
             SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -406,9 +406,9 @@ pub fn advance_centralized_sign_party(
         { secp256k1::SCALAR_LIMBS },
         secp256k1::GroupElement,
     > {
-        public_key_share: decentralized_output.public_key_share,
-        public_key: decentralized_output.public_key,
-        decentralized_party_public_key_share: decentralized_output
+        public_key_share: centralized_output.public_key_share,
+        public_key: centralized_output.public_key,
+        decentralized_party_public_key_share: centralized_output
             .decentralized_party_public_key_share,
     };
     let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
