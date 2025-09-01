@@ -390,21 +390,26 @@ pub fn advance_centralized_sign_party(
         >::UniversalPublicDKGOutput {
             output: dkg_output,
             ..
-        } => dkg_output,
+        } => DKGCentralizedPartyOutput::<SCALAR_LIMBS, group::secp256k1::GroupElement>::from(
+            dkg_output,
+        ),
         DKGDecentralizedPartyVersionedOutput::<
             { group::secp256k1::SCALAR_LIMBS },
             SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
             SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
             group::secp256k1::GroupElement,
-        >::TargetedPublicDKGOutput(output) => output,
+        >::TargetedPublicDKGOutput(output) => {
+            DKGCentralizedPartyOutput::<SCALAR_LIMBS, group::secp256k1::GroupElement>::from(output)
+        }
     };
     let centralized_public_output = twopc_mpc::class_groups::DKGCentralizedPartyOutput::<
         { secp256k1::SCALAR_LIMBS },
         secp256k1::GroupElement,
     > {
-        public_key_share: decentralized_output.centralized_party_public_key_share,
+        public_key_share: decentralized_output.public_key_share,
         public_key: decentralized_output.public_key,
-        decentralized_party_public_key_share: decentralized_output.public_key_share,
+        decentralized_party_public_key_share: decentralized_output
+            .decentralized_party_public_key_share,
     };
     let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
         bcs::from_bytes(&presign)?;
