@@ -109,12 +109,12 @@ pub fn create_dkg_output_v2(
     protocol_pp: Vec<u8>,
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    let public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
+    let protocol_public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let session_identifier = CommitmentSizedNumber::from_le_slice(&session_id);
     let round_result = DKGCentralizedParty::advance(
         (),
         &(),
-        &(public_parameters, session_identifier).into(),
+        &(protocol_public_parameters, session_identifier).into(),
         &mut OsCsRng,
     )
     .context("advance() failed on the DKGCentralizedParty")?;
