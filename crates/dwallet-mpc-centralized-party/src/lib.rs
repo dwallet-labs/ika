@@ -41,6 +41,7 @@ use twopc_mpc::class_groups::{
     DKGDecentralizedPartyVersionedOutput,
 };
 use twopc_mpc::dkg::Protocol;
+use twopc_mpc::ecdsa::VerifyingKey;
 use twopc_mpc::ecdsa::sign::verify_signature;
 use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, ProtocolPublicParameters,
@@ -434,7 +435,14 @@ pub fn verify_secp_signature_inner(
     let hashed_message =
         message_digest(&message, &hash_type.try_into()?).context("Message digest failed")?;
     let (r, s): (secp256k1::Scalar, secp256k1::Scalar) = bcs::from_bytes(&signature)?;
-    Ok(verify_signature(r, s, hashed_message, public_key).is_ok())
+    let r_ge = secp256k1::GroupElement::new(r, Default::default())?;
+    Ok(public_key
+        .verify(
+            &message,
+            HashType::try_from(hash_type)?,
+            &((r, s).try_into()?),
+        )
+        .is_ok())
 }
 
 pub fn create_imported_dwallet_centralized_step_inner(
