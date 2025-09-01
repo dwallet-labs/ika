@@ -24,6 +24,7 @@ use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
 use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -31,7 +32,6 @@ use std::time::Instant;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, error, info};
-use ika_protocol_config::ProtocolConfig;
 
 /// Channel size for cryptographic computations state updates.
 /// This channel should not reach a size even close to this.
@@ -81,12 +81,15 @@ pub(crate) struct CryptographicComputationsOrchestrator {
     /// advancing this session.
     /// SECURITY NOTICE: *MUST KEEP PRIVATE*.
     root_seed: RootSeed,
-    protocol_config: ProtocolConfig
+    protocol_config: ProtocolConfig,
 }
 
 impl CryptographicComputationsOrchestrator {
     /// Creates a new orchestrator for cryptographic computations.
-    pub(crate) fn try_new(root_seed: RootSeed, protocol_config: ProtocolConfig) -> DwalletMPCResult<Self> {
+    pub(crate) fn try_new(
+        root_seed: RootSeed,
+        protocol_config: ProtocolConfig,
+    ) -> DwalletMPCResult<Self> {
         let (report_computation_completed_sender, report_computation_completed_receiver) =
             tokio::sync::mpsc::channel(COMPUTATION_UPDATE_CHANNEL_SIZE);
         let mut available_cores_for_computations =

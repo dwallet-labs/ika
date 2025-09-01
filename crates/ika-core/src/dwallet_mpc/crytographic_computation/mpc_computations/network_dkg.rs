@@ -26,6 +26,7 @@ use group::{GroupElement, OsCsRng, PartyID, secp256k1};
 use homomorphic_encryption::{
     AdditivelyHomomorphicDecryptionKeyShare, GroupsPublicParametersAccessors,
 };
+use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
@@ -46,7 +47,6 @@ use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
 };
 use twopc_mpc::sign::Protocol;
-use ika_protocol_config::ProtocolConfig;
 
 /// Holds the network (decryption) keys of the network MPC protocols.
 pub struct DwalletMPCNetworkKeys {
@@ -225,7 +225,7 @@ impl DwalletMPCNetworkKeys {
             .clone();
         Ok(match versionedOutput {
             VersionedNetworkDkgOutput::V1(_) => 1,
-            VersionedNetworkDkgOutput::V2(_) => 2
+            VersionedNetworkDkgOutput::V2(_) => 2,
         })
     }
 
@@ -306,7 +306,11 @@ pub(crate) fn advance_network_dkg(
                     private_output,
                 }) => {
                     let public_output_value =
-                        bcs::to_bytes(&VersionedNetworkDkgOutput::V2(public_output_value))?;
+                        if protocol_config.network_encryption_key_version == Some(2) {
+                            bcs::to_bytes(&VersionedNetworkDkgOutput::V2(public_output_value))?
+                        } else {
+                            bcs::to_bytes(&VersionedNetworkDkgOutput::V1(public_output_value))?
+                        };
 
                     Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                         public_output_value,

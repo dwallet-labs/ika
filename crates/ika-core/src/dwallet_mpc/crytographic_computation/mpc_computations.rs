@@ -27,6 +27,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use dwallet_rng::RootSeed;
 use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
 use mpc::guaranteed_output_delivery::{Party, ReadyToAdvanceResult};
@@ -39,7 +40,6 @@ use tracing::error;
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
 };
-use ika_protocol_config::ProtocolConfig;
 
 pub(crate) mod dwallet_dkg;
 pub(crate) mod network_dkg;
@@ -275,7 +275,7 @@ impl ProtocolCryptographicData {
         session_identifier: SessionIdentifier,
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-        protocol_config: &ProtocolConfig
+        protocol_config: &ProtocolConfig,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
 
@@ -562,6 +562,7 @@ impl ProtocolCryptographicData {
                 &data.key_scheme,
                 advance_request,
                 class_groups_decryption_key,
+                &protocol_config,
                 &mut rng,
             ),
             ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
