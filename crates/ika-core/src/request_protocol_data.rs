@@ -1,3 +1,4 @@
+use group::HashType;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput, SignatureAlgorithm,
 };
@@ -53,7 +54,7 @@ pub struct PresignData {
 #[display("Sign")]
 pub struct SignData {
     pub curve: DWalletMPCNetworkKeyScheme,
-    pub hash_scheme: Hash,
+    pub hash_scheme: HashType,
     pub signature_algorithm: SignatureAlgorithm,
 }
 

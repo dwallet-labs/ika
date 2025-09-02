@@ -4,6 +4,7 @@ use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, SignatureAlgori
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use message_digest::message_digest::Hash;
 use std::cmp::Ordering;
+use group::HashType;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequest {
@@ -25,7 +26,7 @@ pub struct DWalletSessionRequest {
 pub struct DWalletSessionRequestMetricData {
     name: String,
     curve: Option<DWalletMPCNetworkKeyScheme>,
-    hash_scheme: Option<Hash>,
+    hash_scheme: Option<HashType>,
     signature_algorithm: Option<SignatureAlgorithm>,
 }
 
