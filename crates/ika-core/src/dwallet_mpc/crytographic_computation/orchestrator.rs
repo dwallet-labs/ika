@@ -113,7 +113,7 @@ impl CryptographicComputationsOrchestrator {
             currently_running_cryptographic_computations: HashSet::new(),
             completed_cryptographic_computations: HashSet::new(),
             root_seed,
-            protocol_config: (),
+            protocol_config,
         })
     }
 

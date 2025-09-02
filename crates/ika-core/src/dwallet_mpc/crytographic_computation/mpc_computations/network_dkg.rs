@@ -461,6 +461,10 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                         protocol_public_parameters,
                     })
                 }
+                VersionedNetworkDkgOutput::V2(_) => {
+                    // TODO (this pr): understand from Scaly what should I do in this case.
+                    todo!()
+                }
             }
         }
         DWalletMPCNetworkKeyScheme::Ristretto => todo!("Ristretto key scheme"),
