@@ -348,7 +348,6 @@ pub fn advance_centralized_sign_party(
         bcs::from_bytes(&centralized_party_secret_key_share)?;
     let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
         centralized_party_secret_key_share;
-    // TODO (#1478): Use From to convert the decentralized DKG output to centralized public output.
     let centralized_public_output = match decentralized_dkg_output {
         DKGDecentralizedPartyVersionedOutput::<
             { group::secp256k1::SCALAR_LIMBS },
