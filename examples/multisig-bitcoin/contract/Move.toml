@@ -4,8 +4,8 @@ edition = "2024.beta"
 license = "BSD-3-Clause-Clear"
 
 [dependencies]
-ika = { git = "https://github.com/dwallet-labs/ika.git", subdir = "contracts/ika", rev = "dev" }
-ika_dwallet_2pc_mpc = { git = "https://github.com/dwallet-labs/ika.git", subdir = "contracts/ika_dwallet_2pc_mpc", rev = "dev" }
+ika = { local = "../../../contracts/ika" }
+ika_dwallet_2pc_mpc = { local = "../../../contracts/ika_dwallet_2pc_mpc" }
 
 [addresses]
 ika_btc_multisig = "0x0"

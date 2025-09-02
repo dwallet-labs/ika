@@ -1,5 +1,6 @@
 packages:
   - 'sdk/**'
+  - 'examples/**'
   - '!**/dist/**'
   - '!**/.next/**'
   - '!docs/**'
