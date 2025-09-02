@@ -23,7 +23,6 @@ use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
-use sui_types::base_types::ObjectID;
 use twopc_mpc::sign::Protocol;
 
 pub enum ProtocolCryptographicData {
