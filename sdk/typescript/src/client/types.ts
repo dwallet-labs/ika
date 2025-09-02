@@ -117,6 +117,12 @@ export type EncryptedUserSecretKeyShareState =
 export const Hash = {
 	KECCAK256: 0,
 	SHA256: 1,
+	/// A double sha256 hash: h(x) = sha256(sha256(x)). Used by bitcoin
+	DoubleSHA256: 2,
+	SHA512: 3,
+	/// Not a hash-function per-sa, but a STROBE-based transcript construction.
+	/// Used in Schnorrkel signatures.
+	Merlin: 4,
 } as const;
 
 export type Hash = (typeof Hash)[keyof typeof Hash];
