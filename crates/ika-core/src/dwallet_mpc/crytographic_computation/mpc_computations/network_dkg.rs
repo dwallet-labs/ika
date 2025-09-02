@@ -284,6 +284,18 @@ impl DwalletMPCNetworkKeys {
             .network_dkg_output
             .clone())
     }
+
+    pub fn get_last_reconfiguration_output(
+        &self,
+        key_id: &ObjectID,
+    ) -> DwalletMPCResult<Option<VersionedDecryptionKeyReconfigurationOutput>> {
+        Ok(self
+            .network_encryption_keys
+            .get(key_id)
+            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?
+            .latest_network_reconfiguration_public_output
+            .clone())
+    }
 }
 
 /// Advances the network DKG protocol for the supported key types.
