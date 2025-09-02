@@ -8,7 +8,6 @@ exclude = [
 members = [
     "crates/dwallet-mpc-centralized-party",
     "crates/dwallet-mpc-types",
-    "crates/message-digest",
     "crates/dwallet-classgroups-types",
     "crates/ika",
     "crates/ika-config",
