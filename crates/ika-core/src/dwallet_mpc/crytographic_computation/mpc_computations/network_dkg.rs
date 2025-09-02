@@ -398,42 +398,52 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
 
     match key_scheme {
-        DWalletMPCNetworkKeyScheme::Secp256k1 => match &mpc_public_output {
-            VersionedNetworkDkgOutput::V1(public_output_bytes) => {
-                let public_output: <Secp256k1Party as mpc::Party>::PublicOutput =
-                    bcs::from_bytes(public_output_bytes)?;
+        DWalletMPCNetworkKeyScheme::Secp256k1 => {
+            match &mpc_public_output {
+                VersionedNetworkDkgOutput::V1(public_output_bytes) => {
+                    let public_output: <Secp256k1Party as mpc::Party>::PublicOutput =
+                        bcs::from_bytes(public_output_bytes)?;
 
-                let decryption_key_share_public_parameters = public_output
-                    .default_decryption_key_share_public_parameters::<secp256k1::GroupElement>(
-                        access_structure,
-                    )
-                    .map_err(DwalletMPCError::from)?;
+                    let decryption_key_share_public_parameters = public_output
+                        .default_decryption_key_share_public_parameters::<secp256k1::GroupElement>(
+                            access_structure,
+                        )
+                        .map_err(DwalletMPCError::from)?;
 
-                let protocol_public_parameters = ProtocolPublicParameters::new::<
-                    { secp256k1::SCALAR_LIMBS },
-                    { FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                    { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                    secp256k1::GroupElement,
-                >(
-                    Default::default(),
-                    Default::default(),
-                    Default::default(),
-                    Default::default(),
-                    decryption_key_share_public_parameters
-                        .encryption_scheme_public_parameters
-                        .clone(),
-                );
+                    let neutral_group_value =
+                        group::secp256k1::GroupElement::neutral_from_public_parameters(
+                            &group::secp256k1::group_element::PublicParameters::default(),
+                        )
+                        .map_err(twopc_mpc::Error::from)?
+                        .value();
+                    let neutral_ciphertext_value = ::class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(decryption_key_share_public_parameters.encryption_scheme_public_parameters.ciphertext_space_public_parameters()).map_err(twopc_mpc::Error::from)?.value();
 
-                Ok(NetworkEncryptionKeyPublicData {
-                    epoch,
-                    state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
-                    latest_network_reconfiguration_public_output: None,
-                    decryption_key_share_public_parameters,
-                    network_dkg_output: mpc_public_output,
-                    protocol_public_parameters,
-                })
+                    let protocol_public_parameters = ProtocolPublicParameters::new::<
+                        { secp256k1::SCALAR_LIMBS },
+                        { FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                        { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                        secp256k1::GroupElement,
+                    >(
+                        neutral_group_value,
+                        neutral_group_value,
+                        neutral_ciphertext_value,
+                        neutral_ciphertext_value,
+                        decryption_key_share_public_parameters
+                            .encryption_scheme_public_parameters
+                            .clone(),
+                    );
+
+                    Ok(NetworkEncryptionKeyPublicData {
+                        epoch,
+                        state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
+                        latest_network_reconfiguration_public_output: None,
+                        decryption_key_share_public_parameters,
+                        network_dkg_output: mpc_public_output,
+                        protocol_public_parameters,
+                    })
+                }
             }
-        },
+        }
         DWalletMPCNetworkKeyScheme::Ristretto => todo!("Ristretto key scheme"),
     }
 }
