@@ -496,7 +496,7 @@ fn protocol_public_parameters_by_key_scheme(
                     )?;
 
                     let setup_parameters =
-                        class_groups::setup::SetupParameters::SetupParameters::<
+                        class_groups::setup::SetupParameters::<
                             SECP256K1_SCALAR_LIMBS,
                             SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
                             SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -605,13 +605,13 @@ pub fn verify_secret_share(
     let secret_share: VersionedDwalletUserSecretShare = bcs::from_bytes(&secret_share)?;
     Ok(
         <twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
-                &protocol_public_params,
-                decentralized_dkg_output,
-                match secret_share {
-                    VersionedDwalletUserSecretShare::V1(secret_share) => bcs::from_bytes(&secret_share)?
-                },
-            )
-                .is_ok())
+            &protocol_public_params,
+            decentralized_dkg_output,
+            match secret_share {
+                VersionedDwalletUserSecretShare::V1(secret_share) => bcs::from_bytes(&secret_share)?
+            },
+        )
+            .is_ok())
 }
 
 /// Decrypts the given encrypted user share using the given decryption key.
