@@ -12,7 +12,6 @@ use crate::request_protocol_data::ProtocolData;
 use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
-use message_digest::message_digest::message_digest;
 use mpc::GuaranteedOutputDeliveryRoundResult;
 use std::sync::Arc;
 use tracing::error;

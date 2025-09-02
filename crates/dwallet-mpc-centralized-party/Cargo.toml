@@ -6,9 +6,8 @@ version.workspace = true
 [dependencies]
 mpc.workspace = true
 twopc_mpc.workspace = true
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "c3faed6f11b" }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "6134ddc9" }
 web-sys = "0.3.77"
-message-digest = { path = "../message-digest" }
 class_groups.workspace = true
 group.workspace = true
 homomorphic_encryption.workspace = true

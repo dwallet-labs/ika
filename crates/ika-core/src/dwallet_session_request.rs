@@ -1,8 +1,8 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, SignatureAlgorithm};
+use group::HashType;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
-use message_digest::message_digest::Hash;
 use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -25,7 +25,7 @@ pub struct DWalletSessionRequest {
 pub struct DWalletSessionRequestMetricData {
     name: String,
     curve: Option<DWalletMPCNetworkKeyScheme>,
-    hash_scheme: Option<Hash>,
+    hash_scheme: Option<HashType>,
     signature_algorithm: Option<SignatureAlgorithm>,
 }
 
