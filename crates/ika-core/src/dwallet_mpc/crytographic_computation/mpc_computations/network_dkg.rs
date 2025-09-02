@@ -473,6 +473,9 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                         decryption_key_share_public_parameters,
                         network_dkg_output: mpc_public_output,
                         secp256k1_protocol_public_parameters: protocol_public_parameters,
+                        secp256r1_protocol_public_parameters: None,
+                        ristretto_protocol_public_parameters: None,
+                        curve25519_protocol_public_parameters: None,
                     })
                 }
             }

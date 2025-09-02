@@ -64,11 +64,11 @@ pub struct NetworkEncryptionKeyPublicData {
     /// On first instance it will be equal to `latest_public_output`.
     pub network_dkg_output: VersionedNetworkDkgOutput,
     pub secp256r1_protocol_public_parameters:
-        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+        Option<twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters>,
     pub ristretto_protocol_public_parameters:
-        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+        Option<twopc_mpc::ristretto::class_groups::ProtocolPublicParameters>,
     pub curve25519_protocol_public_parameters:
-        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+        Option<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters>,
 }
 
 #[repr(u32)]

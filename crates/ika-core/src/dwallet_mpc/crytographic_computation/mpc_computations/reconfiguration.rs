@@ -226,7 +226,10 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 decryption_key_share_public_parameters,
                 secp256k1_protocol_public_parameters: protocol_public_parameters,
                 network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
+                secp256r1_protocol_public_parameters: None,
+                ristretto_protocol_public_parameters: None,
                 latest_network_reconfiguration_public_output: Some(mpc_public_output),
+                curve25519_protocol_public_parameters: None,
             })
         }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
@@ -262,9 +265,9 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 latest_network_reconfiguration_public_output: Some(mpc_public_output),
                 decryption_key_share_public_parameters,
                 secp256k1_protocol_public_parameters,
-                secp256r1_protocol_public_parameters,
-                ristretto_protocol_public_parameters,
-                curve25519_protocol_public_parameters,
+                secp256r1_protocol_public_parameters: Some(secp256r1_protocol_public_parameters),
+                ristretto_protocol_public_parameters: Some(ristretto_protocol_public_parameters),
+                curve25519_protocol_public_parameters: Some(curve25519_protocol_public_parameters),
                 network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
             })
         }
