@@ -9,6 +9,7 @@ thiserror.workspace = true
 schemars.workspace = true
 twopc_mpc.workspace = true
 class_groups.workspace = true
+group.workspace = true
 enum_dispatch.workspace = true
 strum_macros.workspace = true
 

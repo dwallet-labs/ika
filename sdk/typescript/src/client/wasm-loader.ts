@@ -65,17 +65,13 @@ export async function generate_secp_cg_keypair_from_seed(
 	return wasm.generate_secp_cg_keypair_from_seed(seed);
 }
 
-export async function create_dkg_centralized_output(
+// TODO (#1482): Add support for V2 one round DWallet creation flow
+export async function create_dkg_centralized_output_v1(
 	protocolPublicParameters: Uint8Array,
 	networkFirstRoundOutput: Uint8Array,
-	sessionIdentifier: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array, Uint8Array]> {
 	const wasm = await getWasmModule();
-	return wasm.create_dkg_centralized_output(
-		protocolPublicParameters,
-		networkFirstRoundOutput,
-		sessionIdentifier,
-	);
+	return wasm.create_dkg_centralized_output_v1(protocolPublicParameters, networkFirstRoundOutput);
 }
 
 export async function create_sign_centralized_party_message(

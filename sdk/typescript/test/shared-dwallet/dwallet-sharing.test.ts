@@ -56,7 +56,6 @@ describe('Shared DWallet (make shares public)', () => {
 		const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 			ikaClient,
 			dWallet,
-			sessionIdentifierPreimage,
 			userShareEncryptionKeys,
 		);
 

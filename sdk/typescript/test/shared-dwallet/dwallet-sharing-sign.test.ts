@@ -57,7 +57,6 @@ describe('Shared DWallet Signing (public user shares)', () => {
 		const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 			ikaClient,
 			dWallet,
-			sessionIdentifierPreimage,
 			userShareEncryptionKeys,
 		);
 
