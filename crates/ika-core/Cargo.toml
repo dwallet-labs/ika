@@ -18,7 +18,6 @@ class_groups = { workspace = true, features = ["threshold", "parallel"]}
 dwallet-rng.workspace = true
 dwallet-classgroups-types.workspace = true
 commitment.workspace = true
-message-digest = { path = "../message-digest" }
 rand_core = "0.9"
 dwallet-mpc-types.workspace = true
 anyhow = { workspace = true, features = ["backtrace"] }

@@ -10,7 +10,8 @@ use class_groups::{
 };
 use dwallet_mpc_types::dwallet_mpc::{
     NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
-    SerializedWrappedMPCPublicOutput, VersionedNetworkDkgOutput,
+    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
+    VersionedNetworkDkgOutput,
 };
 use group::{GroupElement, PartyID, secp256k1};
 use homomorphic_encryption::GroupsPublicParametersAccessors;
@@ -120,11 +121,11 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_dkg_public_output: &SerializedWrappedMPCPublicOutput,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
-    let mpc_public_output: VersionedNetworkDkgOutput =
+    let mpc_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
 
     match &mpc_public_output {
-        VersionedNetworkDkgOutput::V1(public_output_bytes) => {
+        VersionedDecryptionKeyReconfigurationOutput::V1(public_output_bytes) => {
             let public_output: <ReconfigurationSecp256k1Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
 
@@ -168,7 +169,29 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,
                 state: NetworkDecryptionKeyPublicOutputType::Reconfiguration,
-                latest_public_output: mpc_public_output,
+                decryption_key_share_public_parameters,
+                protocol_public_parameters,
+                network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
+                latest_network_reconfiguration_public_output: Some(mpc_public_output),
+            })
+        }
+        VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
+            let public_output: <twopc_mpc::reconfiguration::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+            // TODO (#1483): Add support for all supported curves.
+            let protocol_public_parameters =
+                twopc_mpc::reconfiguration::PublicOutput::secp256k1_protocol_public_parameters(
+                    &public_output,
+                )
+                .map_err(DwalletMPCError::from)?;
+            let decryption_key_share_public_parameters = public_output
+                .secp256k1_decryption_key_share_public_parameters(access_structure)
+                .map_err(DwalletMPCError::from)?;
+
+            Ok(NetworkEncryptionKeyPublicData {
+                epoch,
+                state: NetworkDecryptionKeyPublicOutputType::Reconfiguration,
+                latest_network_reconfiguration_public_output: Some(mpc_public_output),
                 decryption_key_share_public_parameters,
                 protocol_public_parameters,
                 network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,

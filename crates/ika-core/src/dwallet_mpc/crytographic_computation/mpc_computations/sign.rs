@@ -15,7 +15,6 @@ use dwallet_mpc_types::dwallet_mpc::{
 use group::{HashType, OsCsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
-use message_digest::message_digest::{Hash, message_digest};
 use mpc::{Party, Weight, WeightedThresholdAccessStructure};
 use rand_core::SeedableRng;
 use std::collections::HashSet;
@@ -68,7 +67,7 @@ pub(crate) fn sign_session_public_input(
     message: Vec<u8>,
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
-    hash_scheme: Hash,
+    hash_scheme: HashType,
     access_structure: &WeightedThresholdAccessStructure,
     network_keys: &DwalletMPCNetworkKeys,
     protocol_public_parameters: ProtocolPublicParameters,
@@ -131,7 +130,7 @@ pub(crate) trait SignPartyPublicInputGenerator: Party {
         centralized_signed_message: &Vec<u8>,
         decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-        hash_scheme: Hash,
+        hash_scheme: HashType,
     ) -> DwalletMPCResult<<SignParty as Party>::PublicInput>;
 }
 
@@ -144,7 +143,7 @@ impl SignPartyPublicInputGenerator for SignParty {
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-        hash_scheme: Hash,
+        hash_scheme: HashType,
     ) -> DwalletMPCResult<<SignParty as Party>::PublicInput> {
         let dkg_output = bcs::from_bytes(dkg_output)?;
         let presign = bcs::from_bytes(presign)?;
@@ -160,10 +159,10 @@ impl SignPartyPublicInputGenerator for SignParty {
 
         let VersionedPresignOutput::V1(presign) = presign;
         let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
+
         let public_input = SignPublicInput::from((
             expected_decrypters,
             protocol_public_parameters,
-            vec![],
             message,
             HashType::try_from(hash_scheme as u32)
                 .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
@@ -212,7 +211,6 @@ pub(crate) fn verify_partial_signature(
         bcs::from_bytes(&partially_signed_message)?;
 
     <AsyncProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
-        &[],
         message,
         hash_type.clone(),
         decentralized_dkg_output,
