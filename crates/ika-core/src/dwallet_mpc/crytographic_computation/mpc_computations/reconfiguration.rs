@@ -178,7 +178,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             let public_output: <twopc_mpc::reconfiguration::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
-
+            // TODO (#1483): Add support for all supported curves.
             let protocol_public_parameters =
                 twopc_mpc::reconfiguration::PublicOutput::secp256k1_protocol_public_parameters(
                     &public_output,
