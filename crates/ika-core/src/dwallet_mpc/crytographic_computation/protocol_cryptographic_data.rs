@@ -151,6 +151,9 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::EncryptedShareVerification { .. }
             | ProtocolCryptographicData::PartialSignatureVerification { .. }
             | ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => None,
+            ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration { advance_request, .. } => {
+                Some(advance_request.mpc_round_number)
+            }
         }
     }
 }
