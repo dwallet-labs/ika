@@ -349,7 +349,7 @@ pub fn advance_centralized_sign_party(
     let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
         centralized_party_secret_key_share;
     // TODO (#1478): Use From to convert the decentralized DKG output to centralized public output.
-    let decentralized_output = match decentralized_dkg_output {
+    let centralized_public_output = match decentralized_dkg_output {
         DKGDecentralizedPartyVersionedOutput::<
             { group::secp256k1::SCALAR_LIMBS },
             SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -358,21 +358,19 @@ pub fn advance_centralized_sign_party(
         >::UniversalPublicDKGOutput {
             output: dkg_output,
             ..
-        } => dkg_output,
+        } => DKGCentralizedPartyOutput::<
+            { group::secp256k1::SCALAR_LIMBS },
+            group::secp256k1::GroupElement,
+        >::from(dkg_output),
         DKGDecentralizedPartyVersionedOutput::<
             { group::secp256k1::SCALAR_LIMBS },
             SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
             SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
             group::secp256k1::GroupElement,
-        >::TargetedPublicDKGOutput(output) => output,
-    };
-    let centralized_public_output = twopc_mpc::class_groups::DKGCentralizedPartyOutput::<
-        { secp256k1::SCALAR_LIMBS },
-        secp256k1::GroupElement,
-    > {
-        public_key_share: decentralized_output.centralized_party_public_key_share,
-        public_key: decentralized_output.public_key,
-        decentralized_party_public_key_share: decentralized_output.public_key_share,
+        >::TargetedPublicDKGOutput(output) => DKGCentralizedPartyOutput::<
+            { group::secp256k1::SCALAR_LIMBS },
+            group::secp256k1::GroupElement,
+        >::from(output),
     };
     let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
         bcs::from_bytes(&presign)?;
