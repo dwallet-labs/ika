@@ -5,8 +5,8 @@
 //!
 //! It integrates both Presign parties (each representing a round in the Presign protocol).
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyVersionedOutputSecp256k1, SerializedWrappedMPCPublicOutput,
-    SpecificDKGDecentralizedPartyOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
+    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
 };
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
@@ -51,7 +51,7 @@ impl PresignPartyPublicInputGenerator for PresignParty {
         let dkg_output = bcs::from_bytes(&dkg_output)?;
         let decentralized_dkg_output = match dkg_output {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-                bcs::from_bytes::<SpecificDKGDecentralizedPartyOutput>(output.as_slice())?.into()
+                bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice())?.into()
             }
             VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
                 bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?

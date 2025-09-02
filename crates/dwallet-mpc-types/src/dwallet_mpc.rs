@@ -27,7 +27,7 @@ pub enum NetworkDecryptionKeyPublicOutputType {
     Reconfiguration,
 }
 
-pub type SpecificDKGDecentralizedPartyOutput = DKGDecentralizedPartyOutput<
+pub type DKGDecentralizedPartyOutputSecp256k1 = DKGDecentralizedPartyOutput<
     { twopc_mpc::secp256k1::SCALAR_LIMBS },
     { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
     { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
@@ -49,9 +49,9 @@ pub struct NetworkEncryptionKeyPublicData {
     pub epoch: u64,
 
     pub state: NetworkDecryptionKeyPublicOutputType,
-    /// The public output of the `latest` decryption key update (NetworkDKG/Reconfiguration).
-    pub latest_public_output: VersionedNetworkDkgOutput,
-
+    /// The public output of the `latest` decryption key update (Reconfiguration).
+    pub latest_network_reconfiguration_public_output:
+        Option<VersionedDecryptionKeyReconfigurationOutput>,
     /// The public parameters of the decryption key shares,
     /// updated only after a successful network DKG or Reconfiguration.
     pub decryption_key_share_public_parameters:
@@ -174,9 +174,10 @@ pub enum VersionedNetworkDkgOutput {
     V2(MPCPublicOutput),
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedDecryptionKeyReconfigurationOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

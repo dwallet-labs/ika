@@ -100,6 +100,7 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
         first_round_output_buf: &SerializedWrappedMPCPublicOutput,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
     ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
+        // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
         let first_round_output_buf: VersionedDwalletDKGFirstRoundPublicOutput =
             bcs::from_bytes(first_round_output_buf).map_err(DwalletMPCError::BcsError)?;
 
