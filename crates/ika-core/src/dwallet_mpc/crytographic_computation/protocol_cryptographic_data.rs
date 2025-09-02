@@ -78,7 +78,8 @@ pub enum ProtocolCryptographicData {
     NetworkEncryptionKeyV1ToV2Reconfiguration {
         data: NetworkEncryptionKeyV1ToV2ReconfigurationData,
         public_input: <ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
+        advance_request:
+            AdvanceRequest<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
 
@@ -121,6 +122,10 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::ImportedKeyVerification {
                 advance_request, ..
             } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
+                advance_request,
+                ..
+            } => advance_request.attempt_number,
         }
     }
 
@@ -151,9 +156,10 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::EncryptedShareVerification { .. }
             | ProtocolCryptographicData::PartialSignatureVerification { .. }
             | ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => None,
-            ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration { advance_request, .. } => {
-                Some(advance_request.mpc_round_number)
-            }
+            ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
+                advance_request,
+                ..
+            } => Some(advance_request.mpc_round_number),
         }
     }
 }
