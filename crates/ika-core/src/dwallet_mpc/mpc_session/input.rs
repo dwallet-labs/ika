@@ -141,11 +141,9 @@ pub(crate) fn session_input_from_request(
             let next_active_committee = next_active_committee.ok_or(
                 DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
             )?;
-            let last_reconfiguration_version = network_keys
-                .get_latest_reconfiguration_version(dwallet_network_encryption_key_id)?;
-            if (last_reconfiguration_version == Some(1) || last_reconfiguration_version.is_none())
-                && protocol_config.network_encryption_key_version == Some(2)
-            {
+            let key_version =
+                network_keys.get_network_key_version(dwallet_network_encryption_key_id)?;
+            if (key_version == 1) && protocol_config.network_encryption_key_version == 2 {
                 Ok((
                     PublicInput::NetworkEncryptionKeyReconfigurationV1ToV2(<ReconfigurationV1toV2Secp256k1Party as ReconfigurationV1ToV2PartyPublicInputGenerator>::generate_public_input(
                         committee,
@@ -163,7 +161,7 @@ pub(crate) fn session_input_from_request(
                         &class_groups_decryption_key
                     )?),
                 ))
-            } else if protocol_config.network_encryption_key_version == Some(2) {
+            } else if protocol_config.network_encryption_key_version == 2 {
                 Ok((
                     PublicInput::NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Secp256k1Party as ReconfigurationV2PartyPublicInputGenerator>::generate_public_input(
                         committee,
