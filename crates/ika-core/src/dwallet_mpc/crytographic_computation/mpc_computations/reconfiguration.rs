@@ -76,6 +76,7 @@ impl ReconfigurationV1ToV2PartyPublicInputGenerator for ReconfigurationV1toV2Sec
                 current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
                     .clone(),
                 bcs::from_bytes(&network_dkg_public_output)?,
+
             )
             .map_err(DwalletMPCError::from)?;
 
