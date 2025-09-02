@@ -69,13 +69,14 @@ pub enum ProtocolCryptographicData {
         advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
-
-    NetworkEncryptionKeyReconfiguration {
+    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
+    NetworkEncryptionKeyV1Reconfiguration {
         data: NetworkEncryptionKeyReconfigurationData,
         public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
+    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyV1ToV2Reconfiguration {
         data: NetworkEncryptionKeyV1ToV2ReconfigurationData,
         public_input: <ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput,
@@ -119,7 +120,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
                 advance_request, ..
             } => advance_request.attempt_number,
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
+            ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
                 advance_request,
                 ..
             } => advance_request.attempt_number,
@@ -157,7 +158,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
+            ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
                 advance_request,
                 ..
             } => Some(advance_request.mpc_round_number),

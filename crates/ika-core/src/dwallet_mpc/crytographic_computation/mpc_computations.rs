@@ -236,7 +236,7 @@ impl ProtocolCryptographicData {
                 data,
                 dwallet_network_encryption_key_id,
             } => match public_input {
-                PublicInput::NetworkEncryptionKeyReconfiguration(public_input) => {
+                PublicInput::NetworkEncryptionKeyV1Reconfiguration(public_input) => {
                     let advance_request_result =
                         Party::<ReconfigurationSecp256k1Party>::ready_to_advance(
                             party_id,
@@ -255,7 +255,7 @@ impl ProtocolCryptographicData {
                     let decryption_key_shares = decryption_key_shares
                         .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                    ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
+                    ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
                         data: data.clone(),
                         public_input: public_input.clone(),
                         advance_request,
@@ -629,7 +629,7 @@ impl ProtocolCryptographicData {
                 &protocol_config,
                 &mut rng,
             ),
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
+            ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
                 public_input,
                 advance_request,
                 decryption_key_shares,
