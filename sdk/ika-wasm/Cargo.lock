@@ -33,12 +33,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
 
 [[package]]
-name = "base64"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
-
-[[package]]
 name = "base64ct"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -99,7 +93,7 @@ checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
 [[package]]
 name = "class_groups"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=4ea9a0e#4ea9a0eff94aef2d345aee6da262e54caf8aecf8"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=70abb0923#70abb0923c8189b0ae074d8276cb27f4db0665f5"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -121,7 +115,7 @@ dependencies = [
 [[package]]
 name = "commitment"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=4ea9a0e#4ea9a0eff94aef2d345aee6da262e54caf8aecf8"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=70abb0923#70abb0923c8189b0ae074d8276cb27f4db0665f5"
 dependencies = [
  "crypto-bigint",
  "group 0.1.0",
@@ -294,7 +288,6 @@ dependencies = [
  "group 0.1.0",
  "homomorphic_encryption",
  "log",
- "message-digest",
  "mpc",
  "rand_chacha",
  "rand_core 0.9.3",
@@ -488,7 +481,7 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=4ea9a0e#4ea9a0eff94aef2d345aee6da262e54caf8aecf8"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=70abb0923#70abb0923c8189b0ae074d8276cb27f4db0665f5"
 dependencies = [
  "crypto-bigint",
  "curve25519-dalek 5.0.0-pre.0",
@@ -548,7 +541,7 @@ dependencies = [
 [[package]]
 name = "homomorphic_encryption"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=4ea9a0e#4ea9a0eff94aef2d345aee6da262e54caf8aecf8"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=70abb0923#70abb0923c8189b0ae074d8276cb27f4db0665f5"
 dependencies = [
  "crypto-bigint",
  "group 0.1.0",
@@ -653,7 +646,7 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 [[package]]
 name = "maurer"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=4ea9a0e#4ea9a0eff94aef2d345aee6da262e54caf8aecf8"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=70abb0923#70abb0923c8189b0ae074d8276cb27f4db0665f5"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -686,26 +679,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "message-digest"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "base64",
- "bcs",
- "dwallet-mpc-types",
- "group 0.1.0",
- "k256",
- "schemars",
- "serde",
- "sha2 0.11.0-rc.0",
- "sha3",
- "strum_macros",
-]
-
-[[package]]
 name = "mpc"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=4ea9a0e#4ea9a0eff94aef2d345aee6da262e54caf8aecf8"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=70abb0923#70abb0923c8189b0ae074d8276cb27f4db0665f5"
 dependencies = [
  "bcs",
  "commitment",
@@ -830,7 +806,7 @@ dependencies = [
 [[package]]
 name = "proof"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=4ea9a0e#4ea9a0eff94aef2d345aee6da262e54caf8aecf8"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=70abb0923#70abb0923c8189b0ae074d8276cb27f4db0665f5"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -1253,7 +1229,7 @@ dependencies = [
 [[package]]
 name = "twopc_mpc"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=4ea9a0e#4ea9a0eff94aef2d345aee6da262e54caf8aecf8"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=70abb0923#70abb0923c8189b0ae074d8276cb27f4db0665f5"
 dependencies = [
  "class_groups",
  "commitment",
