@@ -47,7 +47,7 @@ use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, ProtocolPublicParameters,
 };
 
-type AsyncProtocol = twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol;
+type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 type DKGCentralizedParty = <AsyncProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
 pub type SignCentralizedParty = <AsyncProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
@@ -606,7 +606,7 @@ pub fn verify_secret_share(
 
     let secret_share: VersionedDwalletUserSecretShare = bcs::from_bytes(&secret_share)?;
     Ok(
-        <twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
+        <twopc_mpc::secp256k1::class_groups::ECDSAProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
             &protocol_public_params,
             decentralized_dkg_output,
             match secret_share {
@@ -637,7 +637,7 @@ pub fn decrypt_user_share_inner(
     };
 
     let (_, encryption_of_discrete_log): <AsyncProtocol as twopc_mpc::dkg::Protocol>::EncryptedSecretKeyShareMessage = bcs::from_bytes(&encrypted_user_share_and_proof)?;
-    <twopc_mpc::secp256k1::class_groups::AsyncECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
+    <twopc_mpc::secp256k1::class_groups::ECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_params,
         dwallet_dkg_output,
         bcs::from_bytes(&encryption_key)?,
