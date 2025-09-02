@@ -10,7 +10,6 @@ use ika_types::messages_dwallet_mpc::{
     FutureSignRequestEvent, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
     SignRequestEvent,
 };
-use message_digest::message_digest::Hash;
 use sui_types::base_types::ObjectID;
 // Common structs for shared data between ProtocolSpecificData and AdvanceSpecificData
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]

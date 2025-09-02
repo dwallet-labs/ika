@@ -3,7 +3,6 @@ use crate::request_protocol_data::ProtocolData;
 use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, SignatureAlgorithm};
 use group::HashType;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
-use message_digest::message_digest::Hash;
 use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
