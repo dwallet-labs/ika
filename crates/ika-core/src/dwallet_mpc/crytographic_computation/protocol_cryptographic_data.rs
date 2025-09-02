@@ -4,7 +4,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
 use crate::dwallet_mpc::presign::PresignParty;
-use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
+use crate::dwallet_mpc::reconfiguration::{ReconfigurationSecp256k1Party, ReconfigurationV1toV2Secp256k1Party};
 use crate::dwallet_mpc::sign::SignParty;
 use crate::request_protocol_data::{
     DKGFirstData, DKGSecondData, EncryptedShareVerificationData, ImportedKeyVerificationData,
@@ -70,6 +70,12 @@ pub enum ProtocolCryptographicData {
     NetworkEncryptionKeyReconfiguration {
         data: NetworkEncryptionKeyReconfigurationData,
         public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
+        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+    },
+    NetworkEncryptionKeyV1ToV2Reconfiguration {
+        data: NetworkEncryptionKeyReconfigurationData,
+        public_input: <ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
