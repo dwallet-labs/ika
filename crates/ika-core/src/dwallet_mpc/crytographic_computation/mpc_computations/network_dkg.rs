@@ -239,7 +239,6 @@ impl DwalletMPCNetworkKeys {
             .clone();
         Ok(match versionedOutput {
             VersionedNetworkDkgOutput::V1(_) => 1,
-            VersionedNetworkDkgOutput::V2(_) => 2,
         })
     }
 
@@ -320,11 +319,7 @@ pub(crate) fn advance_network_dkg(
                     private_output,
                 }) => {
                     let public_output_value =
-                        if protocol_config.network_encryption_key_version == Some(2) {
-                            bcs::to_bytes(&VersionedNetworkDkgOutput::V2(public_output_value))?
-                        } else {
-                            bcs::to_bytes(&VersionedNetworkDkgOutput::V1(public_output_value))?
-                        };
+                            bcs::to_bytes(&VersionedNetworkDkgOutput::V1(public_output_value))?;
 
                     Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                         public_output_value,
@@ -460,10 +455,6 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                         network_dkg_output: mpc_public_output,
                         protocol_public_parameters,
                     })
-                }
-                VersionedNetworkDkgOutput::V2(_) => {
-                    // TODO (this pr): understand from Scaly what should I do in this case.
-                    todo!()
                 }
             }
         }
