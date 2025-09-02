@@ -119,11 +119,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationSecp256k1Party 
         decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
         network_dkg_public_output: VersionedNetworkDkgOutput,
     ) -> DwalletMPCResult<<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput> {
-        let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output
-        else {
-            // TODO (this pr): Understand from Scaly what to do in this case.
-            todo!();
-        };
+        let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output;
         let current_committee = current_committee.clone();
 
         let current_access_structure =
