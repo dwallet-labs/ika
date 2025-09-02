@@ -63,5 +63,5 @@ sha2 = { git = 'https://github.com/RustCrypto/hashes.git', tag = "sha2-v0.11.0-r
 sha3 = { git = 'https://github.com/RustCrypto/hashes.git', tag = "sha3-v0.11.0-rc.0" }
 digest = { git = 'https://github.com/RustCrypto/traits.git', tag = "digest-v0.11.0-rc.0" }
 signature = { git = 'https://github.com/RustCrypto/traits.git', tag = "signature-v3.0.0-rc.1" }
-curve25519-dalek = { git = 'https://github.com/dalek-cryptography/curve25519-dalek', rev = "b7e4fc0" }
+#curve25519-dalek = { git = 'https://github.com/dalek-cryptography/curve25519-dalek', rev = "b7e4fc0" }
 crypto-bigint = { git = 'https://github.com/erik-3milabs/crypto-bigint.git', rev = "d0929d4" }
