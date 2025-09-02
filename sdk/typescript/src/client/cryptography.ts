@@ -14,7 +14,7 @@ import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 import {
 	centralized_and_decentralized_parties_dkg_output_match,
-	create_dkg_centralized_output as create_dkg_user_output,
+	create_dkg_centralized_output_v1 as create_dkg_user_output,
 	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
 	create_sign_centralized_party_message as create_sign_user_message,
 	encrypt_secret_share,
@@ -100,7 +100,6 @@ export async function createClassGroupsKeypair(
 export async function createDKGUserOutput(
 	protocolPublicParameters: Uint8Array,
 	networkFirstRoundOutput: Uint8Array,
-	sessionIdentifier: Uint8Array,
 ): Promise<{
 	userDKGMessage: Uint8Array;
 	userPublicOutput: Uint8Array;
@@ -109,7 +108,6 @@ export async function createDKGUserOutput(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
-		sessionIdentifierDigest(sessionIdentifier),
 	);
 
 	return {
@@ -156,7 +154,6 @@ export async function encryptSecretShare(
 export async function prepareDKGSecondRound(
 	protocolPublicParameters: Uint8Array,
 	dWallet: DWallet,
-	sessionIdentifier: Uint8Array,
 	encryptionKey: Uint8Array,
 ): Promise<DKGSecondRoundRequestInput> {
 	const networkFirstRoundOutput =
@@ -169,7 +166,6 @@ export async function prepareDKGSecondRound(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
-		sessionIdentifierDigest(sessionIdentifier),
 	);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(
@@ -199,7 +195,6 @@ export async function prepareDKGSecondRound(
 export async function prepareDKGSecondRoundAsync(
 	ikaClient: IkaClient,
 	dWallet: DWallet,
-	sessionIdentifier: Uint8Array,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 ): Promise<DKGSecondRoundRequestInput> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
@@ -207,7 +202,6 @@ export async function prepareDKGSecondRoundAsync(
 	return prepareDKGSecondRound(
 		protocolPublicParameters,
 		dWallet,
-		sessionIdentifier,
 		userShareEncryptionKeys.encryptionKey,
 	);
 }

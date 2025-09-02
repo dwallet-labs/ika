@@ -89,3 +89,5 @@ ika_config.json
 
 # TypeDoc
 sdk/typescript/docs
+move_pkg_lock_root.lock
+node-compile-cache

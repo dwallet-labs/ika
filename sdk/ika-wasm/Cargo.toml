@@ -49,7 +49,6 @@ publish = false
 #    "--flexible-inline-max-function-size",
 #    "4294967295",
 #]
-
 [dependencies]
 dwallet-mpc-centralized-party = { path = "../../crates/dwallet-mpc-centralized-party", features = ["wasm_js"] }
 anyhow = "1.0.95"
