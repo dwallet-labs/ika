@@ -44,8 +44,8 @@ pub(crate) trait ReconfigurationV2PartyPublicInputGenerator: Party {
     fn generate_public_input(
         committee: &Committee,
         new_committee: Committee,
-        decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
         network_dkg_public_output: VersionedNetworkDkgOutput,
+        latest_reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
     ) -> DwalletMPCResult<<ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput>;
 }
 
@@ -57,8 +57,13 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
         latest_reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
     ) -> DwalletMPCResult<<ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput> {
         let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output;
-        let VersionedDecryptionKeyReconfigurationOutput::V2(latest_reconfiguration_public_output) = latest_reconfiguration_public_output else {
-          return Err(DWalletMPCError::InternalError("Reconfiguration to V2 only supports reconfiguration public output of version V2".to_string()));
+        let VersionedDecryptionKeyReconfigurationOutput::V2(latest_reconfiguration_public_output) =
+            latest_reconfiguration_public_output
+        else {
+            return Err(DwalletMPCError::InternalError(
+                "Reconfiguration to V2 only supports reconfiguration public output of version V2"
+                    .to_string(),
+            ));
         };
         let current_committee = current_committee.clone();
 
@@ -76,7 +81,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
             extract_encryption_keys_from_committee(&upcoming_committee)?;
 
         let public_input: <ReconfigurationV2Secp256k1Party as Party>::PublicInput =
-            ReconfigurationV2Secp256k1Party::PublicInput::new(
+            <twopc_mpc::reconfiguration::Party as mpc::Party>::PublicInput::new(
                 &current_access_structure,
                 upcoming_access_structure,
                 current_encryption_keys_per_crt_prime_and_proofs.clone(),

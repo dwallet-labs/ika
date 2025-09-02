@@ -7,7 +7,11 @@ use crate::dwallet_mpc::dwallet_dkg::{
 };
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_public_input};
 use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
-use crate::dwallet_mpc::reconfiguration::{ReconfigurationPartyPublicInputGenerator, ReconfigurationSecp256k1Party, ReconfigurationV1ToV2PartyPublicInputGenerator, ReconfigurationV1toV2Secp256k1Party, ReconfigurationV2Secp256k1Party};
+use crate::dwallet_mpc::reconfiguration::{
+    ReconfigurationPartyPublicInputGenerator, ReconfigurationSecp256k1Party,
+    ReconfigurationV1ToV2PartyPublicInputGenerator, ReconfigurationV1toV2Secp256k1Party,
+    ReconfigurationV2PartyPublicInputGenerator, ReconfigurationV2Secp256k1Party,
+};
 use crate::dwallet_mpc::sign::{SignParty, sign_session_public_input};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::ProtocolData;
@@ -157,7 +161,7 @@ pub(crate) fn session_input_from_request(
                 ))
             } else if protocol_config.network_encryption_key_version == Some(2) {
                 Ok((
-                    PublicInput::NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Secp256k1Party as ReconfigurationV1ToV2PartyPublicInputGenerator>::generate_public_input(
+                    PublicInput::NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Secp256k1Party as ReconfigurationV2PartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
                         network_keys
