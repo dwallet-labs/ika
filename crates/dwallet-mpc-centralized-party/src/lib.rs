@@ -35,7 +35,6 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
-use message_digest::message_digest::message_digest;
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyOutput,
     DKGDecentralizedPartyVersionedOutput,

@@ -15,7 +15,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use group::{HashType, OsCsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
-use message_digest::message_digest::{Hash, message_digest};
+use message_digest::message_digest::{Hash};
 use mpc::{Party, Weight, WeightedThresholdAccessStructure};
 use rand_core::SeedableRng;
 use std::collections::HashSet;
