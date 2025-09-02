@@ -1,7 +1,7 @@
-use group::HashType;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput, SignatureAlgorithm,
 };
+use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
@@ -82,7 +82,7 @@ pub struct EncryptedShareVerificationData {
 pub struct PartialSignatureVerificationData {
     pub curve: DWalletMPCNetworkKeyScheme,
     pub message: Vec<u8>,
-    pub hash_type: Hash,
+    pub hash_type: HashType,
     pub signature_algorithm: SignatureAlgorithm,
     pub dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
     pub presign: SerializedWrappedMPCPublicOutput,
@@ -245,7 +245,7 @@ pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCRes
     Ok(ProtocolData::Sign {
         data: SignData {
             curve: request_event_data.curve.try_into()?,
-            hash_scheme: Hash::try_from(request_event_data.hash_scheme)
+            hash_scheme: HashType::try_from(request_event_data.hash_scheme)
                 .map_err(|_| DwalletMPCError::InvalidSessionPublicInput)?,
             signature_algorithm: request_event_data.signature_algorithm.try_into()?,
         },
@@ -303,7 +303,7 @@ pub fn partial_signature_verification_protocol_data(
         data: PartialSignatureVerificationData {
             curve: request_event_data.curve.try_into()?,
             message: request_event_data.message,
-            hash_type: Hash::try_from(request_event_data.hash_scheme).unwrap(),
+            hash_type: HashType::try_from(request_event_data.hash_scheme).unwrap(),
             signature_algorithm: request_event_data.signature_algorithm.try_into()?,
             dwallet_decentralized_output: request_event_data.dkg_output,
             presign: request_event_data.presign,
