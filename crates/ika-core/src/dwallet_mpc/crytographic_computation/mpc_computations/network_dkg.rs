@@ -319,7 +319,7 @@ pub(crate) fn advance_network_dkg(
                     private_output,
                 }) => {
                     let public_output_value =
-                            bcs::to_bytes(&VersionedNetworkDkgOutput::V1(public_output_value))?;
+                        bcs::to_bytes(&VersionedNetworkDkgOutput::V1(public_output_value))?;
 
                     Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                         public_output_value,
