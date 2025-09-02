@@ -571,17 +571,11 @@ impl ProtocolCryptographicData {
                         public_output_value,
                         malicious_parties,
                         private_output,
-                    } => {
-                        // Wrap the public output with its version.
-                        let public_output_value =
-                            bcs::to_bytes(&VersionedSignOutput::V1(public_output_value))?;
-
-                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                            public_output_value,
-                            malicious_parties,
-                            private_output,
-                        })
-                    }
+                    } => Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    }),
                 }
             }
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
