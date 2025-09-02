@@ -13,11 +13,13 @@ use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationSecp256k1Party, ReconfigurationV1toV2Secp256k1Party,
+    ReconfigurationV2Secp256k1Party,
 };
 use crate::dwallet_mpc::sign::SignParty;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
-    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData, ProtocolData,
+    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
+    NetworkEncryptionKeyV2ReconfigurationData, ProtocolData,
 };
 use anyhow::anyhow;
 use class_groups::dkg::Secp256k1Party;
@@ -281,6 +283,32 @@ impl ProtocolCryptographicData {
 
                     ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
                         data: NetworkEncryptionKeyV1ToV2ReconfigurationData {},
+                        public_input: public_input.clone(),
+                        advance_request,
+                        decryption_key_shares: decryption_key_shares.clone(),
+                    }
+                }
+                PublicInput::NetworkEncryptionKeyReconfigurationV2(public_input) => {
+                    let advance_request_result =
+                        Party::<ReconfigurationV2Secp256k1Party>::ready_to_advance(
+                            party_id,
+                            access_structure,
+                            consensus_round,
+                            HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
+                            &serialized_messages_by_consensus_round,
+                        )?;
+
+                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                        advance_request_result
+                    else {
+                        return Ok(None);
+                    };
+
+                    let decryption_key_shares = decryption_key_shares
+                        .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
+
+                    ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration {
+                        data: NetworkEncryptionKeyV2ReconfigurationData {},
                         public_input: public_input.clone(),
                         advance_request,
                         decryption_key_shares: decryption_key_shares.clone(),

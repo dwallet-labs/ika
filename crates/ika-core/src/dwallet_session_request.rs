@@ -233,6 +233,14 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: None,
                 signature_algorithm: None,
             },
+            ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: None,
+                    hash_scheme: None,
+                    signature_algorithm: None,
+                }
+            }
         }
     }
 }

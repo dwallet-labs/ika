@@ -72,8 +72,6 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
         let upcoming_access_structure =
             generate_access_structure_from_committee(&upcoming_committee)?;
 
-        let plaintext_space_public_parameters = secp256k1::scalar::PublicParameters::default();
-
         let current_encryption_keys_per_crt_prime_and_proofs =
             extract_encryption_keys_from_committee(&current_committee)?;
 
