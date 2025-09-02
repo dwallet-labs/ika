@@ -16,7 +16,9 @@ use crate::dwallet_mpc::reconfiguration::{
 };
 use crate::dwallet_mpc::sign::SignParty;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
-use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
+use crate::request_protocol_data::{
+    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData, ProtocolData,
+};
 use anyhow::anyhow;
 use class_groups::dkg::Secp256k1Party;
 use commitment::CommitmentSizedNumber;
@@ -278,7 +280,7 @@ impl ProtocolCryptographicData {
                         .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                     ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
-                        data: data.clone(),
+                        data: NetworkEncryptionKeyV1ToV2ReconfigurationData {},
                         public_input: public_input.clone(),
                         advance_request,
                         decryption_key_shares: decryption_key_shares.clone(),

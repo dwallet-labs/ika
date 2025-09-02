@@ -225,6 +225,14 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                     signature_algorithm: Some(data.signature_algorithm.clone()),
                 }
             }
+            ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
+                data, ..
+            } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: None,
+                hash_scheme: None,
+                signature_algorithm: None,
+            },
         }
     }
 }
