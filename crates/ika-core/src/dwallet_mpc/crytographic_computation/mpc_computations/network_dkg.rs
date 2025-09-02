@@ -277,7 +277,7 @@ impl DwalletMPCNetworkKeys {
             );
             return Err(DwalletMPCError::WaitingForNetworkKey(*key_id));
         };
-        Ok(result.protocol_public_parameters.clone())
+        Ok(result.secp256k1_protocol_public_parameters.clone())
     }
 
     pub fn get_network_dkg_public_output(
@@ -472,7 +472,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                         latest_network_reconfiguration_public_output: None,
                         decryption_key_share_public_parameters,
                         network_dkg_output: mpc_public_output,
-                        protocol_public_parameters,
+                        secp256k1_protocol_public_parameters: protocol_public_parameters,
                     })
                 }
             }

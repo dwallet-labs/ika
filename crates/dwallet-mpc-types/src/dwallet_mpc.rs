@@ -57,11 +57,18 @@ pub struct NetworkEncryptionKeyPublicData {
     pub decryption_key_share_public_parameters:
         class_groups::Secp256k1DecryptionKeySharePublicParameters,
 
-    pub protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    pub secp256k1_protocol_public_parameters:
+        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
 
     /// The public output of the `NetworkDKG` process (the first and only one).
     /// On first instance it will be equal to `latest_public_output`.
     pub network_dkg_output: VersionedNetworkDkgOutput,
+    pub secp256r1_protocol_public_parameters:
+        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    pub ristretto_protocol_public_parameters:
+        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    pub curve25519_protocol_public_parameters:
+        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
 }
 
 #[repr(u32)]

@@ -224,7 +224,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 epoch,
                 state: NetworkDecryptionKeyPublicOutputType::Reconfiguration,
                 decryption_key_share_public_parameters,
-                protocol_public_parameters,
+                secp256k1_protocol_public_parameters: protocol_public_parameters,
                 network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
                 latest_network_reconfiguration_public_output: Some(mpc_public_output),
             })
@@ -232,9 +232,23 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             let public_output: <twopc_mpc::reconfiguration::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
-            // TODO (#1483): Add support for all supported curves.
-            let protocol_public_parameters =
+            let secp256k1_protocol_public_parameters =
                 twopc_mpc::reconfiguration::PublicOutput::secp256k1_protocol_public_parameters(
+                    &public_output,
+                )
+                .map_err(DwalletMPCError::from)?;
+            let secp256r1_protocol_public_parameters =
+                twopc_mpc::reconfiguration::PublicOutput::secp256r1_protocol_public_parameters(
+                    &public_output,
+                )
+                .map_err(DwalletMPCError::from)?;
+            let ristretto_protocol_public_parameters =
+                twopc_mpc::reconfiguration::PublicOutput::ristretto_protocol_public_parameters(
+                    &public_output,
+                )
+                .map_err(DwalletMPCError::from)?;
+            let curve25519_protocol_public_parameters =
+                twopc_mpc::reconfiguration::PublicOutput::curve25519_protocol_public_parameters(
                     &public_output,
                 )
                 .map_err(DwalletMPCError::from)?;
@@ -247,7 +261,10 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 state: NetworkDecryptionKeyPublicOutputType::Reconfiguration,
                 latest_network_reconfiguration_public_output: Some(mpc_public_output),
                 decryption_key_share_public_parameters,
-                protocol_public_parameters,
+                secp256k1_protocol_public_parameters,
+                secp256r1_protocol_public_parameters,
+                ristretto_protocol_public_parameters,
+                curve25519_protocol_public_parameters,
                 network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
             })
         }
