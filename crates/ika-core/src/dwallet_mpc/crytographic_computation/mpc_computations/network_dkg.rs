@@ -230,7 +230,10 @@ impl DwalletMPCNetworkKeys {
             .clone())
     }
 
-    pub fn get_latest_reconfiguration_version(&self, key_id: &ObjectID) -> DwalletMPCResult<Option<usize>> {
+    pub fn get_latest_reconfiguration_version(
+        &self,
+        key_id: &ObjectID,
+    ) -> DwalletMPCResult<Option<usize>> {
         let versioned_output = self
             .network_encryption_keys
             .get(key_id)
