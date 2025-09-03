@@ -153,9 +153,9 @@ pub(crate) fn session_input_from_request(
                                 dwallet_network_encryption_key_id,
                             )?,
                         network_keys
-                            .get_last_reconfiguration_output(
+                            .get_decryption_key_share_public_parameters(
                                 dwallet_network_encryption_key_id,
-                            )?.ok_or(DwalletMPCError::InternalError("reconfiguration output missing".to_string()))?,
+                            )?,
                     )?),
                     Some(bcs::to_bytes(
                         &class_groups_decryption_key
