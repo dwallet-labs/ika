@@ -44,6 +44,8 @@ use tracing::error;
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
 };
+use twopc_mpc::ecdsa::ECDSASecp256k1Signature;
+use twopc_mpc::sign::EncodableSignature;
 
 pub(crate) mod dwallet_dkg;
 pub(crate) mod network_dkg;
@@ -571,11 +573,15 @@ impl ProtocolCryptographicData {
                         public_output_value,
                         malicious_parties,
                         private_output,
-                    } => Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                        public_output_value,
-                        malicious_parties,
-                        private_output,
-                    }),
+                    } => {
+                        let signature: ECDSASecp256k1Signature =
+                            bcs::from_bytes(&public_output_value)?;
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value: signature.to_bytes().to_vec(),
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
                 }
             }
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
