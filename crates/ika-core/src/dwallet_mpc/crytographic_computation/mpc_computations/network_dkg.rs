@@ -358,7 +358,6 @@ pub(crate) fn advance_network_dkg(
 pub(crate) fn network_dkg_public_input(
     access_structure: &WeightedThresholdAccessStructure,
     encryption_keys_and_proofs: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
-    key_scheme: DWalletMPCNetworkKeyScheme,
 ) -> DwalletMPCResult<<Secp256k1Party as mpc::Party>::PublicInput> {
     generate_secp256k1_dkg_party_public_input(access_structure, encryption_keys_and_proofs)
 }
@@ -380,7 +379,6 @@ pub(crate) fn generate_secp256k1_dkg_party_public_input(
 
 pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
     epoch: u64,
-    key_scheme: DWalletMPCNetworkKeyScheme,
     access_structure: WeightedThresholdAccessStructure,
     key_data: DWalletNetworkEncryptionKeyData,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
@@ -393,7 +391,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
             } else {
                 instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
                     epoch,
-                    key_scheme,
                     &access_structure,
                     &key_data.network_dkg_public_output,
                 )
@@ -419,7 +416,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
 
 fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
     epoch: u64,
-    key_scheme: DWalletMPCNetworkKeyScheme,
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {

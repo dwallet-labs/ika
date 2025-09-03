@@ -498,7 +498,6 @@ impl DWalletMPCManager {
                     for (key_id, key_data) in new_keys {
                         let res = instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
                             key_data.current_epoch,
-                            DWalletMPCNetworkKeyScheme::Secp256k1,
                             self.access_structure.clone(),
                             key_data,
                         ).await;
