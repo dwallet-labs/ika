@@ -101,7 +101,7 @@ pub(crate) trait ReconfigurationV1ToV2PartyPublicInputGenerator: Party {
         committee: &Committee,
         new_committee: Committee,
         network_dkg_public_output: VersionedNetworkDkgOutput,
-        reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
+        decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
     ) -> DwalletMPCResult<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput>;
 }
 
@@ -110,14 +110,9 @@ impl ReconfigurationV1ToV2PartyPublicInputGenerator for ReconfigurationV1toV2Sec
         current_committee: &Committee,
         upcoming_committee: Committee,
         network_dkg_public_output: VersionedNetworkDkgOutput,
-        reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
+        decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
     ) -> DwalletMPCResult<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput> {
         let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output;
-        let VersionedDecryptionKeyReconfigurationOutput::V1(reconfiguration_public_output) =
-            reconfiguration_public_output
-        else {
-            return Err(DwalletMPCError::InternalError("Reconfiguration from V1 to V2 only supports reconfiguration public output of version V1".to_string()));
-        };
         let current_committee = current_committee.clone();
 
         let current_access_structure =
@@ -139,8 +134,8 @@ impl ReconfigurationV1ToV2PartyPublicInputGenerator for ReconfigurationV1toV2Sec
                 upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
                 current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
                     .clone(),
+                decryption_key_share_public_parameters,
                 bcs::from_bytes(&network_dkg_public_output)?,
-                bcs::from_bytes(&reconfiguration_public_output)?,
             )
             .map_err(DwalletMPCError::from)?;
 

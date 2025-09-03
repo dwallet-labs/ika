@@ -244,8 +244,8 @@ impl DwalletMPCNetworkKeys {
             });
         }
         Ok(match versioned_output.unwrap() {
-            VersionedDecryptionKeyReconfigurationOutput::V1(_) => Some(1),
-            VersionedDecryptionKeyReconfigurationOutput::V2(_) => Some(2),
+            VersionedDecryptionKeyReconfigurationOutput::V1(_) => 1,
+            VersionedDecryptionKeyReconfigurationOutput::V2(_) => 2,
         })
     }
 
