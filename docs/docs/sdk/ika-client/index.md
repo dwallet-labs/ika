@@ -24,11 +24,11 @@ We recommend you to have a single instance of Ika Client for your application. T
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
-const client = new SuiClient({ url: getFullnodeUrl('testnet') }); // mainnet / testnet / localnet
+const client = new SuiClient({ url: getFullnodeUrl('testnet') }); // mainnet / testnet
 
 const ikaClient = new IkaClient({
 	suiClient: client,
-	config: getNetworkConfig('testnet'), // mainnet / testnet / localnet
+	config: getNetworkConfig('testnet'), // mainnet / testnet
 });
 
 await ikaClient.initialize(); // This will initialize the Ika Client and fetch the Ika protocol state and objects.

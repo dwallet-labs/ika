@@ -43,7 +43,6 @@ export function createSuiClient() {
 export function createIkaClient(suiClient: SuiClient) {
 	return new IkaClient({
 		suiClient,
-		network: 'testnet',
 		config: getNetworkConfig('testnet'),
 	});
 }
@@ -58,11 +57,14 @@ export async function executeTransaction(suiClient: SuiClient, transaction: Tran
 	});
 }
 
-export function generateKeypair() {
+export async function generateKeypair() {
 	const seed = new Uint8Array(randomBytes(32));
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(new Uint8Array(randomBytes(32))));
 
-	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
+	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+		seed,
+		Curve.SECP256K1,
+	);
 
 	return {
 		userShareEncryptionKeys,
@@ -71,11 +73,14 @@ export function generateKeypair() {
 	};
 }
 
-export function generateKeypairForImportedKeyDWallet() {
+export async function generateKeypairForImportedKeyDWallet() {
 	const seed = new Uint8Array(32).fill(8);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed('0x1');
 
-	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
+	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+		seed,
+		Curve.SECP256K1,
+	);
 
 	const dWalletKeypair = Secp256k1Keypair.deriveKeypair(userKeypair.getSecretKey());
 

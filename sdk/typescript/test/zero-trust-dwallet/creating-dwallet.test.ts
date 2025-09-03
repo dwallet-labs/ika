@@ -31,7 +31,7 @@ describe('DWallet Creation', () => {
 		await ikaClient.initialize();
 
 		// Generate deterministic keypair for this test
-		const { userShareEncryptionKeys, signerAddress } = generateTestKeypair(testName);
+		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName);
 
 		// Request faucet funds for the test address
 		await requestTestFaucetFunds(signerAddress);
@@ -78,7 +78,6 @@ describe('DWallet Creation', () => {
 		const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 			ikaClient,
 			dWallet,
-			sessionIdentifierPreimage,
 			userShareEncryptionKeys,
 		);
 
@@ -167,8 +166,8 @@ describe('DWallet Creation', () => {
 		await ikaClient.initialize();
 
 		// Generate different keypairs for each test
-		const keypair1 = generateTestKeypair(testName1);
-		const keypair2 = generateTestKeypair(testName2);
+		const keypair1 = await generateTestKeypair(testName1);
+		const keypair2 = await generateTestKeypair(testName2);
 
 		// Verify the keypairs are different
 		expect(keypair1.signerAddress).not.toBe(keypair2.signerAddress);

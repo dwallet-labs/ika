@@ -299,10 +299,9 @@ pub(crate) async fn create_dwallet_test(
     };
     info!("DWallet DKG first round completed");
     let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
-    let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output(
+    let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output_v1(
         protocol_pp.clone(),
         dwallet_dkg_first_round_output.output.clone(),
-        SessionIdentifier::new(SessionType::User, dwallet_dkg_session_identifier).to_vec(),
     )
     .unwrap();
     let (encryption_key, decryption_key) =

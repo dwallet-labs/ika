@@ -118,7 +118,7 @@ export async function getSharedTestSetup(): Promise<SharedTestSetup> {
 export async function createIndividualTestSetup(testName: string) {
 	const sharedSetup = await getSharedTestSetup();
 	const { userShareEncryptionKeys, signerAddress, signerPublicKey, userKeypair } =
-		sharedSetup.getSharedKeypair(testName);
+		await sharedSetup.getSharedKeypair(testName);
 
 	return {
 		suiClient: sharedSetup.getSuiClient(),

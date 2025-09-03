@@ -11,7 +11,6 @@ use derivative::Derivative;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
 pub(crate) use orchestrator::CryptographicComputationsOrchestrator;
 pub(crate) use request::Request as ComputationRequest;
-use std::hash::Hash;
 
 const MPC_SIGN_SECOND_ROUND: u64 = 2;
 
@@ -20,7 +19,7 @@ const MPC_SIGN_SECOND_ROUND: u64 = 2;
 #[derivative(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub(crate) struct ComputationId {
     pub(crate) session_identifier: SessionIdentifier,
-    pub(crate) mpc_round: u64,
+    pub(crate) mpc_round: Option<u64>,
     pub(crate) attempt_number: u64,
 
     /// Do not include the consensus round in the equality check. A new computation is created

@@ -23,7 +23,7 @@ describe('Cryptography Direct Functions', () => {
 		]);
 
 		// Test creating a class groups keypair
-		const keypair = createClassGroupsKeypair(seed, Curve.SECP256K1);
+		const keypair = await createClassGroupsKeypair(seed, Curve.SECP256K1);
 
 		// Test against expected deterministic outputs
 		expect(keypair).toBeDefined();
@@ -49,7 +49,7 @@ describe('Cryptography Direct Functions', () => {
 		expect(actualDecryptionKeyStart).toBe(expectedDecryptionKeyStart);
 
 		// Test that same seed creates same keypair
-		const keypair2 = createClassGroupsKeypair(seed, Curve.SECP256K1);
+		const keypair2 = await createClassGroupsKeypair(seed, Curve.SECP256K1);
 
 		expect(keypair.encryptionKey).toEqual(keypair2.encryptionKey);
 		expect(keypair.decryptionKey).toEqual(keypair2.decryptionKey);
@@ -57,7 +57,7 @@ describe('Cryptography Direct Functions', () => {
 		// Test that different seeds create different keypairs
 		const seed2 = new Uint8Array(32);
 		crypto.getRandomValues(seed2);
-		const keypair3 = createClassGroupsKeypair(seed2, Curve.SECP256K1);
+		const keypair3 = await createClassGroupsKeypair(seed2, Curve.SECP256K1);
 
 		expect(keypair.encryptionKey).not.toEqual(keypair3.encryptionKey);
 		expect(keypair.decryptionKey).not.toEqual(keypair3.decryptionKey);
@@ -68,7 +68,7 @@ describe('Cryptography Direct Functions', () => {
 		const invalidSeed = new Uint8Array(16); // Too small
 		crypto.getRandomValues(invalidSeed);
 
-		expect(() => createClassGroupsKeypair(invalidSeed, Curve.SECP256K1)).toThrow(
+		await expect(createClassGroupsKeypair(invalidSeed, Curve.SECP256K1)).rejects.toThrow(
 			'Seed must be 32 bytes',
 		);
 
@@ -76,15 +76,15 @@ describe('Cryptography Direct Functions', () => {
 		const tooLargeSeed = new Uint8Array(64); // Too large
 		crypto.getRandomValues(tooLargeSeed);
 
-		expect(() => createClassGroupsKeypair(tooLargeSeed, Curve.SECP256K1)).toThrow(
+		await expect(createClassGroupsKeypair(tooLargeSeed, Curve.SECP256K1)).rejects.toThrow(
 			'Seed must be 32 bytes',
 		);
 	});
 
 	it('should create random session identifier', async () => {
 		// Test creating random session identifiers
-		const sessionId1 = createRandomSessionIdentifier();
-		const sessionId2 = createRandomSessionIdentifier();
+		const sessionId1 = await createRandomSessionIdentifier();
+		const sessionId2 = await createRandomSessionIdentifier();
 
 		// Test expected properties
 		expect(sessionId1).toBeInstanceOf(Uint8Array);
@@ -135,7 +135,7 @@ describe('Cryptography Direct Functions', () => {
 		expect(digest).toEqual(digest2);
 
 		// Different input should produce different output
-		const sessionId2 = createRandomSessionIdentifier();
+		const sessionId2 = await createRandomSessionIdentifier();
 		const digest3 = sessionIdentifierDigest(sessionId2);
 		expect(digest).not.toEqual(digest3);
 	});
@@ -163,7 +163,7 @@ describe('Cryptography Direct Functions', () => {
 		// We expect it to not throw during parameter validation
 		// but may fail during actual cryptographic operations due to mock data
 		try {
-			const result = createDKGUserOutput(mockProtocolParams, mockNetworkOutput, sessionId);
+			const result = await createDKGUserOutput(mockProtocolParams, mockNetworkOutput, sessionId);
 			expect(result).toBeDefined();
 		} catch (error) {
 			// Expected to fail with mock data, but should have proper error handling
@@ -182,7 +182,7 @@ describe('Cryptography Direct Functions', () => {
 
 		// This should fail with mock data but validate parameters properly
 		try {
-			const result = encryptSecretShare(secretShare, encryptionKey, protocolParams);
+			const result = await encryptSecretShare(secretShare, encryptionKey, protocolParams);
 			expect(result).toBeDefined();
 		} catch (error) {
 			// Expected to fail with mock data
@@ -234,11 +234,11 @@ describe('Cryptography Direct Functions', () => {
 	});
 
 	describe('publicKeyFromDWalletOutput', () => {
-		it('should handle invalid DWallet output gracefully', () => {
+		it('should handle invalid DWallet output gracefully', async () => {
 			const mockDWalletOutput = new Uint8Array(64).fill(1);
 
 			// This function may throw for invalid input, which is expected behavior
-			expect(() => publicKeyFromDWalletOutput(mockDWalletOutput)).toThrow();
+			await expect(publicKeyFromDWalletOutput(mockDWalletOutput)).rejects.toThrow();
 		});
 	});
 

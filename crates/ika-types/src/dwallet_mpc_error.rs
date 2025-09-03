@@ -171,6 +171,15 @@ pub enum DwalletMPCError {
 
     #[error("checkpoint message is empty")]
     CheckpointMessageIsEmpty,
+
+    #[error("Invalid dWallet protocol type")]
+    InvalidDWalletProtocolType,
+
+    #[error("Invalid hash scheme")]
+    InvalidHashScheme,
+
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 
 /// A wrapper type for the result of a runtime operation.

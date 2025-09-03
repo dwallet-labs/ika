@@ -20,7 +20,7 @@ const ikaClient = createIkaClient(suiClient);
 async function main() {
 	await ikaClient.initialize();
 
-	const { userShareEncryptionKeys } = generateKeypair();
+	const { userShareEncryptionKeys } = await generateKeypair();
 
 	const { dwalletID, sessionIdentifierPreimage } = await requestDKGFirstRound(ikaClient, suiClient);
 
@@ -34,7 +34,6 @@ async function main() {
 	const dkgSecondRoundRequestInput = await prepareDKGSecondRoundAsync(
 		ikaClient,
 		dWallet,
-		sessionIdentifierPreimage,
 		userShareEncryptionKeys,
 	);
 

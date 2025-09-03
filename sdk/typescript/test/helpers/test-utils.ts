@@ -1,6 +1,8 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import fs from 'fs';
+import path from 'path';
 import { toHex } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
@@ -137,14 +139,70 @@ export async function requestTestFaucetFunds(address: string): Promise<void> {
 	}
 }
 
+export function findIkaConfigFile(): string {
+	const possiblePaths = [
+		// Current working directory
+		'ika_config.json',
+		// One level up
+		'../ika_config.json',
+		// Two levels up (current hardcoded path)
+		'../../ika_config.json',
+		// Three levels up
+		'../../../ika_config.json',
+		// From environment variable if set
+		...(process.env.IKA_CONFIG_PATH ? [process.env.IKA_CONFIG_PATH] : []),
+		// From project root (assuming we're in sdk/typescript/src/client/)
+		path.resolve(__dirname, '../../../../ika_config.json'),
+		// From workspace root (assuming we're in sdk/typescript/)
+		path.resolve(__dirname, '../../../ika_config.json'),
+	];
+
+	for (const configPath of possiblePaths) {
+		try {
+			const resolvedPath = path.resolve(configPath);
+			if (fs.existsSync(resolvedPath)) {
+				return resolvedPath;
+			}
+		} catch {
+			// Continue to next path if this one fails
+			continue;
+		}
+	}
+
+	throw new Error(
+		`Could not find ika_config.json file. Tried the following locations:\n` +
+			`${possiblePaths.map((p) => `  - ${p}`).join('\n')}\n\n` +
+			`Please ensure the file exists in one of these locations, or set the IKA_CONFIG_PATH environment variable.`,
+	);
+}
+
 /**
  * Creates an IkaClient for testing
  */
 export function createTestIkaClient(suiClient: SuiClient): IkaClient {
+	const configPath = findIkaConfigFile();
+	const parsedJson = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
 	return new IkaClient({
 		suiClient,
-		network: 'localnet',
-		config: getNetworkConfig('localnet'),
+		config: {
+			packages: {
+				ikaPackage: parsedJson.packages.ika_package_id,
+				ikaCommonPackage: parsedJson.packages.ika_common_package_id,
+				ikaDwallet2pcMpcPackage: parsedJson.packages.ika_dwallet_2pc_mpc_package_id,
+				ikaSystemPackage: parsedJson.packages.ika_system_package_id,
+			},
+			objects: {
+				ikaSystemObject: {
+					objectID: parsedJson.objects.ika_system_object_id,
+					initialSharedVersion: 0,
+				},
+				ikaDWalletCoordinator: {
+					objectID: parsedJson.objects.ika_dwallet_coordinator_object_id,
+					initialSharedVersion: 0,
+				},
+			},
+		},
 	});
 }
 
@@ -182,11 +240,14 @@ export async function executeTestTransactionWithKeypair(
 /**
  * Generates deterministic keypair for testing
  */
-export function generateTestKeypair(testName: string) {
+export async function generateTestKeypair(testName: string) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
+	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+		seed,
+		Curve.SECP256K1,
+	);
 
 	return {
 		userShareEncryptionKeys,
@@ -199,11 +260,14 @@ export function generateTestKeypair(testName: string) {
 /**
  * Generates deterministic keypair for Imported Key DWallet testing
  */
-export function generateTestKeypairForImportedKeyDWallet(testName: string) {
+export async function generateTestKeypairForImportedKeyDWallet(testName: string) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
+	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+		seed,
+		Curve.SECP256K1,
+	);
 	const dWalletKeypair = Secp256k1Keypair.fromSeed(seed);
 
 	return {
@@ -358,13 +422,9 @@ export async function runSignFullFlow(
 }
 
 export async function waitForEpochSwitch(ikaClient: IkaClient) {
-	ikaClient.invalidateCache();
-	await ikaClient.initialize();
 	const startEpoch = await ikaClient.getEpoch();
 	let epochSwitched = false;
 	while (!epochSwitched) {
-		ikaClient.invalidateCache();
-		await ikaClient.initialize();
 		if ((await ikaClient.getEpoch()) > startEpoch) {
 			epochSwitched = true;
 		} else {

@@ -528,13 +528,12 @@ pub(crate) fn override_legit_messages_with_false_messages(
         });
     }
 }
-use crate::dwallet_mpc::mpc_session::MPCSessionStatus;
+use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
     DKGFirstData, DKGSecondData, NetworkEncryptionKeyDkgData, PresignData, ProtocolData, SignData,
 };
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
-use message_digest::message_digest::Hash;
 
 pub(crate) async fn send_start_network_dkg_event_to_all_parties(
     epoch_id: EpochId,
@@ -563,10 +562,9 @@ pub(crate) async fn send_start_network_dkg_event_to_all_parties(
             .next()
             .unwrap();
         assert!(
-            matches!(session.status, MPCSessionStatus::Active { .. }),
+            matches!(session.status, SessionStatus::Active { .. }),
             "Session should be active"
         );
-        assert_eq!(session.current_mpc_round, 1, "Session should be in round 1")
     }
 }
 
