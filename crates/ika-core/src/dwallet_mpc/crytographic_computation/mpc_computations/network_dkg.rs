@@ -227,7 +227,7 @@ impl DwalletMPCNetworkKeys {
     }
 
     pub fn get_network_key_version(&self, key_id: &ObjectID) -> DwalletMPCResult<usize> {
-        let key_data = self
+        let latest_reconfig_data = self
             .network_encryption_keys
             .get(key_id)
             .ok_or(DwalletMPCError::InternalError(format!(
@@ -235,12 +235,20 @@ impl DwalletMPCNetworkKeys {
             )))?
             .latest_network_reconfiguration_public_output
             .clone();
-        if versioned_output.is_none() {
-            return Ok(match key_data.network_dkg_output {
+        if latest_reconfig_data.is_none() {
+            let network_dkg_output = self
+                .network_encryption_keys
+                .get(key_id)
+                .ok_or(DwalletMPCError::InternalError(format!(
+                    "cannot find network encryption key for key ID {key_id}"
+                )))?
+                .network_dkg_output
+                .clone();
+            return Ok(match network_dkg_output {
                 VersionedNetworkDkgOutput::V1(_) => 1,
             });
         }
-        Ok(match versioned_output.unwrap() {
+        Ok(match latest_reconfig_data.unwrap() {
             VersionedDecryptionKeyReconfigurationOutput::V1(_) => 1,
             VersionedDecryptionKeyReconfigurationOutput::V2(_) => 2,
         })

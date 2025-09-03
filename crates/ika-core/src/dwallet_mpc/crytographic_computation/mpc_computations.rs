@@ -731,11 +731,6 @@ impl ProtocolCryptographicData {
                 decryption_key_shares,
                 ..
             } => {
-                let decryption_key_shares = decryption_key_shares
-                    .iter()
-                    .map(|(party_id, share)| (*party_id, share.decryption_key_share))
-                    .collect::<HashMap<_, _>>();
-
                 let result =
                     Party::<ReconfigurationV2Secp256k1Party>::advance_with_guaranteed_output(
                         session_id,
