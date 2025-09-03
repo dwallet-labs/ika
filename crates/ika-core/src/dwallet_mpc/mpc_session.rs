@@ -477,10 +477,11 @@ impl DWalletMPCManager {
             &self.network_keys,
             self.next_active_committee.clone(),
             self.validators_class_groups_public_keys_and_proofs.clone(),
+            &self.protocol_config,
         ) {
             Ok((public_input, private_input)) => (public_input, private_input),
             Err(e) => {
-                error!(error=?e, ?request, "create session input from dWallet request with error");
+                error!(should_never_happen=true, error=?e, ?request, "create session input from dWallet request with error");
                 return;
             }
         };

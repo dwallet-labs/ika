@@ -4,12 +4,16 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
 use crate::dwallet_mpc::presign::PresignParty;
-use crate::dwallet_mpc::reconfiguration::ReconfigurationSecp256k1Party;
+use crate::dwallet_mpc::reconfiguration::{
+    ReconfigurationSecp256k1Party, ReconfigurationV1toV2Secp256k1Party,
+    ReconfigurationV2Secp256k1Party,
+};
 use crate::dwallet_mpc::sign::SignParty;
 use crate::request_protocol_data::{
     DKGFirstData, DKGSecondData, EncryptedShareVerificationData, ImportedKeyVerificationData,
     MakeDWalletUserSecretKeySharesPublicData, NetworkEncryptionKeyDkgData,
-    NetworkEncryptionKeyReconfigurationData, PartialSignatureVerificationData, PresignData,
+    NetworkEncryptionKeyReconfigurationData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
+    NetworkEncryptionKeyV2ReconfigurationData, PartialSignatureVerificationData, PresignData,
     ProtocolData, SignData,
 };
 use class_groups::dkg::Secp256k1Party;
@@ -19,7 +23,6 @@ use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
-use sui_types::base_types::ObjectID;
 use twopc_mpc::sign::Protocol;
 
 pub enum ProtocolCryptographicData {
@@ -66,11 +69,25 @@ pub enum ProtocolCryptographicData {
         advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
-
-    NetworkEncryptionKeyReconfiguration {
+    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
+    NetworkEncryptionKeyV1Reconfiguration {
         data: NetworkEncryptionKeyReconfigurationData,
         public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
+        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+    },
+    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
+    NetworkEncryptionKeyV1ToV2Reconfiguration {
+        data: NetworkEncryptionKeyV1ToV2ReconfigurationData,
+        public_input: <ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput,
+        advance_request:
+            AdvanceRequest<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::Message>,
+        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+    },
+    NetworkEncryptionKeyV2Reconfiguration {
+        data: NetworkEncryptionKeyV2ReconfigurationData,
+        public_input: <ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<ReconfigurationV2Secp256k1Party as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
 
@@ -103,7 +120,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
                 advance_request, ..
             } => advance_request.attempt_number,
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
+            ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
                 advance_request,
                 ..
             } => advance_request.attempt_number,
@@ -112,6 +129,14 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => 1,
             ProtocolCryptographicData::ImportedKeyVerification {
                 advance_request, ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
+                advance_request,
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration {
+                advance_request,
+                ..
             } => advance_request.attempt_number,
         }
     }
@@ -133,7 +158,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
+            ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
                 advance_request,
                 ..
             } => Some(advance_request.mpc_round_number),
@@ -143,6 +168,14 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::EncryptedShareVerification { .. }
             | ProtocolCryptographicData::PartialSignatureVerification { .. }
             | ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => None,
+            ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
+                advance_request,
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration {
+                advance_request,
+                ..
+            } => Some(advance_request.mpc_round_number),
         }
     }
 }

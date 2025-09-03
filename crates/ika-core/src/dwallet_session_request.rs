@@ -201,7 +201,7 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                     signature_algorithm: None,
                 }
             }
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration { data, .. } => {
+            ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
                     curve: None,
@@ -223,6 +223,23 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                     curve: Some(data.curve.clone()),
                     hash_scheme: Some(data.hash_type.clone()),
                     signature_algorithm: Some(data.signature_algorithm.clone()),
+                }
+            }
+            ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
+                data, ..
+            } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: None,
+                hash_scheme: None,
+                signature_algorithm: None,
+            },
+            ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    // TODO (#1491): Set curve, hash scheme & signature algorithm metrics fields for each protocol
+                    curve: None,
+                    hash_scheme: None,
+                    signature_algorithm: None,
                 }
             }
         }
