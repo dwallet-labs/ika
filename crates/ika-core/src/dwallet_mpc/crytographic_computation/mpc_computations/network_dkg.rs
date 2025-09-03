@@ -20,7 +20,7 @@ use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, NetworkDecryptionKeyPublicOutputType,
-    NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
+    NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput, V2AdditionalCurvesKeyData,
     VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
 };
 use group::{GroupElement, OsCsRng, PartyID, secp256k1};
@@ -468,14 +468,9 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                         latest_network_reconfiguration_public_output: None,
                         secp256k1_decryption_key_share_public_parameters:
                             decryption_key_share_public_parameters,
-                        secp256r1_decryption_key_share_public_parameters: None,
-                        ristretto_decryption_key_share_public_parameters: None,
                         network_dkg_output: mpc_public_output,
                         secp256k1_protocol_public_parameters: protocol_public_parameters,
-                        secp256r1_protocol_public_parameters: None,
-                        ristretto_protocol_public_parameters: None,
-                        curve25519_protocol_public_parameters: None,
-                        curve25519_decryption_key_share_public_parameters: None,
+                        v2_additional_curves_key_data: None,
                     })
                 }
             }
