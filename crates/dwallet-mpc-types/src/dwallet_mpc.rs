@@ -114,27 +114,6 @@ pub enum DWalletMPCNetworkKeyScheme {
     Ord,
     PartialOrd,
 )]
-pub enum DWalletMPCSignatureCurve {
-    #[strum(to_string = "Secp256k1")]
-    Secp256k1 = 0,
-    #[strum(to_string = "Secp256r1")]
-    Secp256r1 = 1,
-}
-
-#[repr(u32)]
-#[derive(
-    strum_macros::Display,
-    Clone,
-    Debug,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    Eq,
-    Hash,
-    Copy,
-    Ord,
-    PartialOrd,
-)]
 pub enum SignatureAlgorithm {
     #[strum(to_string = "ECDSA")]
     ECDSA,

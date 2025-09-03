@@ -575,18 +575,16 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
-                        let signature: ECDSASecp256k1Signature =
-                            bcs::from_bytes(&public_output_value)?;
-                        let signature_bytes = match data.curve {
+                        let public_output_value = match data.curve {
                             DWalletMPCNetworkKeyScheme::Secp256k1 => {
                                 let signature: ECDSASecp256k1Signature =
                                     bcs::from_bytes(&public_output_value)?;
-                                signature.to_bytes()
+                                signature.to_bytes().to_vec()
                             }
                             DWalletMPCNetworkKeyScheme::Secp256r1 => {
                                 let signature: ECDSASecp256r1Signature =
                                     bcs::from_bytes(&public_output_value)?;
-                                signature.to_bytes()
+                                signature.to_bytes().to_vec()
                             }
                             _ => {
                                 return Err(DwalletMPCError::InvalidDWalletProtocolType);
@@ -594,7 +592,7 @@ impl ProtocolCryptographicData {
                         };
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                            public_output_value: signature.to_bytes().to_vec(),
+                            public_output_value,
                             malicious_parties,
                             private_output,
                         })
