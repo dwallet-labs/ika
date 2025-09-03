@@ -119,6 +119,35 @@ pub enum DWalletMPCNetworkKeyScheme {
     Ord,
     PartialOrd,
 )]
+pub enum DWalletSignatureScheme {
+    #[strum(to_string = "Secp256k1")]
+    Secp256k1 = 0,
+    #[strum(to_string = "Ristretto")]
+    Ristretto = 1,
+    #[strum(to_string = "Secp256r1")]
+    Secp256r1 = 2,
+    #[strum(to_string = "EdDSA")]
+    EdDSA = 3,
+    #[strum(to_string = "SchnorrkelSubstrate")]
+    SchnorrkelSubstrate = 4,
+    #[strum(to_string = "Taproot")]
+    Taproot = 5,
+}
+
+#[repr(u32)]
+#[derive(
+    strum_macros::Display,
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Eq,
+    Hash,
+    Copy,
+    Ord,
+    PartialOrd,
+)]
 pub enum SignatureAlgorithm {
     #[strum(to_string = "ECDSA")]
     ECDSA,
