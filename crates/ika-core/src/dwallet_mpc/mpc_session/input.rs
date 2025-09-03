@@ -10,6 +10,7 @@ use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationPartyPublicInputGenerator, ReconfigurationSecp256k1Party,
     ReconfigurationV1ToV2PartyPublicInputGenerator, ReconfigurationV1toV2Secp256k1Party,
+    ReconfigurationV2PartyPublicInputGenerator, ReconfigurationV2Secp256k1Party,
 };
 use crate::dwallet_mpc::sign::{SignParty, sign_session_public_input};
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -39,9 +40,16 @@ pub enum PublicInput {
     NetworkEncryptionKeyDkg(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
     EncryptedShareVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     PartialSignatureVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
-    NetworkEncryptionKeyReconfiguration(<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput),
+    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
+    NetworkEncryptionKeyReconfigurationV1(
+        <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
+    ),
+    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyReconfigurationV1ToV2(
         <ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput,
+    ),
+    NetworkEncryptionKeyReconfigurationV2(
+        <ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput,
     ),
     MakeDWalletUserSecretKeySharesPublic(
         twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
@@ -133,13 +141,29 @@ pub(crate) fn session_input_from_request(
             let next_active_committee = next_active_committee.ok_or(
                 DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
             )?;
-            let last_reconfiguration_version = network_keys
-                .get_latest_reconfiguration_version(dwallet_network_encryption_key_id)?;
-            if last_reconfiguration_version == Some(1)
-                && protocol_config.network_encryption_key_version == Some(2)
-            {
+            let key_version =
+                network_keys.get_network_key_version(dwallet_network_encryption_key_id)?;
+            if (key_version == 1) && protocol_config.network_encryption_key_version == Some(2) {
                 Ok((
                     PublicInput::NetworkEncryptionKeyReconfigurationV1ToV2(<ReconfigurationV1toV2Secp256k1Party as ReconfigurationV1ToV2PartyPublicInputGenerator>::generate_public_input(
+                        committee,
+                        next_active_committee,
+                        network_keys
+                            .get_network_dkg_public_output(
+                                dwallet_network_encryption_key_id,
+                            )?,
+                        network_keys
+                            .get_decryption_key_share_public_parameters(
+                                dwallet_network_encryption_key_id,
+                            )?,
+                    )?),
+                    Some(bcs::to_bytes(
+                        &class_groups_decryption_key
+                    )?),
+                ))
+            } else if protocol_config.network_encryption_key_version == Some(2) {
+                Ok((
+                    PublicInput::NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Secp256k1Party as ReconfigurationV2PartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
                         network_keys
@@ -157,7 +181,7 @@ pub(crate) fn session_input_from_request(
                 ))
             } else {
                 Ok((
-                    PublicInput::NetworkEncryptionKeyReconfiguration(<ReconfigurationSecp256k1Party as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
+                    PublicInput::NetworkEncryptionKeyReconfigurationV1(<ReconfigurationSecp256k1Party as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
                         network_keys.get_decryption_key_share_public_parameters(
