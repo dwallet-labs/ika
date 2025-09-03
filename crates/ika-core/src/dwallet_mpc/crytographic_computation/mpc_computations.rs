@@ -13,11 +13,13 @@ use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationSecp256k1Party, ReconfigurationV1toV2Secp256k1Party,
+    ReconfigurationV2Secp256k1Party,
 };
 use crate::dwallet_mpc::sign::SignParty;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
-    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData, ProtocolData,
+    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
+    NetworkEncryptionKeyV2ReconfigurationData, ProtocolData,
 };
 use anyhow::anyhow;
 use class_groups::dkg::Secp256k1Party;
@@ -234,7 +236,7 @@ impl ProtocolCryptographicData {
                 data,
                 dwallet_network_encryption_key_id,
             } => match public_input {
-                PublicInput::NetworkEncryptionKeyReconfiguration(public_input) => {
+                PublicInput::NetworkEncryptionKeyReconfigurationV1(public_input) => {
                     let advance_request_result =
                         Party::<ReconfigurationSecp256k1Party>::ready_to_advance(
                             party_id,
@@ -253,7 +255,7 @@ impl ProtocolCryptographicData {
                     let decryption_key_shares = decryption_key_shares
                         .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                    ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
+                    ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
                         data: data.clone(),
                         public_input: public_input.clone(),
                         advance_request,
@@ -281,6 +283,32 @@ impl ProtocolCryptographicData {
 
                     ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
                         data: NetworkEncryptionKeyV1ToV2ReconfigurationData {},
+                        public_input: public_input.clone(),
+                        advance_request,
+                        decryption_key_shares: decryption_key_shares.clone(),
+                    }
+                }
+                PublicInput::NetworkEncryptionKeyReconfigurationV2(public_input) => {
+                    let advance_request_result =
+                        Party::<ReconfigurationV2Secp256k1Party>::ready_to_advance(
+                            party_id,
+                            access_structure,
+                            consensus_round,
+                            HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
+                            &serialized_messages_by_consensus_round,
+                        )?;
+
+                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                        advance_request_result
+                    else {
+                        return Ok(None);
+                    };
+
+                    let decryption_key_shares = decryption_key_shares
+                        .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
+
+                    ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration {
+                        data: NetworkEncryptionKeyV2ReconfigurationData {},
                         public_input: public_input.clone(),
                         advance_request,
                         decryption_key_shares: decryption_key_shares.clone(),
@@ -601,7 +629,7 @@ impl ProtocolCryptographicData {
                 &protocol_config,
                 &mut rng,
             ),
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
+            ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
                 public_input,
                 advance_request,
                 decryption_key_shares,
@@ -633,18 +661,9 @@ impl ProtocolCryptographicData {
                         private_output,
                     } => {
                         // Wrap the public output with its version.
-                        let public_output_value = match protocol_config
-                            .network_encryption_key_version
-                        {
-                            Some(2) => {
-                                bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V2(
-                                    public_output_value,
-                                ))?
-                            }
-                            _ => bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V1(
-                                public_output_value,
-                            ))?,
-                        };
+                        let public_output_value = bcs::to_bytes(
+                            &VersionedDecryptionKeyReconfigurationOutput::V1(public_output_value),
+                        )?;
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
@@ -667,6 +686,50 @@ impl ProtocolCryptographicData {
 
                 let result =
                     Party::<ReconfigurationV1toV2Secp256k1Party>::advance_with_guaranteed_output(
+                        session_id,
+                        party_id,
+                        access_structure,
+                        advance_request,
+                        Some(decryption_key_shares.clone()),
+                        &public_input,
+                        &mut rng,
+                    )?;
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // Wrap the public output with its version.
+                        let public_output_value = bcs::to_bytes(
+                            &VersionedDecryptionKeyReconfigurationOutput::V2(public_output_value),
+                        )?;
+
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
+            ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration {
+                public_input,
+                advance_request,
+                decryption_key_shares,
+                ..
+            } => {
+                let decryption_key_shares = decryption_key_shares
+                    .iter()
+                    .map(|(party_id, share)| (*party_id, share.decryption_key_share))
+                    .collect::<HashMap<_, _>>();
+
+                let result =
+                    Party::<ReconfigurationV2Secp256k1Party>::advance_with_guaranteed_output(
                         session_id,
                         party_id,
                         access_structure,
