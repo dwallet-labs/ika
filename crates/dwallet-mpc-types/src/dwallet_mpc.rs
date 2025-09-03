@@ -176,6 +176,21 @@ impl TryFrom<u32> for DWalletMPCNetworkKeyScheme {
     }
 }
 
+impl TryFrom<u32> for DWalletSignatureScheme {
+    type Error = DwalletNetworkMPCError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(DWalletSignatureScheme::Secp256k1),
+            1 => Ok(DWalletSignatureScheme::Secp256r1),
+            2 => Ok(DWalletSignatureScheme::EdDSA),
+            3 => Ok(DWalletSignatureScheme::SchnorrkelSubstrate),
+            4 => Ok(DWalletSignatureScheme::Taproot),
+            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCNetworkKey(v)),
+        }
+    }
+}
+
 impl TryFrom<u32> for SignatureAlgorithm {
     type Error = DwalletNetworkMPCError;
 
