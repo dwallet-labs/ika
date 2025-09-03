@@ -124,16 +124,14 @@ pub enum DWalletMPCNetworkKeyScheme {
 pub enum DWalletSignatureScheme {
     #[strum(to_string = "Secp256k1")]
     Secp256k1 = 0,
-    #[strum(to_string = "Ristretto")]
-    Ristretto = 1,
     #[strum(to_string = "Secp256r1")]
-    Secp256r1 = 2,
+    Secp256r1 = 1,
     #[strum(to_string = "EdDSA")]
-    EdDSA = 3,
+    EdDSA = 2,
     #[strum(to_string = "SchnorrkelSubstrate")]
-    SchnorrkelSubstrate = 4,
+    SchnorrkelSubstrate = 3,
     #[strum(to_string = "Taproot")]
-    Taproot = 5,
+    Taproot = 4,
 }
 
 #[repr(u32)]

@@ -27,9 +27,10 @@ use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
-    DWalletMPCNetworkKeyScheme, VersionedDWalletImportedKeyVerificationOutput,
-    VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedPresignOutput, VersionedSignOutput,
+    DWalletMPCNetworkKeyScheme, DWalletSignatureScheme,
+    VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
+    VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    VersionedPresignOutput, VersionedSignOutput,
 };
 use dwallet_rng::RootSeed;
 use group::PartyID;
@@ -48,6 +49,7 @@ use twopc_mpc::class_groups::{
     DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
 };
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
+use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
 use twopc_mpc::sign::EncodableSignature;
 
 pub(crate) mod dwallet_dkg;
@@ -607,13 +609,28 @@ impl ProtocolCryptographicData {
                         // TODO (#1492): Add support for all signatures schemes supported by crypto
                         // private
                         let public_output_value = match data.curve {
-                            DWalletMPCNetworkKeyScheme::Secp256k1 => {
+                            DWalletSignatureScheme::Secp256k1 => {
                                 let signature: ECDSASecp256k1Signature =
                                     bcs::from_bytes(&public_output_value)?;
                                 signature.to_bytes().to_vec()
                             }
-                            DWalletMPCNetworkKeyScheme::Secp256r1 => {
+                            DWalletSignatureScheme::Secp256r1 => {
                                 let signature: ECDSASecp256r1Signature =
+                                    bcs::from_bytes(&public_output_value)?;
+                                signature.to_bytes().to_vec()
+                            }
+                            DWalletSignatureScheme::EdDSA => {
+                                let signature: EdDSASignature =
+                                    bcs::from_bytes(&public_output_value)?;
+                                signature.to_bytes().to_vec()
+                            }
+                            DWalletSignatureScheme::SchnorrkelSubstrate => {
+                                let signature: SchnorrkelSubstrateSignature =
+                                    bcs::from_bytes(&public_output_value)?;
+                                signature.to_bytes().to_vec()
+                            }
+                            DWalletSignatureScheme::Taproot => {
+                                let signature: TaprootSignature =
                                     bcs::from_bytes(&public_output_value)?;
                                 signature.to_bytes().to_vec()
                             }
