@@ -236,7 +236,7 @@ impl ProtocolCryptographicData {
                 data,
                 dwallet_network_encryption_key_id,
             } => match public_input {
-                PublicInput::NetworkEncryptionKeyV1Reconfiguration(public_input) => {
+                PublicInput::NetworkEncryptionKeyReconfigurationV1(public_input) => {
                     let advance_request_result =
                         Party::<ReconfigurationSecp256k1Party>::ready_to_advance(
                             party_id,

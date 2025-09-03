@@ -41,7 +41,7 @@ pub enum PublicInput {
     EncryptedShareVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     PartialSignatureVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
-    NetworkEncryptionKeyV1Reconfiguration(
+    NetworkEncryptionKeyReconfigurationV1(
         <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
     ),
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
@@ -181,7 +181,7 @@ pub(crate) fn session_input_from_request(
                 ))
             } else {
                 Ok((
-                    PublicInput::NetworkEncryptionKeyV1Reconfiguration(<ReconfigurationSecp256k1Party as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
+                    PublicInput::NetworkEncryptionKeyReconfigurationV1(<ReconfigurationSecp256k1Party as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
                         network_keys.get_decryption_key_share_public_parameters(
