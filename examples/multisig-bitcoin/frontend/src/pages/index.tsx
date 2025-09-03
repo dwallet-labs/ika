@@ -12,10 +12,8 @@ export default function Home() {
 				<div className="max-w-6xl mx-auto px-4 py-4">
 					<div className="flex items-center justify-between">
 						<div className="flex items-center gap-4">
-							<h1 className="text-2xl font-bold text-foreground">IKA Multisig</h1>
-							<div className="text-sm text-muted-foreground">
-								Bitcoin Multisig Wallet
-							</div>
+							<h1 className="text-2xl font-bold text-foreground">IKA</h1>
+							<div className="text-sm text-muted-foreground">Bitcoin Multisig Wallet</div>
 						</div>
 						<ConnectButton />
 					</div>
@@ -33,7 +31,7 @@ export default function Home() {
 			<footer className="bg-card border-t border-border mt-16">
 				<div className="max-w-6xl mx-auto px-4 py-6">
 					<div className="text-center text-sm text-muted-foreground">
-						<p>Powered by IKA Protocol • Secure Multisignature Wallets</p>
+						<p>Powered by IKA Protocol</p>
 					</div>
 				</div>
 			</footer>

@@ -1,13 +1,16 @@
-import { ArrowLeft, Send, Users } from 'lucide-react';
+import { ArrowLeft, Bitcoin, Send, Users } from 'lucide-react';
 import React, { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useMultisig } from '@/contract/multisig';
+import { validateAddress } from '@/lib/bitcoin-utils';
 
 interface CreateTransactionProps {
 	multisigId: string;
+	bitcoinAddress: string;
 	onClose: () => void;
 }
 
@@ -17,7 +20,7 @@ interface TransactionData {
 	description: string;
 }
 
-export function CreateTransaction({ multisigId, onClose }: CreateTransactionProps) {
+export function CreateTransaction({ multisigId, bitcoinAddress, onClose }: CreateTransactionProps) {
 	const [transaction, setTransaction] = useState<TransactionData>({
 		recipient: '',
 		amount: '',
@@ -25,6 +28,7 @@ export function CreateTransaction({ multisigId, onClose }: CreateTransactionProp
 	});
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const { createTransaction } = useMultisig();
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -34,24 +38,32 @@ export function CreateTransaction({ multisigId, onClose }: CreateTransactionProp
 			return;
 		}
 
+		// Validate recipient Bitcoin address
+		if (!validateAddress(transaction.recipient)) {
+			setError('Invalid recipient Bitcoin address');
+			return;
+		}
+
+		const amount = parseFloat(transaction.amount);
+		if (isNaN(amount) || amount <= 0) {
+			setError('Please enter a valid positive amount');
+			return;
+		}
+
 		try {
 			setIsSubmitting(true);
 			setError(null);
 
-			// Here you would integrate with the actual transaction creation logic
-			// For now, we'll just simulate the process
-			await new Promise((resolve) => setTimeout(resolve, 2000));
-
-			console.log('Creating transaction:', {
+			// Create the actual Bitcoin transaction
+			const result = await createTransaction(
 				multisigId,
-				...transaction,
-			});
+				amount,
+				transaction.recipient,
+				bitcoinAddress, // Use multisig bitcoin address as change address
+				bitcoinAddress, // Use multisig bitcoin address as wallet address
+			);
 
-			// In a real implementation, this would:
-			// 1. Create the transaction using the multisig contract
-			// 2. Submit it for approval from other signers
-			// 3. Wait for confirmations
-
+			console.log('Transaction created:', result);
 			onClose();
 		} catch (err) {
 			console.error('Failed to create transaction:', err);
@@ -79,34 +91,50 @@ export function CreateTransaction({ multisigId, onClose }: CreateTransactionProp
 						</Button>
 						<div>
 							<CardTitle className="flex items-center gap-2">
-								<Send className="w-5 h-5" />
-								Create Transaction
+								<Bitcoin className="w-5 h-5" />
+								Create Bitcoin Transaction
 							</CardTitle>
-							<CardDescription>Send funds from your multisig wallet</CardDescription>
+							<CardDescription>Send Bitcoin from your multisig wallet</CardDescription>
 						</div>
 					</div>
 				</CardHeader>
 				<CardContent>
+					<div className="mb-6 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+						<h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+							Multisig Wallet Address
+						</h3>
+						<p className="text-sm text-gray-700 dark:text-gray-300 font-mono break-all">
+							{bitcoinAddress}
+						</p>
+						<p className="text-xs text-gray-500 mt-2">
+							Funds will be sent from this address, and any change will return to this address.
+						</p>
+					</div>
+
 					<form onSubmit={handleSubmit} className="space-y-4">
 						<div>
-							<Label htmlFor="recipient">Recipient Address</Label>
+							<Label htmlFor="recipient">Recipient Bitcoin Address</Label>
 							<Input
 								id="recipient"
 								type="text"
-								placeholder="Enter recipient address"
+								placeholder="Enter Bitcoin address (testnet)"
 								value={transaction.recipient}
 								onChange={(e) => handleInputChange('recipient', e.target.value)}
-								className="mt-1"
+								className="mt-1 font-mono text-sm"
 							/>
+							<p className="text-xs text-gray-500 mt-1">
+								Testnet addresses start with 'tb1', 'm', or 'n'
+							</p>
 						</div>
 
 						<div>
-							<Label htmlFor="amount">Amount (SUI)</Label>
+							<Label htmlFor="amount">Amount (BTC)</Label>
 							<Input
 								id="amount"
 								type="number"
-								step="0.000000001"
-								placeholder="0.00"
+								step="0.00000001"
+								min="0"
+								placeholder="0.00000000"
 								value={transaction.amount}
 								onChange={(e) => handleInputChange('amount', e.target.value)}
 								className="mt-1"
@@ -131,6 +159,18 @@ export function CreateTransaction({ multisigId, onClose }: CreateTransactionProp
 							</div>
 						)}
 
+						<div className="bg-orange-50 dark:bg-orange-900/20 p-4 rounded-lg mb-4">
+							<div className="flex items-center gap-2 mb-2">
+								<Bitcoin className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+								<span className="text-sm font-medium text-orange-900 dark:text-orange-100">
+									Bitcoin Testnet
+								</span>
+							</div>
+							<div className="text-sm text-orange-700 dark:text-orange-300">
+								This transaction will be created on Bitcoin testnet. Use testnet addresses only.
+							</div>
+						</div>
+
 						<div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
 							<div className="flex items-center gap-2 mb-2">
 								<Users className="w-4 h-4 text-blue-600 dark:text-blue-400" />
@@ -139,7 +179,7 @@ export function CreateTransaction({ multisigId, onClose }: CreateTransactionProp
 								</span>
 							</div>
 							<div className="text-sm text-blue-700 dark:text-blue-300">
-								This transaction requires 2 out of 3 signatures to execute
+								This Bitcoin transaction requires 2 out of 3 signatures to execute
 							</div>
 						</div>
 
@@ -151,12 +191,12 @@ export function CreateTransaction({ multisigId, onClose }: CreateTransactionProp
 								{isSubmitting ? (
 									<>
 										<div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-										Creating...
+										Creating Bitcoin Transaction...
 									</>
 								) : (
 									<>
-										<Send className="w-4 h-4 mr-2" />
-										Create Transaction
+										<Bitcoin className="w-4 h-4 mr-2" />
+										Create Bitcoin Transaction
 									</>
 								)}
 							</Button>

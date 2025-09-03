@@ -150,7 +150,7 @@ impl DWalletMPCMetrics {
             native_calls: register_int_gauge_vec_with_registry!(
                 "dwallet_nativee_calls",
                 "Number of native session calls",
-                &round_metric_labels,
+                &protocol_metric_labels,
                 registry
             )
             .unwrap(),
@@ -178,7 +178,7 @@ impl DWalletMPCMetrics {
             native_completions: register_int_gauge_vec_with_registry!(
                 "dwallet_native_completions",
                 "Number of native sessions completions",
-                &round_metric_labels,
+                &protocol_metric_labels,
                 registry
             )
             .unwrap(),
@@ -423,6 +423,7 @@ impl DWalletMPCMetrics {
             .with_label_values(&[
                 &protocol_data.to_string(),
                 &protocol_data.curve(),
+                "native",
                 &protocol_data.hash_scheme(),
                 &protocol_data.signature_algorithm(),
             ])
@@ -438,10 +439,12 @@ impl DWalletMPCMetrics {
             .get();
         let new_avg = (current_avg * (advance_completions_count as f64 - 1.0) + duration_ms as f64)
             / (advance_completions_count as f64);
+
         self.computation_duration_avg
             .with_label_values(&[
                 &protocol_data.to_string(),
                 &protocol_data.curve(),
+                "native",
                 &protocol_data.hash_scheme(),
                 &protocol_data.signature_algorithm(),
             ])
@@ -452,6 +455,7 @@ impl DWalletMPCMetrics {
                 .with_label_values(&[
                     &protocol_data.to_string(),
                     &protocol_data.curve(),
+                    "native",
                     &protocol_data.hash_scheme(),
                     &protocol_data.signature_algorithm(),
                 ])
@@ -467,6 +471,7 @@ impl DWalletMPCMetrics {
                 .with_label_values(&[
                     &protocol_data.to_string(),
                     &protocol_data.curve(),
+                    "native",
                     &protocol_data.hash_scheme(),
                     &protocol_data.signature_algorithm(),
                 ])
@@ -476,6 +481,7 @@ impl DWalletMPCMetrics {
                 .with_label_values(&[
                     &protocol_data.to_string(),
                     &protocol_data.curve(),
+                    "native",
                     &protocol_data.hash_scheme(),
                     &protocol_data.signature_algorithm(),
                 ])
