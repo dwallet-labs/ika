@@ -334,7 +334,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                     curve25519_protocol_public_parameters,
                     curve25519_decryption_key_share_public_parameters,
                 }),
-            });
+            })
         }
     }
 }
