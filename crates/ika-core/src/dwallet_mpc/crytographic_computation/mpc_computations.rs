@@ -25,9 +25,9 @@ use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
-    VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
-    VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
-    VersionedPresignOutput, VersionedSignOutput,
+    DWalletMPCNetworkKeyScheme, VersionedDWalletImportedKeyVerificationOutput,
+    VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
+    VersionedDwalletDKGSecondRoundPublicOutput, VersionedPresignOutput, VersionedSignOutput,
 };
 use dwallet_rng::RootSeed;
 use group::PartyID;
@@ -44,7 +44,7 @@ use tracing::error;
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
 };
-use twopc_mpc::ecdsa::ECDSASecp256k1Signature;
+use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
 use twopc_mpc::sign::EncodableSignature;
 
 pub(crate) mod dwallet_dkg;
@@ -549,6 +549,7 @@ impl ProtocolCryptographicData {
                 public_input,
                 advance_request,
                 decryption_key_shares,
+                data,
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
@@ -576,6 +577,22 @@ impl ProtocolCryptographicData {
                     } => {
                         let signature: ECDSASecp256k1Signature =
                             bcs::from_bytes(&public_output_value)?;
+                        let signature_bytes = match data.curve {
+                            DWalletMPCNetworkKeyScheme::Secp256k1 => {
+                                let signature: ECDSASecp256k1Signature =
+                                    bcs::from_bytes(&public_output_value)?;
+                                signature.to_bytes()
+                            }
+                            DWalletMPCNetworkKeyScheme::Secp256r1 => {
+                                let signature: ECDSASecp256r1Signature =
+                                    bcs::from_bytes(&public_output_value)?;
+                                signature.to_bytes()
+                            }
+                            _ => {
+                                return Err(DwalletMPCError::InvalidDWalletProtocolType);
+                            }
+                        };
+
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value: signature.to_bytes().to_vec(),
                             malicious_parties,
