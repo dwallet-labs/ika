@@ -41,6 +41,24 @@ pub type DKGDecentralizedPartyVersionedOutputSecp256k1 = DKGDecentralizedPartyVe
     group::secp256k1::GroupElement,
 >;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct V2NetworkKeyData {
+    pub secp256r1_protocol_public_parameters:
+        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    pub secp256r1_decryption_key_share_public_parameters:
+        class_groups::Secp256r1DecryptionKeySharePublicParameters,
+
+    pub ristretto_decryption_key_share_public_parameters:
+        class_groups::RistrettoDecryptionKeySharePublicParameters,
+
+    pub curve25519_decryption_key_share_public_parameters:
+        class_groups::Curve25519DecryptionKeySharePublicParameters,
+    pub ristretto_protocol_public_parameters:
+        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    pub curve25519_protocol_public_parameters:
+        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+}
+
 /// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
 /// Created for each DKG protocol and modified for each Reconfiguration Protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,25 +74,12 @@ pub struct NetworkEncryptionKeyPublicData {
     /// updated only after a successful network DKG or Reconfiguration.
     pub secp256k1_decryption_key_share_public_parameters:
         class_groups::Secp256k1DecryptionKeySharePublicParameters,
-    pub secp256r1_decryption_key_share_public_parameters:
-        Option<class_groups::Secp256r1DecryptionKeySharePublicParameters>,
-    pub ristretto_decryption_key_share_public_parameters:
-        Option<class_groups::RistrettoDecryptionKeySharePublicParameters>,
-    pub curve25519_decryption_key_share_public_parameters:
-        Option<class_groups::Curve25519DecryptionKeySharePublicParameters>,
-
-    pub secp256k1_protocol_public_parameters:
-        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-
     /// The public output of the `NetworkDKG` process (the first and only one).
     /// On first instance it will be equal to `latest_public_output`.
     pub network_dkg_output: VersionedNetworkDkgOutput,
-    pub secp256r1_protocol_public_parameters:
-        Option<twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters>,
-    pub ristretto_protocol_public_parameters:
-        Option<twopc_mpc::ristretto::class_groups::ProtocolPublicParameters>,
-    pub curve25519_protocol_public_parameters:
-        Option<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters>,
+    pub secp256k1_protocol_public_parameters:
+        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    pub v2_data: Option<V2NetworkKeyData>,
 }
 
 #[repr(u32)]
