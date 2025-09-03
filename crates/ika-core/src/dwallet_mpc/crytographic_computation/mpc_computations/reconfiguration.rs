@@ -223,7 +223,11 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,
                 state: NetworkDecryptionKeyPublicOutputType::Reconfiguration,
-                decryption_key_share_public_parameters,
+                secp256k1_decryption_key_share_public_parameters:
+                    decryption_key_share_public_parameters,
+                secp256r1_decryption_key_share_public_parameters: None,
+                ristretto_decryption_key_share_public_parameters: None,
+                curve25519_decryption_key_share_public_parameters: None,
                 secp256k1_protocol_public_parameters: protocol_public_parameters,
                 network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
                 secp256r1_protocol_public_parameters: None,
@@ -255,15 +259,33 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                     &public_output,
                 )
                 .map_err(DwalletMPCError::from)?;
-            let decryption_key_share_public_parameters = public_output
+            let secp256k1_decryption_key_share_public_parameters = public_output
                 .secp256k1_decryption_key_share_public_parameters(access_structure)
+                .map_err(DwalletMPCError::from)?;
+            let secp256r1_decryption_key_share_public_parameters = public_output
+                .secp256r1_decryption_key_share_public_parameters(access_structure)
+                .map_err(DwalletMPCError::from)?;
+            let ristretto_decryption_key_share_public_parameters = public_output
+                .ristretto_decryption_key_share_public_parameters(access_structure)
+                .map_err(DwalletMPCError::from)?;
+            let curve25519_decryption_key_share_public_parameters = public_output
+                .curve25519_decryption_key_share_public_parameters(access_structure)
                 .map_err(DwalletMPCError::from)?;
 
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,
                 state: NetworkDecryptionKeyPublicOutputType::Reconfiguration,
                 latest_network_reconfiguration_public_output: Some(mpc_public_output),
-                decryption_key_share_public_parameters,
+                secp256k1_decryption_key_share_public_parameters,
+                secp256r1_decryption_key_share_public_parameters: Some(
+                    secp256r1_decryption_key_share_public_parameters,
+                ),
+                ristretto_decryption_key_share_public_parameters: Some(
+                    ristretto_decryption_key_share_public_parameters,
+                ),
+                curve25519_decryption_key_share_public_parameters: Some(
+                    curve25519_decryption_key_share_public_parameters,
+                ),
                 secp256k1_protocol_public_parameters,
                 secp256r1_protocol_public_parameters: Some(secp256r1_protocol_public_parameters),
                 ristretto_protocol_public_parameters: Some(ristretto_protocol_public_parameters),

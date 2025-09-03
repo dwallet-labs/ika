@@ -168,7 +168,7 @@ impl ValidatorPrivateDecryptionKeyData {
 
         let self_decryption_key_shares = Self::convert_secret_key_shares_type_to_decryption_shares(
             secret_key_shares,
-            &key.decryption_key_share_public_parameters,
+            &key.secp256k1_decryption_key_share_public_parameters,
         )?;
 
         self.validator_decryption_key_shares
@@ -226,7 +226,7 @@ impl DwalletMPCNetworkKeys {
             .network_encryption_keys
             .get(key_id)
             .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?
-            .decryption_key_share_public_parameters
+            .secp256k1_decryption_key_share_public_parameters
             .clone())
     }
 
@@ -470,12 +470,16 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                         epoch,
                         state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
                         latest_network_reconfiguration_public_output: None,
-                        decryption_key_share_public_parameters,
+                        secp256k1_decryption_key_share_public_parameters:
+                            decryption_key_share_public_parameters,
+                        secp256r1_decryption_key_share_public_parameters: None,
+                        ristretto_decryption_key_share_public_parameters: None,
                         network_dkg_output: mpc_public_output,
                         secp256k1_protocol_public_parameters: protocol_public_parameters,
                         secp256r1_protocol_public_parameters: None,
                         ristretto_protocol_public_parameters: None,
                         curve25519_protocol_public_parameters: None,
+                        curve25519_decryption_key_share_public_parameters: None,
                     })
                 }
             }

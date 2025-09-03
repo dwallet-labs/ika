@@ -54,8 +54,14 @@ pub struct NetworkEncryptionKeyPublicData {
         Option<VersionedDecryptionKeyReconfigurationOutput>,
     /// The public parameters of the decryption key shares,
     /// updated only after a successful network DKG or Reconfiguration.
-    pub decryption_key_share_public_parameters:
+    pub secp256k1_decryption_key_share_public_parameters:
         class_groups::Secp256k1DecryptionKeySharePublicParameters,
+    pub secp256r1_decryption_key_share_public_parameters:
+        Option<class_groups::Secp256r1DecryptionKeySharePublicParameters>,
+    pub ristretto_decryption_key_share_public_parameters:
+        Option<class_groups::RistrettoDecryptionKeySharePublicParameters>,
+    pub curve25519_decryption_key_share_public_parameters:
+        Option<class_groups::Curve25519DecryptionKeySharePublicParameters>,
 
     pub secp256k1_protocol_public_parameters:
         twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
