@@ -263,6 +263,7 @@ impl CryptographicComputationsOrchestrator {
         let computation_channel_sender = self.completed_computation_sender.clone();
         let root_seed = self.root_seed.clone();
         let protocol_config = self.protocol_config.clone();
+        
         rayon::spawn_fifo(move || {
             let advance_start_time = Instant::now();
 
