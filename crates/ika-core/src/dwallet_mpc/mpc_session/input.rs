@@ -9,6 +9,8 @@ use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_public_
 use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationPartyPublicInputGenerator, ReconfigurationSecp256k1Party,
+    ReconfigurationV1ToV2PartyPublicInputGenerator, ReconfigurationV1toV2Secp256k1Party,
+    ReconfigurationV2PartyPublicInputGenerator, ReconfigurationV2Secp256k1Party,
 };
 use crate::dwallet_mpc::sign::{SignParty, sign_session_public_input};
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -19,6 +21,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, MPCPrivateInput, VersionedImportedDWalletPublicOutput,
 };
 use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
@@ -37,7 +40,17 @@ pub enum PublicInput {
     NetworkEncryptionKeyDkg(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
     EncryptedShareVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     PartialSignatureVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
-    NetworkEncryptionKeyReconfiguration(<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput),
+    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
+    NetworkEncryptionKeyReconfigurationV1(
+        <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
+    ),
+    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
+    NetworkEncryptionKeyReconfigurationV1ToV2(
+        <ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput,
+    ),
+    NetworkEncryptionKeyReconfigurationV2(
+        <ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput,
+    ),
     MakeDWalletUserSecretKeySharesPublic(
         twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
     ),
@@ -59,6 +72,7 @@ pub(crate) fn session_input_from_request(
         PartyID,
         ClassGroupsEncryptionKeyAndProof,
     >,
+    protocol_config: &ProtocolConfig,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
@@ -127,9 +141,47 @@ pub(crate) fn session_input_from_request(
             let next_active_committee = next_active_committee.ok_or(
                 DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
             )?;
-
-            Ok((
-                    PublicInput::NetworkEncryptionKeyReconfiguration(<ReconfigurationSecp256k1Party as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
+            let key_version =
+                network_keys.get_network_key_version(dwallet_network_encryption_key_id)?;
+            if (key_version == 1) && protocol_config.network_encryption_key_version == Some(2) {
+                Ok((
+                    PublicInput::NetworkEncryptionKeyReconfigurationV1ToV2(<ReconfigurationV1toV2Secp256k1Party as ReconfigurationV1ToV2PartyPublicInputGenerator>::generate_public_input(
+                        committee,
+                        next_active_committee,
+                        network_keys
+                            .get_network_dkg_public_output(
+                                dwallet_network_encryption_key_id,
+                            )?,
+                        network_keys
+                            .get_decryption_key_share_public_parameters(
+                                dwallet_network_encryption_key_id,
+                            )?,
+                    )?),
+                    Some(bcs::to_bytes(
+                        &class_groups_decryption_key
+                    )?),
+                ))
+            } else if protocol_config.network_encryption_key_version == Some(2) {
+                Ok((
+                    PublicInput::NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Secp256k1Party as ReconfigurationV2PartyPublicInputGenerator>::generate_public_input(
+                        committee,
+                        next_active_committee,
+                        network_keys
+                            .get_network_dkg_public_output(
+                                dwallet_network_encryption_key_id,
+                            )?,
+                        network_keys
+                            .get_last_reconfiguration_output(
+                                dwallet_network_encryption_key_id,
+                            )?.ok_or(DwalletMPCError::InternalError("reconfiguration output missing".to_string()))?,
+                    )?),
+                    Some(bcs::to_bytes(
+                        &class_groups_decryption_key
+                    )?),
+                ))
+            } else {
+                Ok((
+                    PublicInput::NetworkEncryptionKeyReconfigurationV1(<ReconfigurationSecp256k1Party as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
                         network_keys.get_decryption_key_share_public_parameters(
@@ -144,6 +196,7 @@ pub(crate) fn session_input_from_request(
                         &class_groups_decryption_key
                     )?),
                 ))
+            }
         }
         ProtocolData::DKGFirst {
             dwallet_network_encryption_key_id,

@@ -27,6 +27,7 @@ use group::{GroupElement, OsCsRng, PartyID, secp256k1};
 use homomorphic_encryption::{
     AdditivelyHomomorphicDecryptionKeyShare, GroupsPublicParametersAccessors,
 };
+use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
@@ -229,6 +230,25 @@ impl DwalletMPCNetworkKeys {
             .clone())
     }
 
+    pub fn get_network_key_version(&self, key_id: &ObjectID) -> DwalletMPCResult<usize> {
+        let key_data = self
+            .network_encryption_keys
+            .get(key_id)
+            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?;
+        let versioned_output = key_data
+            .latest_network_reconfiguration_public_output
+            .clone();
+        if versioned_output.is_none() {
+            return Ok(match key_data.network_dkg_output {
+                VersionedNetworkDkgOutput::V1(_) => 1,
+            });
+        }
+        Ok(match versioned_output.unwrap() {
+            VersionedDecryptionKeyReconfigurationOutput::V1(_) => 1,
+            VersionedDecryptionKeyReconfigurationOutput::V2(_) => 2,
+        })
+    }
+
     /// Retrieves the decryption key shares for the current authority.
     pub(crate) fn get_decryption_key_shares(
         &self,
@@ -271,6 +291,18 @@ impl DwalletMPCNetworkKeys {
             .network_dkg_output
             .clone())
     }
+
+    pub fn get_last_reconfiguration_output(
+        &self,
+        key_id: &ObjectID,
+    ) -> DwalletMPCResult<Option<VersionedDecryptionKeyReconfigurationOutput>> {
+        Ok(self
+            .network_encryption_keys
+            .get(key_id)
+            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?
+            .latest_network_reconfiguration_public_output
+            .clone())
+    }
 }
 
 /// Advances the network DKG protocol for the supported key types.
@@ -282,6 +314,7 @@ pub(crate) fn advance_network_dkg(
     key_scheme: &DWalletMPCNetworkKeyScheme,
     advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
     class_groups_decryption_key: ClassGroupsDecryptionKey,
+    protocol_config: &ProtocolConfig,
     rng: &mut ChaCha20Rng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let res = match key_scheme {
