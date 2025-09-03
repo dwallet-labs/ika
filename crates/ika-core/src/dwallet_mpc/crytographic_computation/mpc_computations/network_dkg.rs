@@ -360,13 +360,7 @@ pub(crate) fn network_dkg_public_input(
     encryption_keys_and_proofs: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
     key_scheme: DWalletMPCNetworkKeyScheme,
 ) -> DwalletMPCResult<<Secp256k1Party as mpc::Party>::PublicInput> {
-    match key_scheme {
-        DWalletMPCNetworkKeyScheme::Secp256k1 => {
-            generate_secp256k1_dkg_party_public_input(access_structure, encryption_keys_and_proofs)
-        }
-        DWalletMPCNetworkKeyScheme::Ristretto => todo!(),
-        DWalletMPCNetworkKeyScheme::Secp256r1 => todo!(),
-    }
+    generate_secp256k1_dkg_party_public_input(access_structure, encryption_keys_and_proofs)
 }
 
 pub(crate) fn generate_secp256k1_dkg_party_public_input(

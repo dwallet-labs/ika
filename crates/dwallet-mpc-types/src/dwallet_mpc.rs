@@ -105,7 +105,6 @@ pub enum DWalletMPCNetworkKeyScheme {
     Secp256r1 = 2,
     #[strum(to_string = "Curve25519")]
     Curve25519 = 3,
-
 }
 
 #[repr(u32)]
