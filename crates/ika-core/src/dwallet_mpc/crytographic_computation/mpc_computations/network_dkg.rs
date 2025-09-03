@@ -20,7 +20,7 @@ use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, NetworkDecryptionKeyPublicOutputType,
-    NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput, V2AdditionalCurvesKeyData,
+    NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput, V2NetworkKeyData,
     VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
 };
 use group::{GroupElement, OsCsRng, PartyID, secp256k1};
@@ -226,11 +226,8 @@ impl DwalletMPCNetworkKeys {
             .clone())
     }
 
-    pub fn get_latest_reconfiguration_version(
-        &self,
-        key_id: &ObjectID,
-    ) -> DwalletMPCResult<Option<usize>> {
-        let versioned_output = self
+    pub fn get_network_key_version(&self, key_id: &ObjectID) -> DwalletMPCResult<usize> {
+        let key_data = self
             .network_encryption_keys
             .get(key_id)
             .ok_or(DwalletMPCError::InternalError(format!(
@@ -239,11 +236,13 @@ impl DwalletMPCNetworkKeys {
             .latest_network_reconfiguration_public_output
             .clone();
         if versioned_output.is_none() {
-            return Ok(None);
+            return Ok(match key_data.network_dkg_output {
+                VersionedNetworkDkgOutput::V1(_) => 1,
+            });
         }
         Ok(match versioned_output.unwrap() {
-            VersionedDecryptionKeyReconfigurationOutput::V1(_) => Some(1),
-            VersionedDecryptionKeyReconfigurationOutput::V2(_) => Some(2),
+            VersionedDecryptionKeyReconfigurationOutput::V1(_) => 1,
+            VersionedDecryptionKeyReconfigurationOutput::V2(_) => 2,
         })
     }
 
@@ -348,6 +347,7 @@ pub(crate) fn advance_network_dkg(
             }
         }
         DWalletMPCNetworkKeyScheme::Ristretto => todo!(),
+        DWalletMPCNetworkKeyScheme::Secp256r1 => todo!(),
     }?;
     Ok(res)
 }
@@ -362,6 +362,7 @@ pub(crate) fn network_dkg_public_input(
             generate_secp256k1_dkg_party_public_input(access_structure, encryption_keys_and_proofs)
         }
         DWalletMPCNetworkKeyScheme::Ristretto => todo!(),
+        DWalletMPCNetworkKeyScheme::Secp256r1 => todo!(),
     }
 }
 
@@ -472,11 +473,12 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                             decryption_key_share_public_parameters,
                         network_dkg_output: mpc_public_output,
                         secp256k1_protocol_public_parameters: protocol_public_parameters,
-                        v2_additional_curves_key_data: None,
+                        v2_data: None,
                     })
                 }
             }
         }
         DWalletMPCNetworkKeyScheme::Ristretto => todo!("Ristretto key scheme"),
+        DWalletMPCNetworkKeyScheme::Secp256r1 => todo!("Secp256r1 key scheme"),
     }
 }

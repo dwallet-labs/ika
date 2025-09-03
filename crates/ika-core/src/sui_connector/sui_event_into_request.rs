@@ -258,6 +258,7 @@ fn network_dkg_session_request(
         DWalletMPCNetworkKeyScheme::Ristretto => {
             network_dkg_ristretto_session_request(deserialized_event, pulled)
         }
+        DWalletMPCNetworkKeyScheme::Secp256r1 => todo!(),
     }
 }
 

@@ -10,7 +10,7 @@ use class_groups::{
 };
 use dwallet_mpc_types::dwallet_mpc::{
     NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
-    SerializedWrappedMPCPublicOutput, V2AdditionalCurvesKeyData,
+    SerializedWrappedMPCPublicOutput, V2NetworkKeyData,
     VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
 };
 use group::{GroupElement, PartyID, secp256k1};
@@ -27,6 +27,7 @@ use twopc_mpc::secp256k1::class_groups::{
 
 pub(crate) type ReconfigurationSecp256k1Party = Secp256k1Party;
 pub(crate) type ReconfigurationV1toV2Secp256k1Party = twopc_mpc::reconfiguration_v1_to_v2::Party;
+pub(crate) type ReconfigurationV2Secp256k1Party = twopc_mpc::reconfiguration::Party;
 
 pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
     /// Generates the public input required for the reconfiguration protocol.
@@ -38,13 +39,69 @@ pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
     ) -> DwalletMPCResult<<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput>;
 }
 
+pub(crate) trait ReconfigurationV2PartyPublicInputGenerator: Party {
+    /// Generates the public input required for the reconfiguration protocol.
+    fn generate_public_input(
+        committee: &Committee,
+        new_committee: Committee,
+        network_dkg_public_output: VersionedNetworkDkgOutput,
+        latest_reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
+    ) -> DwalletMPCResult<<ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput>;
+}
+
+impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Party {
+    fn generate_public_input(
+        current_committee: &Committee,
+        upcoming_committee: Committee,
+        network_dkg_public_output: VersionedNetworkDkgOutput,
+        latest_reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
+    ) -> DwalletMPCResult<<ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput> {
+        let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output;
+        let VersionedDecryptionKeyReconfigurationOutput::V2(latest_reconfiguration_public_output) =
+            latest_reconfiguration_public_output
+        else {
+            return Err(DwalletMPCError::InternalError(
+                "Reconfiguration to V2 only supports reconfiguration public output of version V2"
+                    .to_string(),
+            ));
+        };
+        let current_committee = current_committee.clone();
+
+        let current_access_structure =
+            generate_access_structure_from_committee(&current_committee)?;
+        let upcoming_access_structure =
+            generate_access_structure_from_committee(&upcoming_committee)?;
+
+        let current_encryption_keys_per_crt_prime_and_proofs =
+            extract_encryption_keys_from_committee(&current_committee)?;
+
+        let upcoming_encryption_keys_per_crt_prime_and_proofs =
+            extract_encryption_keys_from_committee(&upcoming_committee)?;
+
+        let public_input: <ReconfigurationV2Secp256k1Party as Party>::PublicInput =
+            <twopc_mpc::reconfiguration::Party as mpc::Party>::PublicInput::new(
+                &current_access_structure,
+                upcoming_access_structure,
+                current_encryption_keys_per_crt_prime_and_proofs.clone(),
+                upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
+                current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
+                    .clone(),
+                bcs::from_bytes(&network_dkg_public_output)?,
+                bcs::from_bytes(&latest_reconfiguration_public_output)?,
+            )
+            .map_err(DwalletMPCError::from)?;
+
+        Ok(public_input)
+    }
+}
+
 pub(crate) trait ReconfigurationV1ToV2PartyPublicInputGenerator: Party {
     /// Generates the public input required for the reconfiguration protocol.
     fn generate_public_input(
         committee: &Committee,
         new_committee: Committee,
         network_dkg_public_output: VersionedNetworkDkgOutput,
-        reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
+        decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
     ) -> DwalletMPCResult<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput>;
 }
 
@@ -53,14 +110,9 @@ impl ReconfigurationV1ToV2PartyPublicInputGenerator for ReconfigurationV1toV2Sec
         current_committee: &Committee,
         upcoming_committee: Committee,
         network_dkg_public_output: VersionedNetworkDkgOutput,
-        reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
+        decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
     ) -> DwalletMPCResult<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput> {
         let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output;
-        let VersionedDecryptionKeyReconfigurationOutput::V1(reconfiguration_public_output) =
-            reconfiguration_public_output
-        else {
-            return Err(DwalletMPCError::InternalError("Reconfiguration from V1 to V2 only supports reconfiguration public output of version V1".to_string()));
-        };
         let current_committee = current_committee.clone();
 
         let current_access_structure =
@@ -82,8 +134,8 @@ impl ReconfigurationV1ToV2PartyPublicInputGenerator for ReconfigurationV1toV2Sec
                 upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
                 current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
                     .clone(),
+                decryption_key_share_public_parameters,
                 bcs::from_bytes(&network_dkg_public_output)?,
-                bcs::from_bytes(&reconfiguration_public_output)?,
             )
             .map_err(DwalletMPCError::from)?;
 
@@ -228,7 +280,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 secp256k1_protocol_public_parameters: protocol_public_parameters,
                 network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
                 latest_network_reconfiguration_public_output: Some(mpc_public_output),
-                v2_additional_curves_key_data: None,
+                v2_data: None,
             })
         }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
@@ -274,7 +326,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 secp256k1_decryption_key_share_public_parameters,
                 secp256k1_protocol_public_parameters,
                 network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
-                v2_additional_curves_key_data: Some(V2AdditionalCurvesKeyData {
+                v2_data: Some(V2NetworkKeyData {
                     secp256r1_decryption_key_share_public_parameters,
                     ristretto_decryption_key_share_public_parameters,
                     secp256r1_protocol_public_parameters,
