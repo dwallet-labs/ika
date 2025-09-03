@@ -185,12 +185,8 @@ impl ValidatorPrivateDecryptionKeyData {
             .into_iter()
             .map(|(virtual_party_id, secret_key_share)| {
                 let decryption_key_share = <AsyncProtocol as Protocol>::DecryptionKeyShare::new(
-                    virtual_party_id,
-                    secret_key_share,
-                    public_parameters,
-                    &mut OsCsRng,
-                )
-                .map_err(DwalletMPCError::from)?;
+                    secret_key_share.to_limbs(),
+                );
 
                 Ok((virtual_party_id, decryption_key_share))
             })

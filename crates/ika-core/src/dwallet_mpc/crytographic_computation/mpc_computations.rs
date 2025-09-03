@@ -41,6 +41,7 @@ use mpc::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
+use twopc_mpc::Protocol;
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
 };
@@ -603,7 +604,12 @@ impl ProtocolCryptographicData {
             } => {
                 let decryption_key_shares = decryption_key_shares
                     .iter()
-                    .map(|(party_id, share)| (*party_id, share.decryption_key_share))
+                    .map(|(party_id, share)| {
+                        (
+                            *party_id,
+                            <AsyncProtocol as Protocol>::DecryptionKeyShare::new(share.to_limbs()),
+                        )
+                    })
                     .collect::<HashMap<_, _>>();
 
                 let result =
@@ -656,7 +662,12 @@ impl ProtocolCryptographicData {
             } => {
                 let decryption_key_shares = decryption_key_shares
                     .iter()
-                    .map(|(party_id, share)| (*party_id, share.decryption_key_share))
+                    .map(|(party_id, share)| {
+                        (
+                            *party_id,
+                            <AsyncProtocol as Protocol>::DecryptionKeyShare::new(share.to_limbs()),
+                        )
+                    })
                     .collect::<HashMap<_, _>>();
 
                 let result =
