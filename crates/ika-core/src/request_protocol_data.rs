@@ -72,6 +72,10 @@ pub struct NetworkEncryptionKeyReconfigurationData {}
 pub struct NetworkEncryptionKeyV1ToV2ReconfigurationData {}
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
+#[display("Network Encryption Key V2 Reconfiguration")]
+pub struct NetworkEncryptionKeyV2ReconfigurationData {}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Encrypted Share Verification")]
 pub struct EncryptedShareVerificationData {
     pub curve: DWalletMPCNetworkKeyScheme,

@@ -230,22 +230,22 @@ impl DwalletMPCNetworkKeys {
             .clone())
     }
 
-    pub fn get_latest_reconfiguration_version(
-        &self,
-        key_id: &ObjectID,
-    ) -> DwalletMPCResult<Option<usize>> {
-        let versioned_output = self
+    pub fn get_network_key_version(&self, key_id: &ObjectID) -> DwalletMPCResult<usize> {
+        let key_data = self
             .network_encryption_keys
             .get(key_id)
-            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?
+            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?;
+        let versioned_output = key_data
             .latest_network_reconfiguration_public_output
             .clone();
         if versioned_output.is_none() {
-            return Ok(None);
+            return Ok(match key_data.network_dkg_output {
+                VersionedNetworkDkgOutput::V1(_) => 1,
+            });
         }
         Ok(match versioned_output.unwrap() {
-            VersionedDecryptionKeyReconfigurationOutput::V1(_) => Some(1),
-            VersionedDecryptionKeyReconfigurationOutput::V2(_) => Some(2),
+            VersionedDecryptionKeyReconfigurationOutput::V1(_) => 1,
+            VersionedDecryptionKeyReconfigurationOutput::V2(_) => 2,
         })
     }
 
