@@ -316,10 +316,8 @@ pub(crate) fn advance_network_dkg(
     access_structure: &WeightedThresholdAccessStructure,
     public_input: &PublicInput,
     party_id: PartyID,
-    key_scheme: &DWalletMPCNetworkKeyScheme,
     advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
     class_groups_decryption_key: ClassGroupsDecryptionKey,
-    protocol_config: &ProtocolConfig,
     rng: &mut ChaCha20Rng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {

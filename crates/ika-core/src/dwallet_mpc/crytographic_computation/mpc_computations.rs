@@ -339,7 +339,6 @@ impl ProtocolCryptographicData {
         session_identifier: SessionIdentifier,
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-        protocol_config: &ProtocolConfig,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
 
@@ -648,7 +647,6 @@ impl ProtocolCryptographicData {
                 }
             }
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
-                data,
                 public_input,
                 advance_request,
                 class_groups_decryption_key,
@@ -658,10 +656,8 @@ impl ProtocolCryptographicData {
                 access_structure,
                 &PublicInput::NetworkEncryptionKeyDkg(public_input),
                 party_id,
-                &data.key_scheme,
                 advance_request,
                 class_groups_decryption_key,
-                &protocol_config,
                 &mut rng,
             ),
             ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
