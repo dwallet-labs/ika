@@ -96,8 +96,6 @@ pub enum DWalletMPCNetworkKeyScheme {
     Secp256k1 = 0,
     #[strum(to_string = "Ristretto")]
     Ristretto = 1,
-    #[strum(to_string = "Secp256r1")]
-    Secp256r1 = 2,
 }
 
 #[repr(u32)]
