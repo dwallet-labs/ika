@@ -233,7 +233,9 @@ impl DwalletMPCNetworkKeys {
         let versioned_output = self
             .network_encryption_keys
             .get(key_id)
-            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?
+            .ok_or(DwalletMPCError::InternalError(format!(
+                "cannot find network encryption key for key ID {key_id}"
+            )))?
             .latest_network_reconfiguration_public_output
             .clone();
         if versioned_output.is_none() {
