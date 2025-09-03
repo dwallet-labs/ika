@@ -1,5 +1,6 @@
 import * as secp256k1 from '@bitcoinerlab/secp256k1';
 import * as bitcoin from 'bitcoinjs-lib';
+import { sha256 } from 'bitcoinjs-lib/src/crypto';
 
 // Bitcoin testnet configuration
 export const BITCOIN_NETWORK = bitcoin.networks.testnet;
@@ -29,7 +30,7 @@ export class BitcoinUtils {
 		amount: number,
 		fee: number,
 		changeAddress: string,
-	): string {
+	): Buffer {
 		try {
 			// Create a new transaction builder
 			const psbt = new bitcoin.Psbt({ network: BITCOIN_NETWORK });
@@ -87,7 +88,7 @@ export class BitcoinUtils {
 				});
 			}
 
-			const psbtHex = psbt.toHex();
+			const psbtHex = psbt.toBuffer();
 
 			return psbtHex;
 		} catch (error) {

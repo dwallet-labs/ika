@@ -41,7 +41,7 @@ export const useMultisig = () => {
 			Curve.SECP256K1,
 		);
 	}, []);
-	const MULTISIG_PACKAGE = '0x2b889ee3952b3cd8be2c22286ce50f2d3a2930be6f6b007e5ca85691a5075a62';
+	const MULTISIG_PACKAGE = '0x849e9ecb3edf79eeca9471d97717d2b150de7c7cfde7db44f0a1db2f8be2ccfc';
 
 	const executeTransaction = async (tx: Transaction) => {
 		const signedTransaction = await signTransaction({
@@ -396,7 +396,7 @@ export const useMultisig = () => {
 			arguments: [
 				tx.object(multisigID),
 				tx.object(ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID),
-				tx.pure.vector('u8', new TextEncoder().encode(psbtHex)),
+				tx.pure.vector('u8', psbtHex),
 				tx.pure.vector(
 					'u8',
 					await createUserSignMessageWithPublicOutput(
@@ -404,8 +404,8 @@ export const useMultisig = () => {
 						Uint8Array.from(dWallet.state.Active?.public_output as number[]),
 						Uint8Array.from(dWallet.public_user_secret_key_share as number[]),
 						Uint8Array.from(presign.state.Completed?.presign as number[]),
-						new TextEncoder().encode(psbtHex),
-						Hash.DoubleSHA256,
+						psbtHex,
+						Hash.SHA256,
 					),
 				),
 				tx.object.clock(),
