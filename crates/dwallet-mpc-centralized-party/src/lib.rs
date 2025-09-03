@@ -537,6 +537,9 @@ fn protocol_public_parameters_by_key_scheme(
                     // function generic or have an enum over `ProtocolPublicParameters`.
                     todo!()
                 }
+                DWalletMPCNetworkKeyScheme::Curve25519 => {
+                    todo!()
+                }
             }
         }
     }
