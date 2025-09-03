@@ -322,41 +322,36 @@ pub(crate) fn advance_network_dkg(
     protocol_config: &ProtocolConfig,
     rng: &mut ChaCha20Rng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    let res = match key_scheme {
-        DWalletMPCNetworkKeyScheme::Secp256k1 => {
-            let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
-                unreachable!();
-            };
-            let result = Party::<Secp256k1Party>::advance_with_guaranteed_output(
-                session_id,
-                party_id,
-                access_structure,
-                advance_request,
-                Some(class_groups_decryption_key),
-                &public_input,
-                rng,
-            );
-            match result.clone() {
-                Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                    public_output_value,
-                    malicious_parties,
-                    private_output,
-                }) => {
-                    let public_output_value =
-                        bcs::to_bytes(&VersionedNetworkDkgOutput::V1(public_output_value))?;
+    let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
+        unreachable!();
+    };
+    let result = Party::<Secp256k1Party>::advance_with_guaranteed_output(
+        session_id,
+        party_id,
+        access_structure,
+        advance_request,
+        Some(class_groups_decryption_key),
+        &public_input,
+        rng,
+    );
+    let res = match result.clone() {
+        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+            public_output_value,
+            malicious_parties,
+            private_output,
+        }) => {
+            let public_output_value =
+                bcs::to_bytes(&VersionedNetworkDkgOutput::V1(public_output_value))?;
 
-                    Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                        public_output_value,
-                        malicious_parties,
-                        private_output,
-                    })
-                }
-                _ => result,
-            }
+            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                public_output_value,
+                malicious_parties,
+                private_output,
+            })
         }
-        DWalletMPCNetworkKeyScheme::Ristretto => todo!(),
-        DWalletMPCNetworkKeyScheme::Secp256r1 => todo!(),
+        _ => result,
     }?;
+
     Ok(res)
 }
 
