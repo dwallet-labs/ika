@@ -532,6 +532,11 @@ fn protocol_public_parameters_by_key_scheme(
                     // function generic or have an enum over `ProtocolPublicParameters`.
                     todo!()
                 }
+                DWalletMPCNetworkKeyScheme::Secp256r1 => {
+                    // To add support here, we need to either make this
+                    // function generic or have an enum over `ProtocolPublicParameters`.
+                    todo!()
+                }
             }
         }
     }

@@ -350,6 +350,7 @@ pub(crate) fn advance_network_dkg(
             }
         }
         DWalletMPCNetworkKeyScheme::Ristretto => todo!(),
+        DWalletMPCNetworkKeyScheme::Secp256r1 => todo!(),
     }?;
     Ok(res)
 }
@@ -364,6 +365,7 @@ pub(crate) fn network_dkg_public_input(
             generate_secp256k1_dkg_party_public_input(access_structure, encryption_keys_and_proofs)
         }
         DWalletMPCNetworkKeyScheme::Ristretto => todo!(),
+        DWalletMPCNetworkKeyScheme::Secp256r1 => todo!(),
     }
 }
 
@@ -485,5 +487,6 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
             }
         }
         DWalletMPCNetworkKeyScheme::Ristretto => todo!("Ristretto key scheme"),
+        DWalletMPCNetworkKeyScheme::Secp256r1 => todo!("Secp256r1 key scheme"),
     }
 }
