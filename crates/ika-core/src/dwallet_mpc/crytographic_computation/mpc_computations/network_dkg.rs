@@ -250,7 +250,7 @@ impl DwalletMPCNetworkKeys {
                 )))?
                 .network_dkg_output()
                 .clone();
-            return Ok(match network_dkg_output() {
+            return Ok(match network_dkg_output {
                 VersionedNetworkDkgOutput::V1(_) => 1,
             });
         }
