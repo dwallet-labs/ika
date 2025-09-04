@@ -81,7 +81,6 @@ pub struct NetworkEncryptionKeyPublicDataV1 {
         twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
 }
 
-#[enum_dispatch]
 pub trait NetworkEncryptionKeyPublicData {
     fn epoch(&self) -> u64;
     fn secp256k1_decryption_key_share_public_parameters(
@@ -143,6 +142,55 @@ impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV2 {
         &self,
     ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
         self.latest_network_reconfiguration_public_output.clone()
+    }
+}
+
+impl NetworkEncryptionKeyPublicData for VersionedNetworkEncryptionKeyPublicData {
+    fn epoch(&self) -> u64 {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => data.epoch(),
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => data.epoch(),
+        }
+    }
+
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => {
+                data.secp256k1_decryption_key_share_public_parameters()
+            }
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => {
+                data.secp256k1_decryption_key_share_public_parameters()
+            }
+        }
+    }
+
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => data.network_dkg_output(),
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => data.network_dkg_output(),
+        }
+    }
+
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => data.state(),
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => data.state(),
+        }
+    }
+
+    fn latest_network_reconfiguration_public_output(
+        &self,
+    ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => {
+                data.latest_network_reconfiguration_public_output()
+            }
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => {
+                data.latest_network_reconfiguration_public_output()
+            }
+        }
     }
 }
 
