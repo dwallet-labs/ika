@@ -62,7 +62,7 @@ pub struct V2NetworkKeyData {
 /// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
 /// Created for each DKG protocol and modified for each Reconfiguration Protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NetworkEncryptionKeyPublicData {
+pub struct NetworkEncryptionKeyPublicDataV1 {
     /// The epoch of the last version update.
     pub epoch: u64,
 
@@ -79,7 +79,66 @@ pub struct NetworkEncryptionKeyPublicData {
     pub network_dkg_output: VersionedNetworkDkgOutput,
     pub secp256k1_protocol_public_parameters:
         twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    pub v2_data: Option<V2NetworkKeyData>,
+}
+
+#[enum_dispatch]
+pub trait NetworkEncryptionKeyPublicData {
+    fn epoch(&self) -> u64;
+}
+
+impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV1 {
+    fn epoch(&self) -> u64 {
+        self.epoch
+    }
+}
+
+impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV2 {
+    fn epoch(&self) -> u64 {
+        self.epoch
+    }
+}
+
+#[enum_dispatch(NetworkEncryptionKeyPublicData)]
+#[derive(Debug)]
+pub enum VersionedNetworkEncryptionKeyPublicData {
+    V1(NetworkEncryptionKeyPublicDataV1),
+    V2(NetworkEncryptionKeyPublicDataV2),
+}
+
+/// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
+/// Created for each DKG protocol and modified for each Reconfiguration Protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkEncryptionKeyPublicDataV2 {
+    /// The epoch of the last version update.
+    pub epoch: u64,
+
+    pub state: NetworkDecryptionKeyPublicOutputType,
+    /// The public output of the `latest` decryption key update (Reconfiguration).
+    pub latest_network_reconfiguration_public_output:
+        Option<VersionedDecryptionKeyReconfigurationOutput>,
+    /// The public parameters of the decryption key shares,
+    /// updated only after a successful network DKG or Reconfiguration.
+    pub secp256k1_decryption_key_share_public_parameters:
+        class_groups::Secp256k1DecryptionKeySharePublicParameters,
+    /// The public output of the `NetworkDKG` process (the first and only one).
+    /// On first instance it will be equal to `latest_public_output`.
+    pub network_dkg_output: VersionedNetworkDkgOutput,
+    pub secp256k1_protocol_public_parameters:
+        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    pub secp256r1_protocol_public_parameters:
+        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    pub secp256r1_decryption_key_share_public_parameters:
+        class_groups::Secp256r1DecryptionKeySharePublicParameters,
+
+    pub ristretto_decryption_key_share_public_parameters:
+        class_groups::RistrettoDecryptionKeySharePublicParameters,
+
+    pub curve25519_decryption_key_share_public_parameters:
+        class_groups::Curve25519DecryptionKeySharePublicParameters,
+    pub ristretto_protocol_public_parameters:
+        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    pub curve25519_protocol_public_parameters:
+        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
 }
 
 #[repr(u32)]

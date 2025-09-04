@@ -510,10 +510,10 @@ impl DWalletMPCManager {
                     for (key_id, res) in results {
                         match res {
                             Ok(key) => {
-                                if key.epoch != self.epoch_id {
+                                if key.epoch() != self.epoch_id {
                                     info!(
                                         key_id=?key_id,
-                                        epoch=?key.epoch,
+                                        epoch=?key.epoch(),
                                         "Network key epoch does not match current epoch, ignoring"
                                     );
 
