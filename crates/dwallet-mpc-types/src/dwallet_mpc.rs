@@ -324,10 +324,10 @@ impl TryFrom<u32> for DWalletSignatureScheme {
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(DWalletSignatureScheme::ECDSASecp256k1),
-            1 => Ok(DWalletSignatureScheme::ECDSASecp256r1),
-            2 => Ok(DWalletSignatureScheme::EdDSA),
-            3 => Ok(DWalletSignatureScheme::SchnorrkelSubstrate),
-            4 => Ok(DWalletSignatureScheme::Taproot),
+            1 => Ok(DWalletSignatureScheme::Taproot),
+            2 => Ok(DWalletSignatureScheme::ECDSASecp256r1),
+            3 => Ok(DWalletSignatureScheme::EdDSA),
+            4 => Ok(DWalletSignatureScheme::SchnorrkelSubstrate),
             v => Err(DwalletNetworkMPCError::InvalidDWalletMPCSignatureAlgorithm(
                 v,
             )),
