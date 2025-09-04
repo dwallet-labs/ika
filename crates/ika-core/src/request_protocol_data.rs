@@ -48,6 +48,7 @@ pub struct DWalletDKGData {
     pub curve: DWalletCurve,
     pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
     pub encryption_key: Vec<u8>,
+    pub centralized_public_key_share_and_proof: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
@@ -238,6 +239,8 @@ pub fn dwallet_dkg_protocol_data(
             encrypted_centralized_secret_share_and_proof: request_event_data
                 .encrypted_centralized_secret_share_and_proof,
             encryption_key: request_event_data.encryption_key,
+            centralized_public_key_share_and_proof: request_event_data
+                .centralized_public_key_share_and_proof,
         },
         dwallet_id: request_event_data.dwallet_id,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,

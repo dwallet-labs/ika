@@ -126,7 +126,7 @@ impl ProtocolCryptographicData {
                 first_round_output,
                 ..
             } => {
-                let PublicInput::DKGSecond(public_input) = public_input else {
+                let PublicInput::DWalletDKG(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
