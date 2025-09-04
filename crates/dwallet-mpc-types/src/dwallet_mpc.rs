@@ -298,7 +298,7 @@ pub enum DWalletSignatureScheme {
 #[derive(Debug, Error, Clone)]
 pub enum DwalletNetworkMPCError {
     #[error("invalid DWalletMPCNetworkKey value: {0}")]
-    InvalidDWalletMPCNetworkKey(u32),
+    InvalidDWalletMPCCurve(u32),
 
     #[error("invalid DWalletMPCSignatureAlgorithm value: {0}")]
     InvalidDWalletMPCSignatureAlgorithm(u32),
@@ -313,7 +313,7 @@ impl TryFrom<u32> for DWalletCurve {
             1 => Ok(DWalletCurve::Ristretto),
             2 => Ok(DWalletCurve::Secp256r1),
             3 => Ok(DWalletCurve::Curve25519),
-            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCNetworkKey(v)),
+            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCCurve(v)),
         }
     }
 }
@@ -328,7 +328,9 @@ impl TryFrom<u32> for DWalletSignatureScheme {
             2 => Ok(DWalletSignatureScheme::EdDSA),
             3 => Ok(DWalletSignatureScheme::SchnorrkelSubstrate),
             4 => Ok(DWalletSignatureScheme::Taproot),
-            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCNetworkKey(v)),
+            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCSignatureAlgorithm(
+                v,
+            )),
         }
     }
 }
