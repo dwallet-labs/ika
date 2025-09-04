@@ -483,6 +483,35 @@ pub struct DWalletDKGFirstRoundRequestEvent {
     pub curve: u32,
 }
 
+/// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletDKGFirstRoundRequestEvent`.
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
+pub struct DWalletDKGRequestEvent {
+    /// ID of the encrypted user secret key share being created
+    encrypted_user_secret_key_share_id: ObjectID,
+    /// ID of the dWallet being created through DKG
+    dwallet_id: ObjectID,
+    /// User's public key share with cryptographic proof of correctness
+    centralized_public_key_share_and_proof: Vec<u8>,
+    /// ID of the dWallet capability that authorizes this operation
+    dwallet_cap_id: ObjectID,
+    /// User's encrypted secret key share with zero-knowledge proof
+    encrypted_centralized_secret_share_and_proof: Vec<u8>,
+    /// Serialized encryption key used to encrypt the user's secret share
+    encryption_key: Vec<u8>,
+    /// ID of the encryption key object
+    encryption_key_id: ObjectID,
+    /// Address of the encryption key owner
+    encryption_key_address: SuiAddress,
+    /// User's contribution to the DKG public output
+    user_public_output: Vec<u8>,
+    /// Ed25519 public key for verifying the user's signature
+    signer_public_key: Vec<u8>,
+    /// ID of the network encryption key for securing network shares
+    dwallet_network_encryption_key_id: ObjectID,
+    /// Elliptic curve for the dWallet's cryptographic operations
+    curve: u32,
+}
+
 impl DWalletSessionEventTrait for DWalletDKGFirstRoundRequestEvent {
     /// This function allows comparing this event with the Move event.
     /// It is used to detect [`DWalletDKGFirstRoundRequestEvent`] events from the chain and initiate the MPC session.
