@@ -21,9 +21,8 @@ use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletMPCNetworkKeyScheme, NetworkDecryptionKeyPublicOutputType,
     NetworkEncryptionKeyPublicData, NetworkEncryptionKeyPublicDataV1,
-    SerializedWrappedMPCPublicOutput, V2NetworkKeyData,
-    VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
-    VersionedNetworkEncryptionKeyPublicData,
+    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
+    VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData,
 };
 use group::{GroupElement, OsCsRng, PartyID, secp256k1};
 use homomorphic_encryption::{

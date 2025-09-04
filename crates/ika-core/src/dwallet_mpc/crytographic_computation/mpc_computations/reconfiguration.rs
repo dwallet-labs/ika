@@ -10,7 +10,7 @@ use class_groups::{
 };
 use dwallet_mpc_types::dwallet_mpc::{
     NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataV1,
-    NetworkEncryptionKeyPublicDataV2, SerializedWrappedMPCPublicOutput, V2NetworkKeyData,
+    NetworkEncryptionKeyPublicDataV2, SerializedWrappedMPCPublicOutput,
     VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
     VersionedNetworkEncryptionKeyPublicData,
 };
