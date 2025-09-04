@@ -54,7 +54,7 @@ use twopc_mpc::sign::Protocol;
 pub struct DwalletMPCNetworkKeys {
     /// Holds all network (decryption) keys for the current network in encrypted form.
     /// This data is identical for all the Validator nodes.
-    pub(crate) network_encryption_keys: HashMap<ObjectID, NetworkEncryptionKeyPublicDataV1>,
+    pub(crate) network_encryption_keys: HashMap<ObjectID, VersionedNetworkEncryptionKeyPublicData>,
     pub(crate) validator_private_dec_key_data: ValidatorPrivateDecryptionKeyData,
 }
 
@@ -156,7 +156,7 @@ impl ValidatorPrivateDecryptionKeyData {
     pub async fn decrypt_and_store_secret_key_shares(
         &mut self,
         key_id: ObjectID,
-        key: NetworkEncryptionKeyPublicDataV1,
+        key: VersionedNetworkEncryptionKeyPublicData,
         access_structure: &WeightedThresholdAccessStructure,
     ) -> DwalletMPCResult<()> {
         let secret_key_shares = get_decryption_key_shares_from_public_output(
@@ -169,7 +169,7 @@ impl ValidatorPrivateDecryptionKeyData {
 
         let self_decryption_key_shares = Self::convert_secret_key_shares_type_to_decryption_shares(
             secret_key_shares,
-            &key.secp256k1_decryption_key_share_public_parameters,
+            &key.secp256k1_decryption_key_share_public_parameters(),
         )?;
 
         self.validator_decryption_key_shares

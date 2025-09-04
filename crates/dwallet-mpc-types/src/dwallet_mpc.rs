@@ -84,11 +84,21 @@ pub struct NetworkEncryptionKeyPublicDataV1 {
 #[enum_dispatch]
 pub trait NetworkEncryptionKeyPublicData {
     fn epoch(&self) -> u64;
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters;
 }
 
 impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV1 {
     fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
+        self.secp256k1_decryption_key_share_public_parameters
+            .clone()
     }
 }
 
@@ -96,10 +106,17 @@ impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV2 {
     fn epoch(&self) -> u64 {
         self.epoch
     }
+
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
+        self.secp256k1_decryption_key_share_public_parameters
+            .clone()
+    }
 }
 
 #[enum_dispatch(NetworkEncryptionKeyPublicData)]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VersionedNetworkEncryptionKeyPublicData {
     V1(NetworkEncryptionKeyPublicDataV1),
     V2(NetworkEncryptionKeyPublicDataV2),
