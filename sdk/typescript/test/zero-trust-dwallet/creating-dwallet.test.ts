@@ -1,9 +1,15 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
 
-import { prepareDKGAsync, prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
+import { SessionsManagerModule } from '../../src';
+import {
+	prepareDKGAsync,
+	prepareDKGSecondRoundAsync,
+	sessionIdentifierDigest,
+} from '../../src/client/cryptography';
 import { ZeroTrustDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
@@ -12,9 +18,13 @@ import {
 	requestTestDkgSecondRound,
 } from '../helpers/dwallet-test-helpers';
 import {
+	createEmptyTestIkaToken,
 	createTestIkaClient,
+	createTestIkaTransaction,
 	createTestSuiClient,
 	delay,
+	destroyEmptyTestIkaToken,
+	executeTestTransaction,
 	generateTestKeypair,
 	requestTestFaucetFunds,
 	retryUntil,
@@ -174,11 +184,30 @@ describe('DWallet Creation', () => {
 		expect(encryptionKeyEvent).toBeDefined();
 		expect(encryptionKeyEvent.encryption_key_id).toBeDefined();
 
+		const createSessionIDTx = new Transaction();
+		const createSessionIDIkaTx = createTestIkaTransaction(
+			ikaClient,
+			createSessionIDTx,
+			userShareEncryptionKeys,
+		);
+		createSessionIDIkaTx.createSessionIdentifier();
+		const registerSessionIDResult = await executeTestTransaction(
+			suiClient,
+			createSessionIDTx,
+			testName,
+		);
+		let registeredSessionIDEvent = registerSessionIDResult.events?.find((event) => {
+			return event.type.includes('UserSessionIdentifierRegisteredEvent');
+		});
+		let parsedEvent = SessionsManagerModule.UserSessionIdentifierRegisteredEvent.fromBase64(
+			registeredSessionIDEvent?.bcs as string,
+		);
 
 		// Step 4: Prepare DKG second round
 		const dkgSecondRoundRequestInput = await prepareDKGAsync(
 			ikaClient,
 			userShareEncryptionKeys,
+			sessionIdentifierDigest(Uint8Array.from(parsedEvent.session_identifier_preimage)),
 		);
 
 		expect(dkgSecondRoundRequestInput).toBeDefined();

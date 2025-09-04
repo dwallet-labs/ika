@@ -263,10 +263,11 @@ export async function prepareDKGSecondRoundAsync(
 export async function prepareDKGAsync(
 	ikaClient: IkaClient,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
+	sessionId: Uint8Array,
 ): Promise<DKGRequestInput> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
-	let session_id = ikaClient.setEncryptionKeyID()
-	return prepareDKG(protocolPublicParameters, userShareEncryptionKeys.encryptionKey);
+
+	return prepareDKG(protocolPublicParameters, userShareEncryptionKeys.encryptionKey, sessionId);
 }
 
 /**
