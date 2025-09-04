@@ -6,7 +6,7 @@ import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transac
 
 import * as coordinatorTx from '../tx/coordinator.js';
 import type {
-	DKGSecondRoundRequestInput,
+	DKGRequestInput,
 	ImportDWalletVerificationRequestInput,
 } from './cryptography.js';
 import {
@@ -151,7 +151,7 @@ export class IkaTransaction {
 		suiCoin,
 	}: {
 		dWalletCap: TransactionObjectArgument | string;
-		dkgSecondRoundRequestInput: DKGSecondRoundRequestInput;
+		dkgSecondRoundRequestInput: DKGRequestInput;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
@@ -163,6 +163,48 @@ export class IkaTransaction {
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			this.#transaction.object(dWalletCap),
+			dkgSecondRoundRequestInput.userDKGMessage,
+			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
+			this.#userShareEncryptionKeys.getSuiAddress(),
+			dkgSecondRoundRequestInput.userPublicOutput,
+			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.#transaction,
+		);
+
+		return this;
+	}
+
+	/**
+	 * Request the DKG (Distributed Key Generation) second round to complete DWallet creation.
+	 * This finalizes the distributed key generation process started in the first round.
+	 *
+	 * @param params.dWalletCap - The dWalletCap object from the first round, created for dWallet
+	 * @param params.dkgSecondRoundRequestInput - Cryptographic data prepared for the second round
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns The updated IkaTransaction instance
+	 * @throws {Error} If user share encryption keys are not set
+	 */
+	requestDWalletDKG({
+		dkgSecondRoundRequestInput,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWalletCap: TransactionObjectArgument | string;
+		dkgSecondRoundRequestInput: DKGRequestInput;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		if (!this.#userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
+		coordinatorTx.requestDWalletDKG(
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
 			dkgSecondRoundRequestInput.userDKGMessage,
 			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
 			this.#userShareEncryptionKeys.getSuiAddress(),

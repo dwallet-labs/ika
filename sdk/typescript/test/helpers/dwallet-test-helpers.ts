@@ -5,7 +5,7 @@ import type { SuiClient } from '@mysten/sui/client';
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import type {
-	DKGSecondRoundRequestInput,
+	DKGRequestInput,
 	ImportDWalletVerificationRequestInput,
 } from '../../src/client/cryptography.js';
 import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
@@ -237,7 +237,7 @@ export async function requestTestDkgSecondRound(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	dkgSecondRoundRequestInput: DKGSecondRoundRequestInput,
+	dkgSecondRoundRequestInput: DKGRequestInput,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 ) {
@@ -248,6 +248,47 @@ export async function requestTestDkgSecondRound(
 
 	ikaTransaction.requestDWalletDKGSecondRound({
 		dWalletCap: dWallet.dwallet_cap_id,
+		dkgSecondRoundRequestInput,
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
+	});
+
+	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
+
+	const result = await executeTestTransaction(suiClient, transaction, testName);
+
+	const dkgSecondRoundRequestEvent = result.events?.find((event) => {
+		return (
+			event.type.includes('DWalletDKGSecondRoundRequestEvent') &&
+			event.type.includes('DWalletSessionEvent')
+		);
+	});
+
+	if (!dkgSecondRoundRequestEvent) {
+		throw new Error('Failed to find DWalletDKGSecondRoundRequestEvent');
+	}
+
+	return SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.DWalletDKGSecondRoundRequestEvent,
+	).fromBase64(dkgSecondRoundRequestEvent.bcs as string);
+}
+
+/**
+ * Request DKG second round for testing
+ */
+export async function requestTestDkg(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dkgSecondRoundRequestInput: DKGRequestInput,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
+	testName: string,
+) {
+	const transaction = new Transaction();
+	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
+
+	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
+
+	ikaTransaction.requestDWalletDKG({
 		dkgSecondRoundRequestInput,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,

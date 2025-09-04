@@ -147,6 +147,35 @@ export function requestDWalletDKGSecondRound(
 	});
 }
 
+export function requestDWalletDKG(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	userPublicKeyShareAndProof: Uint8Array,
+	encryptedUserShareAndProof: Uint8Array,
+	encryptionKeyAddress: string,
+	userPublicOutput: Uint8Array,
+	signerPublicKey: Uint8Array,
+	sessionIdentifier: TransactionObjectArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
+	tx: Transaction,
+) {
+	tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg_second_round`,
+		arguments: [
+			coordinatorObjectRef,
+			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicKeyShareAndProof)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(encryptedUserShareAndProof)),
+			tx.pure.address(encryptionKeyAddress),
+			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(signerPublicKey)),
+			sessionIdentifier,
+			ikaCoin,
+			suiCoin,
+		],
+	});
+}
+
 export function processCheckpointMessageByQuorum(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
