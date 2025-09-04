@@ -93,7 +93,7 @@ impl SuiNodeProvider {
     }
 
     async fn update_sui_validator_set(&self) {
-        let system_inner = self.client.must_get_system_inner_object().await;
+        let (_, system_inner) = self.client.must_get_system_inner_object().await;
         let epoch_start = self.client.must_get_epoch_start_system(&system_inner).await;
         let validators = epoch_start.get_ika_validators();
         let validators = validators

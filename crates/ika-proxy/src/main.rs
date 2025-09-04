@@ -35,6 +35,7 @@ use ika_proxy::{
 };
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_sui_client::SuiClient;
+use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig};
 use mysten_metrics::RegistryService;
 use prometheus::Registry;
 use std::env;
@@ -87,15 +88,26 @@ async fn main() -> Result<()> {
     let registry_service = RegistryService::new(registry);
 
     let sui_client_metrics = SuiClientMetrics::new(&registry_service.default_registry());
+
+    let ika_network_config = IkaNetworkConfig {
+        packages: IkaPackageConfig {
+            ika_package_id: config.dynamic_peers.ika_package_id,
+            ika_common_package_id: config.dynamic_peers.ika_common_package_id,
+            ika_dwallet_2pc_mpc_package_id: config.dynamic_peers.ika_dwallet_2pc_mpc_package_id,
+            ika_system_package_id: config.dynamic_peers.ika_system_package_id,
+        },
+        objects: IkaObjectsConfig {
+            ika_system_object_id: config.dynamic_peers.ika_system_object_id,
+            ika_dwallet_coordinator_object_id: config
+                .dynamic_peers
+                .ika_dwallet_coordinator_object_id,
+        },
+    };
+
     let sui_client = SuiClient::new(
         &config.dynamic_peers.url,
         sui_client_metrics,
-        config.dynamic_peers.ika_package_id,
-        config.dynamic_peers.ika_common_package_id,
-        config.dynamic_peers.ika_dwallet_2pc_mpc_package_id,
-        config.dynamic_peers.ika_system_package_id,
-        config.dynamic_peers.ika_system_object_id,
-        config.dynamic_peers.ika_dwallet_coordinator_object_id,
+        ika_network_config,
     )
     .await?;
 
