@@ -60,8 +60,10 @@ const CHECKPOINT_MESSAGE_INTENT: vector<u8> = vector[1, 0, 0];
 // Used for pricing configuration and protocol identification
 
 /// DKG first round protocol identifier
+#[deprecated, allow(unused)]
 const DKG_FIRST_ROUND_PROTOCOL_FLAG: u32 = 0;
 /// DKG second round protocol identifier
+#[deprecated, allow(unused)]
 const DKG_SECOND_ROUND_PROTOCOL_FLAG: u32 = 1;
 /// User share re-encryption protocol identifier
 const RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG: u32 = 2;
@@ -77,9 +79,13 @@ const SIGN_PROTOCOL_FLAG: u32 = 6;
 const FUTURE_SIGN_PROTOCOL_FLAG: u32 = 7;
 /// Signing with partial user signature protocol identifier
 const SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG: u32 = 8;
+/// DKG protocol identifier
+const DWALLET_DKG_PROTOCOL_FLAG: u32 = 9;
 
 // Message data type constants corresponding to MessageKind enum variants (in ika-types/src/message.rs)
+#[deprecated, allow(unused)]
 const RESPOND_DWALLET_DKG_FIRST_ROUND_OUTPUT_MESSAGE_TYPE: u32 = 0;
+#[deprecated, allow(unused)]
 const RESPOND_DWALLET_DKG_SECOND_ROUND_OUTPUT_MESSAGE_TYPE: u32 = 1;
 const RESPOND_DWALLET_ENCRYPTED_USER_SHARE_MESSAGE_TYPE: u32 = 2;
 const RESPOND_MAKE_DWALLET_USER_SECRET_KEY_SHARES_PUBLIC_MESSAGE_TYPE: u32 = 3;
@@ -92,6 +98,7 @@ const RESPOND_DWALLET_MPC_NETWORK_RECONFIGURATION_OUTPUT_MESSAGE_TYPE: u32 = 9;
 const SET_MAX_ACTIVE_SESSIONS_BUFFER_MESSAGE_TYPE: u32 = 10;
 const SET_GAS_FEE_REIMBURSEMENT_SUI_SYSTEM_CALL_VALUE_MESSAGE_TYPE: u32 = 11;
 const END_OF_EPOCH_MESSAGE_TYPE: u32 = 12;
+const RESPOND_DWALLET_DKG_OUTPUT_MESSAGE_TYPE: u32 = 13;
 
 // === Errors ===
 
@@ -875,6 +882,7 @@ public struct RejectedDWalletEncryptionKeyReconfigurationEvent has copy, drop, s
 ///
 /// Initiates the distributed key generation process for a new dWallet.
 /// Validators respond by executing the first round of the DKG protocol.
+#[deprecated]
 public struct DWalletDKGFirstRoundRequestEvent has copy, drop, store {
     /// ID of the dWallet being created
     dwallet_id: ID,
@@ -896,6 +904,7 @@ public struct DWalletDKGFirstRoundRequestEvent has copy, drop, store {
 /// 1. Process the `first_round_output`
 /// 2. Generate their contribution to the DKG
 /// 3. Call `request_dwallet_dkg_second_round()` to continue
+#[deprecated]
 public struct CompletedDWalletDKGFirstRoundEvent has copy, drop, store {
     /// ID of the dWallet being created
     dwallet_id: ID,
@@ -908,6 +917,7 @@ public struct CompletedDWalletDKGFirstRoundEvent has copy, drop, store {
 /// Indicates that the validator network could not complete the first round
 /// of DKG for the requested dWallet, typically due to validation failures
 /// or insufficient validator participation.
+#[deprecated]
 public struct RejectedDWalletDKGFirstRoundEvent has copy, drop, store {
     /// ID of the dWallet whose DKG first round was rejected
     dwallet_id: ID,
@@ -931,6 +941,7 @@ public struct RejectedDWalletDKGFirstRoundEvent has copy, drop, store {
 /// - User contribution ensures the user controls part of the key
 /// - Network validation prevents malicious key generation
 /// - Encrypted shares ensure proper key distribution
+#[deprecated]
 public struct DWalletDKGSecondRoundRequestEvent has copy, drop, store {
     /// ID of the encrypted user secret key share being created
     encrypted_user_secret_key_share_id: ID,
@@ -975,6 +986,7 @@ public struct DWalletDKGSecondRoundRequestEvent has copy, drop, store {
 /// ## Security Verification
 /// Users should verify that the public key corresponds to their expected
 /// contribution and that the encrypted share can be properly decrypted.
+#[deprecated]
 public struct CompletedDWalletDKGSecondRoundEvent has copy, drop, store {
     /// ID of the successfully created dWallet
     dwallet_id: ID,
@@ -994,7 +1006,96 @@ public struct CompletedDWalletDKGSecondRoundEvent has copy, drop, store {
 /// - Malformed user contribution
 /// - Encryption verification failures
 /// - Network consensus issues
+#[deprecated]
 public struct RejectedDWalletDKGSecondRoundEvent has copy, drop, store {
+    /// ID of the dWallet whose DKG second round was rejected
+    dwallet_id: ID,
+    /// Public output that was being processed when rejection occurred
+    public_output: vector<u8>,
+}
+
+
+
+// === DWallet DKG Events ===
+
+/// Event requesting the second round of DKG from the validator network.
+///
+/// This event initiates the final phase of distributed key generation where
+/// the user's contribution is combined with the network's first round output
+/// to complete the dWallet creation process.
+///
+/// ## Process Flow
+/// 1. User processes the first round output from validators
+/// 2. User generates their cryptographic contribution
+/// 3. User encrypts their secret key share
+/// 4. Network validates and completes the DKG process
+///
+/// ## Security Properties
+/// - User contribution ensures the user controls part of the key
+/// - Network validation prevents malicious key generation
+/// - Encrypted shares ensure proper key distribution
+public struct DWalletDKGRequestEvent has copy, drop, store {
+    /// ID of the encrypted user secret key share being created
+    encrypted_user_secret_key_share_id: ID,
+    /// ID of the dWallet being created through DKG
+    dwallet_id: ID,
+    /// User's public key share with cryptographic proof of correctness
+    centralized_public_key_share_and_proof: vector<u8>,
+    /// ID of the dWallet capability that authorizes this operation
+    dwallet_cap_id: ID,
+    /// User's encrypted secret key share with zero-knowledge proof
+    encrypted_centralized_secret_share_and_proof: vector<u8>,
+    /// Serialized encryption key used to encrypt the user's secret share
+    encryption_key: vector<u8>,
+    /// ID of the encryption key object
+    encryption_key_id: ID,
+    /// Address of the encryption key owner
+    encryption_key_address: address,
+    /// User's contribution to the DKG public output
+    user_public_output: vector<u8>,
+    /// Ed25519 public key for verifying the user's signature
+    signer_public_key: vector<u8>,
+    /// ID of the network encryption key for securing network shares
+    dwallet_network_encryption_key_id: ID,
+    /// Elliptic curve for the dWallet's cryptographic operations
+    curve: u32,
+}
+
+/// Event emitted when DKG second round completes successfully.
+///
+/// Signals the successful completion of the distributed key generation process.
+/// The dWallet is now ready for user acceptance and can begin signing operations
+/// once the user validates and accepts their encrypted key share.
+///
+/// ## Next Steps for Users
+/// 1. Validate the public output matches expected values
+/// 2. Decrypt and verify the received encrypted key share
+/// 3. Sign the public output to accept the dWallet
+/// 4. Begin using the dWallet for signing operations
+///
+/// ## Security Verification
+/// Users should verify that the public key corresponds to their expected
+/// contribution and that the encrypted share can be properly decrypted.
+public struct CompletedDWalletDKGEvent has copy, drop, store {
+    /// ID of the successfully created dWallet
+    dwallet_id: ID,
+    /// Complete public output from the DKG process (public key and metadata)
+    public_output: vector<u8>,
+    /// ID of the user's encrypted secret key share
+    encrypted_user_secret_key_share_id: ID,
+}
+
+/// Event emitted when DKG second round is rejected by the network.
+///
+/// Indicates that the validator network rejected the user's contribution
+/// to the DKG process, typically due to invalid proofs or malformed data.
+///
+/// ## Common Rejection Reasons
+/// - Invalid cryptographic proofs
+/// - Malformed user contribution
+/// - Encryption verification failures
+/// - Network consensus issues
+public struct RejectedDWalletDKGEvent has copy, drop, store {
     /// ID of the dWallet whose DKG second round was rejected
     dwallet_id: ID,
     /// Public output that was being processed when rejection occurred
@@ -2426,203 +2527,6 @@ fun validate_approve_message(
     dwallet.is_imported_key_dwallet
 }
 
-/// Starts the first round of Distributed Key Generation (DKG) for a new dWallet.
-///
-/// Creates a new dWallet in the DKG requested state and initiates the first round
-/// of the DKG protocol through the validator network. Returns a capability that
-/// grants control over the newly created dWallet.
-///
-/// ### Parameters
-/// - `self`: Mutable reference to the DWallet coordinator
-/// - `dwallet_network_encryption_key_id`: ID of the network encryption key to use
-/// - `curve`: Elliptic curve to use for the dWallet
-/// - `payment_ika`: IKA payment for computation fees
-/// - `payment_sui`: SUI payment for gas reimbursement
-/// - `ctx`: Transaction context
-///
-/// ### Returns
-/// A new `DWalletCap` object granting control over the created dWallet
-///
-/// ### Effects
-/// - Creates a new `DWallet` object in DKG requested state
-/// - Creates and returns a `DWalletCap` for the new dWallet
-/// - Charges fees and creates a session for the DKG process
-/// - Emits a `DWalletDKGFirstRoundRequestEvent` to start the protocol
-///
-/// ### Aborts
-/// - `EInvalidCurve`: If the curve is not supported or is paused
-/// - `EDWalletNetworkEncryptionKeyNotExist`: If the network encryption key doesn't exist
-/// - `EMissingProtocolPricing`: If pricing is not configured for DKG first round
-/// - Various payment-related errors if insufficient funds provided
-public(package) fun request_dwallet_dkg_first_round(
-    self: &mut DWalletCoordinatorInner,
-    dwallet_network_encryption_key_id: ID,
-    curve: u32,
-    session_identifier: SessionIdentifier,
-    payment_ika: &mut Coin<IKA>,
-    payment_sui: &mut Coin<SUI>,
-    ctx: &mut TxContext,
-): DWalletCap {
-    self.support_config.validate_curve(curve);
-
-    let pricing_value = self
-        .pricing_and_fee_manager
-        .get_pricing_value_for_protocol(curve, option::none(), DKG_FIRST_ROUND_PROTOCOL_FLAG);
-
-    // TODO(@Omer): check the state of the dWallet (i.e., not waiting for dkg.)
-    // TODO(@Omer): I believe the best thing would be to always use the latest key. I'm not sure why the user should even supply the id.
-    assert!(
-        self.dwallet_network_encryption_keys.contains(dwallet_network_encryption_key_id),
-        EDWalletNetworkEncryptionKeyNotExist,
-    );
-    self.validate_network_encryption_key_supports_curve(dwallet_network_encryption_key_id, curve);
-
-    // Create a new `DWalletCap` object.
-    let id = object::new(ctx);
-    let dwallet_id = id.to_inner();
-    let dwallet_cap = DWalletCap {
-        id: object::new(ctx),
-        dwallet_id,
-    };
-    let dwallet_cap_id = object::id(&dwallet_cap);
-
-    // Create a new `DWallet` object,
-    // link it to the `dwallet_cap` we just created by id,
-    // and insert it into the `dwallets` map.
-    self
-        .dwallets
-        .add(
-            dwallet_id,
-            DWallet {
-                id,
-                created_at_epoch: self.current_epoch,
-                curve,
-                public_user_secret_key_share: option::none(),
-                dwallet_cap_id,
-                dwallet_network_encryption_key_id,
-                is_imported_key_dwallet: false,
-                encrypted_user_secret_key_shares: object_table::new(ctx),
-                sign_sessions: object_table::new(ctx),
-                state: DWalletState::DKGRequested,
-            },
-        );
-
-    // Emit an event to request the Ika network to start DKG for this dWallet.
-    let gas_fee_reimbursement_sui_for_system_calls = self
-        .sessions_manager
-        .initiate_user_session(
-            self.current_epoch,
-            session_identifier,
-            dwallet_network_encryption_key_id,
-            pricing_value,
-            payment_ika,
-            payment_sui,
-            DWalletDKGFirstRoundRequestEvent {
-                dwallet_id,
-                dwallet_cap_id,
-                dwallet_network_encryption_key_id,
-                curve,
-            },
-            ctx,
-        );
-    self
-        .pricing_and_fee_manager
-        .join_gas_fee_reimbursement_sui_system_call_balance(
-            gas_fee_reimbursement_sui_for_system_calls,
-        );
-
-    dwallet_cap
-}
-
-/// Processes validator network response to dWallet DKG first round.
-///
-/// This function handles the validator network's response to a user's DKG first round
-/// request, advancing the dWallet through its initialization lifecycle. It represents
-/// the completion of the first phase of distributed cryptographic key generation.
-///
-/// ### Parameters
-/// - `self`: Mutable reference to the coordinator
-/// - `dwallet_id`: ID of the dWallet undergoing DKG
-/// - `first_round_output`: Cryptographic output from validators' first round computation
-/// - `rejected`: Whether the validator network rejected the DKG request
-/// - `session_sequence_number`: Session identifier for fee processing
-///
-/// ### Returns
-/// Gas reimbursement balance for user refund
-///
-/// ### DKG First Round Process
-/// 1. **Session Completion**: Processes session fees and cleanup
-/// 2. **State Validation**: Ensures dWallet is in correct state for first round completion
-/// 3. **Output Processing**: Handles validator output or rejection appropriately
-/// 4. **Event Emission**: Notifies ecosystem of DKG progress or failure
-/// 5. **State Transition**: Updates dWallet to next appropriate state
-///
-/// ### Success Path
-/// - **Input**: Valid first round output from validator network
-/// - **State Transition**: `DKGRequested` → `AwaitingUserDKGVerificationInitiation`
-/// - **Event**: `CompletedDWalletDKGFirstRoundEvent` with cryptographic output
-/// - **Next Step**: User must verify output and initiate second round
-///
-/// ### Rejection Path
-/// - **Input**: Network rejection signal (computational or consensus failure)
-/// - **State Transition**: `DKGRequested` → `NetworkRejectedDKGRequest`
-/// - **Event**: `RejectedDWalletDKGFirstRoundEvent` signaling failure
-/// - **Next Step**: User must create new dWallet or retry operation
-///
-/// ### Security Properties
-/// - Only processes sessions in correct DKG state
-/// - Validator consensus ensures output authenticity
-/// - State transitions are atomic and irreversible
-/// - Fees are processed regardless of success/failure
-///
-/// ### Network Integration
-/// This function is exclusively called by the Ika validator network as part
-/// of the consensus protocol, never directly by users.
-public(package) fun respond_dwallet_dkg_first_round(
-    self: &mut DWalletCoordinatorInner,
-    dwallet_id: ID,
-    first_round_output: vector<u8>,
-    rejected: bool,
-    session_sequence_number: u64,
-): Balance<SUI> {
-    let status = if (rejected) {
-        sessions_manager::create_rejected_status_event(RejectedDWalletDKGFirstRoundEvent {
-            dwallet_id,
-        })
-    } else {
-        sessions_manager::create_success_status_event(CompletedDWalletDKGFirstRoundEvent {
-            dwallet_id,
-            first_round_output,
-        })
-    };
-
-    let (fee_charged_ika, gas_fee_reimbursement_sui) = self
-        .sessions_manager
-        .complete_user_session<
-            DWalletDKGFirstRoundRequestEvent,
-            CompletedDWalletDKGFirstRoundEvent,
-            RejectedDWalletDKGFirstRoundEvent,
-        >(self.current_epoch, session_sequence_number, status);
-    self.pricing_and_fee_manager.join_fee_charged_ika(fee_charged_ika);
-
-    let dwallet = self.get_dwallet_mut(dwallet_id);
-    dwallet.state =
-        match (dwallet.state) {
-            DWalletState::DKGRequested => {
-                if (rejected) {
-                    DWalletState::NetworkRejectedDKGRequest
-                } else {
-                    DWalletState::AwaitingUserDKGVerificationInitiation {
-                        first_round_output,
-                    }
-                }
-            },
-            _ => abort EWrongState,
-        };
-
-    gas_fee_reimbursement_sui
-}
-
 /// Initiates the second round of Distributed Key Generation (DKG) with encrypted user shares.
 ///
 /// This function represents the user's contribution to the DKG second round, where they
@@ -2663,9 +2567,10 @@ public(package) fun respond_dwallet_dkg_first_round(
 /// - `EMismatchCurve`: If encryption key curve doesn't match dWallet curve
 /// - `EWrongState`: If dWallet not in correct state for second round
 /// - Various validation and payment errors
-public(package) fun request_dwallet_dkg_second_round(
+public(package) fun request_dwallet_dkg(
     self: &mut DWalletCoordinatorInner,
-    dwallet_cap: &DWalletCap,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
     centralized_public_key_share_and_proof: vector<u8>,
     encrypted_centralized_secret_share_and_proof: vector<u8>,
     encryption_key_address: address,
@@ -2675,30 +2580,53 @@ public(package) fun request_dwallet_dkg_second_round(
     payment_ika: &mut Coin<IKA>,
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
-) {
+): DWalletCap {
+    self.support_config.validate_curve(curve);
+
+    let pricing_value = self
+        .pricing_and_fee_manager
+        .get_pricing_value_for_protocol(curve, option::none(), DWALLET_DKG_PROTOCOL_FLAG);
+
+    // TODO(@Omer): check the state of the dWallet (i.e., not waiting for dkg.)
+    // TODO(@Omer): I believe the best thing would be to always use the latest key. I'm not sure why the user should even supply the id.
+    assert!(
+        self.dwallet_network_encryption_keys.contains(dwallet_network_encryption_key_id),
+        EDWalletNetworkEncryptionKeyNotExist,
+    );
+    self.validate_network_encryption_key_supports_curve(dwallet_network_encryption_key_id, curve);
+
+    // Create a new `DWalletCap` object.
+    let id = object::new(ctx);
+    let dwallet_id = id.to_inner();
+    let dwallet_cap = DWalletCap {
+        id: object::new(ctx),
+        dwallet_id,
+    };
+    let dwallet_cap_id = object::id(&dwallet_cap);
+
+        // Create a new `DWallet` object,
+    let mut dwallet = DWallet {
+        id,
+        created_at_epoch: self.current_epoch,
+        curve,
+        public_user_secret_key_share: option::none(),
+        dwallet_cap_id,
+        dwallet_network_encryption_key_id,
+        is_imported_key_dwallet: false,
+        encrypted_user_secret_key_shares: object_table::new(ctx),
+        sign_sessions: object_table::new(ctx),
+        state: DWalletState::AwaitingNetworkDKGVerification,
+    };
+
+
     let encryption_key = self.encryption_keys.borrow(encryption_key_address);
     let encryption_key_curve = encryption_key.curve;
     let encryption_key_id = encryption_key.id.to_inner();
     let encryption_key = encryption_key.encryption_key;
     let created_at_epoch: u64 = self.current_epoch;
-    let dwallet_id = dwallet_cap.dwallet_id;
-    let dwallet = self.get_dwallet(dwallet_id);
-    let curve = dwallet.curve;
 
-    assert!(!dwallet.is_imported_key_dwallet, EImportedKeyDWallet);
     assert!(encryption_key_curve == curve, EMismatchCurve);
     self.support_config.validate_curve(curve);
-
-    let first_round_output = match (&dwallet.state) {
-        DWalletState::AwaitingUserDKGVerificationInitiation {
-            first_round_output,
-        } => {
-            *first_round_output
-        },
-        _ => abort EWrongState,
-    };
-
-    let dwallet_network_encryption_key_id = dwallet.dwallet_network_encryption_key_id;
 
     let encrypted_user_share = EncryptedUserSecretKeyShare {
         id: object::new(ctx),
@@ -2711,10 +2639,16 @@ public(package) fun request_dwallet_dkg_second_round(
         state: EncryptedUserSecretKeyShareState::AwaitingNetworkVerification,
     };
     let encrypted_user_secret_key_share_id = object::id(&encrypted_user_share);
+    dwallet
+        .encrypted_user_secret_key_shares
+        .add(encrypted_user_secret_key_share_id, encrypted_user_share);
 
-    let pricing_value = self
-        .pricing_and_fee_manager
-        .get_pricing_value_for_protocol(curve, option::none(), DKG_SECOND_ROUND_PROTOCOL_FLAG);
+    self
+        .dwallets
+        .add(
+            dwallet_id,
+            dwallet,
+        );
 
     let gas_fee_reimbursement_sui_for_system_calls = self
         .sessions_manager
@@ -2725,12 +2659,11 @@ public(package) fun request_dwallet_dkg_second_round(
             pricing_value,
             payment_ika,
             payment_sui,
-            DWalletDKGSecondRoundRequestEvent {
+            DWalletDKGRequestEvent {
                 encrypted_user_secret_key_share_id,
                 dwallet_id,
-                first_round_output,
                 centralized_public_key_share_and_proof,
-                dwallet_cap_id: object::id(dwallet_cap),
+                dwallet_cap_id,
                 encrypted_centralized_secret_share_and_proof,
                 encryption_key,
                 encryption_key_id,
@@ -2747,12 +2680,8 @@ public(package) fun request_dwallet_dkg_second_round(
         .join_gas_fee_reimbursement_sui_system_call_balance(
             gas_fee_reimbursement_sui_for_system_calls,
         );
-
-    let dwallet = self.get_dwallet_mut(dwallet_cap.dwallet_id);
-    dwallet
-        .encrypted_user_secret_key_shares
-        .add(encrypted_user_secret_key_share_id, encrypted_user_share);
-    dwallet.state = DWalletState::AwaitingNetworkDKGVerification;
+    
+    dwallet_cap
 }
 
 /// This function is called by the Ika network to respond to the dWallet DKG second round request made by the user.
@@ -2763,7 +2692,7 @@ public(package) fun request_dwallet_dkg_second_round(
 /// Advances the `EncryptedUserSecretKeyShareState` to `NetworkVerificationCompleted`.
 ///
 /// Also emits an event with the public output.
-public(package) fun respond_dwallet_dkg_second_round(
+public(package) fun respond_dwallet_dkg(
     self: &mut DWalletCoordinatorInner,
     dwallet_id: ID,
     public_output: vector<u8>,
@@ -2772,12 +2701,12 @@ public(package) fun respond_dwallet_dkg_second_round(
     session_sequence_number: u64,
 ): Balance<SUI> {
     let status = if (rejected) {
-        sessions_manager::create_rejected_status_event(RejectedDWalletDKGSecondRoundEvent {
+        sessions_manager::create_rejected_status_event(RejectedDWalletDKGEvent {
             dwallet_id,
             public_output,
         })
     } else {
-        sessions_manager::create_success_status_event(CompletedDWalletDKGSecondRoundEvent {
+        sessions_manager::create_success_status_event(CompletedDWalletDKGEvent {
             dwallet_id,
             public_output,
             encrypted_user_secret_key_share_id,
@@ -2786,9 +2715,9 @@ public(package) fun respond_dwallet_dkg_second_round(
     let (fee_charged_ika, gas_fee_reimbursement_sui) = self
         .sessions_manager
         .complete_user_session<
-            DWalletDKGSecondRoundRequestEvent,
-            CompletedDWalletDKGSecondRoundEvent,
-            RejectedDWalletDKGSecondRoundEvent,
+            DWalletDKGRequestEvent,
+            CompletedDWalletDKGEvent,
+            RejectedDWalletDKGEvent,
         >(self.current_epoch, session_sequence_number, status);
     self.pricing_and_fee_manager.join_fee_charged_ika(fee_charged_ika);
 
@@ -2896,6 +2825,9 @@ public(package) fun request_re_encrypt_user_share_for(
             },
             ctx,
         );
+
+
+
     self
         .pricing_and_fee_manager
         .join_gas_fee_reimbursement_sui_system_call_balance(
@@ -4456,26 +4388,13 @@ fun process_checkpoint_message(
         let message_data_enum_tag = bcs_body.peel_enum_tag();
         // Parses checkpoint BCS bytes directly.
         match (message_data_enum_tag) {
-            RESPOND_DWALLET_DKG_FIRST_ROUND_OUTPUT_MESSAGE_TYPE => {
-                let dwallet_id = object::id_from_bytes(bcs_body.peel_vec_u8());
-                let first_round_output = bcs_body.peel_vec_u8();
-                let rejected = bcs_body.peel_bool();
-                let session_sequence_number = bcs_body.peel_u64();
-                let gas_fee_reimbursement_sui = self.respond_dwallet_dkg_first_round(
-                    dwallet_id,
-                    first_round_output,
-                    rejected,
-                    session_sequence_number,
-                );
-                total_gas_fee_reimbursement_sui.join(gas_fee_reimbursement_sui);
-            },
-            RESPOND_DWALLET_DKG_SECOND_ROUND_OUTPUT_MESSAGE_TYPE => {
+            RESPOND_DWALLET_DKG_OUTPUT_MESSAGE_TYPE => {
                 let dwallet_id = object::id_from_bytes(bcs_body.peel_vec_u8());
                 let encrypted_user_secret_key_share_id = object::id_from_bytes(bcs_body.peel_vec_u8());
                 let public_output = bcs_body.peel_vec_u8();
                 let rejected = bcs_body.peel_bool();
                 let session_sequence_number = bcs_body.peel_u64();
-                let gas_fee_reimbursement_sui = self.respond_dwallet_dkg_second_round(
+                let gas_fee_reimbursement_sui = self.respond_dwallet_dkg(
                     dwallet_id,
                     public_output,
                     encrypted_user_secret_key_share_id,
@@ -4739,9 +4658,7 @@ fun verify_pricing_exists_for_all_protocols(
         let signature_algorithms = &supported_curves_to_signature_algorithms_to_hash_schemes[curve];
         let signature_algorithms = signature_algorithms.keys();
         is_missing_pricing =
-            is_missing_pricing || default_pricing.try_get_pricing_value(*curve, option::none(), DKG_FIRST_ROUND_PROTOCOL_FLAG).is_none();
-        is_missing_pricing =
-            is_missing_pricing || default_pricing.try_get_pricing_value(*curve, option::none(), DKG_SECOND_ROUND_PROTOCOL_FLAG).is_none();
+            is_missing_pricing || default_pricing.try_get_pricing_value(*curve, option::none(), DWALLET_DKG_PROTOCOL_FLAG).is_none();
         is_missing_pricing =
             is_missing_pricing || default_pricing.try_get_pricing_value(*curve, option::none(), RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG).is_none();
         is_missing_pricing =
