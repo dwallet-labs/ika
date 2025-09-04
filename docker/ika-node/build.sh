@@ -32,14 +32,27 @@ fi
 : "${GITHUB_TOKEN:?GITHUB_TOKEN is not set. Check your .env or environment.}"
 : "${DOCKER_TAG:?DOCKER_TAG is not set. Check your .env or environment.}"
 
-# Handle optional debug profile
-if [ "$1" = "--debug-symbols" ]; then
-  PROFILE="bench"
-  echo "Building with full debug info enabled ... WARNING: binary size might significantly increase"
-  shift
-else
-  PROFILE="release"
-fi
+# Handle optional flags
+PROFILE="release"
+NO_DEFAULT_FEATURES="false"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --debug-symbols)
+      PROFILE="bench"
+      echo "Building with full debug info enabled ... WARNING: binary size might significantly increase"
+      shift
+      ;;
+    --no-default-features)
+      NO_DEFAULT_FEATURES="true"
+      echo "Building with --no-default-features flag enabled"
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 echo
 echo "Building ika-node docker image"
@@ -49,12 +62,14 @@ echo "Build date:      $BUILD_DATE"
 echo "Git revision:    $GIT_REVISION"
 echo "Docker tag:      $DOCKER_TAG"
 echo "Build profile:   $PROFILE"
+echo "No default features: $NO_DEFAULT_FEATURES"
 echo
 
 docker build -f "$DOCKERFILE" "$REPO_ROOT" \
   --build-arg GIT_REVISION="$GIT_REVISION" \
   --build-arg BUILD_DATE="$BUILD_DATE" \
   --build-arg PROFILE="$PROFILE" \
+  --build-arg NO_DEFAULT_FEATURES="$NO_DEFAULT_FEATURES" \
   --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" \
   --tag "$DOCKER_TAG" \
   "$@"

@@ -8,6 +8,7 @@ ARG PROFILE=release
 ARG GIT_REVISION=unknown
 ARG GITHUB_TOKEN
 ARG WORKDIR=/opt
+ARG NO_DEFAULT_FEATURES=false
 
 # Environment
 ENV CARGO_HOME=/usr/local/cargo
@@ -30,9 +31,12 @@ COPY crates crates
 # Build dependencies first for better layer caching
 RUN cargo fetch --locked
 
-# Conditionally compile with the network DKG feature
-RUN cargo build --profile ${PROFILE} --locked --bin ika-node
-#RUN cargo build --profile ${PROFILE} --locked --bin ika-node --no-default-features
+# Conditionally compile with or without default features
+RUN if [ "$NO_DEFAULT_FEATURES" = "true" ]; then \
+      cargo build --profile ${PROFILE} --locked --bin ika-node --no-default-features; \
+    else \
+      cargo build --profile ${PROFILE} --locked --bin ika-node; \
+    fi
 
 # ==========================
 # Runtime stage
