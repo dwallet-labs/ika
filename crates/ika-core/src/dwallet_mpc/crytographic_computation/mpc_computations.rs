@@ -43,6 +43,7 @@ use mpc::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
+use twopc_mpc::Protocol;
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
 };
@@ -652,11 +653,6 @@ impl ProtocolCryptographicData {
                 decryption_key_shares,
                 ..
             } => {
-                let decryption_key_shares = decryption_key_shares
-                    .iter()
-                    .map(|(party_id, share)| (*party_id, share.decryption_key_share))
-                    .collect::<HashMap<_, _>>();
-
                 let result =
                     Party::<ReconfigurationSecp256k1Party>::advance_with_guaranteed_output(
                         session_id,
@@ -696,11 +692,6 @@ impl ProtocolCryptographicData {
                 decryption_key_shares,
                 ..
             } => {
-                let decryption_key_shares = decryption_key_shares
-                    .iter()
-                    .map(|(party_id, share)| (*party_id, share.decryption_key_share))
-                    .collect::<HashMap<_, _>>();
-
                 let result =
                     Party::<ReconfigurationV1toV2Secp256k1Party>::advance_with_guaranteed_output(
                         session_id,
@@ -740,11 +731,6 @@ impl ProtocolCryptographicData {
                 decryption_key_shares,
                 ..
             } => {
-                let decryption_key_shares = decryption_key_shares
-                    .iter()
-                    .map(|(party_id, share)| (*party_id, share.decryption_key_share))
-                    .collect::<HashMap<_, _>>();
-
                 let result =
                     Party::<ReconfigurationV2Secp256k1Party>::advance_with_guaranteed_output(
                         session_id,

@@ -191,12 +191,8 @@ impl ValidatorPrivateDecryptionKeyData {
             .into_iter()
             .map(|(virtual_party_id, secret_key_share)| {
                 let decryption_key_share = <AsyncProtocol as Protocol>::DecryptionKeyShare::new(
-                    virtual_party_id,
-                    secret_key_share,
-                    public_parameters,
-                    &mut OsCsRng,
-                )
-                .map_err(DwalletMPCError::from)?;
+                    secret_key_share.to_limbs(),
+                );
 
                 Ok((virtual_party_id, decryption_key_share))
             })
@@ -237,19 +233,28 @@ impl DwalletMPCNetworkKeys {
     }
 
     pub fn get_network_key_version(&self, key_id: &ObjectID) -> DwalletMPCResult<usize> {
-        let key_data = self
+        let latest_reconfig_data = self
             .network_encryption_keys
             .get(key_id)
-            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?;
-        let versioned_output = key_data
+            .ok_or(DwalletMPCError::InternalError(format!(
+                "cannot find network encryption key for key ID {key_id}"
+            )))?
             .latest_network_reconfiguration_public_output()
             .clone();
-        if versioned_output.is_none() {
-            return Ok(match key_data.network_dkg_output() {
+        if latest_reconfig_data.is_none() {
+            let network_dkg_output = self
+                .network_encryption_keys
+                .get(key_id)
+                .ok_or(DwalletMPCError::InternalError(format!(
+                    "cannot find network encryption key for key ID {key_id}"
+                )))?
+                .network_dkg_output()
+                .clone();
+            return Ok(match network_dkg_output {
                 VersionedNetworkDkgOutput::V1(_) => 1,
             });
         }
-        Ok(match versioned_output.unwrap() {
+        Ok(match latest_reconfig_data.unwrap() {
             VersionedDecryptionKeyReconfigurationOutput::V1(_) => 1,
             VersionedDecryptionKeyReconfigurationOutput::V2(_) => 2,
         })
