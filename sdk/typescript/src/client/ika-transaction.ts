@@ -5,10 +5,7 @@ import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator.js';
-import type {
-	DKGRequestInput,
-	ImportDWalletVerificationRequestInput,
-} from './cryptography.js';
+import type { DKGRequestInput, ImportDWalletVerificationRequestInput } from './cryptography.js';
 import {
 	createRandomSessionIdentifier,
 	encryptSecretShare,
