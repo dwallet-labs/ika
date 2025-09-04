@@ -283,24 +283,6 @@ export async function requestTestDkg(
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 ) {
-	const createSessionIDTx = new Transaction();
-	const createSessionIDIkaTx = createTestIkaTransaction(
-		ikaClient,
-		createSessionIDTx,
-		userShareEncryptionKeys,
-	);
-	createSessionIDIkaTx.createSessionIdentifier();
-	const registerSessionIDResult = await executeTestTransaction(
-		suiClient,
-		createSessionIDTx,
-		testName,
-	);
-	let registeredSessionIDEvent = registerSessionIDResult.events?.find((event) => {
-		return event.type.includes('UserSessionIdentifierRegisteredEvent');
-	});
-	let parsedEvent = SessionsManagerModule.UserSessionIdentifierRegisteredEvent.fromBase64(
-		registeredSessionIDEvent?.bcs as string,
-	);
 	const transaction = new Transaction();
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
