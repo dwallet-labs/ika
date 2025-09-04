@@ -1,11 +1,11 @@
-# Sui Proxy
+# Ika Proxy
 
-A secure metrics proxy server for the Sui blockchain network that collects Prometheus metrics from Sui validators and
+A secure metrics proxy server for the Ika blockchain network that collects Prometheus metrics from Ika validators and
 bridge nodes, then forwards them to remote monitoring systems like Mimir.
 
 ## Overview
 
-Sui Proxy acts as an intermediary between Sui network nodes (validators and bridge nodes) and external monitoring
+Ika Proxy acts as an intermediary between Ika network nodes (validators and bridge nodes) and external monitoring
 infrastructure. It provides secure TLS-based communication with peer validation, metrics processing, and reliable
 forwarding to time-series databases.
 
@@ -13,7 +13,7 @@ forwarding to time-series databases.
 
 ### 🔐 **Secure Peer Validation**
 
-- **Dynamic Peer Discovery**: Automatically discovers and validates Sui validators through JSON-RPC calls to the
+- **Dynamic Peer Discovery**: Automatically discovers and validates Ika validators through JSON-RPC calls to the
   blockchain
 - **Bridge Node Support**: Validates bridge committee members for cross-chain operations
 - **Static Peer Configuration**: Support for manually configured trusted peers
@@ -44,7 +44,7 @@ forwarding to time-series databases.
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Sui Nodes     │───▶│   Sui Proxy     │───▶│  Remote TSDB    │
+│   Ika Nodes     │───▶│   Ika Proxy     │───▶│  Remote TSDB    │
 │  (Validators &  │    │                 │    │   (Mimir)       │
 │  Bridge Nodes)  │    │                 │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
@@ -60,7 +60,7 @@ forwarding to time-series databases.
 
 ### Configuration File Structure
 
-The proxy uses a YAML configuration file (default: `./sui-proxy.yaml`):
+The proxy uses a YAML configuration file (default: `./ika-proxy.yaml`):
 
 ```yaml
 # Network identifier for labeling metrics
@@ -78,7 +78,7 @@ remote-write:
 
 # Dynamic peer validation (discovers validators from blockchain)
 dynamic-peers:
-  url: https://fullnode.mainnet.sui.io:443  # Sui JSON-RPC endpoint
+  url: https://fullnode.mainnet.ika.io:443  # Ika JSON-RPC endpoint
   interval: 30  # Polling interval in seconds
   hostname: proxy.example.com  # Hostname for self-signed cert (optional)
   certificate-file: /path/to/cert.pem  # Custom TLS certificate (optional)
@@ -99,7 +99,7 @@ histogram-address: localhost:9185    # Histogram relay endpoint
 
 #### Network Settings
 
-- **`network`**: String identifier for the Sui network (mainnet, testnet, devnet, etc.)
+- **`network`**: String identifier for the Ika network (mainnet, testnet, devnet, etc.)
 - **`listen-address`**: Socket address where the proxy accepts incoming connections
 
 #### Remote Write Configuration
@@ -110,7 +110,7 @@ histogram-address: localhost:9185    # Histogram relay endpoint
 
 #### Dynamic Peer Validation
 
-- **`url`**: Sui JSON-RPC endpoint for validator discovery
+- **`url`**: Ika JSON-RPC endpoint for validator discovery
 - **`interval`**: How often to refresh the validator list (seconds)
 - **`hostname`**: Hostname for self-signed certificate generation
 - **`certificate-file`**: Path to custom TLS certificate (PEM format)
@@ -128,19 +128,20 @@ histogram-address: localhost:9185    # Histogram relay endpoint
 
 ```bash
 # Using default config file
-sui-proxy
+ika-proxy
 
 # Using custom config file
-sui-proxy --config /path/to/custom-config.yaml
+ika-proxy --config /path/to/custom-config.yaml
 
 # Short form
-sui-proxy -c /path/to/custom-config.yaml
+ika-proxy -c /path/to/custom-config.yaml
 ```
 
 ### Environment Variables
 
 The proxy supports several environment variables for runtime configuration:
 
+- **`IKA_PROXY_VERBOSE_HTTP`**: Set to "true" or "1" to enable verbose HTTP request/response logging
 - **`NODE_CLIENT_TIMEOUT`**: Timeout for client connections (seconds, default: 20)
 - **`MIMIR_CLIENT_TIMEOUT`**: Timeout for remote write requests (seconds, default: 30)
 - **`MAX_BODY_SIZE`**: Maximum request body size (bytes, default: 5MB)
@@ -150,7 +151,7 @@ The proxy supports several environment variables for runtime configuration:
 
 #### Metrics Ingestion
 
-- **`POST /publish/metrics`**: Accepts Prometheus protobuf metrics from Sui nodes
+- **`POST /publish/metrics`**: Accepts Prometheus protobuf metrics from Ika nodes
     - Requires valid TLS client certificate
     - Content-Type: `application/x-protobuf`
     - Validates peer against allowlist
@@ -173,7 +174,7 @@ The proxy supports two TLS modes:
 
 Peers are validated through multiple mechanisms:
 
-1. **Dynamic Validation**: Queries Sui blockchain for current validator set
+1. **Dynamic Validation**: Queries Ika blockchain for current validator set
 2. **Bridge Validation**: Validates bridge committee members
 3. **Static Validation**: Uses manually configured peer list
 
@@ -215,14 +216,14 @@ The proxy provides structured logging with:
 FROM rust:1.70 as builder
 WORKDIR /app
 COPY . .
-RUN cargo build --release --bin sui-proxy
+RUN cargo build --release --bin ika-proxy
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/sui-proxy /usr/local/bin/
-COPY config.yaml /etc/sui-proxy/
+COPY --from=builder /app/target/release/ika-proxy /usr/local/bin/
+COPY config.yaml /etc/ika-proxy/
 EXPOSE 8080 9184 9185
-CMD ["sui-proxy", "--config", "/etc/sui-proxy/config.yaml"]
+CMD ["ika-proxy", "--config", "/etc/ika-proxy/config.yaml"]
 ```
 
 ### Kubernetes Deployment
@@ -231,20 +232,20 @@ CMD ["sui-proxy", "--config", "/etc/sui-proxy/config.yaml"]
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sui-proxy
+  name: ika-proxy
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: sui-proxy
+      app: ika-proxy
   template:
     metadata:
       labels:
-        app: sui-proxy
+        app: ika-proxy
     spec:
       containers:
-        - name: sui-proxy
-          image: sui-proxy:latest
+        - name: ika-proxy
+          image: ika-proxy:latest
           ports:
             - containerPort: 8080
             - containerPort: 9184
@@ -256,16 +257,16 @@ spec:
                   fieldPath: spec.nodeName
           volumeMounts:
             - name: config
-              mountPath: /etc/sui-proxy
+              mountPath: /etc/ika-proxy
             - name: tls-certs
-              mountPath: /etc/ssl/sui-proxy
+              mountPath: /etc/ssl/ika-proxy
       volumes:
         - name: config
           configMap:
-            name: sui-proxy-config
+            name: ika-proxy-config
         - name: tls-certs
           secret:
-            secretName: sui-proxy-tls
+            secretName: ika-proxy-tls
 ```
 
 ## Troubleshooting
@@ -292,7 +293,7 @@ spec:
 Enable debug logging by setting the `RUST_LOG` environment variable:
 
 ```bash
-RUST_LOG=debug sui-proxy --config config.yaml
+RUST_LOG=debug ika-proxy --config config.yaml
 ```
 
 ## Development
@@ -301,8 +302,8 @@ RUST_LOG=debug sui-proxy --config config.yaml
 
 ```bash
 # Clone the repository
-git clone https://github.com/MystenLabs/sui.git
-cd sui/crates/sui-proxy
+git clone https://github.com/dwallet-labs/ika.git
+cd ika/crates/ika-proxy
 
 # Build the project
 cargo build --release

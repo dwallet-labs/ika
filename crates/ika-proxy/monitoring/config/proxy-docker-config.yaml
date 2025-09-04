@@ -1,12 +1,12 @@
-# Sui Proxy Demo Configuration
+# Ika Proxy Demo Configuration
 # This file demonstrates all available configuration options with practical examples
 
-# Network identifier - used for labeling metrics to distinguish between different Sui networks
+# Network identifier - used for labeling metrics to distinguish between different Ika networks
 # Common values: mainnet, testnet, devnet, localnet
 # This field is required and used for metrics labeling
 network: localnet
 
-# Address where the proxy listens for incoming metrics from Sui nodes
+# Address where the proxy listens for incoming metrics from Ika nodes
 # Format: IP:PORT or hostname:PORT
 # Use 0.0.0.0 to listen on all interfaces, 127.0.0.1 for localhost only
 # This field is required
