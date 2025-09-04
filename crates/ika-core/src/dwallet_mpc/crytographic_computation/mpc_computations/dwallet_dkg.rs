@@ -73,9 +73,43 @@ pub(crate) trait DWalletDKGSecondPartyPublicInputGenerator: Party {
     ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput>;
 }
 
+pub(crate) trait DWalletDKGPublicInputGenerator: Party {
+    /// Generates the public input required for the second round of the DKG protocol.
+    fn generate_public_input(
+        protocol_public_parameters: ProtocolPublicParameters,
+        centralized_party_public_key_share: &SerializedWrappedMPCPublicOutput,
+    ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput>;
+}
+
+impl DWalletDKGPublicInputGenerator for DWalletDKGSecondParty {
+    fn generate_public_input(
+        protocol_public_parameters: ProtocolPublicParameters,
+        centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
+    ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
+        let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
+            bcs::from_bytes(centralized_party_public_key_share_buf)
+                .map_err(DwalletMPCError::BcsError)?;
+
+        let centralized_party_public_key_share = match centralized_party_public_key_share {
+            VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
+                bcs::from_bytes(&centralized_party_public_key_share)
+                    .map_err(DwalletMPCError::BcsError)?
+            }
+        };
+
+        let input: Self::PublicInput = (
+            protocol_public_parameters,
+            centralized_party_public_key_share,
+        )
+            .into();
+
+        Ok(input)
+    }
+}
+
 impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
     fn generate_public_input(
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+        protocol_public_parameters: ProtocolPublicParameters,
     ) -> DwalletMPCResult<<DWalletDKGFirstParty as Party>::PublicInput> {
         let secp256k1_public_input = twopc_mpc::dkg::encryption_of_secret_key_share::PublicInput::<
             group::secp256k1::scalar::PublicParameters,

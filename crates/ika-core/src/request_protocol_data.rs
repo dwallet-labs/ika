@@ -130,6 +130,7 @@ pub enum ProtocolData {
         data: DWalletDKGData,
         dwallet_id: ObjectID,
         dwallet_network_encryption_key_id: ObjectID,
+        encrypted_secret_share_id: ObjectID,
     },
 
     DKGSecond {
@@ -240,6 +241,7 @@ pub fn dwallet_dkg_protocol_data(
         },
         dwallet_id: request_event_data.dwallet_id,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+        encrypted_secret_share_id: request_event_data.encrypted_user_secret_key_share_id,
     })
 }
 

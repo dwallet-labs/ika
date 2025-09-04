@@ -68,9 +68,7 @@ pub fn sui_event_into_session_request(
             deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(&contents, pulled)?,
             pulled,
         )?
-    } else if event_type
-        == DWalletSessionEvent::<DWalletDKGRequestEvent>::type_(packages_config)
-    {
+    } else if event_type == DWalletSessionEvent::<DWalletDKGRequestEvent>::type_(packages_config) {
         dwallet_dkg_session_request(
             deserialize_event_contents::<DWalletDKGRequestEvent>(&contents, pulled)?,
             pulled,
