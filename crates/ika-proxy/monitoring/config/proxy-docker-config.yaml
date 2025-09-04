@@ -48,10 +48,8 @@ dynamic-peers:
   ika-system-package-id: 0x6ea8ad06c1da7073253e57ba678032d86de692f550847863ab6153c9d3ef866b
   ika-system-object-id: 0x77f91a4c43808619b9bdb3d65c988b5825d33febd9dbdcc8400b1d9b6bf18bca
   ika-dwallet-coordinator-object-id: 0x784f3993a128a5935ef9c70878082d47df00eb91e6af589be3a435c0047df1e0
-  certificate-file: /Users/zeevmanilovich/Dev/infra/tf-sui-validators/modules/ika-proxy/keys/proxy.crt
-#  certificate-file: /Users/zeevmanilovich/cert/localhost.crt
-  private-key: /Users/zeevmanilovich/Dev/infra/tf-sui-validators/modules/ika-proxy/keys/proxy.key
-#  private-key: /Users/zeevmanilovich/cert/localhost.key
+  certificate-file: proxy.crt
+  private-key: proxy.key
 
 #dynamic-peers:
 #  # Sui JSON-RPC endpoint for validator discovery
