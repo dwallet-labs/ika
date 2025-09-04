@@ -32,6 +32,7 @@ RUN cargo fetch --locked
 
 # Conditionally compile with the network DKG feature
 RUN cargo build --profile ${PROFILE} --locked --bin ika-node
+#RUN cargo build --profile ${PROFILE} --locked --bin ika-node --no-default-features
 
 # ==========================
 # Runtime stage
