@@ -86,7 +86,7 @@ async fn get_decryption_key_shares_from_public_output(
     let (key_shares_sender, key_shares_receiver) = oneshot::channel();
 
     rayon::spawn_fifo(move || {
-        let res = match shares.state {
+        let res = match shares.state() {
             NetworkDecryptionKeyPublicOutputType::NetworkDkg => {
                 match &shares.network_dkg_output() {
                     VersionedNetworkDkgOutput::V1(public_output) => {
