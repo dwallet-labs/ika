@@ -311,6 +311,8 @@ impl TryFrom<u32> for DWalletCurve {
         match value {
             0 => Ok(DWalletCurve::Secp256k1),
             1 => Ok(DWalletCurve::Ristretto),
+            2 => Ok(DWalletCurve::Secp256r1),
+            3 => Ok(DWalletCurve::Curve25519),
             v => Err(DwalletNetworkMPCError::InvalidDWalletMPCNetworkKey(v)),
         }
     }
