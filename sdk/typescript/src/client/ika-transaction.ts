@@ -193,7 +193,6 @@ export class IkaTransaction {
 		ikaCoin,
 		suiCoin,
 	}: {
-		dWalletCap: TransactionObjectArgument | string;
 		dkgSecondRoundRequestInput: DKGRequestInput;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
