@@ -77,6 +77,9 @@ pub(crate) fn session_input_from_request(
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
     match &request.protocol_data {
+        ProtocolData::DWalletDKG { .. } => {
+            todo!()
+        }
         ProtocolData::ImportedKeyVerification {
             dwallet_network_encryption_key_id,
             centralized_party_message,

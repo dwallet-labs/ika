@@ -766,6 +766,9 @@ impl DWalletMPCService {
             "Creating session output message for checkpoint"
         );
         match &session_request.protocol_data {
+            ProtocolData::DWalletDKG { .. } => {
+                todo!()
+            }
             ProtocolData::DKGFirst { dwallet_id, .. } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
                     DKGFirstRoundOutput {

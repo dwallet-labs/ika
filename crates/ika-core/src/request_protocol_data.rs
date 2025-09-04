@@ -3,7 +3,13 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, EncryptedShareVerificationRequestEvent, FutureSignRequestEvent, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent, SignRequestEvent};
+use ika_types::messages_dwallet_mpc::{
+    DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,
+    DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, EncryptedShareVerificationRequestEvent,
+    FutureSignRequestEvent, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
+    SignRequestEvent,
+};
 use sui_types::base_types::ObjectID;
 // Common structs for shared data between ProtocolSpecificData and AdvanceSpecificData
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
@@ -349,7 +355,11 @@ pub fn partial_signature_verification_protocol_data(
 impl ProtocolData {
     pub fn network_encryption_key_id(&self) -> Option<ObjectID> {
         match self {
-            ProtocolData::DKGFirst {
+            ProtocolData::DWalletDKG {
+                dwallet_network_encryption_key_id,
+                ..
+            }
+            | ProtocolData::DKGFirst {
                 dwallet_network_encryption_key_id,
                 ..
             }

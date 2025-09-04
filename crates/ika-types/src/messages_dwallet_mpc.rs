@@ -309,6 +309,17 @@ impl DWalletSessionEventTrait for EncryptedShareVerificationRequestEvent {
     }
 }
 
+impl DWalletSessionEventTrait for DWalletDKGRequestEvent {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
+        StructTag {
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
+            name: ident_str!("DWalletDKGRequestEvent").to_owned(),
+            module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
+            type_params: vec![],
+        }
+    }
+}
+
 /// Rust representation of the Move `FutureSignRequestEvent` Event.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
 pub struct FutureSignRequestEvent {
