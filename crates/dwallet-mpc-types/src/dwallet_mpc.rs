@@ -285,7 +285,7 @@ pub enum DWalletSignatureScheme {
     ECDSASecp256k1 = 0,
     #[strum(to_string = "Taproot")]
     Taproot = 1,
-    #[strum(to_string = "Secp256r1")]
+    #[strum(to_string = "ECDSASecp256r1")]
     ECDSASecp256r1 = 2,
     #[strum(to_string = "EdDSA")]
     EdDSA = 3,
