@@ -118,7 +118,7 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
             },
             ProtocolData::NetworkEncryptionKeyDkg { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.key_scheme.clone()),
+                curve: Some(data.curve.clone()),
                 hash_scheme: None,
                 signature_algorithm: None,
             },
@@ -196,7 +196,7 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
             ProtocolCryptographicData::NetworkEncryptionKeyDkg { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
-                    curve: Some(data.key_scheme.clone()),
+                    curve: Some(data.curve.clone()),
                     hash_scheme: None,
                     signature_algorithm: None,
                 }

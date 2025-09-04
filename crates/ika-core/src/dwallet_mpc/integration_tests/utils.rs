@@ -608,7 +608,7 @@ pub(crate) fn send_configurable_start_network_dkg_event(
                     session_sequence_number,
                     protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
                         data: NetworkEncryptionKeyDkgData {
-                            key_scheme: DWalletCurve::Secp256k1,
+                            curve: DWalletCurve::Secp256k1,
                         },
                         dwallet_network_encryption_key_id: key_id,
                     },
