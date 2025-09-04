@@ -253,8 +253,8 @@ export async function prepareDKGSecondRoundAsync(
  * This function fetches network parameters automatically and prepares the second round data.
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
- * @param dWallet - The DWallet object containing first round output
  * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
+ * @param sessionId
  * @returns Promise resolving to complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available or network parameters cannot be fetched
  *

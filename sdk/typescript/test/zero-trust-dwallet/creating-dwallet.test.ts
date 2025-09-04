@@ -14,6 +14,7 @@ import { ZeroTrustDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
 	registerTestEncryptionKey,
+	requestTestDkg,
 	requestTestDKGFirstRound,
 	requestTestDkgSecondRound,
 } from '../helpers/dwallet-test-helpers';
@@ -227,35 +228,25 @@ describe('DWallet Creation', () => {
 		expect(secondRoundMoveResponse).toBeDefined();
 		expect(secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id).toBeDefined();
 
-		// Step 6: Wait for DWallet to be AwaitingKeyHolderSignature
-		const awaitingKeyHolderSignatureDWallet = await retryUntil(
-			() => ikaClient.getDWalletInParticularState(dwalletID, 'AwaitingKeyHolderSignature'),
+		// Step 6: Wait for DWallet to be Active
+		const dwalletID = secondRoundMoveResponse.event_data.dwallet_id;
+		const activeDWallet = await retryUntil(
+			() => ikaClient.getDWalletInParticularState(dwalletID, 'Active'),
 			(wallet) => wallet !== null,
 			30,
 			2000,
 		);
-
-		expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
-		expect(awaitingKeyHolderSignatureDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
 
 		// Step 7: Accept encrypted user share
 		// Type assertion: DKG flow only creates ZeroTrust DWallets
 		await acceptTestEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			awaitingKeyHolderSignatureDWallet as ZeroTrustDWallet,
+			activeDWallet as ZeroTrustDWallet,
 			dkgSecondRoundRequestInput.userPublicOutput,
 			secondRoundMoveResponse,
 			userShareEncryptionKeys,
 			testName,
-		);
-
-		// Step 8: Wait for DWallet to be Active
-		const activeDWallet = await retryUntil(
-			() => ikaClient.getDWalletInParticularState(dwalletID, 'Active'),
-			(wallet) => wallet !== null,
-			30,
-			2000,
 		);
 
 		expect(activeDWallet).toBeDefined();
