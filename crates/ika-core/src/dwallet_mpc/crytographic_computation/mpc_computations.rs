@@ -631,6 +631,13 @@ impl ProtocolCryptographicData {
                                 signature.to_bytes().to_vec()
                             }
                             _ => {
+                                error!(
+                                    session_identifier=?session_identifier,
+                                    ?public_output_value,
+                                    ?malicious_parties,
+                                    should_never_happen = true,
+                                    "Invalid signature scheme for sign session result"
+                                );
                                 return Err(DwalletMPCError::InvalidDWalletProtocolType);
                             }
                         };
