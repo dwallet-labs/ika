@@ -281,11 +281,11 @@ pub enum DWalletCurve {
     PartialOrd,
 )]
 pub enum DWalletSignatureScheme {
-    #[strum(to_string = "Secp256k1")]
+    #[strum(to_string = "ECDSASecp256k1")]
     ECDSASecp256k1 = 0,
     #[strum(to_string = "Taproot")]
     Taproot = 1,
-    #[strum(to_string = "Secp256r1")]
+    #[strum(to_string = "ECDSASecp256r1")]
     ECDSASecp256r1 = 2,
     #[strum(to_string = "EdDSA")]
     EdDSA = 3,
