@@ -4,12 +4,14 @@ set -euo pipefail
 #set -x
 
 # Default values
-VALIDATOR_NUM=55
-TERRAFORM_WORKSPACES_FILE="../../../infra/tf-gcp/workspaces.tf"
+VALIDATOR_NUM=4
+TERRAFORM_WORKSPACES_FILE="../../../infra/tf-gcp/workspace.devnet.tf"
 SUBDOMAIN=beta.devnet.ika-network.net
-GCP_PROJECT=mainnet-449616
-ENV_PREFIX=ika-devnet
-TF_NETWORK_NAME=devnet
+GCP_PROJECT=devnet-449616
+# The prefix for all secrets created in GCP.
+ENV_PREFIX=ika-new-devnet
+# The chain[X] in terraform workspaces.tf to update
+TF_NETWORK_NAME=new-devnet
 
 # Validate required parameters
 if [ -z "$SUBDOMAIN" ]; then
