@@ -204,7 +204,7 @@ describe('DWallet Creation', () => {
 			registeredSessionIDEvent?.bcs as string,
 		);
 
-		// Step 4: Prepare DKG second round
+		// Step 4: Prepare network DKG input
 		const dkgSecondRoundRequestInput = await prepareDKGAsync(
 			ikaClient,
 			userShareEncryptionKeys,
@@ -230,7 +230,7 @@ describe('DWallet Creation', () => {
 
 		// Step 6: Wait for DWallet to be Active
 		const dwalletID = secondRoundMoveResponse.event_data.dwallet_id;
-		const activeDWallet = await retryUntil(
+		const finalDWallet = await retryUntil(
 			() => ikaClient.getDWalletInParticularState(dwalletID, 'Active'),
 			(wallet) => wallet !== null,
 			30,
@@ -242,15 +242,12 @@ describe('DWallet Creation', () => {
 		await acceptTestEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			activeDWallet as ZeroTrustDWallet,
+			finalDWallet as ZeroTrustDWallet,
 			dkgSecondRoundRequestInput.userPublicOutput,
 			secondRoundMoveResponse,
 			userShareEncryptionKeys,
 			testName,
 		);
-
-		expect(activeDWallet).toBeDefined();
-		expect(activeDWallet.state.$kind).toBe('Active');
 
 		// Verify the encrypted user secret key share exists and is accessible
 		const encryptedUserSecretKeyShare = await retryUntil(
@@ -266,8 +263,6 @@ describe('DWallet Creation', () => {
 		expect(encryptedUserSecretKeyShare).toBeDefined();
 		expect(encryptedUserSecretKeyShare.dwallet_id).toBe(dwalletID);
 
-		// Final verification: DWallet should still be active and fully functional
-		const finalDWallet = await ikaClient.getDWalletInParticularState(dwalletID, 'Active');
 		expect(finalDWallet).toBeDefined();
 		expect(finalDWallet.state.$kind).toBe('Active');
 		expect(finalDWallet.id.id).toBe(dwalletID);
