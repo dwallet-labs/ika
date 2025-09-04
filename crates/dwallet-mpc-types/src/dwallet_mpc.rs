@@ -5,6 +5,7 @@ use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use twopc_mpc::class_groups::{DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput};
+use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
 /// Alias for an MPC message.
 pub type MPCMessage = Vec<u8>;
@@ -91,6 +92,9 @@ pub trait NetworkEncryptionKeyPublicData {
     fn latest_network_reconfiguration_public_output(
         &self,
     ) -> Option<VersionedDecryptionKeyReconfigurationOutput>;
+    fn secp256k1_protocol_public_parameters(
+        &self,
+    ) -> twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 }
 
 impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV1 {
@@ -118,6 +122,10 @@ impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV1 {
     ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
         self.latest_network_reconfiguration_public_output.clone()
     }
+
+    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
+        self.secp256k1_protocol_public_parameters.clone()
+    }
 }
 
 impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV2 {
@@ -142,6 +150,10 @@ impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV2 {
         &self,
     ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
         self.latest_network_reconfiguration_public_output.clone()
+    }
+
+    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
+        self.secp256k1_protocol_public_parameters.clone()
     }
 }
 
@@ -189,6 +201,17 @@ impl NetworkEncryptionKeyPublicData for VersionedNetworkEncryptionKeyPublicData 
             }
             VersionedNetworkEncryptionKeyPublicData::V2(data) => {
                 data.latest_network_reconfiguration_public_output()
+            }
+        }
+    }
+
+    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => {
+                data.secp256k1_protocol_public_parameters()
+            }
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => {
+                data.secp256k1_protocol_public_parameters()
             }
         }
     }
