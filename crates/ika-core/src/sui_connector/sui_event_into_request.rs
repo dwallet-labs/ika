@@ -69,6 +69,13 @@ pub fn sui_event_into_session_request(
             pulled,
         )?
     } else if event_type
+        == DWalletSessionEvent::<DWalletDKGRequestEvent>::type_(packages_config)
+    {
+        dwallet_dkg_session_request(
+            deserialize_event_contents::<DWalletDKGRequestEvent>(&contents, pulled)?,
+            pulled,
+        )?
+    } else if event_type
         == DWalletSessionEvent::<DWalletDKGSecondRoundRequestEvent>::type_(packages_config)
     {
         dwallet_dkg_second_party_session_request(
@@ -160,6 +167,22 @@ fn dwallet_imported_key_verification_request_event_session_request(
     })
 }
 
+fn dwallet_dkg_session_request(
+    deserialized_event: DWalletSessionEvent<DWalletDKGRequestEvent>,
+    pulled: bool,
+) -> DwalletMPCResult<DWalletSessionRequest> {
+    Ok(DWalletSessionRequest {
+        session_type: deserialized_event.session_type,
+        session_identifier: deserialized_event.session_identifier_digest(),
+        session_sequence_number: deserialized_event.session_sequence_number,
+        protocol_data: dwallet_dkg_protocol_data(deserialized_event.event_data.clone())?,
+        epoch: deserialized_event.epoch,
+        requires_network_key_data: true,
+        requires_next_active_committee: false,
+        pulled,
+    })
+}
+
 fn dwallet_dkg_first_party_session_request(
     deserialized_event: DWalletSessionEvent<DWalletDKGFirstRoundRequestEvent>,
     pulled: bool,
@@ -169,22 +192,6 @@ fn dwallet_dkg_first_party_session_request(
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: dwallet_dkg_first_protocol_data(deserialized_event.event_data.clone())?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-        pulled,
-    })
-}
-
-fn dwallet_v2_party_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletDKGRequestEvent>,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: dwallet_dkg_protocol_data(deserialized_event.event_data.clone())?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
