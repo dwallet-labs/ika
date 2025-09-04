@@ -1,0 +1,191 @@
+# Sui Proxy Demo Configuration
+# This file demonstrates all available configuration options with practical examples
+
+# Network identifier - used for labeling metrics to distinguish between different Sui networks
+# Common values: mainnet, testnet, devnet, localnet, joenet
+# This field is required and used for metrics labeling
+network: localnet
+
+# Address where the proxy listens for incoming metrics from Sui nodes
+# Format: IP:PORT or hostname:PORT
+# Use 0.0.0.0 to listen on all interfaces, 127.0.0.1 for localhost only
+# This field is required
+listen-address: 0.0.0.0:9185
+
+# Remote write configuration - where processed metrics are forwarded
+# This section is required for the proxy to function
+remote-write:
+  # Target URL for the remote write endpoint (Mimir, Prometheus, etc.)
+  # For Grafana Cloud Mimir: https://prometheus-prod-XX-prod-XX-XX.grafana.net/api/prom/push
+  # For self-hosted Mimir: https://mimir.example.com/api/v1/push
+  # For Prometheus: http://prometheus.example.com:9090/api/v1/write
+  # Default: http://metrics-gw.testnet.sui.io/api/v1/push
+  url: https://localhost:9090/api/v1/push
+
+  # Authentication credentials for the remote write endpoint
+  # For Grafana Cloud: use your instance ID as username and API key as password
+  # For basic auth: use your configured username/password
+  # Both username and password are required fields
+  username: your-username-or-instance-id
+  password: your-password-or-api-key
+
+  # Maximum number of idle connections to keep per host
+  # This controls the HTTP connection pool size for remote write requests
+  # Higher values allow more concurrent requests but use more resources
+  # Lower values reduce resource usage but may limit throughput
+  # Default: 8, Range: 1-100 (recommended)
+  pool-max-idle-per-host: 8
+
+# Dynamic peer validation - automatically discovers validators from the blockchain
+# This section is required for validator discovery and authentication
+dynamic-peers:
+  # Sui JSON-RPC endpoint for validator discovery
+  # Mainnet: https://fullnode.mainnet.sui.io:443
+  # Testnet: https://fullnode.testnet.sui.io:443
+  # Devnet: https://fullnode.devnet.sui.io:443
+  # Local: http://127.0.0.1:9000
+  # This field is required
+  url: http://localhost:9000
+
+  # How often to refresh the validator list (in seconds)
+  # Lower values = more up-to-date but higher RPC load
+  # Higher values = less RPC load but slower to detect changes
+  # Recommended: 30-300 seconds depending on network stability
+  # This field is required
+  interval: 30
+
+  # Hostname for self-signed certificate generation (optional)
+  # Only used if certificate-file and private-key are not provided
+  # Should match the hostname clients will use to connect
+  # If not specified, defaults to "localhost"
+  # This field is optional
+  hostname: sui-proxy.example.com
+
+  # Custom TLS certificate and private key (optional)
+  # If not provided, a self-signed certificate will be generated using the hostname above
+  # Use absolute paths for reliability in production environments
+  # Both certificate-file and private-key must be provided together or not at all
+  certificate-file: /etc/ssl/sui-proxy/fullchain.pem
+  private-key: /etc/ssl/sui-proxy/privkey.pem
+
+# Static peer validation - manually configured trusted peers (optional)
+# Use this for testing, private networks, or when you want explicit control
+# If not specified, only dynamic peer validation will be used
+# This entire section is optional
+static-peers:
+  # List of manually configured peer public keys
+  # Each entry represents a trusted validator or bridge node
+  pub-keys:
+    # Example validator configuration
+    - name: validator-alice
+      # Ed25519 public key in hex format (64 characters)
+      # This should match the peer_id from the validator's node configuration
+      # This is the Ed25519 PublicKey from the node's config, not the network address
+      peer-id: 4e2f113e61784fdcd611650f36595db8f79e9420319f42a5b571dc2f2b295af2
+
+    # Example bridge node configuration
+    - name: bridge-node-bob
+      peer-id: 7a3c8d9e2f1b4a5c6e8d9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1
+
+    # Example testnet validator
+    - name: testnet-validator-charlie
+      peer-id: 1f2e3d4c5b6a7980fedcba9876543210abcdef1234567890fedcba0987654321
+
+# Metrics server addresses - where the proxy exposes its own metrics
+# These should be different from the main listen-address to avoid conflicts
+
+# Proxy performance metrics endpoint (Prometheus format)
+# Includes request counts, latencies, error rates, connection stats, etc.
+# Format: IP:PORT or hostname:PORT
+# This field is required
+metrics-address: localhost:9184
+
+# Histogram relay metrics endpoint (Prometheus format)
+# Specialized metrics for histogram processing and relay statistics
+# Should be different from metrics-address to avoid port conflicts
+# Format: IP:PORT or hostname:PORT
+# This field is required
+histogram-address: localhost:9185
+
+# ============================================================================
+# CONFIGURATION EXAMPLES FOR DIFFERENT DEPLOYMENT SCENARIOS
+# ============================================================================
+
+# Example 1: Development/Testing Setup
+# Minimal configuration for local development and testing
+# network: devnet
+# listen-address: 127.0.0.1:8080
+# remote-write:
+#   url: http://localhost:9090/api/v1/write
+#   username: ""
+#   password: ""
+#   pool-max-idle-per-host: 4
+# dynamic-peers:
+#   url: https://fullnode.devnet.sui.io:443
+#   interval: 60
+#   hostname: localhost
+# metrics-address: localhost:9184
+# histogram-address: localhost:9185
+
+# Example 2: Production Setup with Custom Certificates
+# High-throughput production configuration with Let's Encrypt certificates
+# network: mainnet
+# listen-address: 0.0.0.0:8443
+# remote-write:
+#   url: https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push
+#   username: "123456"
+#   password: "glc_eyJ0IjoiUGFja2V0..."
+#   pool-max-idle-per-host: 16
+# dynamic-peers:
+#   url: https://fullnode.mainnet.sui.io:443
+#   interval: 30
+#   certificate-file: /etc/letsencrypt/live/sui-proxy.example.com/fullchain.pem
+#   private-key: /etc/letsencrypt/live/sui-proxy.example.com/privkey.pem
+# metrics-address: 0.0.0.0:9184
+# histogram-address: 0.0.0.0:9185
+
+# Example 3: High-Security Setup with Static Peers Only
+# Corporate environment with manual peer management and internal CA
+# network: mainnet
+# listen-address: 10.0.1.100:8080
+# remote-write:
+#   url: https://internal-mimir.company.com/api/v1/push
+#   username: sui-proxy
+#   password: super-secret-password
+#   pool-max-idle-per-host: 12
+# dynamic-peers:
+#   url: ""  # Empty URL disables dynamic discovery
+#   interval: 0  # Zero interval disables periodic updates
+#   certificate-file: /etc/ssl/company-ca/sui-proxy.crt
+#   private-key: /etc/ssl/company-ca/sui-proxy.key
+# static-peers:
+#   pub-keys:
+#     - name: company-validator-1
+#       peer-id: abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+#     - name: company-validator-2
+#       peer-id: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+#     - name: company-bridge-node
+#       peer-id: fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321
+# metrics-address: 10.0.1.100:9184
+# histogram-address: 10.0.1.100:9185
+
+# Example 4: Testnet Configuration with Self-Signed Certificates
+# Testnet setup with automatic certificate generation
+# network: testnet
+# listen-address: 0.0.0.0:8080
+# remote-write:
+#   url: https://testnet-mimir.example.com/api/v1/push
+#   username: testnet-user
+#   password: testnet-password
+#   pool-max-idle-per-host: 6
+# dynamic-peers:
+#   url: https://fullnode.testnet.sui.io:443
+#   interval: 45
+#   hostname: testnet-proxy.example.com
+#   # certificate-file and private-key omitted - will generate self-signed cert
+# static-peers:
+#   pub-keys:
+#     - name: testnet-validator-1
+#       peer-id: 1111111111111111111111111111111111111111111111111111111111111111
+# metrics-address: localhost:9184
+# histogram-address: localhost:9185

@@ -1,0 +1,40 @@
+version: "3.8"
+services:
+  #  ika-proxy:
+  #    image: ika-proxy:latest
+  #    volumes:
+  #      - ./proxy-docker-config.yaml:/etc/ika-proxy/config.yaml
+  #    ports:
+  #      - "8080:8080"
+  #      - "9184:9184"
+  #      - "9185:9185"
+  #    command: ["ika-proxy", "--config", "/etc/ika-proxy/config.yaml"]
+
+  mimir:
+    container_name: mimir
+    image: grafana/mimir:latest
+    ports:
+      - "9009:9009"
+    volumes:
+      - ./config/mimir.yaml:/etc/mimir/mimir.yaml
+    command:
+      - --config.file=/etc/mimir/mimir.yaml
+
+  grafana:
+    image: grafana/grafana:latest
+    pull_policy: always
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_USERS_DEFAULT_THEME=light
+      - GF_LOG_MODE=console
+      - GF_LOG_LEVEL=critical
+    volumes:
+      #      - ./grafana/grafana-provisioning-dashboards.yaml:/etc/grafana/provisioning/dashboards/provisioning-dashboards.yaml:ro
+      - ./config/grafana-datasource.yaml:/etc/grafana/provisioning/datasources/provisioning-datasources.yaml:ro
+      - grafana-storage:/var/lib/grafana
+    ports:
+      - "3000:3000"
+
+volumes:
+  grafana-storage:
