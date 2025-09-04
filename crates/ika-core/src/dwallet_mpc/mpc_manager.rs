@@ -17,7 +17,7 @@ use crate::dwallet_mpc::{
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
+use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, NetworkEncryptionKeyPublicData};
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
@@ -510,10 +510,10 @@ impl DWalletMPCManager {
                     for (key_id, res) in results {
                         match res {
                             Ok(key) => {
-                                if key.epoch != self.epoch_id {
+                                if key.epoch() != self.epoch_id {
                                     info!(
                                         key_id=?key_id,
-                                        epoch=?key.epoch,
+                                        epoch=?key.epoch(),
                                         "Network key epoch does not match current epoch, ignoring"
                                     );
 
