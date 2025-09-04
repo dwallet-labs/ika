@@ -2587,8 +2587,6 @@ public(package) fun request_dwallet_dkg(
         .pricing_and_fee_manager
         .get_pricing_value_for_protocol(curve, option::none(), DWALLET_DKG_PROTOCOL_FLAG);
 
-    // TODO(@Omer): check the state of the dWallet (i.e., not waiting for dkg.)
-    // TODO(@Omer): I believe the best thing would be to always use the latest key. I'm not sure why the user should even supply the id.
     assert!(
         self.dwallet_network_encryption_keys.contains(dwallet_network_encryption_key_id),
         EDWalletNetworkEncryptionKeyNotExist,
