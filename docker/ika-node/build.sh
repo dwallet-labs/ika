@@ -56,6 +56,5 @@ docker build -f "$DOCKERFILE" "$REPO_ROOT" \
   --build-arg BUILD_DATE="$BUILD_DATE" \
   --build-arg PROFILE="$PROFILE" \
   --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" \
-  --build-arg WITH_NETWORK_DKG="$WITH_NETWORK_DKG" \
   --tag "$DOCKER_TAG" \
   "$@"
