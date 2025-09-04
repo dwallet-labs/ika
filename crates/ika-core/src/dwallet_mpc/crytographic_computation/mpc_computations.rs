@@ -604,8 +604,6 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
-                        // TODO (#1492): Add support for all signatures schemes supported by crypto
-                        // private
                         let public_output_value = match data.signature_algorithm {
                             DWalletSignatureScheme::ECDSASecp256k1 => {
                                 let signature: ECDSASecp256k1Signature =
