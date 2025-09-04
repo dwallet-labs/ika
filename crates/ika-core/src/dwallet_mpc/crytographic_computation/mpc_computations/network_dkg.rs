@@ -106,7 +106,10 @@ async fn get_decryption_key_shares_from_public_output(
                 }
             }
             NetworkDecryptionKeyPublicOutputType::Reconfiguration => {
-                match &shares.latest_network_reconfiguration_public_output.unwrap() {
+                match &shares
+                    .latest_network_reconfiguration_public_output()
+                    .unwrap()
+                {
                     VersionedDecryptionKeyReconfigurationOutput::V1(public_output) => {
                         match bcs::from_bytes::<
                             <ReconfigurationSecp256k1Party as mpc::Party>::PublicOutput,
@@ -229,7 +232,7 @@ impl DwalletMPCNetworkKeys {
             .network_encryption_keys
             .get(key_id)
             .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?
-            .secp256k1_decryption_key_share_public_parameters
+            .secp256k1_decryption_key_share_public_parameters()
             .clone())
     }
 
@@ -239,7 +242,7 @@ impl DwalletMPCNetworkKeys {
             .get(key_id)
             .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?;
         let versioned_output = key_data
-            .latest_network_reconfiguration_public_output
+            .latest_network_reconfiguration_public_output()
             .clone();
         if versioned_output.is_none() {
             return Ok(match key_data.network_dkg_output() {
@@ -280,7 +283,7 @@ impl DwalletMPCNetworkKeys {
             );
             return Err(DwalletMPCError::WaitingForNetworkKey(*key_id));
         };
-        Ok(result.secp256k1_protocol_public_parameters.clone())
+        Ok(result.secp256k1_protocol_public_parameters().clone())
     }
 
     pub fn get_network_dkg_public_output(
@@ -303,7 +306,7 @@ impl DwalletMPCNetworkKeys {
             .network_encryption_keys
             .get(key_id)
             .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?
-            .latest_network_reconfiguration_public_output
+            .latest_network_reconfiguration_public_output()
             .clone())
     }
 }
