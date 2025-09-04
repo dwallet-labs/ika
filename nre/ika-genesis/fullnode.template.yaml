@@ -1,0 +1,60 @@
+# NOTE: this value is fake because of wrong validation,
+# it will be removed later.
+class-groups-key-pair-and-proof:
+  path: fake.key
+# Update this value to the location you want Sui to store its database.
+db-path: "/opt/ika/db"
+
+# For ipv4, update this to "/ip4/X.X.X.X/tcp/8080/http"
+network-address: "/dns/localhost/tcp/8080/http"
+metrics-address: "0.0.0.0:9184"
+sui-connector-config:
+  sui-rpc-url: SUI_RPC_URL
+  sui-chain-identifier: SUI_CHAIN_IDENTITY
+  ika-package-id: IKA_PACKAGE_ID
+  ika-system-package-id: IKA_SYSTEM_PACKAGE_ID
+  ika-system-object-id: IKA_SYSTEM_OBJECT_ID
+  notifier-client-key-pair:
+    path: /opt/ika/key-pairs/notifier.key
+p2p-config:
+  external-address: /dns/HOSTNAME/udp/8084
+  listen-address: "0.0.0.0:8084"
+  # add state-sync seed peers below
+  seed-peers:
+    SEED_PEERS
+  # todo(zeev): check if it's relevant?
+#      state-sync:
+#        checkpoint-content-timeout-ms: 10000
+#    end-of-epoch-broadcast-channel-capacity: 128
+
+authority-store-pruning-config:
+  num-latest-epoch-dbs-to-retain: 3
+  epoch-db-pruning-period-secs: 3600
+  num-epochs-to-retain: 1
+  max-checkpoints-in-batch: 10
+  max-transactions-in-batch: 1000
+  pruning-run-delay-seconds: 60
+
+state-archive-write-config:
+  concurrency: 0
+  use-for-pruning-watermark: false
+state-archive-read-config: [ ]
+  #authority-overload-config:
+  #max-txn-age-in-queue:
+  #  secs: 0
+  #  nanos: 500000000
+  #overload-monitor-interval:
+  #  secs: 10
+  #  nanos: 0
+  #execution-queue-latency-soft-limit:
+  #  secs: 1
+  #  nanos: 0
+  #execution-queue-latency-hard-limit:
+  #  secs: 10
+  #  nanos: 0
+  #max-load-shedding-percentage: 95
+#min-load-shedding-percentage-above-hard-limit: 50
+#safe-transaction-ready-rate: 100
+#check-system-overload-at-signing: true
+#max-transaction-manager-queue-length: 100000
+#max-transaction-manager-per-object-queue-length: 20
