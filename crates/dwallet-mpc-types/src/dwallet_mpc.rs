@@ -96,7 +96,8 @@ pub struct NetworkEncryptionKeyPublicData {
     Ord,
     PartialOrd,
 )]
-pub enum DWalletMPCNetworkKeyScheme {
+// useful to tell which protocol public parameters to use
+pub enum DWalletCurve {
     #[strum(to_string = "Secp256k1")]
     Secp256k1 = 0,
     #[strum(to_string = "Ristretto")]
@@ -123,15 +124,15 @@ pub enum DWalletMPCNetworkKeyScheme {
 )]
 pub enum DWalletSignatureScheme {
     #[strum(to_string = "Secp256k1")]
-    Secp256k1 = 0,
-    #[strum(to_string = "Secp256r1")]
-    Secp256r1 = 1,
-    #[strum(to_string = "EdDSA")]
-    EdDSA = 2,
-    #[strum(to_string = "SchnorrkelSubstrate")]
-    SchnorrkelSubstrate = 3,
+    ECDSASecp256k1 = 0,
     #[strum(to_string = "Taproot")]
-    Taproot = 4,
+    Taproot = 1,
+    #[strum(to_string = "Secp256r1")]
+    ECDSASecp256r1 = 2,
+    #[strum(to_string = "EdDSA")]
+    EdDSA = 3,
+    #[strum(to_string = "SchnorrkelSubstrate")]
+    SchnorrkelSubstrate = 4,
 }
 
 #[repr(u32)]
@@ -164,13 +165,13 @@ pub enum DwalletNetworkMPCError {
     InvalidDWalletMPCSignatureAlgorithm(u32),
 }
 
-impl TryFrom<u32> for DWalletMPCNetworkKeyScheme {
+impl TryFrom<u32> for DWalletCurve {
     type Error = DwalletNetworkMPCError;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(DWalletMPCNetworkKeyScheme::Secp256k1),
-            1 => Ok(DWalletMPCNetworkKeyScheme::Ristretto),
+            0 => Ok(DWalletCurve::Secp256k1),
+            1 => Ok(DWalletCurve::Ristretto),
             v => Err(DwalletNetworkMPCError::InvalidDWalletMPCNetworkKey(v)),
         }
     }
@@ -181,8 +182,8 @@ impl TryFrom<u32> for DWalletSignatureScheme {
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(DWalletSignatureScheme::Secp256k1),
-            1 => Ok(DWalletSignatureScheme::Secp256r1),
+            0 => Ok(DWalletSignatureScheme::ECDSASecp256k1),
+            1 => Ok(DWalletSignatureScheme::ECDSASecp256r1),
             2 => Ok(DWalletSignatureScheme::EdDSA),
             3 => Ok(DWalletSignatureScheme::SchnorrkelSubstrate),
             4 => Ok(DWalletSignatureScheme::Taproot),

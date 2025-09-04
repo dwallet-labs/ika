@@ -6,7 +6,7 @@ use crate::request_protocol_data::{
     network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data,
     partial_signature_verification_protocol_data, presign_protocol_data, sign_protocol_data,
 };
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
+use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
@@ -258,7 +258,7 @@ fn network_dkg_secp256k1_session_request(
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: network_encryption_key_dkg_protocol_data(
-            DWalletMPCNetworkKeyScheme::Secp256k1,
+            DWalletCurve::Secp256k1,
             deserialized_event.event_data.clone(),
         )?,
         epoch: deserialized_event.epoch,
@@ -277,7 +277,7 @@ fn network_dkg_ristretto_session_request(
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: network_encryption_key_dkg_protocol_data(
-            DWalletMPCNetworkKeyScheme::Ristretto,
+            DWalletCurve::Ristretto,
             deserialized_event.event_data.clone(),
         )?,
         epoch: deserialized_event.epoch,

@@ -27,7 +27,7 @@ use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
-    DWalletMPCNetworkKeyScheme, DWalletSignatureScheme,
+    DWalletCurve, DWalletSignatureScheme,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedSignOutput,
@@ -608,12 +608,12 @@ impl ProtocolCryptographicData {
                         // TODO (#1492): Add support for all signatures schemes supported by crypto
                         // private
                         let public_output_value = match data.curve {
-                            DWalletSignatureScheme::Secp256k1 => {
+                            DWalletSignatureScheme::ECDSASecp256k1 => {
                                 let signature: ECDSASecp256k1Signature =
                                     bcs::from_bytes(&public_output_value)?;
                                 signature.to_bytes().to_vec()
                             }
-                            DWalletSignatureScheme::Secp256r1 => {
+                            DWalletSignatureScheme::ECDSASecp256r1 => {
                                 let signature: ECDSASecp256r1Signature =
                                     bcs::from_bytes(&public_output_value)?;
                                 signature.to_bytes().to_vec()

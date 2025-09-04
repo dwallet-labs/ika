@@ -2,7 +2,7 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
+use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_mpc::{
@@ -50,7 +50,7 @@ async fn test_some_malicious_validators_flows_succeed() {
                 session_sequence_number: 1,
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
                     data: NetworkEncryptionKeyDkgData {
-                        key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        key_scheme: DWalletCurve::Secp256k1,
                     },
                     dwallet_network_encryption_key_id: network_key_id,
                 },
@@ -175,7 +175,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
                 session_sequence_number: 1,
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
                     data: NetworkEncryptionKeyDkgData {
-                        key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        key_scheme: DWalletCurve::Secp256k1,
                     },
                     dwallet_network_encryption_key_id: network_key_id,
                 },

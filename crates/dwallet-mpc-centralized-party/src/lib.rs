@@ -17,7 +17,7 @@ use class_groups::{
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
-    DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput,
+    DWalletCurve, SerializedWrappedMPCPublicOutput,
     VersionedCentralizedDKGPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput, VersionedDwalletUserSecretShare,
     VersionedEncryptedUserShare, VersionedImportedDWalletPublicOutput,
@@ -77,7 +77,7 @@ pub fn network_dkg_public_output_to_protocol_pp_inner(
 ) -> anyhow::Result<Vec<u8>> {
     let public_parameters = protocol_public_parameters_by_key_scheme(
         network_dkg_public_output,
-        DWalletMPCNetworkKeyScheme::Secp256k1 as u32,
+        DWalletCurve::Secp256k1 as u32,
     )?;
     Ok(bcs::to_bytes(&public_parameters)?)
 }
@@ -485,9 +485,9 @@ fn protocol_public_parameters_by_key_scheme(
     match &network_dkg_public_output {
         // TODO (#1473): Add support for V2 network keys.
         VersionedNetworkDkgOutput::V1(network_dkg_public_output) => {
-            let key_scheme = DWalletMPCNetworkKeyScheme::try_from(key_scheme)?;
+            let key_scheme = DWalletCurve::try_from(key_scheme)?;
             match key_scheme {
-                DWalletMPCNetworkKeyScheme::Secp256k1 => {
+                DWalletCurve::Secp256k1 => {
                     let network_dkg_public_output: <Secp256k1Party as mpc::Party>::PublicOutput =
                         bcs::from_bytes(network_dkg_public_output)?;
                     let encryption_scheme_public_parameters = network_dkg_public_output
@@ -527,17 +527,17 @@ fn protocol_public_parameters_by_key_scheme(
                     );
                     Ok(protocol_public_parameters)
                 }
-                DWalletMPCNetworkKeyScheme::Ristretto => {
+                DWalletCurve::Ristretto => {
                     // To add support here, we need to either make this
                     // function generic or have an enum over `ProtocolPublicParameters`.
                     todo!()
                 }
-                DWalletMPCNetworkKeyScheme::Secp256r1 => {
+                DWalletCurve::Secp256r1 => {
                     // To add support here, we need to either make this
                     // function generic or have an enum over `ProtocolPublicParameters`.
                     todo!()
                 }
-                DWalletMPCNetworkKeyScheme::Curve25519 => {
+                DWalletCurve::Curve25519 => {
                     todo!()
                 }
             }
