@@ -1,3 +1,6 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 use class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::{
     CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS, CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, MAX_PRIMES,
     construct_knowledge_of_decryption_key_public_parameters_per_crt_prime,
@@ -11,7 +14,7 @@ use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, ClassGroupsProof};
 use serde::{Deserialize, Serialize};
 
 pub type ClassGroupsDecryptionKey = [Uint<{ CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS }>; MAX_PRIMES];
-type AsyncProtocol = twopc_mpc::secp256k1::class_groups::AsyncProtocol;
+type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 pub type DKGDecentralizedOutput =
     <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 pub type SingleEncryptionKeyAndProof = (

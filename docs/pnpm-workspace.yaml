@@ -1,0 +1,3 @@
+# Override parent workspace - docs only
+packages:
+  - '.'

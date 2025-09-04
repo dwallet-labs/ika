@@ -1,19 +1,5 @@
 {
-	"entryPoints": [
-		"src/bcs",
-		"src/client",
-		"src/cryptography",
-		"src/faucet",
-		"src/graphql",
-		"src/keypairs/ed25519",
-		"src/keypairs/secp256k1",
-		"src/keypairs/secp256k1",
-		"src/multisig",
-		"src/transactions",
-		"src/utils",
-		"src/verify",
-		"src/zklogin"
-	],
+	"entryPoints": ["src"],
 	"excludeInternal": true,
 	"excludePrivate": true,
 	"intentionallyNotExported": []

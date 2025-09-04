@@ -10,6 +10,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use strum_macros::{AsRefStr, IntoStaticStr};
+use sui_types::digests::TransactionDigest;
 use thiserror::Error;
 use tonic::Status;
 use typed_store_error::TypedStoreError;
@@ -224,8 +225,8 @@ pub enum IkaError {
     #[error("Sui Client internal error: {0}")]
     SuiClientInternalError(String),
 
-    #[error("Sui Client sui transaction failure due to generic error: {0}")]
-    SuiClientTxFailureGeneric(String),
+    #[error("Sui Client sui transaction {0} failure due to generic error: {1}")]
+    SuiClientTxFailureGeneric(TransactionDigest, String),
 
     // Sui Connector
     #[error("Sui Connector failure to serialize: {0}")]

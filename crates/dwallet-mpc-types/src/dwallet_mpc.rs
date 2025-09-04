@@ -1,7 +1,11 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use thiserror::Error;
+use twopc_mpc::class_groups::{DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput};
+use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
 /// Alias for an MPC message.
 pub type MPCMessage = Vec<u8>;
@@ -18,78 +22,264 @@ pub type MPCPublicInput = Vec<u8>;
 /// Alias for MPC private input.
 pub type MPCPrivateInput = Option<Vec<u8>>;
 
-/// Possible statuses of an MPC Session:
-///
-/// - `Pending`:
-///   The instance is queued because the maximum number of active MPC instances
-///   [`DWalletMPCManager::max_active_mpc_instances`] has been reached.
-///   It is waiting for active instances to complete before activation.
-///
-/// - `Active`:
-///   The session is currently running, and new messages are forwarded to it
-///   for processing.
-///
-/// - `Finished`:
-///   The session has been removed from the active instances.
-///   Incoming messages are no longer forwarded to the session,
-///   but they are not flagged as malicious.
-///
-/// - `Failed`:
-///   The session has failed due to an unrecoverable error.
-///   This status indicates that the session cannot proceed further.
-#[derive(Clone, PartialEq, Debug)]
-pub enum MPCSessionStatus {
-    Active,
-    ComputationCompleted,
-    Completed,
-    Failed,
-}
-
-impl fmt::Display for MPCSessionStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MPCSessionStatus::Active => write!(f, "Active"),
-            MPCSessionStatus::ComputationCompleted => write!(f, "Computation Completed"),
-            MPCSessionStatus::Completed => write!(f, "Completed"),
-            MPCSessionStatus::Failed => write!(f, "Failed"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum NetworkDecryptionKeyPublicOutputType {
     NetworkDkg,
     Reconfiguration,
 }
 
+pub type DKGDecentralizedPartyOutputSecp256k1 = DKGDecentralizedPartyOutput<
+    { twopc_mpc::secp256k1::SCALAR_LIMBS },
+    { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::secp256k1::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyVersionedOutputSecp256k1 = DKGDecentralizedPartyVersionedOutput<
+    { twopc_mpc::secp256k1::SCALAR_LIMBS },
+    { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::secp256k1::GroupElement,
+>;
+
 /// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
 /// Created for each DKG protocol and modified for each Reconfiguration Protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NetworkEncryptionKeyPublicData {
+pub struct NetworkEncryptionKeyPublicDataV1 {
     /// The epoch of the last version update.
     pub epoch: u64,
 
     pub state: NetworkDecryptionKeyPublicOutputType,
-    /// The public output of the `latest` decryption key update (NetworkDKG/Reconfiguration).
-    pub latest_public_output: VersionedNetworkDkgOutput,
-
+    /// The public output of the `latest` decryption key update (Reconfiguration).
+    pub latest_network_reconfiguration_public_output:
+        Option<VersionedDecryptionKeyReconfigurationOutput>,
     /// The public parameters of the decryption key shares,
     /// updated only after a successful network DKG or Reconfiguration.
-    pub decryption_key_share_public_parameters:
+    pub secp256k1_decryption_key_share_public_parameters:
         class_groups::Secp256k1DecryptionKeySharePublicParameters,
-
-    pub protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-
     /// The public output of the `NetworkDKG` process (the first and only one).
     /// On first instance it will be equal to `latest_public_output`.
     pub network_dkg_output: VersionedNetworkDkgOutput,
+    pub secp256k1_protocol_public_parameters:
+        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+}
+
+pub trait NetworkEncryptionKeyPublicData {
+    fn epoch(&self) -> u64;
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters;
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput;
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType;
+    fn latest_network_reconfiguration_public_output(
+        &self,
+    ) -> Option<VersionedDecryptionKeyReconfigurationOutput>;
+    fn secp256k1_protocol_public_parameters(
+        &self,
+    ) -> twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+}
+
+impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV1 {
+    fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
+        self.secp256k1_decryption_key_share_public_parameters
+            .clone()
+    }
+
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
+        &self.network_dkg_output
+    }
+
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
+        &self.state
+    }
+
+    fn latest_network_reconfiguration_public_output(
+        &self,
+    ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
+        self.latest_network_reconfiguration_public_output.clone()
+    }
+
+    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
+        self.secp256k1_protocol_public_parameters.clone()
+    }
+}
+
+impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV2 {
+    fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
+        self.secp256k1_decryption_key_share_public_parameters
+            .clone()
+    }
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
+        &self.network_dkg_output
+    }
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
+        &self.state
+    }
+
+    fn latest_network_reconfiguration_public_output(
+        &self,
+    ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
+        self.latest_network_reconfiguration_public_output.clone()
+    }
+
+    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
+        self.secp256k1_protocol_public_parameters.clone()
+    }
+}
+
+impl NetworkEncryptionKeyPublicData for VersionedNetworkEncryptionKeyPublicData {
+    fn epoch(&self) -> u64 {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => data.epoch(),
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => data.epoch(),
+        }
+    }
+
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => {
+                data.secp256k1_decryption_key_share_public_parameters()
+            }
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => {
+                data.secp256k1_decryption_key_share_public_parameters()
+            }
+        }
+    }
+
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => data.network_dkg_output(),
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => data.network_dkg_output(),
+        }
+    }
+
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => data.state(),
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => data.state(),
+        }
+    }
+
+    fn latest_network_reconfiguration_public_output(
+        &self,
+    ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => {
+                data.latest_network_reconfiguration_public_output()
+            }
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => {
+                data.latest_network_reconfiguration_public_output()
+            }
+        }
+    }
+
+    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
+        match self {
+            VersionedNetworkEncryptionKeyPublicData::V1(data) => {
+                data.secp256k1_protocol_public_parameters()
+            }
+            VersionedNetworkEncryptionKeyPublicData::V2(data) => {
+                data.secp256k1_protocol_public_parameters()
+            }
+        }
+    }
+}
+
+#[enum_dispatch(NetworkEncryptionKeyPublicData)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VersionedNetworkEncryptionKeyPublicData {
+    V1(NetworkEncryptionKeyPublicDataV1),
+    V2(NetworkEncryptionKeyPublicDataV2),
+}
+
+/// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
+/// Created for each DKG protocol and modified for each Reconfiguration Protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkEncryptionKeyPublicDataV2 {
+    /// The epoch of the last version update.
+    pub epoch: u64,
+
+    pub state: NetworkDecryptionKeyPublicOutputType,
+    /// The public output of the `latest` decryption key update (Reconfiguration).
+    pub latest_network_reconfiguration_public_output:
+        Option<VersionedDecryptionKeyReconfigurationOutput>,
+    /// The public output of the `NetworkDKG` process (the first and only one).
+    /// On first instance it will be equal to `latest_public_output`.
+    pub network_dkg_output: VersionedNetworkDkgOutput,
+    pub secp256k1_protocol_public_parameters:
+        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    /// The public parameters of the decryption key shares,
+    /// updated only after a successful network DKG or Reconfiguration.
+    pub secp256k1_decryption_key_share_public_parameters:
+        class_groups::Secp256k1DecryptionKeySharePublicParameters,
+    pub secp256r1_protocol_public_parameters:
+        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    pub secp256r1_decryption_key_share_public_parameters:
+        class_groups::Secp256r1DecryptionKeySharePublicParameters,
+    pub ristretto_protocol_public_parameters:
+        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    pub ristretto_decryption_key_share_public_parameters:
+        class_groups::RistrettoDecryptionKeySharePublicParameters,
+    pub curve25519_protocol_public_parameters:
+        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+    pub curve25519_decryption_key_share_public_parameters:
+        class_groups::Curve25519DecryptionKeySharePublicParameters,
 }
 
 #[repr(u32)]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash, Copy)]
+#[derive(
+    strum_macros::Display,
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Eq,
+    Hash,
+    Copy,
+    Ord,
+    PartialOrd,
+)]
 pub enum DWalletMPCNetworkKeyScheme {
+    #[strum(to_string = "Secp256k1")]
     Secp256k1 = 0,
+    #[strum(to_string = "Ristretto")]
     Ristretto = 1,
+    #[strum(to_string = "Secp256r1")]
+    Secp256r1 = 2,
+}
+
+#[repr(u32)]
+#[derive(
+    strum_macros::Display,
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Eq,
+    Hash,
+    Copy,
+    Ord,
+    PartialOrd,
+)]
+pub enum SignatureAlgorithm {
+    #[strum(to_string = "ECDSA")]
+    ECDSA,
 }
 
 // We can't import ika-types here since we import this module in there.
@@ -98,6 +288,9 @@ pub enum DWalletMPCNetworkKeyScheme {
 pub enum DwalletNetworkMPCError {
     #[error("invalid DWalletMPCNetworkKey value: {0}")]
     InvalidDWalletMPCNetworkKey(u32),
+
+    #[error("invalid DWalletMPCSignatureAlgorithm value: {0}")]
+    InvalidDWalletMPCSignatureAlgorithm(u32),
 }
 
 impl TryFrom<u32> for DWalletMPCNetworkKeyScheme {
@@ -108,6 +301,19 @@ impl TryFrom<u32> for DWalletMPCNetworkKeyScheme {
             0 => Ok(DWalletMPCNetworkKeyScheme::Secp256k1),
             1 => Ok(DWalletMPCNetworkKeyScheme::Ristretto),
             v => Err(DwalletNetworkMPCError::InvalidDWalletMPCNetworkKey(v)),
+        }
+    }
+}
+
+impl TryFrom<u32> for SignatureAlgorithm {
+    type Error = DwalletNetworkMPCError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(SignatureAlgorithm::ECDSA),
+            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCSignatureAlgorithm(
+                v,
+            )),
         }
     }
 }
@@ -127,6 +333,7 @@ pub enum VersionedDwalletDKGFirstRoundPublicOutput {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedDwalletDKGSecondRoundPublicOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -144,9 +351,10 @@ pub enum VersionedNetworkDkgOutput {
     V1(MPCPublicOutput),
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedDecryptionKeyReconfigurationOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -157,6 +365,7 @@ pub enum VersionedPublicKeyShareAndProof {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedCentralizedDKGPublicOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

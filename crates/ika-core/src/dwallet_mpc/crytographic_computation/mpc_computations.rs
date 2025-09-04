@@ -1,18 +1,54 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_mpc::mpc_session::MPCRoundToMessagesHashMap;
-use commitment::CommitmentSizedNumber;
-use group::PartyID;
-use ika_types::dwallet_mpc_error::DwalletMPCResult;
-use itertools::Itertools;
-use mpc::{
-    AsynchronouslyAdvanceable, GuaranteedOutputDeliveryParty, GuaranteedOutputDeliveryRoundResult,
-    WeightedThresholdAccessStructure,
+use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
+use crate::dwallet_mpc::dwallet_dkg::{
+    DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
 };
-use rand_chacha::ChaCha20Rng;
-use std::collections::hash_map::Entry::Vacant;
-use std::collections::{HashMap, HashSet};
+use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
+use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
+use crate::dwallet_mpc::mpc_session::PublicInput;
+use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, advance_network_dkg};
+use crate::dwallet_mpc::presign::PresignParty;
+use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
+use crate::dwallet_mpc::reconfiguration::{
+    ReconfigurationSecp256k1Party, ReconfigurationV1toV2Secp256k1Party,
+    ReconfigurationV2Secp256k1Party,
+};
+use crate::dwallet_mpc::sign::SignParty;
+use crate::dwallet_session_request::DWalletSessionRequestMetricData;
+use crate::request_protocol_data::{
+    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
+    NetworkEncryptionKeyV2ReconfigurationData, ProtocolData,
+};
+use anyhow::anyhow;
+use class_groups::dkg::Secp256k1Party;
+use commitment::CommitmentSizedNumber;
+use dwallet_classgroups_types::ClassGroupsDecryptionKey;
+use dwallet_mpc_types::dwallet_mpc::{
+    DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
+    DWalletMPCNetworkKeyScheme, VersionedDWalletImportedKeyVerificationOutput,
+    VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
+    VersionedDwalletDKGSecondRoundPublicOutput, VersionedPresignOutput, VersionedSignOutput,
+};
+use dwallet_rng::RootSeed;
+use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
+use mpc::guaranteed_output_delivery::{Party, ReadyToAdvanceResult};
+use mpc::{
+    GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
+};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::error;
+use twopc_mpc::Protocol;
+use twopc_mpc::class_groups::{
+    DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
+};
+use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
+use twopc_mpc::sign::EncodableSignature;
 
 pub(crate) mod dwallet_dkg;
 pub(crate) mod network_dkg;
@@ -20,656 +56,721 @@ pub(crate) mod presign;
 pub(crate) mod reconfiguration;
 pub(crate) mod sign;
 
-/// This function iterates over the messages from different parties sent for
-/// different MPC rounds, ordered by the consensus round they were received.
-///
-/// It builds a list of messages to advance the current round `current_mpc_round`,
-/// using all the messages from the first consensus round to the first that satisfies the
-/// following conditions:
-/// - a quorum of messages from the previous round `current_mpc_round — 1` must exist
-///   (except for the first round, which is always ready to advance requiring no messages as input.)
-/// - a minimum number of consensus rounds that was required to delay the execution
-///   (to allow more messages to come in before advancing)
-///   has passed since the first consensus round where we got a quorum for this round.
-/// - This quorum must be "fresh", in the sense we never tried to advance with it before.
-///   There is only one case in which we attempt to advance the same round twice:
-///   when we get a threshold not reached error.
-///   Therefore, if such an error occurred for a consensus round, we don't stop the search,
-///   and wait for at least one new message to come in a later consensus round before returning
-///   the messages to advance with.
-///
-/// Duplicate messages are ignored — the first message a party has sent for an MPC round
-/// is always used.
-pub(crate) fn build_messages_to_advance(
-    current_mpc_round: u64,
-    rounds_to_delay: u64,
-    mpc_round_to_threshold_not_reached_consensus_rounds: HashMap<u64, HashSet<u64>>,
-    mut messages_by_consensus_round: HashMap<u64, MPCRoundToMessagesHashMap>,
-    access_structure: &WeightedThresholdAccessStructure,
-) -> Option<(Option<u64>, MPCRoundToMessagesHashMap)> {
-    // The first round needs no messages as input, and is always ready to advance.
-    if current_mpc_round == 1 {
-        return Some((None, HashMap::new()));
-    }
+impl ProtocolCryptographicData {
+    pub fn try_new_mpc(
+        protocol_specific_data: &ProtocolData,
+        party_id: PartyID,
+        access_structure: &WeightedThresholdAccessStructure,
+        consensus_round: u64,
+        serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
+        public_input: PublicInput,
+        network_dkg_third_round_delay: u64,
+        decryption_key_reconfiguration_third_round_delay: u64,
+        class_groups_decryption_key: ClassGroupsDecryptionKey,
+        decryption_key_shares: &Box<DwalletMPCNetworkKeys>,
+    ) -> Result<Option<Self>, DwalletMPCError> {
+        let res = match protocol_specific_data {
+            ProtocolData::ImportedKeyVerification { data, .. } => {
+                let PublicInput::DWalletImportedKeyVerificationRequest(public_input) = public_input
+                else {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                };
 
-    let threshold_not_reached_consensus_rounds_for_current_mpc_round =
-        mpc_round_to_threshold_not_reached_consensus_rounds
-            .get(&current_mpc_round)
-            .cloned()
-            .unwrap_or_default();
-    let mut delayed_rounds = 0;
-    let mut got_new_messages_since_last_threshold_not_reached = false;
-    let mut messages_for_advance: MPCRoundToMessagesHashMap = HashMap::new();
+                let advance_request_result =
+                    Party::<DWalletImportedKeyVerificationParty>::ready_to_advance(
+                        party_id,
+                        access_structure,
+                        consensus_round,
+                        HashMap::new(),
+                        &serialized_messages_by_consensus_round,
+                    )?;
 
-    // Make sure the messages are consecutive by inserting the default value (i.e. empty message map) for missing rounds.
-    // This is just an extra step, as we should update sessions in every consensus round even if no new message were received.
-    // It is important for computing delay.
-    if let Some(&first_consensus_round) = messages_by_consensus_round.keys().min() {
-        if let Some(&last_consensus_round) = messages_by_consensus_round.keys().max() {
-            for consensus_round in first_consensus_round..=last_consensus_round {
-                messages_by_consensus_round
-                    .entry(consensus_round)
-                    .or_default();
+                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
+                else {
+                    return Ok(None);
+                };
+
+                ProtocolCryptographicData::ImportedKeyVerification {
+                    data: data.clone(),
+                    public_input: public_input.clone(),
+                    advance_request,
+                }
             }
-        }
+            ProtocolData::DKGFirst { data, .. } => {
+                let PublicInput::DKGFirst(public_input) = public_input else {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                };
+
+                let advance_request_result = Party::<DWalletDKGFirstParty>::ready_to_advance(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::new(),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
+                else {
+                    return Ok(None);
+                };
+
+                ProtocolCryptographicData::DKGFirst {
+                    data: data.clone(),
+                    public_input: public_input.clone(),
+                    advance_request,
+                }
+            }
+            ProtocolData::DKGSecond {
+                data,
+                first_round_output,
+                ..
+            } => {
+                let PublicInput::DKGSecond(public_input) = public_input else {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                };
+
+                let advance_request_result = Party::<DWalletDKGSecondParty>::ready_to_advance(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::new(),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
+                else {
+                    return Ok(None);
+                };
+
+                ProtocolCryptographicData::DKGSecond {
+                    data: data.clone(),
+                    public_input: public_input.clone(),
+                    advance_request,
+                    first_round_output: first_round_output.clone(),
+                }
+            }
+            ProtocolData::Presign { data, .. } => {
+                let PublicInput::Presign(public_input) = public_input else {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                };
+
+                let advance_request_result = Party::<PresignParty>::ready_to_advance(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::new(),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
+                else {
+                    return Ok(None);
+                };
+
+                ProtocolCryptographicData::Presign {
+                    data: data.clone(),
+                    public_input: public_input.clone(),
+                    advance_request,
+                }
+            }
+            ProtocolData::Sign {
+                data,
+                dwallet_network_encryption_key_id,
+                ..
+            } => {
+                let PublicInput::Sign(public_input) = public_input else {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                };
+
+                let advance_request_result = Party::<SignParty>::ready_to_advance(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::new(),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
+                else {
+                    return Ok(None);
+                };
+
+                let decryption_key_shares = decryption_key_shares
+                    .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
+
+                ProtocolCryptographicData::Sign {
+                    data: data.clone(),
+                    public_input: public_input.clone(),
+                    advance_request,
+                    decryption_key_shares: decryption_key_shares.clone(),
+                }
+            }
+            ProtocolData::NetworkEncryptionKeyDkg {
+                data: NetworkEncryptionKeyDkgData { key_scheme },
+                ..
+            } => {
+                let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                };
+
+                let advance_request_result = Party::<Secp256k1Party>::ready_to_advance(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::from([(3, network_dkg_third_round_delay)]),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
+                else {
+                    return Ok(None);
+                };
+
+                ProtocolCryptographicData::NetworkEncryptionKeyDkg {
+                    data: NetworkEncryptionKeyDkgData {
+                        key_scheme: key_scheme.clone(),
+                    },
+                    public_input: public_input.clone(),
+                    advance_request,
+                    class_groups_decryption_key,
+                }
+            }
+            ProtocolData::NetworkEncryptionKeyReconfiguration {
+                data,
+                dwallet_network_encryption_key_id,
+            } => match public_input {
+                PublicInput::NetworkEncryptionKeyReconfigurationV1(public_input) => {
+                    let advance_request_result =
+                        Party::<ReconfigurationSecp256k1Party>::ready_to_advance(
+                            party_id,
+                            access_structure,
+                            consensus_round,
+                            HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
+                            &serialized_messages_by_consensus_round,
+                        )?;
+
+                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                        advance_request_result
+                    else {
+                        return Ok(None);
+                    };
+
+                    let decryption_key_shares = decryption_key_shares
+                        .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
+
+                    ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
+                        data: data.clone(),
+                        public_input: public_input.clone(),
+                        advance_request,
+                        decryption_key_shares: decryption_key_shares.clone(),
+                    }
+                }
+                PublicInput::NetworkEncryptionKeyReconfigurationV1ToV2(public_input) => {
+                    let advance_request_result =
+                        Party::<ReconfigurationV1toV2Secp256k1Party>::ready_to_advance(
+                            party_id,
+                            access_structure,
+                            consensus_round,
+                            HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
+                            &serialized_messages_by_consensus_round,
+                        )?;
+
+                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                        advance_request_result
+                    else {
+                        return Ok(None);
+                    };
+
+                    let decryption_key_shares = decryption_key_shares
+                        .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
+
+                    ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
+                        data: NetworkEncryptionKeyV1ToV2ReconfigurationData {},
+                        public_input: public_input.clone(),
+                        advance_request,
+                        decryption_key_shares: decryption_key_shares.clone(),
+                    }
+                }
+                PublicInput::NetworkEncryptionKeyReconfigurationV2(public_input) => {
+                    let advance_request_result =
+                        Party::<ReconfigurationV2Secp256k1Party>::ready_to_advance(
+                            party_id,
+                            access_structure,
+                            consensus_round,
+                            HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
+                            &serialized_messages_by_consensus_round,
+                        )?;
+
+                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                        advance_request_result
+                    else {
+                        return Ok(None);
+                    };
+
+                    let decryption_key_shares = decryption_key_shares
+                        .get_decryption_key_shares(dwallet_network_encryption_key_id)?;
+
+                    ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration {
+                        data: NetworkEncryptionKeyV2ReconfigurationData {},
+                        public_input: public_input.clone(),
+                        advance_request,
+                        decryption_key_shares: decryption_key_shares.clone(),
+                    }
+                }
+                _ => {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                }
+            },
+            _ => {
+                return Err(DwalletMPCError::InvalidDWalletProtocolType);
+            }
+        };
+        Ok(Some(res))
     }
 
-    let sorted_messages_by_consensus_round = messages_by_consensus_round
-        .clone()
-        .into_iter()
-        .sorted_by(|(first_consensus_round, _), (second_consensus_round, _)| {
-            first_consensus_round.cmp(second_consensus_round)
-        });
+    pub(crate) fn compute_mpc(
+        self,
+        party_id: PartyID,
+        access_structure: &WeightedThresholdAccessStructure,
+        mpc_round: u64,
+        consensus_round: u64,
+        session_identifier: SessionIdentifier,
+        root_seed: RootSeed,
+        dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        protocol_config: &ProtocolConfig,
+    ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+        let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
 
-    for (consensus_round, consensus_round_messages) in sorted_messages_by_consensus_round {
-        // Update messages to advance the current round by joining the messages
-        // received at the current consensus round
-        // with the ones we collected so far, ignoring duplicates.
-        for (mpc_round, mpc_round_messages) in consensus_round_messages {
-            if mpc_round < current_mpc_round {
-                for (sender_party_id, message) in mpc_round_messages {
-                    let mpc_round_messages_map = messages_for_advance.entry(mpc_round).or_default();
+        dwallet_mpc_metrics.add_advance_mpc_call(&protocol_metadata, &mpc_round.to_string());
 
-                    if let Vacant(e) = mpc_round_messages_map.entry(sender_party_id) {
-                        // Always take the first message sent in consensus by a
-                        // particular party for a particular round.
-                        e.insert(message);
-                        got_new_messages_since_last_threshold_not_reached = true;
+        let session_id = CommitmentSizedNumber::from_le_slice(&session_identifier.into_bytes());
+
+        // Derive a one-time use, MPC protocol and round specific, deterministic random generator
+        // from the private seed.
+        // This should only be used to `advance()` this specific round, and is guaranteed to be
+        // deterministic — if we attempt to run the round twice, the same message will be generated.
+        // SECURITY NOTICE: don't use for anything else other than (this particular) `advance()`,
+        // and keep private!
+        let mut rng = root_seed.mpc_round_rng(session_id, mpc_round, consensus_round);
+
+        match self {
+            ProtocolCryptographicData::ImportedKeyVerification {
+                public_input,
+                data,
+                advance_request,
+                ..
+            } => {
+                let result =
+                    Party::<DWalletImportedKeyVerificationParty>::advance_with_guaranteed_output(
+                        session_id,
+                        party_id,
+                        access_structure,
+                        advance_request,
+                        None,
+                        &public_input,
+                        &mut rng,
+                    )?;
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // Verify the encrypted share before finalizing, guaranteeing a two-for-one
+                        // computation of both that the key import was successful, and
+                        // the encrypted user share is valid.
+                        verify_encrypted_share(
+                            &data.encrypted_centralized_secret_share_and_proof,
+                            &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
+                                public_output_value.clone(),
+                            ))?,
+                            &data.encryption_key,
+                            public_input.protocol_public_parameters.clone(),
+                        )?;
+
+                        // Wrap the public output with its version.
+                        let public_output_value = bcs::to_bytes(
+                            &VersionedDWalletImportedKeyVerificationOutput::V1(public_output_value),
+                        )?;
+
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
                     }
                 }
             }
-        }
+            ProtocolCryptographicData::DKGFirst {
+                public_input,
+                advance_request,
+                ..
+            } => {
+                let result = Party::<DWalletDKGFirstParty>::advance_with_guaranteed_output(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    None,
+                    &public_input,
+                    &mut rng,
+                )?;
 
-        // Check if we have the threshold of messages for the previous round
-        // to advance to the next round.
-        let is_quorum_reached = if let Some(previous_round_messages) =
-            messages_for_advance.get(&(current_mpc_round - 1))
-        {
-            let previous_round_message_senders: HashSet<PartyID> =
-                previous_round_messages.keys().cloned().collect();
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        let output_with_session_id =
+                            bcs::to_bytes(&(public_output_value, session_id))?;
+                        // Wrap the public output with its version.
+                        let public_output_value = bcs::to_bytes(
+                            &VersionedDwalletDKGFirstRoundPublicOutput::V1(output_with_session_id),
+                        )?;
 
-            access_structure
-                .is_authorized_subset(&previous_round_message_senders)
-                .is_ok()
-        } else {
-            false
-        };
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
+            ProtocolCryptographicData::DKGSecond {
+                public_input,
+                data,
+                advance_request,
+                first_round_output,
+                ..
+            } => {
+                // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
+                let session_id = match bcs::from_bytes(&first_round_output)? {
+                    VersionedDwalletDKGFirstRoundPublicOutput::V1(output) => {
+                        let (_, session_id) =
+                            bcs::from_bytes::<(Vec<u8>, CommitmentSizedNumber)>(&output)?;
+                        session_id
+                    }
+                };
+                let result = Party::<DWalletDKGSecondParty>::advance_with_guaranteed_output(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    None,
+                    &public_input.clone(),
+                    &mut rng,
+                )?;
 
-        if is_quorum_reached {
-            if delayed_rounds != rounds_to_delay {
-                // Wait for the delay.
-                // We set the map of messages by consensus round at each consensus round for
-                // each session, even if no messages were received, so this count is
-                // accurate as iterating the messages by consensus round goes through all
-                // consensus rounds to date.
-                delayed_rounds += 1;
-            } else if threshold_not_reached_consensus_rounds_for_current_mpc_round
-                .contains(&consensus_round)
-            {
-                // We already tried executing this MPC round at the current consensus round, no point in trying again.
-                // Wait for new messages in later rounds before retrying.
-                got_new_messages_since_last_threshold_not_reached = false;
-            } else if got_new_messages_since_last_threshold_not_reached {
-                // We have a quorum of previous round messages,
-                // we delayed the execution as and if required,
-                // and we know we haven't tried to advance the current MPC round with this
-                // set of messages, so we have a chance at advancing (and reaching threshold):
-                // Let's try advancing with this set of messages!
-                return Some((Some(consensus_round), messages_for_advance));
+                if let GuaranteedOutputDeliveryRoundResult::Finalize {
+                    public_output_value,
+                    ..
+                } = &result
+                {
+                    // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
+                    let decentralized_output = match bcs::from_bytes(&public_output_value)? {
+                        DKGDecentralizedPartyVersionedOutput::<
+                            { group::secp256k1::SCALAR_LIMBS },
+                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                            {
+                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
+                            },
+                            group::secp256k1::GroupElement,
+                        >::UniversalPublicDKGOutput {
+                            output: dkg_output,
+                            ..
+                        } => dkg_output,
+                        DKGDecentralizedPartyVersionedOutput::<
+                            { group::secp256k1::SCALAR_LIMBS },
+                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                            {
+                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
+                            },
+                            group::secp256k1::GroupElement,
+                        >::TargetedPublicDKGOutput(output) => output,
+                    };
+                    verify_encrypted_share(
+                        &data.encrypted_centralized_secret_share_and_proof,
+                        // TODO (#1482): Check the protocol config and use this hack only for V1
+                        // DWallets.
+                        &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
+                            bcs::to_bytes(&decentralized_output)?,
+                        ))?,
+                        &data.encryption_key,
+                        public_input.protocol_public_parameters.clone(),
+                    )?;
+                }
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
+                        let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
+                        let decentralized_output = match decentralized_output {
+                            DKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
+                                output, ..
+                            } => output,
+                            DKGDecentralizedPartyVersionedOutputSecp256k1::TargetedPublicDKGOutput (
+                                output
+                            ) => output,
+                        };
+                        let public_output_value =
+                            bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
+                                bcs::to_bytes(&decentralized_output).unwrap(),
+                            ))?;
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
+            ProtocolCryptographicData::Presign {
+                public_input,
+                advance_request,
+                ..
+            } => {
+                let result = Party::<PresignParty>::advance_with_guaranteed_output(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    None,
+                    &public_input,
+                    &mut rng,
+                )?;
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // Wrap the public output with its version.
+                        let public_output_value =
+                            bcs::to_bytes(&VersionedPresignOutput::V1(public_output_value))?;
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
+            ProtocolCryptographicData::Sign {
+                public_input,
+                advance_request,
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    // Todo (#1408): Return update_expected_decrypters_metrics
+                }
+
+                let result = Party::<SignParty>::advance_with_guaranteed_output(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    Some(decryption_key_shares),
+                    &public_input,
+                    &mut rng,
+                )?;
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // TODO (#1492): Add support for all signatures schemes supported by crypto
+                        // private
+                        let public_output_value = match data.curve {
+                            DWalletMPCNetworkKeyScheme::Secp256k1 => {
+                                let signature: ECDSASecp256k1Signature =
+                                    bcs::from_bytes(&public_output_value)?;
+                                signature.to_bytes().to_vec()
+                            }
+                            DWalletMPCNetworkKeyScheme::Secp256r1 => {
+                                let signature: ECDSASecp256r1Signature =
+                                    bcs::from_bytes(&public_output_value)?;
+                                signature.to_bytes().to_vec()
+                            }
+                            _ => {
+                                return Err(DwalletMPCError::InvalidDWalletProtocolType);
+                            }
+                        };
+
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
+            ProtocolCryptographicData::NetworkEncryptionKeyDkg {
+                data,
+                public_input,
+                advance_request,
+                class_groups_decryption_key,
+                ..
+            } => advance_network_dkg(
+                session_id,
+                access_structure,
+                &PublicInput::NetworkEncryptionKeyDkg(public_input),
+                party_id,
+                &data.key_scheme,
+                advance_request,
+                class_groups_decryption_key,
+                &protocol_config,
+                &mut rng,
+            ),
+            ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
+                public_input,
+                advance_request,
+                decryption_key_shares,
+                ..
+            } => {
+                let result =
+                    Party::<ReconfigurationSecp256k1Party>::advance_with_guaranteed_output(
+                        session_id,
+                        party_id,
+                        access_structure,
+                        advance_request,
+                        Some(decryption_key_shares.clone()),
+                        &public_input,
+                        &mut rng,
+                    )?;
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // Wrap the public output with its version.
+                        let public_output_value = bcs::to_bytes(
+                            &VersionedDecryptionKeyReconfigurationOutput::V1(public_output_value),
+                        )?;
+
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
+            ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
+                public_input,
+                advance_request,
+                decryption_key_shares,
+                ..
+            } => {
+                let result =
+                    Party::<ReconfigurationV1toV2Secp256k1Party>::advance_with_guaranteed_output(
+                        session_id,
+                        party_id,
+                        access_structure,
+                        advance_request,
+                        Some(decryption_key_shares.clone()),
+                        &public_input,
+                        &mut rng,
+                    )?;
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // Wrap the public output with its version.
+                        let public_output_value = bcs::to_bytes(
+                            &VersionedDecryptionKeyReconfigurationOutput::V2(public_output_value),
+                        )?;
+
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
+            ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration {
+                public_input,
+                advance_request,
+                decryption_key_shares,
+                ..
+            } => {
+                let result =
+                    Party::<ReconfigurationV2Secp256k1Party>::advance_with_guaranteed_output(
+                        session_id,
+                        party_id,
+                        access_structure,
+                        advance_request,
+                        Some(decryption_key_shares.clone()),
+                        &public_input,
+                        &mut rng,
+                    )?;
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // Wrap the public output with its version.
+                        let public_output_value = bcs::to_bytes(
+                            &VersionedDecryptionKeyReconfigurationOutput::V2(public_output_value),
+                        )?;
+
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
+            _ => {
+                error!(
+                    session_type=?protocol_metadata,
+                    session_identifier=?session_identifier,
+                    "Invalid session type for mpc computation");
+                Err(DwalletMPCError::InvalidDWalletProtocolType)
             }
         }
-    }
-
-    // If we reached here, we either got no quorum of previous round messages,
-    // or we need to delay execution further,
-    // or we need to wait for more messages before retrying after a threshold not reached has occurred.
-    // This session is not ready to advance.
-    None
-}
-
-/// Advances the state of an MPC party and serializes the result into bytes.
-///
-/// This helper function wraps around a party `P`'s `advance()` method,
-/// converting its output into a serialized byte format.
-/// This abstraction allows the system's generic components to operate uniformly on byte arrays,
-/// rather than requiring generics to handle the different message and output types
-/// for each MPC protocol.
-///
-/// By maintaining a structured transition between instantiated types, and their
-/// serialized forms, this function ensures compatibility across various components.
-pub(crate) fn advance<P: AsynchronouslyAdvanceable>(
-    session_id: CommitmentSizedNumber,
-    party_id: PartyID,
-    access_structure: &WeightedThresholdAccessStructure,
-    serialized_messages: MPCRoundToMessagesHashMap,
-    public_input: &P::PublicInput,
-    private_input: P::PrivateInput,
-    mut rng: ChaCha20Rng,
-) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    // When a `ThresholdNotReached` error is received, the system now waits for additional messages
-    // (including those from previous rounds) and retries.
-    match P::advance_with_guaranteed_output(
-        session_id,
-        party_id,
-        access_structure,
-        serialized_messages.clone(),
-        Some(private_input),
-        public_input,
-        &mut rng,
-    ) {
-        Ok(res) => Ok(res),
-        Err(e) => match e.into() {
-            mpc::Error::ThresholdNotReached => Err(mpc::Error::ThresholdNotReached)?,
-            e => Err(e)?,
-        },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use group::OsCsRng;
-
-    #[test]
-    fn builds_empty_messages_for_round1() {
-        let access_structure =
-            WeightedThresholdAccessStructure::uniform(3, 4, 4, &mut OsCsRng).unwrap();
-
-        let current_mpc_round = 1;
-        let rounds_to_delay = 0;
-        let mpc_round_to_threshold_not_reached_consensus_rounds = HashMap::new();
-        let messages_by_consensus_round = HashMap::new();
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds.clone(),
-            messages_by_consensus_round,
-            &access_structure,
-        );
-
-        assert_eq!(messages, Some((None, HashMap::new())));
-
-        let messages_by_consensus_round = HashMap::from([
-            (
-                3,
-                HashMap::from([(1, HashMap::from([(1u16, vec![42u8]), (3, vec![42u8])]))]),
-            ),
-            (4, HashMap::new()),
-        ]);
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds,
-            messages_by_consensus_round,
-            &access_structure,
-        );
-
-        assert_eq!(messages, Some((None, HashMap::new())));
-    }
-
-    #[test]
-    fn builds_messages_for_round2() {
-        let access_structure =
-            WeightedThresholdAccessStructure::uniform(3, 4, 4, &mut OsCsRng).unwrap();
-
-        let current_mpc_round = 2;
-        let rounds_to_delay = 0;
-        let mpc_round_to_threshold_not_reached_consensus_rounds = HashMap::new();
-        let round1_messages = HashMap::from([
-            (1u16, vec![42u8]),
-            (2u16, vec![0u8, 42u8]),
-            (3, vec![43u8]),
-            (4u16, vec![42u8]),
-        ]);
-        let messages_by_consensus_round = HashMap::from([
-            (
-                3,
-                HashMap::from([(
-                    1,
-                    HashMap::from([
-                        (1, round1_messages.get(&1).unwrap().clone()),
-                        (3, round1_messages.get(&3).unwrap().clone()),
-                    ]),
-                )]),
-            ),
-            (4, HashMap::new()),
-            (
-                5,
-                HashMap::from([(
-                    1,
-                    HashMap::from([(4, round1_messages.get(&4).unwrap().clone())]),
-                )]),
-            ),
-            (6, HashMap::new()),
-            (
-                7,
-                HashMap::from([(
-                    1,
-                    HashMap::from([(2, round1_messages.get(&2).unwrap().clone())]),
-                )]),
-            ),
-        ]);
-
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds,
-            messages_by_consensus_round,
-            &access_structure,
-        );
-        let expected_messages = HashMap::from([(
-            1,
-            round1_messages
-                .clone()
-                .into_iter()
-                .filter(|(pid, _)| *pid != 2)
-                .collect(),
-        )]);
-
-        assert_eq!(messages, Some((Some(5), expected_messages)));
-    }
-
-    #[test]
-    fn doesnt_build_messages_for_round2_no_quorum() {
-        let access_structure =
-            WeightedThresholdAccessStructure::uniform(3, 4, 4, &mut OsCsRng).unwrap();
-
-        let current_mpc_round = 2;
-        let rounds_to_delay = 0;
-        let mpc_round_to_threshold_not_reached_consensus_rounds = HashMap::new();
-        let messages_by_consensus_round = HashMap::from([
-            (
-                3,
-                HashMap::from([(1, HashMap::from([(1u16, vec![42u8]), (3, vec![42u8])]))]),
-            ),
-            (4, HashMap::new()),
-        ]);
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds,
-            messages_by_consensus_round,
-            &access_structure,
-        );
-
-        assert_eq!(messages, None);
-    }
-
-    #[test]
-    fn doesnt_build_messages_for_round2_insufficent_delay() {
-        let access_structure =
-            WeightedThresholdAccessStructure::uniform(3, 4, 4, &mut OsCsRng).unwrap();
-
-        let current_mpc_round = 2;
-        let rounds_to_delay = 3;
-        let mpc_round_to_threshold_not_reached_consensus_rounds = HashMap::new();
-        let round1_messages = HashMap::from([
-            (1u16, vec![42u8]),
-            (2u16, vec![0u8, 42u8]),
-            (3, vec![43u8]),
-            (4u16, vec![42u8]),
-        ]);
-        let messages_by_consensus_round = HashMap::from([
-            (
-                3,
-                HashMap::from([(
-                    1,
-                    HashMap::from([
-                        (1, round1_messages.get(&1).unwrap().clone()),
-                        (3, round1_messages.get(&3).unwrap().clone()),
-                    ]),
-                )]),
-            ),
-            (4, HashMap::new()),
-            (
-                5,
-                HashMap::from([(
-                    1,
-                    HashMap::from([(4, round1_messages.get(&4).unwrap().clone())]),
-                )]),
-            ),
-            (6, HashMap::new()),
-            (
-                7,
-                HashMap::from([(
-                    1,
-                    HashMap::from([(2, round1_messages.get(&2).unwrap().clone())]),
-                )]),
-            ),
-        ]);
-
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds,
-            messages_by_consensus_round,
-            &access_structure,
-        );
-
-        assert_eq!(messages, None);
-    }
-
-    #[test]
-    fn delays_and_builds_messages_for_round2() {
-        let access_structure =
-            WeightedThresholdAccessStructure::uniform(3, 4, 4, &mut OsCsRng).unwrap();
-
-        let current_mpc_round = 2;
-        let mpc_round_to_threshold_not_reached_consensus_rounds = HashMap::new();
-        let round1_messages = HashMap::from([
-            (1u16, vec![42u8]),
-            (2u16, vec![0u8, 42u8]),
-            (3, vec![43u8]),
-            (4u16, vec![42u8]),
-        ]);
-        let messages_by_consensus_round = HashMap::from([
-            (
-                3,
-                HashMap::from([(
-                    1,
-                    HashMap::from([
-                        (1, round1_messages.get(&1).unwrap().clone()),
-                        (3, round1_messages.get(&3).unwrap().clone()),
-                    ]),
-                )]),
-            ),
-            (4, HashMap::new()),
-            (
-                5,
-                HashMap::from([(
-                    1,
-                    HashMap::from([(4, round1_messages.get(&4).unwrap().clone())]),
-                )]),
-            ),
-            (6, HashMap::new()),
-            (
-                7,
-                HashMap::from([(
-                    1,
-                    HashMap::from([(2, round1_messages.get(&2).unwrap().clone())]),
-                )]),
-            ),
-            (8, HashMap::new()),
-        ]);
-
-        let rounds_to_delay = 1;
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds.clone(),
-            messages_by_consensus_round.clone(),
-            &access_structure,
-        );
-        let expected_messages = HashMap::from([(
-            1,
-            round1_messages
-                .clone()
-                .into_iter()
-                .filter(|(pid, _)| *pid != 2)
-                .collect(),
-        )]);
-
-        assert_eq!(messages, Some((Some(6), expected_messages)));
-
-        let rounds_to_delay = 2;
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds.clone(),
-            messages_by_consensus_round.clone(),
-            &access_structure,
-        );
-
-        assert_eq!(
-            messages,
-            Some((Some(7), HashMap::from([(1, round1_messages.clone())])))
-        );
-
-        let rounds_to_delay = 3;
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds,
-            messages_by_consensus_round,
-            &access_structure,
-        );
-
-        assert_eq!(
-            messages,
-            Some((Some(8), HashMap::from([(1, round1_messages)])))
-        );
-    }
-
-    #[test]
-    fn builds_messages_for_round3() {
-        let access_structure =
-            WeightedThresholdAccessStructure::uniform(3, 4, 4, &mut OsCsRng).unwrap();
-
-        let current_mpc_round = 3;
-        let rounds_to_delay = 0;
-        let mpc_round_to_threshold_not_reached_consensus_rounds = HashMap::new();
-        let round1_messages = HashMap::from([
-            (1u16, vec![42u8]),
-            (2u16, vec![0u8, 42u8]),
-            (3, vec![43u8]),
-            (4u16, vec![42u8]),
-        ]);
-        let round2_messages =
-            HashMap::from([(1u16, vec![]), (2u16, vec![0u8, 1u8]), (4u16, vec![42u8])]);
-        let messages_by_consensus_round = HashMap::from([
-            (
-                3,
-                HashMap::from([(
-                    1,
-                    HashMap::from([
-                        (1, round1_messages.get(&1).unwrap().clone()),
-                        (3, round1_messages.get(&3).unwrap().clone()),
-                    ]),
-                )]),
-            ),
-            (4, HashMap::new()),
-            (
-                5,
-                HashMap::from([(
-                    1,
-                    HashMap::from([(4, round1_messages.get(&4).unwrap().clone())]),
-                )]),
-            ),
-            (6, HashMap::new()),
-            (
-                7,
-                HashMap::from([
-                    (
-                        1,
-                        HashMap::from([(2, round1_messages.get(&2).unwrap().clone())]),
-                    ),
-                    (
-                        2,
-                        HashMap::from([
-                            (1, round2_messages.get(&1).unwrap().clone()),
-                            (4, round2_messages.get(&4).unwrap().clone()),
-                        ]),
-                    ),
-                ]),
-            ),
-            (
-                8,
-                HashMap::from([(
-                    2,
-                    HashMap::from([(2, round2_messages.get(&2).unwrap().clone())]),
-                )]),
-            ),
-        ]);
-
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds,
-            messages_by_consensus_round,
-            &access_structure,
-        );
-        let expected_messages = HashMap::from([(1, round1_messages), (2, round2_messages)]);
-
-        assert_eq!(messages, Some((Some(8), expected_messages)));
-    }
-
-    #[test]
-    fn builds_messages_with_threshold_not_reached() {
-        let access_structure =
-            WeightedThresholdAccessStructure::uniform(3, 4, 4, &mut OsCsRng).unwrap();
-
-        let rounds_to_delay = 0;
-        let round1_messages = HashMap::from([
-            (1u16, vec![42u8]),
-            (2u16, vec![0u8, 42u8]),
-            (3, vec![43u8]),
-            (4u16, vec![42u8]),
-        ]);
-        let round2_messages = HashMap::from([
-            (1u16, vec![]),
-            (2u16, vec![0u8, 1u8]),
-            (3u16, vec![0u8, 1u8]),
-            (4u16, vec![42u8]),
-        ]);
-        let messages_by_consensus_round = HashMap::from([
-            (
-                3,
-                HashMap::from([(
-                    1,
-                    HashMap::from([
-                        (1, round1_messages.get(&1).unwrap().clone()),
-                        (3, round1_messages.get(&3).unwrap().clone()),
-                    ]),
-                )]),
-            ),
-            (4, HashMap::new()),
-            (
-                5,
-                HashMap::from([(
-                    1,
-                    HashMap::from([(4, round1_messages.get(&4).unwrap().clone())]),
-                )]),
-            ),
-            (6, HashMap::new()),
-            (
-                7,
-                HashMap::from([
-                    (
-                        1,
-                        HashMap::from([(2, round1_messages.get(&2).unwrap().clone())]),
-                    ),
-                    // 3 was malicious, sent round 2 even though threshold not reached
-                    (
-                        2,
-                        HashMap::from([(3, round2_messages.get(&3).unwrap().clone())]),
-                    ),
-                ]),
-            ),
-            (
-                8,
-                HashMap::from([(
-                    2,
-                    HashMap::from([
-                        (1, round2_messages.get(&1).unwrap().clone()),
-                        (4, round2_messages.get(&4).unwrap().clone()),
-                    ]),
-                )]),
-            ),
-            (
-                9,
-                HashMap::from([(
-                    2,
-                    HashMap::from([(2, round2_messages.get(&2).unwrap().clone())]),
-                )]),
-            ),
-        ]);
-
-        let current_mpc_round = 2;
-        let mpc_round_to_threshold_not_reached_consensus_rounds =
-            HashMap::from([(2, HashSet::from([5]))]);
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds,
-            messages_by_consensus_round
-                .clone()
-                .into_iter()
-                .filter(|(consensus_round, _)| *consensus_round <= 6)
-                .collect(),
-            &access_structure,
-        );
-        assert_eq!(messages, None);
-
-        let current_mpc_round = 2;
-        let mpc_round_to_threshold_not_reached_consensus_rounds =
-            HashMap::from([(2, HashSet::from([5]))]);
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds,
-            messages_by_consensus_round.clone(),
-            &access_structure,
-        );
-        let expected_messages = HashMap::from([(1, round1_messages.clone())]);
-
-        assert_eq!(messages, Some((Some(7), expected_messages)));
-
-        let current_mpc_round = 3;
-        let mpc_round_to_threshold_not_reached_consensus_rounds =
-            HashMap::from([(2, HashSet::from([5]))]);
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds,
-            messages_by_consensus_round.clone(),
-            &access_structure,
-        );
-        let expected_messages = HashMap::from([
-            (1, round1_messages.clone()),
-            (
-                2,
-                round2_messages
-                    .clone()
-                    .into_iter()
-                    .filter(|(pid, _)| *pid != 2)
-                    .collect(),
-            ),
-        ]);
-
-        assert_eq!(messages, Some((Some(8), expected_messages)));
-
-        let current_mpc_round = 3;
-        let mpc_round_to_threshold_not_reached_consensus_rounds =
-            HashMap::from([(2, HashSet::from([5])), (3, HashSet::from([8]))]);
-        let messages = build_messages_to_advance(
-            current_mpc_round,
-            rounds_to_delay,
-            mpc_round_to_threshold_not_reached_consensus_rounds,
-            messages_by_consensus_round.clone(),
-            &access_structure,
-        );
-        let expected_messages = HashMap::from([(1, round1_messages), (2, round2_messages)]);
-
-        assert_eq!(messages, Some((Some(9), expected_messages)));
     }
 }

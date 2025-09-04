@@ -1,31 +1,36 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::build_messages_to_advance;
+use crate::SuiDataReceivers;
 use crate::dwallet_mpc::crytographic_computation::{
     ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
-use crate::dwallet_mpc::mpc_session::{DWalletMPCSession, DWalletMPCSessionOutput, MPCEventData};
+use crate::dwallet_mpc::mpc_session::{
+    DWalletMPCSessionOutput, DWalletSession, SessionComputationType, SessionStatus,
+};
 use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
 };
+use crate::dwallet_session_request::DWalletSessionRequest;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCSessionStatus};
+use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, NetworkEncryptionKeyPublicData};
+use dwallet_rng::RootSeed;
+use fastcrypto::hash::HashFunction;
 use group::PartyID;
-use ika_config::NodeConfig;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
-use ika_types::crypto::AuthorityName;
 use ika_types::crypto::AuthorityPublicKeyBytes;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::crypto::{AuthorityName, DefaultHash};
+use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
-    DWalletMPCEvent, DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData,
-    IkaPackagesConfig, MPCRequestInput, SessionIdentifier, SessionType,
+    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, SessionIdentifier,
+    SessionType,
 };
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -33,9 +38,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
-use tokio::sync::watch;
-use tokio::sync::watch::Receiver;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -51,9 +54,8 @@ pub(crate) struct DWalletMPCManager {
     /// A map of all MPC sessions that start execution in this epoch.
     /// These include completed sessions, and they are never to be removed from this
     /// mapping until the epoch advances.
-    pub(crate) mpc_sessions: HashMap<SessionIdentifier, DWalletMPCSession>,
+    pub(crate) mpc_sessions: HashMap<SessionIdentifier, DWalletSession>,
     pub(crate) epoch_id: EpochId,
-    pub(crate) packages_config: IkaPackagesConfig,
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
@@ -72,17 +74,17 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) last_session_to_complete_in_current_epoch: u64,
     pub(crate) recognized_self_as_malicious: bool,
     pub(crate) network_keys: Box<DwalletMPCNetworkKeys>,
-    network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     /// Events that wait for the network key to update.
     /// Once we get the network key, these events will be executed.
-    pub(crate) events_pending_for_network_key: HashMap<ObjectID, Vec<DWalletMPCEvent>>,
-    pub(crate) events_pending_for_next_active_committee: Vec<DWalletMPCEvent>,
-    pub(crate) next_epoch_committee_receiver: watch::Receiver<Committee>,
+    pub(crate) requests_pending_for_network_key: HashMap<ObjectID, Vec<DWalletSessionRequest>>,
+    pub(crate) requests_pending_for_next_active_committee: Vec<DWalletSessionRequest>,
     pub(crate) next_active_committee: Option<Committee>,
     pub(crate) dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 
-    network_dkg_third_round_delay: u64,
-    decryption_key_reconfiguration_third_round_delay: u64,
+    pub(crate) network_dkg_third_round_delay: u64,
+    pub(crate) decryption_key_reconfiguration_third_round_delay: u64,
+    sui_data_receivers: SuiDataReceivers,
+    pub(crate) protocol_config: ProtocolConfig,
 }
 
 impl DWalletMPCManager {
@@ -90,25 +92,23 @@ impl DWalletMPCManager {
         validator_name: AuthorityPublicKeyBytes,
         committee: Arc<Committee>,
         epoch_id: EpochId,
-        packages_config: IkaPackagesConfig,
-        network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        next_epoch_committee_receiver: Receiver<Committee>,
-        node_config: NodeConfig,
+        root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        sui_data_receivers: SuiDataReceivers,
+        protocol_config: ProtocolConfig,
     ) -> Self {
         Self::try_new(
             validator_name,
             committee,
             epoch_id,
-            packages_config,
-            network_keys_receiver,
-            next_epoch_committee_receiver,
-            node_config.clone(),
+            root_seed,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics,
+            sui_data_receivers,
+            protocol_config,
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -121,25 +121,19 @@ impl DWalletMPCManager {
         validator_name: AuthorityPublicKeyBytes,
         committee: Arc<Committee>,
         epoch_id: EpochId,
-        packages_config: IkaPackagesConfig,
-        network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        next_epoch_committee_receiver: watch::Receiver<Committee>,
-        node_config: NodeConfig,
+        root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        sui_data_receivers: SuiDataReceivers,
+        protocol_config: ProtocolConfig,
     ) -> DwalletMPCResult<Self> {
-        let root_seed = node_config
-            .root_seed_key_pair
-            .clone()
-            .ok_or(DwalletMPCError::MissingRootSeed)?
-            .root_seed()
-            .clone();
-
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
-        let mpc_computations_orchestrator =
-            CryptographicComputationsOrchestrator::try_new(root_seed.clone())?;
+        let mpc_computations_orchestrator = CryptographicComputationsOrchestrator::try_new(
+            root_seed.clone(),
+            protocol_config.clone(),
+        )?;
         let party_id = authority_name_to_party_id_from_committee(&committee, &validator_name)?;
 
         let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
@@ -157,7 +151,6 @@ impl DWalletMPCManager {
             mpc_sessions: HashMap::new(),
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
-            packages_config,
             access_structure,
             validators_class_groups_public_keys_and_proofs:
                 get_validators_class_groups_public_keys_and_proofs(&committee)?,
@@ -166,16 +159,16 @@ impl DWalletMPCManager {
             last_session_to_complete_in_current_epoch: 0,
             recognized_self_as_malicious: false,
             network_keys: Box::new(dwallet_network_keys),
-            network_keys_receiver,
-            next_epoch_committee_receiver,
-            events_pending_for_next_active_committee: Vec::new(),
-            events_pending_for_network_key: HashMap::new(),
+            sui_data_receivers,
+            requests_pending_for_next_active_committee: Vec::new(),
+            requests_pending_for_network_key: HashMap::new(),
             dwallet_mpc_metrics,
             next_active_committee: None,
             validator_name,
             committee,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
+            protocol_config,
         })
     }
 
@@ -197,19 +190,6 @@ impl DWalletMPCManager {
         consensus_round: u64,
         messages: Vec<DWalletMPCMessage>,
     ) {
-        for (_, session) in self.mpc_sessions.iter_mut() {
-            if !session.messages_by_consensus_round.is_empty() {
-                // Set the `messages_by_consensus_round` for every open MPC session for the current consensus round to an empty map.
-                // This is important, as we count on the `messages_by_consensus_round` to hold entries for all consensus rounds since the session's inception,
-                // when we check for delay.
-                //
-                // Do this only from the first received message, for synchronicity between validators.
-                session
-                    .messages_by_consensus_round
-                    .insert(consensus_round, HashMap::new());
-            }
-        }
-
         for message in messages {
             self.handle_message(consensus_round, message);
         }
@@ -260,34 +240,6 @@ impl DWalletMPCManager {
     pub(crate) fn handle_message(&mut self, consensus_round: u64, message: DWalletMPCMessage) {
         let session_identifier = message.session_identifier;
         let sender_authority = message.authority;
-        let Some(mpc_round_number) = (match message.message.first() {
-            Some(0) => {
-                let serialized_mpc_round_number = &message.message[1..=8];
-                bcs::from_bytes::<u64>(serialized_mpc_round_number).ok()
-            }
-            Some(1) => {
-                warn!(
-                    session_identifier=?session_identifier,
-                    sender_authority=?sender_authority,
-                    receiver_authority=?self.validator_name,
-                    serialized_message=?message.message,
-                    "got a threshold not reached message, ignoring",
-                );
-
-                return;
-            }
-            _ => None,
-        }) else {
-            error!(
-                session_identifier=?session_identifier,
-                sender_authority=?sender_authority,
-                receiver_authority=?self.validator_name,
-                serialized_message=?message.message,
-                "got a short message, ignoring",
-            );
-
-            return;
-        };
 
         let Ok(sender_party_id) =
             authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
@@ -296,28 +248,21 @@ impl DWalletMPCManager {
                 session_identifier=?session_identifier,
                 sender_authority=?sender_authority,
                 receiver_authority=?self.validator_name,
-                mpc_round_number=?mpc_round_number,
+                consensus_round=?consensus_round,
                 "got a message for an authority without party ID",
             );
 
             return;
         };
-
+        let mut message_hasher = DefaultHash::default();
+        message_hasher.update(&message.message);
         info!(
             session_identifier=?session_identifier,
             sender_authority=?sender_authority,
             receiver_authority=?self.validator_name,
-            mpc_round_number=?mpc_round_number,
+            consensus_round=?consensus_round,
+            message_hash=?message_hasher.finalize().digest,
             "Received an MPC message for session",
-        );
-
-        debug!(
-            session_identifier=?session_identifier,
-            sender_authority=?sender_authority,
-            receiver_authority=?self.validator_name,
-            mpc_round_number=?mpc_round_number,
-            message_bytes=?message.message,
-            "Received an MPC message for session with contents",
         );
 
         if self.is_malicious_actor(&sender_authority) {
@@ -325,7 +270,7 @@ impl DWalletMPCManager {
                 session_identifier=?session_identifier,
                 sender_authority=?sender_authority,
                 receiver_authority=?self.validator_name,
-                mpc_round_number=?mpc_round_number,
+                consensus_round=?consensus_round,
                 "Ignoring message from malicious authority",
             );
 
@@ -339,49 +284,56 @@ impl DWalletMPCManager {
                     ?session_identifier,
                     sender_authority=?sender_authority,
                     receiver_authority=?self.validator_name,
-                    mpc_round_number=?mpc_round_number,
+                    consensus_round=?consensus_round,
                     "received a message for an MPC session before receiving an event requesting it"
                 );
 
                 // This can happen if the session is not in the active sessions,
                 // but we still want to store the message.
                 // We will create a new session for it.
-                self.new_mpc_session(&session_identifier, None);
+                self.new_session(
+                    &session_identifier,
+                    SessionStatus::WaitingForSessionRequest,
+                    // only MPC sessions have messages.
+                    SessionComputationType::MPC {
+                        messages_by_consensus_round: HashMap::new(),
+                    },
+                );
                 // Safe to `unwrap()`: we just created the session.
                 self.mpc_sessions.get_mut(&session_identifier).unwrap()
             }
         };
 
-        if session.status == MPCSessionStatus::Active {
-            session.add_message(consensus_round, mpc_round_number, sender_party_id, message);
-        }
+        session.add_message(consensus_round, sender_party_id, message);
     }
 
     /// Creates a new session with SID `session_identifier`,
     /// and insert it into the MPC session map `self.mpc_sessions`.
-    pub(super) fn new_mpc_session(
+    pub(super) fn new_session(
         &mut self,
         session_identifier: &SessionIdentifier,
-        mpc_event_data: Option<MPCEventData>,
+        status: SessionStatus,
+        session_type: SessionComputationType,
     ) {
         info!(
-            "Received start MPC flow event for session identifier {:?}",
-            session_identifier
+            status=?status,
+            "Received start MPC flow request for session identifier {:?}",
+            session_identifier,
         );
-        let with_mpc_event_data = mpc_event_data.is_some();
+        let active = matches!(status, SessionStatus::Active { .. });
 
-        let new_session = DWalletMPCSession::new(
+        let new_session = DWalletSession::new(
             self.validator_name,
-            MPCSessionStatus::Active,
+            status,
             *session_identifier,
             self.party_id,
-            mpc_event_data,
+            session_type,
         );
 
         info!(
             party_id=self.party_id,
             authority=?self.validator_name,
-            with_mpc_event_data,
+            active,
             ?session_identifier,
             last_session_to_complete_in_current_epoch=?self.last_session_to_complete_in_current_epoch,
             "Adding a new MPC session to the active sessions map",
@@ -393,7 +345,7 @@ impl DWalletMPCManager {
     /// Spawns all ready MPC cryptographic computations on separate threads using Rayon.
     /// If no local CPUs are available, computations will execute as CPUs are freed.
     ///
-    /// A session must have its `mpc_event_data` set in order to be advanced.
+    /// A session must have its `request_data` set in order to be advanced.
     ///
     /// System sessions are always advanced if a CPU is free, user sessions are only advanced
     /// if they come before the last session to complete in the current epoch (at the current time).
@@ -407,77 +359,78 @@ impl DWalletMPCManager {
     /// Returns the completed computation results.
     pub(crate) async fn perform_cryptographic_computation(
         &mut self,
+        last_read_consensus_round: u64,
     ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
         let mut ready_to_advance_sessions: Vec<_> = self
             .mpc_sessions
             .iter()
-            .filter(|(_, session)| session.status == MPCSessionStatus::Active)
             .filter_map(|(_, session)| {
-                // Only sessions with MPC event data should be advanced
-                session.mpc_event_data.clone().and_then(|mpc_event_data| {
-                    // Always advance system sessions, and only advance user session
-                    // if they come before the last session to complete in the current epoch (at the current time).
-                    let should_advance = match mpc_event_data.session_type {
-                        SessionType::User => {
-                            mpc_event_data.session_sequence_number
-                                <= self.last_session_to_complete_in_current_epoch
-                        }
-                        SessionType::System => true,
-                    };
+                let SessionStatus::Active { request, .. } = &session.status else {
+                    return None;
+                };
 
-                    if should_advance {
-                        Some((session, mpc_event_data))
-                    } else {
-                        None
+                //   Always advance system sessions, and only advance user session
+                // if they come before the last session to complete in the current epoch (at the current time).
+                let should_advance = match request.session_type {
+                    SessionType::User => {
+                        request.session_sequence_number
+                            <= self.last_session_to_complete_in_current_epoch
                     }
-                })
+                    SessionType::System => true,
+                };
+
+                if should_advance {
+                    Some((session, request))
+                } else {
+                    None
+                }
             })
             .collect();
 
-        ready_to_advance_sessions.sort_by(|(_, mpc_event_data), (_, other_mpc_event_data)| {
-            mpc_event_data.cmp(other_mpc_event_data)
-        });
+        ready_to_advance_sessions
+            .sort_by(|(_, request), (_, other_request)| request.cmp(other_request));
 
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
-            .flat_map(|(session, mpc_event_data)| {
-                let rounds_to_delay = self.consensus_rounds_delay_for_mpc_round(
-                    session.current_mpc_round,
-                    &mpc_event_data,
-                );
+            .flat_map(|(session, _)| {
+                let SessionStatus::Active {
+                    public_input,
+                    private_input: _,
+                    request,
+                } = &session.status
+                else {
+                    error!(
+                        should_never_happen =? true,
+                        session_identifier=?session.session_identifier,
+                        "session is not active, cannot perform cryptographic computation",
+                    );
+                    return None;
+                };
 
-                build_messages_to_advance(
-                    session.current_mpc_round,
-                    rounds_to_delay,
-                    session
-                        .mpc_round_to_threshold_not_reached_consensus_rounds
-                        .clone(),
-                    session.messages_by_consensus_round.clone(),
-                    &self.access_structure,
+                self.generate_protocol_cryptographic_data(
+                    &session.computation_type,
+                    &request.protocol_data,
+                    last_read_consensus_round,
+                    public_input.clone(),
                 )
-                .map(|(consensus_round, messages_for_advance)| {
-                    let attempt_number = session.get_attempt_number();
-
-                    // Safe to `unwrap()`, as the session is ready to advance so `mpc_event_data` must be `Some()`.
-                    let mpc_event_data = session.mpc_event_data.clone().unwrap();
+                .ok()?
+                .map(|advance_specific_data| {
+                    let attempt_number = advance_specific_data.get_attempt_number();
+                    let mpc_round = advance_specific_data.get_mpc_round();
 
                     let computation_id = ComputationId {
                         session_identifier: session.session_identifier,
-                        consensus_round,
-                        mpc_round: session.current_mpc_round,
+                        consensus_round: last_read_consensus_round,
+                        mpc_round,
                         attempt_number,
                     };
 
                     let computation_request = ComputationRequest {
                         party_id: self.party_id,
+                        protocol_data: (&request.protocol_data).into(),
                         validator_name: self.validator_name,
-                        committee: self.committee.clone(),
                         access_structure: self.access_structure.clone(),
-                        request_input: mpc_event_data.request_input,
-                        private_input: mpc_event_data.private_input,
-                        public_input: mpc_event_data.public_input,
-                        decryption_key_shares: mpc_event_data.decryption_key_shares,
-                        messages: messages_for_advance,
+                        protocol_cryptographic_data: advance_specific_data,
                     };
 
                     (computation_id, computation_request)
@@ -507,10 +460,15 @@ impl DWalletMPCManager {
     }
 
     pub(crate) fn try_receiving_next_active_committee(&mut self) -> bool {
-        match self.next_epoch_committee_receiver.has_changed() {
+        match self
+            .sui_data_receivers
+            .next_epoch_committee_receiver
+            .has_changed()
+        {
             Ok(has_changed) => {
                 if has_changed {
                     let committee = self
+                        .sui_data_receivers
                         .next_epoch_committee_receiver
                         .borrow_and_update()
                         .clone();
@@ -531,7 +489,7 @@ impl DWalletMPCManager {
     }
 
     pub(crate) async fn maybe_update_network_keys(&mut self) -> Vec<ObjectID> {
-        match self.network_keys_receiver.has_changed() {
+        match self.sui_data_receivers.network_keys_receiver.has_changed() {
             Ok(has_changed) => {
                 if has_changed {
                     let new_keys = self.borrow_and_update_network_keys();
@@ -552,6 +510,15 @@ impl DWalletMPCManager {
                     for (key_id, res) in results {
                         match res {
                             Ok(key) => {
+                                if key.epoch() != self.epoch_id {
+                                    info!(
+                                        key_id=?key_id,
+                                        epoch=?key.epoch(),
+                                        "Network key epoch does not match current epoch, ignoring"
+                                    );
+
+                                    continue;
+                                }
                                 info!(key_id=?key_id, "Updating (decrypting new shares) network key for key_id");
                                 if let Err(e) = self
                                     .network_keys
@@ -590,7 +557,10 @@ impl DWalletMPCManager {
     fn borrow_and_update_network_keys(
         &mut self,
     ) -> HashMap<ObjectID, DWalletNetworkEncryptionKeyData> {
-        let new_keys = self.network_keys_receiver.borrow_and_update();
+        let new_keys = self
+            .sui_data_receivers
+            .network_keys_receiver
+            .borrow_and_update();
 
         new_keys
             .iter()
@@ -629,10 +599,28 @@ impl DWalletMPCManager {
                     "received a output for an MPC session before receiving an event requesting it"
                 );
 
+                // All output kinds are constructed from the same type, so we can safely use the first one.
+                let Ok(session_computation_type) = SessionComputationType::try_from(
+                    output.output.first().expect("output must have a kind"),
+                ) else {
+                    error!(
+                        session_identifier=?session_identifier,
+                        sender_authority=?sender_authority,
+                        receiver_authority=?self.validator_name,
+                        "got a output for an invalid computation type",
+                    );
+
+                    return None;
+                };
+
                 // This can happen if the session is not in the active sessions,
                 // but we still want to store the message.
                 // We will create a new session for it.
-                self.new_mpc_session(&session_identifier, None);
+                self.new_session(
+                    &session_identifier,
+                    SessionStatus::WaitingForSessionRequest,
+                    session_computation_type.clone(),
+                );
                 // Safe to `unwrap()`: we just created the session.
                 self.mpc_sessions.get_mut(&session_identifier).unwrap()
             }
@@ -655,16 +643,6 @@ impl DWalletMPCManager {
         }
     }
 
-    pub(crate) fn record_threshold_not_reached(
-        &mut self,
-        consensus_round: u64,
-        session_identifier: SessionIdentifier,
-    ) {
-        if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
-            session.record_threshold_not_reached(consensus_round)
-        }
-    }
-
     pub(crate) fn is_malicious_actor(&self, authority: &AuthorityName) -> bool {
         self.malicious_actors.contains(authority)
     }
@@ -680,32 +658,6 @@ impl DWalletMPCManager {
                 authority=?self.validator_name,
                 "node recognized itself as malicious"
             );
-        }
-    }
-
-    /// Returns the number of additional (delay) consensus rounds the session should wait for before advancing.
-    ///
-    /// This method returns the protocol-specific delay for certain MPC rounds in specific protocols
-    /// (NetworkDkg, DecryptionKeyReconfiguration).
-    ///
-    /// - **NetworkDkg protocol**: requires delay for the third round
-    ///   using `network_dkg_third_round_delay` config.
-    /// - **DecryptionKeyReconfiguration protocol**: requires delay for the third round
-    ///   using `decryption_key_reconfiguration_third_round_delay` config.
-    /// - **Other protocols**: No delay required, always ready to advance
-    pub(crate) fn consensus_rounds_delay_for_mpc_round(
-        &self,
-        current_mpc_round: u64,
-        mpc_event_data: &MPCEventData,
-    ) -> u64 {
-        match mpc_event_data.request_input {
-            MPCRequestInput::NetworkEncryptionKeyDkg(_, _) if current_mpc_round == 3 => {
-                self.network_dkg_third_round_delay
-            }
-            MPCRequestInput::NetworkEncryptionKeyReconfiguration(_) if current_mpc_round == 3 => {
-                self.decryption_key_reconfiguration_third_round_delay
-            }
-            _ => 0,
         }
     }
 
@@ -745,7 +697,7 @@ impl DWalletMPCManager {
                         ?malicious_voters,
                         ?malicious_authorities,
                         committee=?self.committee,
-                        "Failed to convert some malicious party IDs to authority names"
+                        "failed to convert some malicious party IDs to authority names"
                     );
                 }
                 let malicious_authorities: HashSet<AuthorityName> = malicious_authorities
@@ -767,11 +719,10 @@ impl DWalletMPCManager {
 
     pub(crate) fn complete_mpc_session(&mut self, session_identifier: &SessionIdentifier) {
         if let Some(session) = self.mpc_sessions.get_mut(session_identifier) {
-            session.mark_mpc_session_as_completed();
-            if let Some(mpc_event_data) = session.mpc_event_data() {
-                self.dwallet_mpc_metrics
-                    .add_completion(&mpc_event_data.request_input);
+            if let Some(request_data) = session.request_metric_data() {
+                self.dwallet_mpc_metrics.add_completion(&request_data);
             }
+            session.mark_mpc_session_as_completed();
             session.clear_data();
         }
     }
@@ -779,19 +730,22 @@ impl DWalletMPCManager {
     pub(crate) fn complete_computation_mpc_session_and_create_if_not_exists(
         &mut self,
         session_identifier: &SessionIdentifier,
+        session_type: SessionComputationType,
     ) {
-        let session = match self.mpc_sessions.entry(*session_identifier) {
-            Entry::Occupied(session) => session.into_mut(),
+        match self.mpc_sessions.entry(*session_identifier) {
+            Entry::Occupied(session) => session
+                .into_mut()
+                .mark_mpc_session_as_computation_completed(),
             Entry::Vacant(_) => {
                 // This can happen if the session is not in the active sessions,
                 // but we still want to store the message.
                 // We will create a new session for it.
-                self.new_mpc_session(session_identifier, None);
-                // Safe to `unwrap()`: we just created the session.
-                self.mpc_sessions.get_mut(session_identifier).unwrap()
+                self.new_session(
+                    session_identifier,
+                    SessionStatus::ComputationCompleted,
+                    session_type,
+                );
             }
         };
-
-        session.mark_mpc_session_as_computation_completed();
     }
 }

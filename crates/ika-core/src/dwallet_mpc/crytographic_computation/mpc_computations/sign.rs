@@ -1,4 +1,4 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! This module provides a wrapper around the Sign protocol from the 2PC-MPC library.
@@ -8,26 +8,23 @@
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::network_dkg::DwalletMPCNetworkKeys;
 use dwallet_mpc_types::dwallet_mpc::{
+    DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedPresignOutput, VersionedUserSignedMessage,
 };
-use group::PartyID;
+use group::{HashType, OsCsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{
-    AsyncProtocol, DWalletSessionEvent, FutureSignRequestEvent, MPCRequestInput, MPCSessionRequest,
-    SessionIdentifier, SignRequestEvent,
-};
-use message_digest::message_digest::{Hash, message_digest};
+use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
 use mpc::{Party, Weight, WeightedThresholdAccessStructure};
 use rand_core::SeedableRng;
 use std::collections::HashSet;
 use std::sync::Arc;
+use sui_types::base_types::ObjectID;
 use twopc_mpc::dkg::Protocol;
-use twopc_mpc::secp256k1;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use twopc_mpc::{secp256k1, sign};
 
-pub(crate) type SignFirstParty =
-    <AsyncProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
+pub(crate) type SignParty = <AsyncProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
 pub(crate) type SignPublicInput =
     <AsyncProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedPartyPublicInput;
 
@@ -64,45 +61,34 @@ fn generate_expected_decrypters(
 }
 
 pub(crate) fn sign_session_public_input(
-    deserialized_event: &DWalletSessionEvent<SignRequestEvent>,
+    dwallet_network_encryption_key_id: &ObjectID,
+    session_identifier: SessionIdentifier,
+    dwallet_decentralized_public_output: &SerializedWrappedMPCPublicOutput,
+    message: Vec<u8>,
+    presign: &SerializedWrappedMPCPublicOutput,
+    message_centralized_signature: &SerializedWrappedMPCPublicOutput,
+    hash_scheme: HashType,
     access_structure: &WeightedThresholdAccessStructure,
     network_keys: &DwalletMPCNetworkKeys,
     protocol_public_parameters: ProtocolPublicParameters,
-) -> DwalletMPCResult<<SignFirstParty as Party>::PublicInput> {
+) -> DwalletMPCResult<<SignParty as Party>::PublicInput> {
     let decryption_pp = network_keys.get_decryption_key_share_public_parameters(
         // The `StartSignRoundEvent` is assign with a Secp256k1 dwallet.
         // Todo (#473): Support generic network key scheme
-        &deserialized_event
-            .event_data
-            .dwallet_network_encryption_key_id,
+        dwallet_network_encryption_key_id,
     )?;
 
-    let expected_decrypters = generate_expected_decrypters(
-        access_structure,
-        deserialized_event.session_identifier_digest(),
-    )?;
+    let expected_decrypters = generate_expected_decrypters(access_structure, session_identifier)?;
 
-    <SignFirstParty as SignPartyPublicInputGenerator>::generate_public_input(
+    <SignParty as SignPartyPublicInputGenerator>::generate_public_input(
         protocol_public_parameters,
-        deserialized_event
-            .event_data
-            .dwallet_decentralized_public_output
-            .clone(),
-        bcs::to_bytes(
-            &message_digest(
-                &deserialized_event.event_data.message.clone(),
-                &Hash::try_from(deserialized_event.event_data.hash_scheme)
-                    .map_err(|e| DwalletMPCError::SignatureVerificationFailed(e.to_string()))?,
-            )
-            .map_err(|e| DwalletMPCError::SignatureVerificationFailed(e.to_string()))?,
-        )?,
-        deserialized_event.event_data.presign.clone(),
-        deserialized_event
-            .event_data
-            .message_centralized_signature
-            .clone(),
+        dwallet_decentralized_public_output,
+        message,
+        presign,
+        message_centralized_signature,
         decryption_pp,
         expected_decrypters,
+        hash_scheme,
     )
 }
 
@@ -131,34 +117,6 @@ pub(crate) fn update_expected_decrypters_metrics(
     }
 }
 
-pub(crate) fn sign_party_session_request(
-    deserialized_event: &DWalletSessionEvent<SignRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::Sign(deserialized_event.clone()),
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-    }
-}
-
-pub(crate) fn get_verify_partial_signatures_session_request(
-    deserialized_event: &DWalletSessionEvent<FutureSignRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::PartialSignatureVerification(deserialized_event.clone()),
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-    }
-}
-
 /// A trait for generating the public input for decentralized `Sign` round in the MPC protocol.
 ///
 /// This trait is implemented to resolve compiler type ambiguities that arise in the 2PC-MPC library
@@ -166,54 +124,57 @@ pub(crate) fn get_verify_partial_signatures_session_request(
 pub(crate) trait SignPartyPublicInputGenerator: Party {
     fn generate_public_input(
         protocol_public_parameters: ProtocolPublicParameters,
-        dkg_output: SerializedWrappedMPCPublicOutput,
+        dkg_output: &SerializedWrappedMPCPublicOutput,
         message: Vec<u8>,
-        presign: SerializedWrappedMPCPublicOutput,
-        centralized_signed_message: Vec<u8>,
+        presign: &SerializedWrappedMPCPublicOutput,
+        centralized_signed_message: &Vec<u8>,
         decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-    ) -> DwalletMPCResult<<SignFirstParty as Party>::PublicInput>;
+        hash_scheme: HashType,
+    ) -> DwalletMPCResult<<SignParty as Party>::PublicInput>;
 }
 
-impl SignPartyPublicInputGenerator for SignFirstParty {
+impl SignPartyPublicInputGenerator for SignParty {
     fn generate_public_input(
         protocol_public_parameters: ProtocolPublicParameters,
-        dkg_output: SerializedWrappedMPCPublicOutput,
+        dkg_output: &SerializedWrappedMPCPublicOutput,
         message: Vec<u8>,
-        presign: SerializedWrappedMPCPublicOutput,
-        centralized_signed_message: SerializedWrappedMPCPublicOutput,
+        presign: &SerializedWrappedMPCPublicOutput,
+        centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-    ) -> DwalletMPCResult<<SignFirstParty as Party>::PublicInput> {
-        let dkg_output = bcs::from_bytes(&dkg_output)?;
-        let presign = bcs::from_bytes(&presign)?;
-        let centralized_signed_message = bcs::from_bytes(&centralized_signed_message)?;
-        match dkg_output {
+        hash_scheme: HashType,
+    ) -> DwalletMPCResult<<SignParty as Party>::PublicInput> {
+        let dkg_output = bcs::from_bytes(dkg_output)?;
+        let presign = bcs::from_bytes(presign)?;
+        let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
+        let decentralized_dkg_output = match dkg_output {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-                let VersionedPresignOutput::V1(presign) = presign;
-                let VersionedUserSignedMessage::V1(centralized_signed_message) =
-                    centralized_signed_message;
-                let public_input = SignPublicInput::from((
-                    expected_decrypters,
-                    protocol_public_parameters,
-                    bcs::from_bytes::<<AsyncProtocol as twopc_mpc::sign::Protocol>::HashedMessage>(
-                        &message,
-                    )?,
-                    bcs::from_bytes::<<AsyncProtocol as Protocol>::DecentralizedPartyDKGOutput>(
-                        &output,
-                    )?,
-                    bcs::from_bytes::<<AsyncProtocol as twopc_mpc::presign::Protocol>::Presign>(
-                        &presign,
-                    )?,
-                    bcs::from_bytes::<<AsyncProtocol as twopc_mpc::sign::Protocol>::SignMessage>(
-                        &centralized_signed_message,
-                    )?,
-                    decryption_key_share_public_parameters,
-                ));
-
-                Ok(public_input)
+                bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice())?.into()
             }
-        }
+            VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+                bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
+            }
+        };
+
+        let VersionedPresignOutput::V1(presign) = presign;
+        let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
+
+        let public_input = SignPublicInput::from((
+            expected_decrypters,
+            protocol_public_parameters,
+            message,
+            HashType::try_from(hash_scheme as u32)
+                .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
+            decentralized_dkg_output,
+            bcs::from_bytes::<<AsyncProtocol as twopc_mpc::presign::Protocol>::Presign>(&presign)?,
+            bcs::from_bytes::<<AsyncProtocol as twopc_mpc::sign::Protocol>::SignMessage>(
+                &centralized_signed_message,
+            )?,
+            decryption_key_share_public_parameters,
+        ));
+
+        Ok(public_input)
     }
 }
 
@@ -221,7 +182,8 @@ impl SignPartyPublicInputGenerator for SignFirstParty {
 /// client side in the 2PC-MPC protocol — is valid regarding the given dWallet DKG output.
 /// Returns Ok if the message is valid, Err otherwise.
 pub(crate) fn verify_partial_signature(
-    hashed_message: &[u8],
+    message: &[u8],
+    hash_type: &HashType,
     dwallet_decentralized_output: &SerializedWrappedMPCPublicOutput,
     presign: &SerializedWrappedMPCPublicOutput,
     partially_signed_message: &SerializedWrappedMPCPublicOutput,
@@ -229,29 +191,33 @@ pub(crate) fn verify_partial_signature(
 ) -> DwalletMPCResult<()> {
     let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
         bcs::from_bytes(dwallet_decentralized_output)?;
+    let decentralized_dkg_output = match dkg_output {
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+            bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice())?.into()
+        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+            bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
+        }
+    };
+
     let presign: VersionedPresignOutput = bcs::from_bytes(presign)?;
     let partially_signed_message: VersionedUserSignedMessage =
         bcs::from_bytes(partially_signed_message)?;
-    match dkg_output {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
-            let VersionedPresignOutput::V1(presign) = presign;
-            let VersionedUserSignedMessage::V1(partially_signed_message) = partially_signed_message;
-            let message: secp256k1::Scalar = bcs::from_bytes(hashed_message)?;
-            let dkg_output = bcs::from_bytes::<
-                <AsyncProtocol as Protocol>::DecentralizedPartyDKGOutput,
-            >(&dkg_output)?;
-            let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
-                bcs::from_bytes(&presign)?;
-            let partial: <AsyncProtocol as twopc_mpc::sign::Protocol>::SignMessage =
-                bcs::from_bytes(&partially_signed_message)?;
+    let VersionedPresignOutput::V1(presign) = presign;
+    let VersionedUserSignedMessage::V1(partially_signed_message) = partially_signed_message;
+    let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(&presign)?;
+    let partial: <AsyncProtocol as twopc_mpc::sign::Protocol>::SignMessage =
+        bcs::from_bytes(&partially_signed_message)?;
 
-            twopc_mpc::sign::decentralized_party::signature_partial_decryption_round::Party::verify_encryption_of_signature_parts_prehash_class_groups(
-                protocol_public_parameters,
-                dkg_output,
-                presign,
-                partial,
-                message,
-            ).map_err(DwalletMPCError::from)
-        }
-    }
+    <AsyncProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
+        message,
+        hash_type.clone(),
+        decentralized_dkg_output,
+        presign,
+        partial,
+        protocol_public_parameters,
+        &mut OsCsRng,
+    )
+    .map_err(DwalletMPCError::from)
 }

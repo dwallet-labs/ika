@@ -1,27 +1,27 @@
-// Copyright (c) dWallet Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! This module provides a wrapper around the DKG protocol from the 2PC-MPC library.
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
+
+use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
-    VersionedPublicKeyShareAndProof,
+    VersionedDwalletDKGFirstRoundPublicOutput, VersionedPublicKeyShareAndProof,
 };
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{
-    AsyncProtocol, DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
-    DWalletImportedKeyVerificationRequestEvent, DWalletSessionEvent, MPCRequestInput,
-    MPCSessionRequest,
-};
+use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::Party;
 use twopc_mpc::dkg::Protocol;
+use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+
 /// This struct represents the initial round of the DKG protocol.
-pub type DWalletDKGFirstParty = <AsyncProtocol as Protocol>::EncryptionOfSecretKeyShareRoundParty;
+pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
 pub(crate) type DWalletImportedKeyVerificationParty =
     <AsyncProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
 /// This struct represents the final round of the DKG protocol.
-pub(crate) type DWalletDKGSecondParty = <AsyncProtocol as Protocol>::ProofVerificationRoundParty;
+pub(crate) type DWalletDKGSecondParty = <AsyncProtocol as Protocol>::DKGDecentralizedParty;
 
 pub(crate) fn dwallet_dkg_first_public_input(
     protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
@@ -32,58 +32,15 @@ pub(crate) fn dwallet_dkg_first_public_input(
 }
 
 pub(crate) fn dwallet_dkg_second_public_input(
-    deserialized_event: &DWalletDKGSecondRoundRequestEvent,
+    first_round_output: &SerializedWrappedMPCPublicOutput,
+    centralized_public_key_share_and_proof: &SerializedWrappedMPCPublicOutput,
     protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
 ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
     <DWalletDKGSecondParty as DWalletDKGSecondPartyPublicInputGenerator>::generate_public_input(
         protocol_public_parameters,
-        deserialized_event.first_round_output.clone(),
-        deserialized_event
-            .centralized_public_key_share_and_proof
-            .clone(),
+        first_round_output,
+        centralized_public_key_share_and_proof,
     )
-}
-
-pub(crate) fn dwallet_imported_key_verification_request_event_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletImportedKeyVerificationRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::DWalletImportedKeyVerificationRequest(deserialized_event),
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-    }
-}
-
-pub(crate) fn dwallet_dkg_first_party_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletDKGFirstRoundRequestEvent>,
-) -> anyhow::Result<MPCSessionRequest> {
-    Ok(MPCSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::DKGFirst(deserialized_event),
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-    })
-}
-
-pub(crate) fn dwallet_dkg_second_party_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletDKGSecondRoundRequestEvent>,
-) -> MPCSessionRequest {
-    MPCSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        epoch: deserialized_event.epoch,
-        request_input: MPCRequestInput::DKGSecond(deserialized_event.clone()),
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-    }
 }
 
 /// A trait for generating the public input for the initial round of the DKG protocol.
@@ -111,8 +68,8 @@ pub(crate) trait DWalletDKGSecondPartyPublicInputGenerator: Party {
     /// Generates the public input required for the second round of the DKG protocol.
     fn generate_public_input(
         protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-        first_round_output: SerializedWrappedMPCPublicOutput,
-        centralized_party_public_key_share: SerializedWrappedMPCPublicOutput,
+        first_round_output: &SerializedWrappedMPCPublicOutput,
+        centralized_party_public_key_share: &SerializedWrappedMPCPublicOutput,
     ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput>;
 }
 
@@ -120,28 +77,62 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
     fn generate_public_input(
         protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
     ) -> DwalletMPCResult<<DWalletDKGFirstParty as Party>::PublicInput> {
-        let input: Self::PublicInput = protocol_public_parameters;
+        let secp256k1_public_input = twopc_mpc::dkg::encryption_of_secret_key_share::PublicInput::<
+            group::secp256k1::scalar::PublicParameters,
+            group::secp256k1::group_element::PublicParameters,
+            class_groups::Secp256k1EncryptionSchemePublicParameters,
+        > {
+            scalar_group_public_parameters: protocol_public_parameters
+                .scalar_group_public_parameters
+                .clone(),
+            group_public_parameters: protocol_public_parameters.group_public_parameters.clone(),
+            encryption_scheme_public_parameters: protocol_public_parameters
+                .encryption_scheme_public_parameters,
+        };
+        let input: Self::PublicInput = secp256k1_public_input;
         Ok(input)
     }
 }
 
 impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
     fn generate_public_input(
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-        first_round_output_buf: SerializedWrappedMPCPublicOutput,
-        centralized_party_public_key_share_buf: SerializedWrappedMPCPublicOutput,
+        protocol_public_parameters: ProtocolPublicParameters,
+        first_round_output_buf: &SerializedWrappedMPCPublicOutput,
+        centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
     ) -> DwalletMPCResult<<DWalletDKGSecondParty as mpc::Party>::PublicInput> {
-        let first_round_output_buf: VersionedCentralizedDKGPublicOutput =
-            bcs::from_bytes(&first_round_output_buf).map_err(DwalletMPCError::BcsError)?;
+        // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
+        let first_round_output_buf: VersionedDwalletDKGFirstRoundPublicOutput =
+            bcs::from_bytes(first_round_output_buf).map_err(DwalletMPCError::BcsError)?;
 
         let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
-            bcs::from_bytes(&centralized_party_public_key_share_buf)
+            bcs::from_bytes(centralized_party_public_key_share_buf)
                 .map_err(DwalletMPCError::BcsError)?;
 
         match first_round_output_buf {
-            VersionedCentralizedDKGPublicOutput::V1(first_round_output) => {
-                let first_round_output: <DWalletDKGFirstParty as Party>::PublicOutput =
+            VersionedDwalletDKGFirstRoundPublicOutput::V1(first_round_output) => {
+                let (first_round_output, _) =
+                    bcs::from_bytes::<(Vec<u8>, CommitmentSizedNumber)>(&first_round_output)?;
+                let [first_part, second_part]: <DWalletDKGFirstParty as Party>::PublicOutput =
                     bcs::from_bytes(&first_round_output).map_err(DwalletMPCError::BcsError)?;
+                let (first_first_part, first_second_part) = first_part.into();
+                let (second_first_part, second_second_part) = second_part.into();
+                // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.
+                // TODO (#1470): Use one network round in the dWallet DKG flow.
+                let protocol_public_parameters_with_dkg_centralized_output =
+                    ProtocolPublicParameters::new::<
+                        { group::secp256k1::SCALAR_LIMBS },
+                        { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                        { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                        group::secp256k1::GroupElement,
+                    >(
+                        first_second_part,
+                        second_second_part,
+                        first_first_part,
+                        second_first_part,
+                        protocol_public_parameters
+                            .encryption_scheme_public_parameters
+                            .clone(),
+                    );
 
                 let centralized_party_public_key_share = match centralized_party_public_key_share {
                     VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
@@ -151,8 +142,7 @@ impl DWalletDKGSecondPartyPublicInputGenerator for DWalletDKGSecondParty {
                 };
 
                 let input: Self::PublicInput = (
-                    protocol_public_parameters,
-                    first_round_output,
+                    protocol_public_parameters_with_dkg_centralized_output,
                     centralized_party_public_key_share,
                 )
                     .into();
