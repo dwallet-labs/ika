@@ -87,6 +87,8 @@ pub trait NetworkEncryptionKeyPublicData {
     fn secp256k1_decryption_key_share_public_parameters(
         &self,
     ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters;
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput;
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType;
 }
 
 impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV1 {
@@ -100,6 +102,14 @@ impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV1 {
         self.secp256k1_decryption_key_share_public_parameters
             .clone()
     }
+
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
+        &self.network_dkg_output
+    }
+
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
+        &self.state
+    }
 }
 
 impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV2 {
@@ -112,6 +122,12 @@ impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV2 {
     ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
         self.secp256k1_decryption_key_share_public_parameters
             .clone()
+    }
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
+        &self.network_dkg_output
+    }
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
+        &self.state
     }
 }
 

@@ -78,7 +78,7 @@ pub struct ValidatorPrivateDecryptionKeyData {
 }
 
 async fn get_decryption_key_shares_from_public_output(
-    shares: NetworkEncryptionKeyPublicDataV1,
+    shares: VersionedNetworkEncryptionKeyPublicData,
     party_id: PartyID,
     personal_decryption_key: ClassGroupsDecryptionKey,
     access_structure: WeightedThresholdAccessStructure,
@@ -87,22 +87,24 @@ async fn get_decryption_key_shares_from_public_output(
 
     rayon::spawn_fifo(move || {
         let res = match shares.state {
-            NetworkDecryptionKeyPublicOutputType::NetworkDkg => match &shares.network_dkg_output {
-                VersionedNetworkDkgOutput::V1(public_output) => {
-                    match bcs::from_bytes::<<Secp256k1Party as mpc::Party>::PublicOutput>(
-                        public_output,
-                    ) {
-                        Ok(dkg_public_output) => dkg_public_output
-                            .default_decryption_key_shares::<secp256k1::GroupElement>(
-                                party_id,
-                                &access_structure,
-                                personal_decryption_key,
-                            )
-                            .map_err(DwalletMPCError::from),
-                        Err(e) => Err(e.into()),
+            NetworkDecryptionKeyPublicOutputType::NetworkDkg => {
+                match &shares.network_dkg_output() {
+                    VersionedNetworkDkgOutput::V1(public_output) => {
+                        match bcs::from_bytes::<<Secp256k1Party as mpc::Party>::PublicOutput>(
+                            public_output,
+                        ) {
+                            Ok(dkg_public_output) => dkg_public_output
+                                .default_decryption_key_shares::<secp256k1::GroupElement>(
+                                    party_id,
+                                    &access_structure,
+                                    personal_decryption_key,
+                                )
+                                .map_err(DwalletMPCError::from),
+                            Err(e) => Err(e.into()),
+                        }
                     }
                 }
-            },
+            }
             NetworkDecryptionKeyPublicOutputType::Reconfiguration => {
                 match &shares.latest_network_reconfiguration_public_output.unwrap() {
                     VersionedDecryptionKeyReconfigurationOutput::V1(public_output) => {
@@ -240,7 +242,7 @@ impl DwalletMPCNetworkKeys {
             .latest_network_reconfiguration_public_output
             .clone();
         if versioned_output.is_none() {
-            return Ok(match key_data.network_dkg_output {
+            return Ok(match key_data.network_dkg_output() {
                 VersionedNetworkDkgOutput::V1(_) => 1,
             });
         }
@@ -289,7 +291,7 @@ impl DwalletMPCNetworkKeys {
             .network_encryption_keys
             .get(key_id)
             .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?
-            .network_dkg_output
+            .network_dkg_output()
             .clone())
     }
 
