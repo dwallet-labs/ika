@@ -483,7 +483,9 @@ pub async fn ika_system_initialize(
         .await?;
 
     let zero_key = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![0u32])?))?;
-    let zero_and_one_value = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![vec![0u32, 1u32]])?))?;
+    let zero_to_four_value = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![vec![
+        0u32, 1u32, 2u32, 3u32, 4u32,
+    ]])?))?; // @todo: maybe we can rename this variable better
     let zero = ptb.input(CallArg::Pure(bcs::to_bytes(&0u32)?))?;
     let zero_option = ptb.input(CallArg::Pure(bcs::to_bytes(&Some(0u32))?))?;
     let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
@@ -676,7 +678,7 @@ pub async fn ika_system_initialize(
         ident_str!("vec_map").into(),
         ident_str!("from_keys_values").into(),
         vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
-        vec![zero_key, zero_and_one_value],
+        vec![zero_key, zero_to_four_value],
     );
 
     let supported_signature_algorithms_to_hash_schemes_vec = ptb.programmable_move_call(
