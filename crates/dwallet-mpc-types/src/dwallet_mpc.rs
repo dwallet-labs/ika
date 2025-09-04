@@ -293,25 +293,6 @@ pub enum DWalletSignatureScheme {
     SchnorrkelSubstrate = 4,
 }
 
-#[repr(u32)]
-#[derive(
-    strum_macros::Display,
-    Clone,
-    Debug,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    Eq,
-    Hash,
-    Copy,
-    Ord,
-    PartialOrd,
-)]
-pub enum SignatureAlgorithm {
-    #[strum(to_string = "ECDSA")]
-    ECDSA,
-}
-
 // We can't import ika-types here since we import this module in there.
 // Therefore, we use `thiserror` `#from` to convert this error.
 #[derive(Debug, Error, Clone)]
