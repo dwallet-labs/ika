@@ -606,7 +606,7 @@ impl ProtocolCryptographicData {
                     } => {
                         // TODO (#1492): Add support for all signatures schemes supported by crypto
                         // private
-                        let public_output_value = match data.curve {
+                        let public_output_value = match data.signature_algorithm {
                             DWalletSignatureScheme::ECDSASecp256k1 => {
                                 let signature: ECDSASecp256k1Signature =
                                     bcs::from_bytes(&public_output_value)?;

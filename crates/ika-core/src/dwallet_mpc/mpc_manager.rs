@@ -17,7 +17,7 @@ use crate::dwallet_mpc::{
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, NetworkEncryptionKeyPublicData};
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
