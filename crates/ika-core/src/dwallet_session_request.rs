@@ -1,6 +1,6 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::request_protocol_data::ProtocolData;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, SignatureAlgorithm};
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureScheme};
 use group::HashType;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use std::cmp::Ordering;
@@ -26,7 +26,7 @@ pub struct DWalletSessionRequestMetricData {
     name: String,
     curve: Option<DWalletCurve>,
     hash_scheme: Option<HashType>,
-    signature_algorithm: Option<SignatureAlgorithm>,
+    signature_algorithm: Option<DWalletSignatureScheme>,
 }
 
 impl PartialOrd<Self> for DWalletSessionRequest {

@@ -1,6 +1,5 @@
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureScheme, SerializedWrappedMPCPublicOutput,
-    SignatureAlgorithm,
 };
 use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -47,15 +46,15 @@ pub struct DKGSecondData {
 #[display("Presign")]
 pub struct PresignData {
     pub curve: DWalletCurve,
-    pub signature_algorithm: SignatureAlgorithm,
+    pub signature_algorithm: DWalletSignatureScheme,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Sign")]
 pub struct SignData {
-    pub curve: DWalletSignatureScheme,
+    pub curve: DWalletCurve,
     pub hash_scheme: HashType,
-    pub signature_algorithm: SignatureAlgorithm,
+    pub signature_algorithm: DWalletSignatureScheme,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
@@ -91,7 +90,7 @@ pub struct PartialSignatureVerificationData {
     pub curve: DWalletCurve,
     pub message: Vec<u8>,
     pub hash_type: HashType,
-    pub signature_algorithm: SignatureAlgorithm,
+    pub signature_algorithm: DWalletSignatureScheme,
     pub dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
     pub presign: SerializedWrappedMPCPublicOutput,
     pub partially_signed_message: SerializedWrappedMPCPublicOutput,

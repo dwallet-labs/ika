@@ -350,19 +350,6 @@ impl TryFrom<u32> for DWalletSignatureScheme {
     }
 }
 
-impl TryFrom<u32> for SignatureAlgorithm {
-    type Error = DwalletNetworkMPCError;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(SignatureAlgorithm::ECDSA),
-            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCSignatureAlgorithm(
-                v,
-            )),
-        }
-    }
-}
-
 pub type ClassGroupsPublicKeyAndProofBytes = Vec<u8>;
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

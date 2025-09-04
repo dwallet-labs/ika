@@ -19,10 +19,10 @@ use class_groups::{
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkDecryptionKeyPublicOutputType,
-    NetworkEncryptionKeyPublicData, NetworkEncryptionKeyPublicDataV1,
-    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
-    VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData,
+    DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
+    NetworkEncryptionKeyPublicDataV1, SerializedWrappedMPCPublicOutput,
+    VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
+    VersionedNetworkEncryptionKeyPublicData,
 };
 use group::{GroupElement, OsCsRng, PartyID, secp256k1};
 use homomorphic_encryption::{
@@ -467,19 +467,17 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                     .clone(),
             );
 
-                    Ok(VersionedNetworkEncryptionKeyPublicData::V1(
-                        NetworkEncryptionKeyPublicDataV1 {
-                            epoch,
-                            state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
-                            latest_network_reconfiguration_public_output: None,
-                            secp256k1_decryption_key_share_public_parameters:
-                                decryption_key_share_public_parameters,
-                            network_dkg_output: mpc_public_output,
-                            secp256k1_protocol_public_parameters: protocol_public_parameters,
-                        },
-                    ))
-                }
-            }
+            Ok(VersionedNetworkEncryptionKeyPublicData::V1(
+                NetworkEncryptionKeyPublicDataV1 {
+                    epoch,
+                    state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
+                    latest_network_reconfiguration_public_output: None,
+                    secp256k1_decryption_key_share_public_parameters:
+                        decryption_key_share_public_parameters,
+                    network_dkg_output: mpc_public_output,
+                    secp256k1_protocol_public_parameters: protocol_public_parameters,
+                },
+            ))
         }
     }
 }
