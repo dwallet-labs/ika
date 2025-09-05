@@ -562,21 +562,12 @@ impl ProtocolCryptographicData {
                     }
                 }
             }
-            ProtocolCryptographicData::DKGSecond {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input,
                 data,
                 advance_request,
-                first_round_output,
                 ..
             } => {
-                // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
-                let session_id = match bcs::from_bytes(&first_round_output)? {
-                    VersionedDwalletDKGFirstRoundPublicOutput::V1(output) => {
-                        let (_, session_id) =
-                            bcs::from_bytes::<(Vec<u8>, CommitmentSizedNumber)>(&output)?;
-                        session_id
-                    }
-                };
                 let result = Party::<DWalletDKGParty>::advance_with_guaranteed_output(
                     session_id,
                     party_id,
