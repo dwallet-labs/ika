@@ -1,0 +1,10 @@
+---
+keystore:
+  File: /root/.sui/sui_config/sui.keystore
+envs:
+  - alias: DOMAIN_NAME_HERE
+    rpc: "https://fullnode.DOMAIN_NAME_HERE:443"
+    ws: ~
+    basic_auth: ~
+active_env: DOMAIN_NAME_HERE
+active_address: ACTIVE_ADDRESS_HERE
