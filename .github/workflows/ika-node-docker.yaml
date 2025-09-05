@@ -3,11 +3,19 @@ name: Build and Push Ika Node Docker Image
 on:
   workflow_dispatch:
     inputs:
+      network:
+        description: 'The network to build the image for (mainnet, testnet, devnet)'
+        required: true
+        type: string
+        options:
+          - mainnet
+          - testnet
+          - devnet
+        default: 'devnet'
       version:
         description: 'Version to tag the image (format: vX.Y.Z)'
         required: true
         type: string
-        default: 'v1.0.0'
       no_default_features:
         description: 'Build with --no-default-features flag'
         required: false
@@ -52,10 +60,11 @@ jobs:
           REPO_NAME="us-docker.pkg.dev/common-449616/ika-common-public-containers"
           IMAGE_NAME="ika-node"
           VERSION="${{ inputs.version }}"
+          NETWORK="${{ inputs.network }}"
           
           # Set up environment variables for build script
           export GITHUB_TOKEN="${{ secrets.GH_PRIVATE_REPO_TOKEN }}"
-          export DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${VERSION}"
+          export DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${NETWORK}-${VERSION}"
           
           # Prepare build flags
           BUILD_FLAGS=""
@@ -71,19 +80,12 @@ jobs:
           echo "Building Docker image: ${DOCKER_TAG}"
           ./build.sh $BUILD_FLAGS
           
-          # Also tag as latest
-          # docker tag ${DOCKER_TAG} ${REPO_NAME}/${IMAGE_NAME}:latest
-          
           # Push both tags
           echo "Pushing Docker image: ${DOCKER_TAG}"
           docker push ${DOCKER_TAG}
           
-          # echo "Pushing Docker image: ${REPO_NAME}/${IMAGE_NAME}:latest"
-          # docker push ${REPO_NAME}/${IMAGE_NAME}:latest
-          
           echo "Successfully built and pushed:"
           echo "- ${DOCKER_TAG}"
-          # echo " - ${REPO_NAME}/${IMAGE_NAME}:latest"
           
           if [ "${{ inputs.no_default_features }}" = "true" ]; then
             echo "- Built with --no-default-features flag"

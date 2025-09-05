@@ -2,12 +2,7 @@ name: Build Binaries
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to tag the binaries (format: vX.Y.Z)'
-        required: false
-        type: string
-        default: 'latest'
+  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
