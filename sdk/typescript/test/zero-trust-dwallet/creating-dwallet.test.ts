@@ -223,7 +223,7 @@ describe('DWallet Creation', () => {
 			dkgSecondRoundRequestInput,
 			userShareEncryptionKeys,
 			testName,
-			parsedEvent.session_object_id
+			parsedEvent.session_object_id,
 		);
 
 		expect(secondRoundMoveResponse).toBeDefined();
