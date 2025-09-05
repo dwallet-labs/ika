@@ -1,0 +1,78 @@
+name: Build and Push Ika Proxy Docker Image
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: 'The network to build the image for (mainnet, testnet, devnet)'
+        required: true
+        type: string
+        options:
+          - mainnet
+          - testnet
+          - devnet
+        default: devnet
+      version:
+        description: 'Version to tag the image (format: vX.Y.Z)'
+        required: true
+        default: v1.0.0
+        type: string
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Version must be in format vX.Y.Z (e.g., v1.0.0)"
+            exit 1
+          fi
+          echo "Version format is valid: ${{ inputs.version }}"
+
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v2'
+        with:
+          credentials_json: '${{ secrets.GAR_KEY }}'
+
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: 'Configure Docker for Artifact Registry'
+        run: gcloud auth configure-docker us-docker.pkg.dev
+
+      - name: 'Build and Push Docker Image'
+        run: |
+          set -e
+          
+          # Set repository details
+          REPO_NAME="us-docker.pkg.dev/common-449616/ika-common-containers"
+          IMAGE_NAME="ika-proxy"
+          VERSION="${{ inputs.version }}"
+          NETWORK="${{ inputs.network }}"
+          
+          # Set up environment variables for build script
+          export GITHUB_TOKEN="${{ secrets.GH_PRIVATE_REPO_TOKEN }}"
+          export DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${NETWORK}-${VERSION}"
+          
+          # Navigate to docker build directory
+          cd docker/ika-proxy
+          
+          # Build the Docker image using build.sh
+          echo "Building Docker image: ${DOCKER_TAG}"
+          ./build.sh
+          
+          # Push the image
+          echo "Pushing Docker image: ${DOCKER_TAG}"
+          docker push ${DOCKER_TAG}
+          
+          echo "Successfully built and pushed:"
+          echo "- ${DOCKER_TAG}"
