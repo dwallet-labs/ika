@@ -30,13 +30,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate version format
-        run: |
-          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Error: Version must be in format vX.Y.Z (e.g., v1.0.0)"
-            exit 1
-          fi
-          echo "Version format is valid: ${{ inputs.version }}"
+#      - name: Validate version format
+#        run: |
+#          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+#            echo "Error: Version must be in format vX.Y.Z (e.g., v1.0.0)"
+#            exit 1
+#          fi
+#          echo "Version format is valid: ${{ inputs.version }}"
 
       - name: Authenticate to Google Cloud
         uses: 'google-github-actions/auth@v2'
@@ -56,8 +56,10 @@ jobs:
           # Set repository details
           REPO_NAME="us-docker.pkg.dev/common-449616/ika-common-containers"
           IMAGE_NAME="ika-proxy"
-          VERSION="${{ inputs.version }}"
-          NETWORK="${{ inputs.network }}"
+          VERSION="v0.0.1"
+#          VERSION="${{ inputs.version }}"
+          NETWORK="devnet"
+#          NETWORK="${{ inputs.network }}"
           
           # Set up environment variables for build script
           export GITHUB_TOKEN="${{ secrets.GH_PRIVATE_REPO_TOKEN }}"
@@ -65,11 +67,11 @@ jobs:
           
           # Navigate to docker build directory
           cd docker/ika-proxy
-          
+
           # Build the Docker image using build.sh
           echo "Building Docker image: ${DOCKER_TAG}"
           ./build.sh
-          
+
           # Push the image
           echo "Pushing Docker image: ${DOCKER_TAG}"
           docker push ${DOCKER_TAG}
