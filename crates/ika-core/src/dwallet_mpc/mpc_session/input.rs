@@ -18,7 +18,7 @@ use crate::request_protocol_data::ProtocolData;
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletMPCNetworkKeyScheme, MPCPrivateInput, VersionedImportedDWalletPublicOutput,
+    DWalletCurve, MPCPrivateInput, VersionedImportedDWalletPublicOutput,
 };
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
@@ -124,8 +124,6 @@ pub(crate) fn session_input_from_request(
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_public_input(
                     access_structure,
                     validators_class_groups_public_keys_and_proofs,
-                    // Todo (#473): Support generic network key scheme
-                    DWalletMPCNetworkKeyScheme::Secp256k1,
                 )?),
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
             ))

@@ -8,7 +8,7 @@ use crate::request_protocol_data::{EncryptedShareVerificationData, ProtocolData}
 use dwallet_mpc_centralized_party::{
     encrypt_secret_key_share_and_prove, network_dkg_public_output_to_protocol_pp_inner,
 };
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
+use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
@@ -127,7 +127,7 @@ pub(crate) fn send_start_encrypt_secret_share_event(
                 session_sequence_number,
                 protocol_data: ProtocolData::EncryptedShareVerification {
                     data: EncryptedShareVerificationData {
-                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        curve: DWalletCurve::Secp256k1,
                         encrypted_centralized_secret_share_and_proof:
                             encrypted_centralized_secret_share_and_proof.clone(),
                         decentralized_public_output: decentralized_public_output.clone(),
