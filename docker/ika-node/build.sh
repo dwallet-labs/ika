@@ -23,9 +23,6 @@ if [ -f .env ]; then
       export "$key=$value"
     fi
   done < .env
-else
-  echo ".env file not found!"
-  exit 1
 fi
 
 # Validate required variables

@@ -71,7 +71,7 @@ jobs:
           export DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${NETWORK}-${VERSION}"
           
           # Prepare build flags
-#          BUILD_FLAGS=""
+          #BUILD_FLAGS=""
           BUILD_FLAGS="--no-default-features"
           #if [ "${{ inputs.no_default_features }}" = "true" ]; then
           #  BUILD_FLAGS="--no-default-features"
