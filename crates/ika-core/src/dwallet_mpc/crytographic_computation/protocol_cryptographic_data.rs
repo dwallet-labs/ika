@@ -144,12 +144,18 @@ impl ProtocolCryptographicData {
                 advance_request,
                 ..
             } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKG {
+                advance_request, ..
+            } => advance_request.attempt_number,
         }
     }
 
     pub fn get_mpc_round(&self) -> Option<u64> {
         match self {
             ProtocolCryptographicData::DKGFirst {
+                advance_request, ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKG {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::DKGSecond {
