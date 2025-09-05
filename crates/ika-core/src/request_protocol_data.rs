@@ -68,9 +68,7 @@ pub struct SignData {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Network Encryption Key DKG")]
-pub struct NetworkEncryptionKeyDkgData {
-    pub key_scheme: DWalletCurve,
-}
+pub struct NetworkEncryptionKeyDkgData {}
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Network Encryption Key Reconfiguration")]
@@ -302,11 +300,10 @@ pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCRes
 }
 
 pub fn network_encryption_key_dkg_protocol_data(
-    key_scheme: DWalletCurve,
     request_event_data: DWalletNetworkDKGEncryptionKeyRequestEvent,
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::NetworkEncryptionKeyDkg {
-        data: NetworkEncryptionKeyDkgData { key_scheme },
+        data: NetworkEncryptionKeyDkgData {},
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
     })
 }

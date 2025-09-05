@@ -207,7 +207,7 @@ impl ProtocolCryptographicData {
                 }
             }
             ProtocolData::NetworkEncryptionKeyDkg {
-                data: NetworkEncryptionKeyDkgData { key_scheme },
+                data: NetworkEncryptionKeyDkgData {},
                 ..
             } => {
                 let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
@@ -228,9 +228,7 @@ impl ProtocolCryptographicData {
                 };
 
                 ProtocolCryptographicData::NetworkEncryptionKeyDkg {
-                    data: NetworkEncryptionKeyDkgData {
-                        key_scheme: key_scheme.clone(),
-                    },
+                    data: NetworkEncryptionKeyDkgData {},
                     public_input: public_input.clone(),
                     advance_request,
                     class_groups_decryption_key,
@@ -604,8 +602,6 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
-                        // TODO (#1492): Add support for all signatures schemes supported by crypto
-                        // private
                         let public_output_value = match data.signature_algorithm {
                             DWalletSignatureScheme::ECDSASecp256k1 => {
                                 let signature: ECDSASecp256k1Signature =
@@ -633,6 +629,13 @@ impl ProtocolCryptographicData {
                                 signature.to_bytes().to_vec()
                             }
                             _ => {
+                                error!(
+                                    session_identifier=?session_identifier,
+                                    ?public_output_value,
+                                    ?malicious_parties,
+                                    should_never_happen = true,
+                                    "Invalid signature scheme for sign session result"
+                                );
                                 return Err(DwalletMPCError::InvalidDWalletProtocolType);
                             }
                         };

@@ -49,9 +49,7 @@ async fn test_some_malicious_validators_flows_succeed() {
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
                 session_sequence_number: 1,
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
-                    data: NetworkEncryptionKeyDkgData {
-                        key_scheme: DWalletCurve::Secp256k1,
-                    },
+                    data: NetworkEncryptionKeyDkgData {},
                     dwallet_network_encryption_key_id: network_key_id,
                 },
                 epoch: 1,
@@ -174,9 +172,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
                 session_sequence_number: 1,
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
-                    data: NetworkEncryptionKeyDkgData {
-                        key_scheme: DWalletCurve::Secp256k1,
-                    },
+                    data: NetworkEncryptionKeyDkgData {},
                     dwallet_network_encryption_key_id: network_key_id,
                 },
                 epoch: 1,

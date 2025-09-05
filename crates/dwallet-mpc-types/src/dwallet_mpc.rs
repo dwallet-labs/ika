@@ -281,11 +281,11 @@ pub enum DWalletCurve {
     PartialOrd,
 )]
 pub enum DWalletSignatureScheme {
-    #[strum(to_string = "Secp256k1")]
+    #[strum(to_string = "ECDSASecp256k1")]
     ECDSASecp256k1 = 0,
     #[strum(to_string = "Taproot")]
     Taproot = 1,
-    #[strum(to_string = "Secp256r1")]
+    #[strum(to_string = "ECDSASecp256r1")]
     ECDSASecp256r1 = 2,
     #[strum(to_string = "EdDSA")]
     EdDSA = 3,
@@ -298,7 +298,7 @@ pub enum DWalletSignatureScheme {
 #[derive(Debug, Error, Clone)]
 pub enum DwalletNetworkMPCError {
     #[error("invalid DWalletMPCNetworkKey value: {0}")]
-    InvalidDWalletMPCNetworkKey(u32),
+    InvalidDWalletMPCCurve(u32),
 
     #[error("invalid DWalletMPCSignatureAlgorithm value: {0}")]
     InvalidDWalletMPCSignatureAlgorithm(u32),
@@ -311,7 +311,9 @@ impl TryFrom<u32> for DWalletCurve {
         match value {
             0 => Ok(DWalletCurve::Secp256k1),
             1 => Ok(DWalletCurve::Ristretto),
-            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCNetworkKey(v)),
+            2 => Ok(DWalletCurve::Secp256r1),
+            3 => Ok(DWalletCurve::Curve25519),
+            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCCurve(v)),
         }
     }
 }
@@ -322,11 +324,13 @@ impl TryFrom<u32> for DWalletSignatureScheme {
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(DWalletSignatureScheme::ECDSASecp256k1),
-            1 => Ok(DWalletSignatureScheme::ECDSASecp256r1),
-            2 => Ok(DWalletSignatureScheme::EdDSA),
-            3 => Ok(DWalletSignatureScheme::SchnorrkelSubstrate),
-            4 => Ok(DWalletSignatureScheme::Taproot),
-            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCNetworkKey(v)),
+            1 => Ok(DWalletSignatureScheme::Taproot),
+            2 => Ok(DWalletSignatureScheme::ECDSASecp256r1),
+            3 => Ok(DWalletSignatureScheme::EdDSA),
+            4 => Ok(DWalletSignatureScheme::SchnorrkelSubstrate),
+            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCSignatureAlgorithm(
+                v,
+            )),
         }
     }
 }
