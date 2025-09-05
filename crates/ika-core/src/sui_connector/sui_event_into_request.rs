@@ -251,7 +251,6 @@ fn network_dkg_session_request(
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: network_encryption_key_dkg_protocol_data(
-            DWalletCurve::Secp256k1,
             deserialized_event.event_data.clone(),
         )?,
         epoch: deserialized_event.epoch,

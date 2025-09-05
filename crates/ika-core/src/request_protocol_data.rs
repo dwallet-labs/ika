@@ -266,7 +266,6 @@ pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCRes
 }
 
 pub fn network_encryption_key_dkg_protocol_data(
-    key_scheme: DWalletCurve,
     request_event_data: DWalletNetworkDKGEncryptionKeyRequestEvent,
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::NetworkEncryptionKeyDkg {
