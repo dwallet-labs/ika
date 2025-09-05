@@ -162,7 +162,7 @@ describe('DWallet Creation', () => {
 		expect(finalDWallet.id.id).toBe(dwalletID);
 	});
 
-	it('should create a new DWallet through the v2 on round DKG process', async () => {
+	it('should create a new DWallet through the v2 one round DKG process', async () => {
 		const testName = 'dwallet-creation-test';
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);
