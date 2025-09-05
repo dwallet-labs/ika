@@ -63,9 +63,16 @@ jobs:
           VERSION="${{ inputs.version }}"
           NETWORK="${{ inputs.network }}"
           
+          # Append -notifier to tag if building with no default features
+          if [ "${{ inputs.no_default_features }}" = "true" ]; then
+            DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${NETWORK}-${VERSION}-notifier"
+          else
+            DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${NETWORK}-${VERSION}"
+          fi
+          
           # Set up environment variables for build script
           export GITHUB_TOKEN="${{ secrets.GH_PRIVATE_REPO_TOKEN }}"
-          export DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${NETWORK}-${VERSION}"
+          export DOCKER_TAG
           
           # Prepare build flags
           BUILD_FLAGS=""
