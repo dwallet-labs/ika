@@ -207,7 +207,7 @@ impl ProtocolCryptographicData {
                 }
             }
             ProtocolData::NetworkEncryptionKeyDkg {
-                data: NetworkEncryptionKeyDkgData { curve: key_scheme },
+                data: NetworkEncryptionKeyDkgData {},
                 ..
             } => {
                 let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
@@ -228,9 +228,7 @@ impl ProtocolCryptographicData {
                 };
 
                 ProtocolCryptographicData::NetworkEncryptionKeyDkg {
-                    data: NetworkEncryptionKeyDkgData {
-                        curve: key_scheme.clone(),
-                    },
+                    data: NetworkEncryptionKeyDkgData {},
                     public_input: public_input.clone(),
                     advance_request,
                     class_groups_decryption_key,
