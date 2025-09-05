@@ -10,7 +10,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { randomBytes } from '@noble/hashes/utils.js';
 
 import type {
-	DKGSecondRoundRequestInput,
+	DKGRequestInput,
 	ImportDWalletVerificationRequestInput,
 } from '../src/client/cryptography.js';
 import { IkaClient, IkaTransaction } from '../src/client/index.js';
@@ -172,7 +172,7 @@ export async function requestDkgSecondRound(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	dkgSecondRoundRequestInput: DKGSecondRoundRequestInput,
+	dkgSecondRoundRequestInput: DKGRequestInput,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 ) {
 	const transaction = new Transaction();

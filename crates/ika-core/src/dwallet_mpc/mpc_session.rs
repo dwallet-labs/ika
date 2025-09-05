@@ -304,6 +304,7 @@ impl TryFrom<&DWalletCheckpointMessageKind> for SessionComputationType {
             | DWalletCheckpointMessageKind::RespondDWalletPresign(_)
             | DWalletCheckpointMessageKind::RespondDWalletSign(_)
             | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletDKGOutput(_)
             | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(_) => {
                 Ok(SessionComputationType::MPC {
                     messages_by_consensus_round: HashMap::new(),
