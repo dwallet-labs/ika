@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGPublicInputGenerator, DWalletDKGSecondParty,
+    DWalletDKGFirstParty, DWalletDKGParty, DWalletDKGPublicInputGenerator,
     DWalletImportedKeyVerificationParty, dwallet_dkg_first_public_input,
     dwallet_dkg_second_public_input,
 };
@@ -35,7 +35,7 @@ pub enum PublicInput {
         <DWalletImportedKeyVerificationParty as mpc::Party>::PublicInput,
     ),
     DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
-    DWalletDKG(<DWalletDKGSecondParty as mpc::Party>::PublicInput),
+    DWalletDKG(<DWalletDKGParty as mpc::Party>::PublicInput),
     Presign(<PresignParty as mpc::Party>::PublicInput),
     Sign(<SignParty as mpc::Party>::PublicInput),
     NetworkEncryptionKeyDkg(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
@@ -87,10 +87,12 @@ pub(crate) fn session_input_from_request(
                 network_keys.get_protocol_public_parameters(dwallet_network_encryption_key_id)?;
 
             Ok((
-                PublicInput::DWalletDKG(<DWalletDKGSecondParty as DWalletDKGPublicInputGenerator>::generate_public_input(
-                    protocol_public_parameters,
-                    &data.centralized_public_key_share_and_proof
-                )?),
+                PublicInput::DWalletDKG(
+                    <DWalletDKGParty as DWalletDKGPublicInputGenerator>::generate_public_input(
+                        protocol_public_parameters,
+                        &data.centralized_public_key_share_and_proof,
+                    )?,
+                ),
                 None,
             ))
         }

@@ -1,5 +1,5 @@
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
+    DWalletDKGFirstParty, DWalletDKGParty, DWalletImportedKeyVerificationParty,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
@@ -10,11 +10,11 @@ use crate::dwallet_mpc::reconfiguration::{
 };
 use crate::dwallet_mpc::sign::SignParty;
 use crate::request_protocol_data::{
-    DKGFirstData, DKGSecondData, EncryptedShareVerificationData, ImportedKeyVerificationData,
-    MakeDWalletUserSecretKeySharesPublicData, NetworkEncryptionKeyDkgData,
-    NetworkEncryptionKeyReconfigurationData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
-    NetworkEncryptionKeyV2ReconfigurationData, PartialSignatureVerificationData, PresignData,
-    ProtocolData, SignData,
+    DKGFirstData, DKGSecondData, DWalletDKGData, EncryptedShareVerificationData,
+    ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData,
+    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData,
+    NetworkEncryptionKeyV1ToV2ReconfigurationData, NetworkEncryptionKeyV2ReconfigurationData,
+    PartialSignatureVerificationData, PresignData, ProtocolData, SignData,
 };
 use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
@@ -45,9 +45,15 @@ pub enum ProtocolCryptographicData {
 
     DKGSecond {
         data: DKGSecondData,
-        public_input: <DWalletDKGSecondParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<DWalletDKGSecondParty as mpc::Party>::Message>,
+        public_input: <DWalletDKGParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<DWalletDKGParty as mpc::Party>::Message>,
         first_round_output: Vec<u8>,
+    },
+
+    DWalletDKG {
+        data: DWalletDKGData,
+        public_input: <DWalletDKGParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<DWalletDKGParty as mpc::Party>::Message>,
     },
 
     Presign {
