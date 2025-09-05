@@ -74,7 +74,6 @@ pub(crate) trait DWalletDKGSecondPartyPublicInputGenerator: Party {
 }
 
 pub(crate) trait DWalletDKGPublicInputGenerator: Party {
-    /// Generates the public input required for the second round of the DKG protocol.
     fn generate_public_input(
         protocol_public_parameters: ProtocolPublicParameters,
         centralized_party_public_key_share: &SerializedWrappedMPCPublicOutput,
