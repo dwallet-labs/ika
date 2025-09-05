@@ -155,13 +155,13 @@ export function requestDWalletDKG(
 	encryptionKeyAddress: string,
 	userPublicOutput: Uint8Array,
 	signerPublicKey: Uint8Array,
-	sessionIdentifier: TransactionObjectArgument,
+	sessionIdentifierObjID: string,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ) {
 	tx.moveCall({
-		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg_second_round`,
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg`,
 		arguments: [
 			coordinatorObjectRef,
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicKeyShareAndProof)),
@@ -169,7 +169,7 @@ export function requestDWalletDKG(
 			tx.pure.address(encryptionKeyAddress),
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(signerPublicKey)),
-			sessionIdentifier,
+			tx.object(sessionIdentifierObjID),
 			ikaCoin,
 			suiCoin,
 		],

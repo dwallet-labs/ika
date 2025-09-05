@@ -282,6 +282,7 @@ export async function requestTestDkg(
 	dkgSecondRoundRequestInput: DKGRequestInput,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
+	sessionIdentifierObjID: string
 ) {
 	const transaction = new Transaction();
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
@@ -290,6 +291,7 @@ export async function requestTestDkg(
 		dkgSecondRoundRequestInput,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
+		sessionIdentifierObjID
 	});
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);

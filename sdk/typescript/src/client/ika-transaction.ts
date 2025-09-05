@@ -189,10 +189,12 @@ export class IkaTransaction {
 		dkgSecondRoundRequestInput,
 		ikaCoin,
 		suiCoin,
+		sessionIdentifierObjID,
 	}: {
 		dkgSecondRoundRequestInput: DKGRequestInput;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
+		sessionIdentifierObjID: string;
 	}) {
 		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
@@ -206,7 +208,7 @@ export class IkaTransaction {
 			this.#userShareEncryptionKeys.getSuiAddress(),
 			dkgSecondRoundRequestInput.userPublicOutput,
 			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
-			this.createSessionIdentifier(),
+			sessionIdentifierObjID,
 			ikaCoin,
 			suiCoin,
 			this.#transaction,

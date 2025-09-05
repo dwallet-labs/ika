@@ -216,13 +216,14 @@ describe('DWallet Creation', () => {
 		expect(dkgSecondRoundRequestInput.userDKGMessage).toBeInstanceOf(Uint8Array);
 		expect(dkgSecondRoundRequestInput.userPublicOutput).toBeDefined();
 
-		// Step 5: Request DKG second round
+		// Step 5: Request DKG chain round
 		const secondRoundMoveResponse = await requestTestDkg(
 			ikaClient,
 			suiClient,
 			dkgSecondRoundRequestInput,
 			userShareEncryptionKeys,
 			testName,
+			parsedEvent.session_object_id
 		);
 
 		expect(secondRoundMoveResponse).toBeDefined();
