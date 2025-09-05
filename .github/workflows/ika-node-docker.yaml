@@ -62,20 +62,21 @@ jobs:
           REPO_NAME="us-docker.pkg.dev/common-449616/ika-common-public-containers"
           IMAGE_NAME="ika-node"
           VERSION="v0.0.3"
-#          VERSION="${{ inputs.version }}"
+          #VERSION="${{ inputs.version }}"
           NETWORK="devnet"
-#          NETWORK="${{ inputs.network }}"
+          #NETWORK="${{ inputs.network }}"
           
           # Set up environment variables for build script
           export GITHUB_TOKEN="${{ secrets.GH_PRIVATE_REPO_TOKEN }}"
           export DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${NETWORK}-${VERSION}"
           
           # Prepare build flags
-          BUILD_FLAGS=""
-          if [ "${{ inputs.no_default_features }}" = "true" ]; then
-            BUILD_FLAGS="--no-default-features"
-            echo "Building with --no-default-features flag enabled"
-          fi
+#          BUILD_FLAGS=""
+          BUILD_FLAGS="--no-default-features"
+          #if [ "${{ inputs.no_default_features }}" = "true" ]; then
+          #  BUILD_FLAGS="--no-default-features"
+          #  echo "Building with --no-default-features flag enabled"
+          #fi
           
           # Navigate to docker build directory
           cd docker/ika-node
@@ -90,7 +91,7 @@ jobs:
           
           echo "Successfully built and pushed:"
           echo "- ${DOCKER_TAG}"
-          
-          if [ "${{ inputs.no_default_features }}" = "true" ]; then
-            echo "- Built with --no-default-features flag"
-          fi
+
+          #if [ "${{ inputs.no_default_features }}" = "true" ]; then
+            #echo "- Built with --no-default-features flag"
+          #fi

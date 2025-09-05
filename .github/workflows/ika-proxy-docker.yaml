@@ -57,9 +57,9 @@ jobs:
           REPO_NAME="us-docker.pkg.dev/common-449616/ika-common-containers"
           IMAGE_NAME="ika-proxy"
           VERSION="v0.0.1"
-#          VERSION="${{ inputs.version }}"
+          #VERSION="${{ inputs.version }}"
           NETWORK="devnet"
-#          NETWORK="${{ inputs.network }}"
+          #NETWORK="${{ inputs.network }}"
           
           # Set up environment variables for build script
           export GITHUB_TOKEN="${{ secrets.GH_PRIVATE_REPO_TOKEN }}"
