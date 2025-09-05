@@ -1,7 +1,6 @@
 name: Build and Push Ika Proxy Docker Image
 
 on:
-  pull_request:
   workflow_dispatch:
     inputs:
       network:
@@ -30,13 +29,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-#      - name: Validate version format
-#        run: |
-#          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-#            echo "Error: Version must be in format vX.Y.Z (e.g., v1.0.0)"
-#            exit 1
-#          fi
-#          echo "Version format is valid: ${{ inputs.version }}"
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Version must be in format vX.Y.Z (e.g., v1.0.0)"
+            exit 1
+          fi
+          echo "Version format is valid: ${{ inputs.version }}"
 
       - name: Authenticate to Google Cloud
         uses: 'google-github-actions/auth@v2'
@@ -56,10 +55,8 @@ jobs:
           # Set repository details
           REPO_NAME="us-docker.pkg.dev/common-449616/ika-common-containers"
           IMAGE_NAME="ika-proxy"
-          VERSION="v0.0.1"
-          #VERSION="${{ inputs.version }}"
-          NETWORK="devnet"
-          #NETWORK="${{ inputs.network }}"
+          VERSION="${{ inputs.version }}"
+          NETWORK="${{ inputs.network }}"
           
           # Set up environment variables for build script
           export GITHUB_TOKEN="${{ secrets.GH_PRIVATE_REPO_TOKEN }}"
