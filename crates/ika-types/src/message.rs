@@ -104,7 +104,6 @@ pub struct DWalletImportedKeyVerificationOutput {
 pub enum DWalletCheckpointMessageKind {
     RespondDWalletDKGFirstRoundOutput(DKGFirstRoundOutput),
     RespondDWalletDKGSecondRoundOutput(DWalletDKGOutput),
-    RespondDWalletDKGOutput(DWalletDKGOutput),
     RespondDWalletEncryptedUserShare(EncryptedUserShareOutput),
     RespondMakeDWalletUserSecretKeySharesPublic(MakeDWalletUserSecretKeySharesPublicOutput),
     RespondDWalletImportedKeyVerificationOutput(DWalletImportedKeyVerificationOutput),
@@ -116,6 +115,7 @@ pub enum DWalletCheckpointMessageKind {
     SetMaxActiveSessionsBuffer(u64),
     SetGasFeeReimbursementSuiSystemCallValue(u64),
     EndOfPublish,
+    RespondDWalletDKGOutput(DWalletDKGOutput),
 }
 
 impl DWalletCheckpointMessageKind {
