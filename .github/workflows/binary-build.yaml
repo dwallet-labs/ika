@@ -8,14 +8,6 @@ on:
         required: false
         type: string
         default: 'latest'
-  push:
-    tags:
-      - 'v*'
-  pull_request:
-    paths:
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -35,12 +27,12 @@ jobs:
     permissions:
       contents: read
       packages: write
-    
+
     strategy:
       fail-fast: false
       matrix:
         binary: [ika, ika-node]
-        target: 
+        target:
           - x86_64-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
         include:
@@ -67,19 +59,27 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - name: Configure cross-compilation
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          echo "[target.aarch64-unknown-linux-gnu]" >> ~/.cargo/config.toml
-          echo "linker = \"aarch64-linux-gnu-gcc\"" >> ~/.cargo/config.toml
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml << EOF
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
 
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}-${{ matrix.binary }}
 
       - name: Build ${{ matrix.binary }} for ${{ matrix.target }}
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: |
           cargo build --release --bin ${{ matrix.binary }} --target ${{ matrix.target }}
 
