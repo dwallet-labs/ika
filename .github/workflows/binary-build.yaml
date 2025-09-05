@@ -1,0 +1,131 @@
+name: Build Binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to tag the binaries (format: vX.Y.Z)'
+        required: false
+        type: string
+        default: 'latest'
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  RUSTDOCFLAGS: -Dwarnings
+  RUST_BACKTRACE: 1
+  rust_stable: 1.88
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_PRIVATE_REPO_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
+
+jobs:
+  build-binaries:
+    name: Build ${{ matrix.binary }} (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        binary: [ika, ika-node]
+        target: 
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x64
+          - target: aarch64-unknown-linux-gnu
+            arch: arm64
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure git with personal access token
+        run: |
+          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation dependencies
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Configure cross-compilation
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          echo "[target.aarch64-unknown-linux-gnu]" >> ~/.cargo/config.toml
+          echo "linker = \"aarch64-linux-gnu-gcc\"" >> ~/.cargo/config.toml
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-${{ matrix.binary }}
+
+      - name: Build ${{ matrix.binary }} for ${{ matrix.target }}
+        run: |
+          cargo build --release --bin ${{ matrix.binary }} --target ${{ matrix.target }}
+
+      - name: Prepare binary artifact
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} artifacts/${{ matrix.binary }}-linux-${{ matrix.arch }}
+          chmod +x artifacts/${{ matrix.binary }}-linux-${{ matrix.arch }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}-linux-${{ matrix.arch }}
+          path: artifacts/${{ matrix.binary }}-linux-${{ matrix.arch }}
+          if-no-files-found: error
+
+  summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: build-binaries
+    if: always()
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create build summary
+        run: |
+          echo "## Built Binaries" >> $GITHUB_STEP_SUMMARY
+          echo "| Binary | Architecture | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------------|------|" >> $GITHUB_STEP_SUMMARY
+          for dir in artifacts/*/; do
+            if [ -d "$dir" ]; then
+              for file in "$dir"*; do
+                if [ -f "$file" ]; then
+                  basename_file=$(basename "$file")
+                  size=$(du -h "$file" | cut -f1)
+                  arch=$(echo "$basename_file" | grep -o 'linux-[^-]*' || echo "unknown")
+                  echo "| $basename_file | $arch | $size |" >> $GITHUB_STEP_SUMMARY
+                fi
+              done
+            fi
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📦 **All binaries are available as downloadable artifacts from this workflow run.**" >> $GITHUB_STEP_SUMMARY
