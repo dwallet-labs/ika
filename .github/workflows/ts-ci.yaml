@@ -4,9 +4,9 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    paths:
-      - 'sdk/**'
+#  pull_request:
+#    paths:
+#      - 'sdk/**'
   workflow_dispatch:
 
 concurrency:
