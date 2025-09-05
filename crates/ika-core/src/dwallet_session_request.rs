@@ -187,6 +187,12 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: None,
                 signature_algorithm: None,
             },
+            ProtocolCryptographicData::DWalletDKG { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve.clone()),
+                hash_scheme: None,
+                signature_algorithm: None,
+            },
             ProtocolCryptographicData::Presign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve.clone()),
