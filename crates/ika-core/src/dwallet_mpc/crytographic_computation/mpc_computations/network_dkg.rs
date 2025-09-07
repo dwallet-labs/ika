@@ -45,6 +45,7 @@ use sui_types::base_types::ObjectID;
 use tokio::sync::oneshot;
 use tracing::error;
 use twopc_mpc::ProtocolPublicParameters;
+use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
 };
@@ -359,14 +360,7 @@ pub(crate) fn advance_network_dkg(
     Ok(res)
 }
 
-pub(crate) fn network_dkg_public_input(
-    access_structure: &WeightedThresholdAccessStructure,
-    encryption_keys_and_proofs: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
-) -> DwalletMPCResult<<Secp256k1Party as mpc::Party>::PublicInput> {
-    generate_secp256k1_dkg_party_public_input(access_structure, encryption_keys_and_proofs)
-}
-
-pub(crate) fn generate_secp256k1_dkg_party_public_input(
+pub(crate) fn network_dkg_v1_public_input(
     access_structure: &WeightedThresholdAccessStructure,
     encryption_keys_and_proofs: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
 ) -> DwalletMPCResult<<Secp256k1Party as mpc::Party>::PublicInput> {
@@ -377,6 +371,17 @@ pub(crate) fn generate_secp256k1_dkg_party_public_input(
         encryption_keys_and_proofs,
     )
     .map_err(|e| DwalletMPCError::InvalidMPCPartyType(e.to_string()))?;
+
+    Ok(public_input)
+}
+
+pub(crate) fn network_dkg_v2_public_input(
+    access_structure: &WeightedThresholdAccessStructure,
+    encryption_keys_and_proofs: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
+) -> DwalletMPCResult<<dkg::Party as mpc::Party>::PublicInput> {
+    let public_input =
+        <dkg::Party as mpc::Party>::PublicInput::new(access_structure, encryption_keys_and_proofs)
+            .map_err(|e| DwalletMPCError::InvalidMPCPartyType(e.to_string()))?;
 
     Ok(public_input)
 }

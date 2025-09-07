@@ -6,7 +6,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
     DWalletImportedKeyVerificationParty, dwallet_dkg_first_public_input,
     dwallet_dkg_second_public_input,
 };
-use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_public_input};
+use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v1_public_input};
 use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationPartyPublicInputGenerator, ReconfigurationSecp256k1Party,
@@ -140,7 +140,7 @@ pub(crate) fn session_input_from_request(
                 .class_groups_decryption_key;
 
             Ok((
-                PublicInput::NetworkEncryptionKeyDkg(network_dkg_public_input(
+                PublicInput::NetworkEncryptionKeyDkg(network_dkg_v1_public_input(
                     access_structure,
                     validators_class_groups_public_keys_and_proofs,
                 )?),
