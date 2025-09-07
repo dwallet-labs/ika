@@ -20,9 +20,9 @@ use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
-    NetworkEncryptionKeyPublicDataV1, SerializedWrappedMPCPublicOutput,
-    VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
-    VersionedNetworkEncryptionKeyPublicData,
+    NetworkEncryptionKeyPublicDataV1, NetworkEncryptionKeyPublicDataV2,
+    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
+    VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData,
 };
 use group::{GroupElement, OsCsRng, PartyID, secp256k1};
 use homomorphic_encryption::{
@@ -533,6 +533,39 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                         decryption_key_share_public_parameters,
                     network_dkg_output: mpc_public_output,
                     secp256k1_protocol_public_parameters: protocol_public_parameters,
+                },
+            ))
+        }
+        VersionedNetworkDkgOutput::V2(public_output_bytes) => {
+            let public_output: <dkg::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+
+            let decryption_key_share_public_parameters = public_output
+                .secp256k1_decryption_key_share_public_parameters(access_structure)
+                .map_err(DwalletMPCError::from)?;
+
+            Ok(VersionedNetworkEncryptionKeyPublicData::V2(
+                NetworkEncryptionKeyPublicDataV2 {
+                    epoch,
+                    state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
+                    latest_network_reconfiguration_public_output: None,
+                    secp256k1_decryption_key_share_public_parameters:
+                        decryption_key_share_public_parameters,
+                    secp256r1_protocol_public_parameters: public_output
+                        .secp256r1_protocol_public_parameters()?,
+                    secp256r1_decryption_key_share_public_parameters: public_output
+                        .secp256r1_decryption_key_share_public_parameters(access_structure)?,
+                    ristretto_protocol_public_parameters: public_output
+                        .ristretto_protocol_public_parameters()?,
+                    ristretto_decryption_key_share_public_parameters: public_output
+                        .ristretto_decryption_key_share_public_parameters(access_structure)?,
+                    curve25519_protocol_public_parameters: public_output
+                        .curve25519_protocol_public_parameters()?,
+                    network_dkg_output: mpc_public_output,
+                    secp256k1_protocol_public_parameters: public_output
+                        .secp256k1_protocol_public_parameters()?,
+                    curve25519_decryption_key_share_public_parameters: public_output
+                        .curve25519_decryption_key_share_public_parameters(access_structure)?,
                 },
             ))
         }
