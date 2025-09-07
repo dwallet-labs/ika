@@ -637,7 +637,7 @@ impl ProtocolCryptographicData {
                             ) => output,
                         };
                         let public_output_value =
-                            bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
+                            bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
                                 bcs::to_bytes(&decentralized_output).unwrap(),
                             ))?;
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
