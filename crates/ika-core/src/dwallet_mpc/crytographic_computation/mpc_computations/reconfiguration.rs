@@ -59,7 +59,10 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
     ) -> DwalletMPCResult<<ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput> {
-        let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output;
+        let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output
+        else {
+            todo!("Reconfiguration to V2 only supports network DKG public output of) version V1")
+        };
         let VersionedDecryptionKeyReconfigurationOutput::V2(latest_reconfiguration_public_output) =
             latest_reconfiguration_public_output
         else {
@@ -115,7 +118,13 @@ impl ReconfigurationV1ToV2PartyPublicInputGenerator for ReconfigurationV1toV2Sec
         network_dkg_public_output: VersionedNetworkDkgOutput,
         decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
     ) -> DwalletMPCResult<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput> {
-        let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output;
+        let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output
+        else {
+            return Err(DwalletMPCError::InternalError(
+                "V1 to V2 Reconfiguration only supports network DKG public output of version V1"
+                    .to_string(),
+            ));
+        };
         let current_committee = current_committee.clone();
 
         let current_access_structure =
@@ -174,7 +183,13 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationSecp256k1Party 
         decryption_key_share_public_parameters: Secp256k1DecryptionKeySharePublicParameters,
         network_dkg_public_output: VersionedNetworkDkgOutput,
     ) -> DwalletMPCResult<<ReconfigurationSecp256k1Party as mpc::Party>::PublicInput> {
-        let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output;
+        let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output
+        else {
+            return Err(DwalletMPCError::InternalError(
+                "V1 Reconfiguration only supports network DKG public output of version V1"
+                    .to_string(),
+            ));
+        };
         let current_committee = current_committee.clone();
 
         let current_access_structure =

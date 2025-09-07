@@ -155,6 +155,9 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::DWalletDKG {
                 advance_request, ..
             } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgV2 {
+                advance_request, ..
+            } => advance_request.attempt_number,
         }
     }
 
