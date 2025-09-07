@@ -196,13 +196,11 @@ describe('DWallet Creation', () => {
 			userShareEncryptionKeys,
 		);
 		const sessionIdentifier = createSessionIDIkaTx.createSessionIdentifier();
-		const seed = createDeterministicSeed(testName);
-		const signerKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
-		createSessionIDTx.transferObjects([sessionIdentifier], signerKeypair.toSuiAddress());
-		const registerSessionIDResult = await executeTestTransactionWithKeypair(
+		createSessionIDTx.transferObjects([sessionIdentifier], signerAddress);
+		const registerSessionIDResult = await executeTestTransaction(
 			suiClient,
 			createSessionIDTx,
-			signerKeypair,
+			testName,
 		);
 		let registeredSessionIDEvent = registerSessionIDResult.events?.find((event) => {
 			return event.type.includes('UserSessionIdentifierRegisteredEvent');
