@@ -1,6 +1,8 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { toHex } from '@mysten/bcs/dist/esm';
+import { Ed25519Keypair } from '@mysten/sui/keypairs';
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
 
@@ -26,13 +28,12 @@ import {
 	createTestSuiClient,
 	delay,
 	destroyEmptyTestIkaToken,
-	executeTestTransaction, executeTestTransactionWithKeypair,
+	executeTestTransaction,
+	executeTestTransactionWithKeypair,
 	generateTestKeypair,
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
-import { Ed25519Keypair } from '@mysten/sui/keypairs';
-import { toHex } from '@mysten/bcs/dist/esm';
 
 describe('DWallet Creation', () => {
 	it('should create a new DWallet through the complete DKG process', async () => {
