@@ -19,17 +19,20 @@ import {
 	requestTestDkgSecondRound,
 } from '../helpers/dwallet-test-helpers';
 import {
+	createDeterministicSeed,
 	createEmptyTestIkaToken,
 	createTestIkaClient,
 	createTestIkaTransaction,
 	createTestSuiClient,
 	delay,
 	destroyEmptyTestIkaToken,
-	executeTestTransaction,
+	executeTestTransaction, executeTestTransactionWithKeypair,
 	generateTestKeypair,
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
+import { Ed25519Keypair } from '@mysten/sui/keypairs';
+import { toHex } from '@mysten/bcs/dist/esm';
 
 describe('DWallet Creation', () => {
 	it('should create a new DWallet through the complete DKG process', async () => {
@@ -191,11 +194,14 @@ describe('DWallet Creation', () => {
 			createSessionIDTx,
 			userShareEncryptionKeys,
 		);
-		createSessionIDIkaTx.createSessionIdentifier();
-		const registerSessionIDResult = await executeTestTransaction(
+		const sessionIdentifier = createSessionIDIkaTx.createSessionIdentifier();
+		const seed = createDeterministicSeed(testName);
+		const signerKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
+		createSessionIDTx.transferObjects([sessionIdentifier], signerKeypair.toSuiAddress());
+		const registerSessionIDResult = await executeTestTransactionWithKeypair(
 			suiClient,
 			createSessionIDTx,
-			testName,
+			signerKeypair,
 		);
 		let registeredSessionIDEvent = registerSessionIDResult.events?.find((event) => {
 			return event.type.includes('UserSessionIdentifierRegisteredEvent');
