@@ -327,7 +327,7 @@ pub(crate) fn advance_network_dkg(
     class_groups_decryption_key: ClassGroupsDecryptionKey,
     rng: &mut ChaCha20Rng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
+    let PublicInput::NetworkEncryptionKeyDkgV1(public_input) = public_input else {
         unreachable!();
     };
     let result = Party::<Secp256k1Party>::advance_with_guaranteed_output(

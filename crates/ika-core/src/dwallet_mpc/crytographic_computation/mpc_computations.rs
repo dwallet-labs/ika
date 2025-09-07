@@ -234,7 +234,7 @@ impl ProtocolCryptographicData {
                 data: NetworkEncryptionKeyDkgData {},
                 ..
             } => {
-                let PublicInput::NetworkEncryptionKeyDkg(public_input) = public_input else {
+                let PublicInput::NetworkEncryptionKeyDkgV1(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
@@ -742,7 +742,7 @@ impl ProtocolCryptographicData {
             } => advance_network_dkg(
                 session_id,
                 access_structure,
-                &PublicInput::NetworkEncryptionKeyDkg(public_input),
+                &PublicInput::NetworkEncryptionKeyDkgV1(public_input),
                 party_id,
                 advance_request,
                 class_groups_decryption_key,
