@@ -19,7 +19,7 @@ use crate::dwallet_mpc::sign::SignParty;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
     NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
-    NetworkEncryptionKeyV2ReconfigurationData, ProtocolData,
+    NetworkEncryptionKeyV2ReconfigurationData, ProtocolData, SignData,
 };
 use anyhow::anyhow;
 use class_groups::dkg::Secp256k1Party;
@@ -602,46 +602,21 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
-                        let public_output_value = match data.signature_algorithm {
-                            DWalletSignatureScheme::ECDSASecp256k1 => {
-                                let signature: ECDSASecp256k1Signature =
-                                    bcs::from_bytes(&public_output_value)?;
-                                signature.to_bytes().to_vec()
-                            }
-                            DWalletSignatureScheme::ECDSASecp256r1 => {
-                                let signature: ECDSASecp256r1Signature =
-                                    bcs::from_bytes(&public_output_value)?;
-                                signature.to_bytes().to_vec()
-                            }
-                            DWalletSignatureScheme::EdDSA => {
-                                let signature: EdDSASignature =
-                                    bcs::from_bytes(&public_output_value)?;
-                                signature.to_bytes().to_vec()
-                            }
-                            DWalletSignatureScheme::SchnorrkelSubstrate => {
-                                let signature: SchnorrkelSubstrateSignature =
-                                    bcs::from_bytes(&public_output_value)?;
-                                signature.to_bytes().to_vec()
-                            }
-                            DWalletSignatureScheme::Taproot => {
-                                let signature: TaprootSignature =
-                                    bcs::from_bytes(&public_output_value)?;
-                                signature.to_bytes().to_vec()
-                            }
-                            _ => {
-                                error!(
-                                    session_identifier=?session_identifier,
-                                    ?public_output_value,
-                                    ?malicious_parties,
-                                    should_never_happen = true,
-                                    "Invalid signature scheme for sign session result"
-                                );
-                                return Err(DwalletMPCError::InvalidDWalletProtocolType);
-                            }
-                        };
-
+                        let parsed_signature_result: DwalletMPCResult<Vec<u8>> =
+                            parse_signature_from_sign_output(data, public_output_value);
+                        if parsed_signature_result.is_err() {
+                            error!(
+                                session_identifier=?session_identifier,
+                                ?parsed_signature_result,
+                                ?malicious_parties,
+                                signature_algorithm=?data.signature_algorithm,
+                                should_never_happen = true,
+                                "failed to deserialize sign session result"
+                            );
+                            return Err(parsed_signature_result.err().unwrap());
+                        }
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                            public_output_value,
+                            public_output_value: parsed_signature_result.unwrap(),
                             malicious_parties,
                             private_output,
                         })
@@ -786,6 +761,34 @@ impl ProtocolCryptographicData {
                     "Invalid session type for mpc computation");
                 Err(DwalletMPCError::InvalidDWalletProtocolType)
             }
+        }
+    }
+}
+
+fn parse_signature_from_sign_output(
+    data: SignData,
+    public_output_value: Vec<u8>,
+) -> DwalletMPCResult<Vec<u8>> {
+    match data.signature_algorithm {
+        DWalletSignatureScheme::ECDSASecp256k1 => {
+            let signature: ECDSASecp256k1Signature = bcs::from_bytes(&public_output_value)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureScheme::ECDSASecp256r1 => {
+            let signature: ECDSASecp256r1Signature = bcs::from_bytes(&public_output_value)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureScheme::EdDSA => {
+            let signature: EdDSASignature = bcs::from_bytes(&public_output_value)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureScheme::SchnorrkelSubstrate => {
+            let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&public_output_value)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureScheme::Taproot => {
+            let signature: TaprootSignature = bcs::from_bytes(&public_output_value)?;
+            Ok(signature.to_bytes().to_vec())
         }
     }
 }
