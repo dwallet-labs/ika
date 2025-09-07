@@ -315,7 +315,7 @@ export async function requestTestDkg(
 	}
 
 	return SessionsManagerModule.DWalletSessionEvent(
-		CoordinatorInnerModule.DWalletDKGSecondRoundRequestEvent,
+		CoordinatorInnerModule.DWalletDKGRequestEvent,
 	).fromBase64(dkgRequestEvent.bcs as string);
 }
 

@@ -197,6 +197,7 @@ describe('DWallet Creation', () => {
 		);
 		const sessionIdentifier = createSessionIDIkaTx.createSessionIdentifier();
 		createSessionIDTx.transferObjects([sessionIdentifier], signerAddress);
+		await delay(5);
 		const registerSessionIDResult = await executeTestTransaction(
 			suiClient,
 			createSessionIDTx,
