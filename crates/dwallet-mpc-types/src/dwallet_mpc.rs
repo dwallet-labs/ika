@@ -260,10 +260,10 @@ pub enum DWalletCurve {
     Secp256k1 = 0,
     #[strum(to_string = "Ristretto")]
     Ristretto = 1,
-    #[strum(to_string = "Secp256r1")]
-    Secp256r1 = 2,
     #[strum(to_string = "Curve25519")]
-    Curve25519 = 3,
+    Curve25519 = 2,
+    #[strum(to_string = "Secp256r1")]
+    Secp256r1 = 3,
 }
 
 #[repr(u32)]
@@ -311,8 +311,8 @@ impl TryFrom<u32> for DWalletCurve {
         match value {
             0 => Ok(DWalletCurve::Secp256k1),
             1 => Ok(DWalletCurve::Ristretto),
-            2 => Ok(DWalletCurve::Secp256r1),
-            3 => Ok(DWalletCurve::Curve25519),
+            2 => Ok(DWalletCurve::Curve25519),
+            3 => Ok(DWalletCurve::Secp256r1),
             v => Err(DwalletNetworkMPCError::InvalidDWalletMPCCurve(v)),
         }
     }
