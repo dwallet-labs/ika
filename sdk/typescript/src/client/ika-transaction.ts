@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
-import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+import type {
+	Transaction,
+	TransactionObjectArgument,
+	TransactionResult,
+} from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator.js';
-import type {
-	DKGSecondRoundRequestInput,
-	ImportDWalletVerificationRequestInput,
-} from './cryptography.js';
+import type { DKGRequestInput, ImportDWalletVerificationRequestInput } from './cryptography.js';
 import {
 	createRandomSessionIdentifier,
 	encryptSecretShare,
@@ -151,7 +152,7 @@ export class IkaTransaction {
 		suiCoin,
 	}: {
 		dWalletCap: TransactionObjectArgument | string;
-		dkgSecondRoundRequestInput: DKGSecondRoundRequestInput;
+		dkgSecondRoundRequestInput: DKGRequestInput;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
@@ -175,6 +176,53 @@ export class IkaTransaction {
 		);
 
 		return this;
+	}
+
+	/**
+	 * Request the DKG (Distributed Key Generation) second round to complete DWallet creation.
+	 * This finalizes the distributed key generation process started in the first round.
+	 *
+	 * @param params.dWalletCap - The dWalletCap object from the first round, created for dWallet
+	 * @param params.dkgSecondRoundRequestInput - Cryptographic data prepared for the second round
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns The updated IkaTransaction instance
+	 * @throws {Error} If user share encryption keys are not set
+	 */
+	requestDWalletDKG({
+		dkgSecondRoundRequestInput,
+		ikaCoin,
+		suiCoin,
+		sessionIdentifierObjID,
+		dwalletNetworkEncryptionKeyId,
+		curve,
+	}: {
+		dkgSecondRoundRequestInput: DKGRequestInput;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+		sessionIdentifierObjID: string;
+		dwalletNetworkEncryptionKeyId: string;
+		curve: number;
+	}): TransactionResult {
+		if (!this.#userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
+		return coordinatorTx.requestDWalletDKG(
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			dwalletNetworkEncryptionKeyId,
+			curve,
+			dkgSecondRoundRequestInput.userDKGMessage,
+			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
+			this.#userShareEncryptionKeys.getSuiAddress(),
+			dkgSecondRoundRequestInput.userPublicOutput,
+			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
+			sessionIdentifierObjID,
+			ikaCoin,
+			suiCoin,
+			this.#transaction,
+		);
 	}
 
 	/**

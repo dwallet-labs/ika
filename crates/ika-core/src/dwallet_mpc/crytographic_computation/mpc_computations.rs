@@ -3,7 +3,7 @@
 
 use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
+    DWalletDKGFirstParty, DWalletDKGParty, DWalletImportedKeyVerificationParty,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
@@ -97,6 +97,30 @@ impl ProtocolCryptographicData {
                     advance_request,
                 }
             }
+            ProtocolData::DWalletDKG { data, .. } => {
+                let PublicInput::DWalletDKG(public_input) = public_input else {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                };
+
+                let advance_request_result = Party::<DWalletDKGParty>::ready_to_advance(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::new(),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
+                else {
+                    return Ok(None);
+                };
+
+                ProtocolCryptographicData::DWalletDKG {
+                    data: data.clone(),
+                    public_input: public_input.clone(),
+                    advance_request,
+                }
+            }
             ProtocolData::DKGFirst { data, .. } => {
                 let PublicInput::DKGFirst(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
@@ -126,11 +150,11 @@ impl ProtocolCryptographicData {
                 first_round_output,
                 ..
             } => {
-                let PublicInput::DKGSecond(public_input) = public_input else {
+                let PublicInput::DWalletDKG(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result = Party::<DWalletDKGSecondParty>::ready_to_advance(
+                let advance_request_result = Party::<DWalletDKGParty>::ready_to_advance(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -442,6 +466,7 @@ impl ProtocolCryptographicData {
                     }
                 }
             }
+
             ProtocolCryptographicData::DKGSecond {
                 public_input,
                 data,
@@ -457,7 +482,7 @@ impl ProtocolCryptographicData {
                         session_id
                     }
                 };
-                let result = Party::<DWalletDKGSecondParty>::advance_with_guaranteed_output(
+                let result = Party::<DWalletDKGParty>::advance_with_guaranteed_output(
                     session_id,
                     party_id,
                     access_structure,
@@ -527,6 +552,92 @@ impl ProtocolCryptographicData {
                         };
                         let public_output_value =
                             bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
+                                bcs::to_bytes(&decentralized_output).unwrap(),
+                            ))?;
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
+            ProtocolCryptographicData::DWalletDKG {
+                public_input,
+                data,
+                advance_request,
+                ..
+            } => {
+                let result = Party::<DWalletDKGParty>::advance_with_guaranteed_output(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    None,
+                    &public_input.clone(),
+                    &mut rng,
+                )?;
+
+                if let GuaranteedOutputDeliveryRoundResult::Finalize {
+                    public_output_value,
+                    ..
+                } = &result
+                {
+                    // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
+                    let decentralized_output = match bcs::from_bytes(&public_output_value)? {
+                        DKGDecentralizedPartyVersionedOutput::<
+                            { group::secp256k1::SCALAR_LIMBS },
+                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                            {
+                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
+                            },
+                            group::secp256k1::GroupElement,
+                        >::UniversalPublicDKGOutput {
+                            output: dkg_output,
+                            ..
+                        } => dkg_output,
+                        DKGDecentralizedPartyVersionedOutput::<
+                            { group::secp256k1::SCALAR_LIMBS },
+                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                            {
+                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
+                            },
+                            group::secp256k1::GroupElement,
+                        >::TargetedPublicDKGOutput(output) => output,
+                    };
+                    verify_encrypted_share(
+                        &data.encrypted_centralized_secret_share_and_proof,
+                        // TODO (#1482): Check the protocol config and use this hack only for V1
+                        // DWallets.
+                        &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
+                            bcs::to_bytes(&decentralized_output)?,
+                        ))?,
+                        &data.encryption_key,
+                        public_input.protocol_public_parameters.clone(),
+                    )?;
+                }
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
+                        let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
+                        let decentralized_output = match decentralized_output {
+                            DKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
+                                output, ..
+                            } => output,
+                            DKGDecentralizedPartyVersionedOutputSecp256k1::TargetedPublicDKGOutput (
+                                output
+                            ) => output,
+                        };
+                        let public_output_value =
+                            bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
                                 bcs::to_bytes(&decentralized_output).unwrap(),
                             ))?;
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
