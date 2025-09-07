@@ -306,8 +306,7 @@ export async function requestTestDkg(
 
 	const dkgRequestEvent = result.events?.find((event) => {
 		return (
-			event.type.includes('DWalletDKGRequestEvent') &&
-			event.type.includes('DWalletSessionEvent')
+			event.type.includes('DWalletDKGRequestEvent') && event.type.includes('DWalletSessionEvent')
 		);
 	});
 

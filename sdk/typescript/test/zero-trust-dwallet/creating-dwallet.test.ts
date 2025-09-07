@@ -231,7 +231,7 @@ describe('DWallet Creation', () => {
 			parsedEvent.session_object_id,
 			(await ikaClient.getConfiguredNetworkEncryptionKey()).id,
 			Curve.SECP256K1,
-			signerAddress
+			signerAddress,
 		);
 
 		expect(secondRoundMoveResponse).toBeDefined();

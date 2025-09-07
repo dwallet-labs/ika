@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
-import type { Transaction, TransactionObjectArgument, TransactionResult } from '@mysten/sui/transactions';
+import type {
+	Transaction,
+	TransactionObjectArgument,
+	TransactionResult,
+} from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator.js';
 import type { DKGRequestInput, ImportDWalletVerificationRequestInput } from './cryptography.js';
