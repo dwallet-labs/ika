@@ -58,7 +58,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
         upcoming_committee: Committee,
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
-    ) -> DwalletMPCResult<<ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput> {
+    ) -> DwalletMPCResult<<ReconfigurationV2Secp256k1Party as Party>::PublicInput> {
         let VersionedNetworkDkgOutput::V1(network_dkg_public_output) = network_dkg_public_output
         else {
             todo!("Reconfiguration to V2 only supports network DKG public output of) version V1")
@@ -85,7 +85,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
             extract_encryption_keys_from_committee(&upcoming_committee)?;
 
         let public_input: <ReconfigurationV2Secp256k1Party as Party>::PublicInput =
-            <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicInput::new(
+            <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicInput::new_from_reconfiguration_output(
                 &current_access_structure,
                 upcoming_access_structure,
                 current_encryption_keys_per_crt_prime_and_proofs.clone(),
