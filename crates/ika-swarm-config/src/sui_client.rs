@@ -681,7 +681,7 @@ pub async fn ika_system_initialize(
         vec![
             pricing,
             zero,
-            zero_option,
+            none_option,
             dwallet_dkg_protocol_flag,
             zero_price,
             zero_price,

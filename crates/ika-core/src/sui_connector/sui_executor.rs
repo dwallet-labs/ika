@@ -720,7 +720,7 @@ where
             vec![
                 dwallet_coordinator_ptb_arg,
                 zero,
-                zero_option,
+                none_option,
                 dwallet_dkg_protocol_flag,
             ],
         );
