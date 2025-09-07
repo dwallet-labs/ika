@@ -241,8 +241,8 @@ describe('DWallet Creation', () => {
 
 		// Step 6: Wait for DWallet to be Active
 		const dwalletID = secondRoundMoveResponse.event_data.dwallet_id;
-		const finalDWallet = await retryUntil(
-			() => ikaClient.getDWalletInParticularState(dwalletID, 'Active'),
+		const pendingSignatureDWallet = await retryUntil(
+			() => ikaClient.getDWalletInParticularState(dwalletID, 'AwaitingKeyHolderSignature'),
 			(wallet) => wallet !== null,
 			30,
 			2000,
@@ -253,11 +253,18 @@ describe('DWallet Creation', () => {
 		await acceptTestEncryptedUserShare(
 			ikaClient,
 			suiClient,
-			finalDWallet as ZeroTrustDWallet,
+			pendingSignatureDWallet as ZeroTrustDWallet,
 			dkgSecondRoundRequestInput.userPublicOutput,
 			secondRoundMoveResponse,
 			userShareEncryptionKeys,
 			testName,
+		);
+
+		const finalDWallet = await retryUntil(
+			() => ikaClient.getDWalletInParticularState(dwalletID, 'Active'),
+			(wallet) => wallet !== null,
+			30,
+			2000,
 		);
 
 		// Verify the encrypted user secret key share exists and is accessible
