@@ -8,7 +8,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::dwallet_mpc::mpc_session::PublicInput;
-use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, advance_network_dkg};
+use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, advance_network_dkg_v1};
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::{
@@ -233,31 +233,55 @@ impl ProtocolCryptographicData {
             ProtocolData::NetworkEncryptionKeyDkg {
                 data: NetworkEncryptionKeyDkgData {},
                 ..
-            } => {
-                let PublicInput::NetworkEncryptionKeyDkgV1(public_input) = public_input else {
-                    return Err(DwalletMPCError::InvalidSessionPublicInput);
-                };
+            } => match public_input {
+                PublicInput::NetworkEncryptionKeyDkgV1(public_input) => {
+                    let advance_request_result = Party::<Secp256k1Party>::ready_to_advance(
+                        party_id,
+                        access_structure,
+                        consensus_round,
+                        HashMap::from([(3, network_dkg_third_round_delay)]),
+                        &serialized_messages_by_consensus_round,
+                    )?;
 
-                let advance_request_result = Party::<Secp256k1Party>::ready_to_advance(
-                    party_id,
-                    access_structure,
-                    consensus_round,
-                    HashMap::from([(3, network_dkg_third_round_delay)]),
-                    &serialized_messages_by_consensus_round,
-                )?;
+                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                        advance_request_result
+                    else {
+                        return Ok(None);
+                    };
 
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
-                    return Ok(None);
-                };
-
-                ProtocolCryptographicData::NetworkEncryptionKeyDkg {
-                    data: NetworkEncryptionKeyDkgData {},
-                    public_input: public_input.clone(),
-                    advance_request,
-                    class_groups_decryption_key,
+                    ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
+                        data: NetworkEncryptionKeyDkgData {},
+                        public_input: public_input.clone(),
+                        advance_request,
+                        class_groups_decryption_key,
+                    }
                 }
-            }
+                PublicInput::NetworkEncryptionKeyDkgV2(public_input) => {
+                    let advance_request_result =
+                        Party::<twopc_mpc::decentralized_party::dkg::Party>::ready_to_advance(
+                            party_id,
+                            access_structure,
+                            consensus_round,
+                            HashMap::from([(3, network_dkg_third_round_delay)]),
+                            &serialized_messages_by_consensus_round,
+                        )?;
+
+                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                        advance_request_result
+                    else {
+                        return Ok(None);
+                    };
+                    ProtocolCryptographicData::NetworkEncryptionKeyDkgV2 {
+                        data: NetworkEncryptionKeyDkgData {},
+                        public_input: public_input.clone(),
+                        advance_request,
+                        class_groups_decryption_key,
+                    }
+                }
+                _ => {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                }
+            },
             ProtocolData::NetworkEncryptionKeyReconfiguration {
                 data,
                 dwallet_network_encryption_key_id,
@@ -734,15 +758,15 @@ impl ProtocolCryptographicData {
                     }
                 }
             }
-            ProtocolCryptographicData::NetworkEncryptionKeyDkg {
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
                 public_input,
                 advance_request,
                 class_groups_decryption_key,
                 ..
-            } => advance_network_dkg(
+            } => advance_network_dkg_v1(
                 session_id,
                 access_structure,
-                &PublicInput::NetworkEncryptionKeyDkgV1(public_input),
+                public_input,
                 party_id,
                 advance_request,
                 class_groups_decryption_key,

@@ -68,11 +68,18 @@ pub enum ProtocolCryptographicData {
         advance_request: AdvanceRequest<<SignParty as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
-
-    NetworkEncryptionKeyDkg {
+    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
+    NetworkEncryptionKeyDkgV1 {
         data: NetworkEncryptionKeyDkgData,
         public_input: <Secp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
+        class_groups_decryption_key: ClassGroupsDecryptionKey,
+    },
+    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
+    NetworkEncryptionKeyDkgV2 {
+        data: NetworkEncryptionKeyDkgData,
+        public_input: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::Message>,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
@@ -123,7 +130,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::Sign {
                 advance_request, ..
             } => advance_request.attempt_number,
-            ProtocolCryptographicData::NetworkEncryptionKeyDkg {
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
                 advance_request, ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
@@ -167,7 +174,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::Sign {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
-            ProtocolCryptographicData::NetworkEncryptionKeyDkg {
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {

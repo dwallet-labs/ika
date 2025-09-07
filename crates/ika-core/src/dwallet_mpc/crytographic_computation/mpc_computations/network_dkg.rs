@@ -318,10 +318,10 @@ impl DwalletMPCNetworkKeys {
 }
 
 /// Advances the network DKG protocol for the supported key types.
-pub(crate) fn advance_network_dkg(
+pub(crate) fn advance_network_dkg_v1(
     session_id: CommitmentSizedNumber,
     access_structure: &WeightedThresholdAccessStructure,
-    public_input: &PublicInput,
+    public_input: <Secp256k1Party as mpc::Party>::PublicInput,
     party_id: PartyID,
     advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
     class_groups_decryption_key: ClassGroupsDecryptionKey,
