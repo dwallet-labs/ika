@@ -603,7 +603,7 @@ impl ProtocolCryptographicData {
                         private_output,
                     } => {
                         let parsed_signature_result: DwalletMPCResult<Vec<u8>> =
-                            parse_signature_from_sign_output(data, public_output_value);
+                            parse_signature_from_sign_output(&data, public_output_value);
                         if parsed_signature_result.is_err() {
                             error!(
                                 session_identifier=?session_identifier,
@@ -766,7 +766,7 @@ impl ProtocolCryptographicData {
 }
 
 fn parse_signature_from_sign_output(
-    data: SignData,
+    data: &SignData,
     public_output_value: Vec<u8>,
 ) -> DwalletMPCResult<Vec<u8>> {
     match data.signature_algorithm {
