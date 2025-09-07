@@ -8,7 +8,9 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::dwallet_mpc::mpc_session::PublicInput;
-use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, advance_network_dkg_v1};
+use crate::dwallet_mpc::network_dkg::{
+    DwalletMPCNetworkKeys, advance_network_dkg_v1, advance_network_dkg_v2,
+};
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::{
@@ -764,6 +766,20 @@ impl ProtocolCryptographicData {
                 class_groups_decryption_key,
                 ..
             } => advance_network_dkg_v1(
+                session_id,
+                access_structure,
+                public_input,
+                party_id,
+                advance_request,
+                class_groups_decryption_key,
+                &mut rng,
+            ),
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgV2 {
+                public_input,
+                advance_request,
+                class_groups_decryption_key,
+                ..
+            } => advance_network_dkg_v2(
                 session_id,
                 access_structure,
                 public_input,

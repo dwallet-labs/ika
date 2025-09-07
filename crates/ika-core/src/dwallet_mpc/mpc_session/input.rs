@@ -6,7 +6,9 @@ use crate::dwallet_mpc::dwallet_dkg::{
     DWalletImportedKeyVerificationParty, dwallet_dkg_first_public_input,
     dwallet_dkg_second_public_input,
 };
-use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v1_public_input, network_dkg_v2_public_input};
+use crate::dwallet_mpc::network_dkg::{
+    DwalletMPCNetworkKeys, network_dkg_v1_public_input, network_dkg_v2_public_input,
+};
 use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationPartyPublicInputGenerator, ReconfigurationSecp256k1Party,
@@ -39,7 +41,9 @@ pub enum PublicInput {
     Presign(<PresignParty as mpc::Party>::PublicInput),
     Sign(<SignParty as mpc::Party>::PublicInput),
     NetworkEncryptionKeyDkgV1(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
-    NetworkEncryptionKeyDkgV2(<twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput),
+    NetworkEncryptionKeyDkgV2(
+        <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
+    ),
     EncryptedShareVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     PartialSignatureVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code

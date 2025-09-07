@@ -104,6 +104,20 @@ async fn get_decryption_key_shares_from_public_output(
                             Err(e) => Err(e.into()),
                         }
                     }
+                    VersionedNetworkDkgOutput::V2(public_output) => {
+                        match bcs::from_bytes::<<dkg::Party as mpc::Party>::PublicOutput>(
+                            public_output,
+                        ) {
+                            Ok(dkg_public_output) => dkg_public_output
+                                .decrypt_decryption_key_shares(
+                                    party_id,
+                                    &access_structure,
+                                    personal_decryption_key,
+                                )
+                                .map_err(DwalletMPCError::from),
+                            Err(e) => Err(e.into()),
+                        }
+                    }
                 }
             }
             NetworkDecryptionKeyPublicOutputType::Reconfiguration => {
@@ -253,6 +267,7 @@ impl DwalletMPCNetworkKeys {
                 .clone();
             return Ok(match network_dkg_output {
                 VersionedNetworkDkgOutput::V1(_) => 1,
+                VersionedNetworkDkgOutput::V2(_) => 2,
             });
         }
         Ok(match latest_reconfig_data.unwrap() {
@@ -327,9 +342,6 @@ pub(crate) fn advance_network_dkg_v1(
     class_groups_decryption_key: ClassGroupsDecryptionKey,
     rng: &mut ChaCha20Rng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    let PublicInput::NetworkEncryptionKeyDkgV1(public_input) = public_input else {
-        unreachable!();
-    };
     let result = Party::<Secp256k1Party>::advance_with_guaranteed_output(
         session_id,
         party_id,
@@ -347,6 +359,46 @@ pub(crate) fn advance_network_dkg_v1(
         }) => {
             let public_output_value =
                 bcs::to_bytes(&VersionedNetworkDkgOutput::V1(public_output_value))?;
+
+            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                public_output_value,
+                malicious_parties,
+                private_output,
+            })
+        }
+        _ => result,
+    }?;
+
+    Ok(res)
+}
+
+/// Advances the network DKG protocol for the supported key types.
+pub(crate) fn advance_network_dkg_v2(
+    session_id: CommitmentSizedNumber,
+    access_structure: &WeightedThresholdAccessStructure,
+    public_input: <dkg::Party as mpc::Party>::PublicInput,
+    party_id: PartyID,
+    advance_request: AdvanceRequest<<dkg::Party as mpc::Party>::Message>,
+    class_groups_decryption_key: ClassGroupsDecryptionKey,
+    rng: &mut ChaCha20Rng,
+) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+    let result = Party::<dkg::Party>::advance_with_guaranteed_output(
+        session_id,
+        party_id,
+        access_structure,
+        advance_request,
+        Some(class_groups_decryption_key),
+        &public_input,
+        rng,
+    );
+    let res = match result.clone() {
+        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+            public_output_value,
+            malicious_parties,
+            private_output,
+        }) => {
+            let public_output_value =
+                bcs::to_bytes(&VersionedNetworkDkgOutput::V2(public_output_value))?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
