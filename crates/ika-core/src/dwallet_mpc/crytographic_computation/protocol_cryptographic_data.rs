@@ -75,7 +75,6 @@ pub enum ProtocolCryptographicData {
         advance_request: AdvanceRequest<<Secp256k1Party as mpc::Party>::Message>,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
-    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyDkgV2 {
         data: NetworkEncryptionKeyDkgData,
         public_input: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
