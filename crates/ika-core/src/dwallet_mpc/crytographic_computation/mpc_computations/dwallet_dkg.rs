@@ -127,7 +127,7 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
             group_public_parameters: protocol_public_parameters.group_public_parameters.clone(),
             encryption_scheme_public_parameters: protocol_public_parameters
                 .encryption_scheme_public_parameters,
-            base_protocol_context: Default::default(),
+            base_protocol_context,
         };
         let input: Self::PublicInput = secp256k1_public_input;
         Ok(input)
