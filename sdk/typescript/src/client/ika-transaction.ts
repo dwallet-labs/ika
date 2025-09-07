@@ -190,11 +190,15 @@ export class IkaTransaction {
 		ikaCoin,
 		suiCoin,
 		sessionIdentifierObjID,
+		dwalletNetworkEncryptionKeyId,
+		curve,
 	}: {
 		dkgSecondRoundRequestInput: DKGRequestInput;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 		sessionIdentifierObjID: string;
+		dwalletNetworkEncryptionKeyId: string;
+		curve: number;
 	}) {
 		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
@@ -203,6 +207,8 @@ export class IkaTransaction {
 		coordinatorTx.requestDWalletDKG(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
+			dwalletNetworkEncryptionKeyId,
+			curve,
 			dkgSecondRoundRequestInput.userDKGMessage,
 			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
 			this.#userShareEncryptionKeys.getSuiAddress(),

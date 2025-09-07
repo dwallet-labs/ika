@@ -4,7 +4,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
 
-import { SessionsManagerModule } from '../../src';
+import { Curve, SessionsManagerModule } from '../../src';
 import {
 	prepareDKGAsync,
 	prepareDKGSecondRoundAsync,
@@ -224,6 +224,8 @@ describe('DWallet Creation', () => {
 			userShareEncryptionKeys,
 			testName,
 			parsedEvent.session_object_id,
+			(await ikaClient.getConfiguredNetworkEncryptionKey()).id,
+			Curve.SECP256K1,
 		);
 
 		expect(secondRoundMoveResponse).toBeDefined();

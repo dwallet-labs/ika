@@ -283,6 +283,8 @@ export async function requestTestDkg(
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 	sessionIdentifierObjID: string,
+	dwalletNetworkEncryptionKeyId: string,
+	curve: number,
 ) {
 	const transaction = new Transaction();
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
@@ -292,6 +294,8 @@ export async function requestTestDkg(
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
 		sessionIdentifierObjID,
+		dwalletNetworkEncryptionKeyId,
+		curve,
 	});
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
