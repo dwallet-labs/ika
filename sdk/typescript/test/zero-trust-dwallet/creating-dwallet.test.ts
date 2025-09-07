@@ -167,7 +167,7 @@ describe('DWallet Creation', () => {
 	});
 
 	it('should create a new DWallet through the v2 one round DKG process', async () => {
-		const testName = 'dwallet-creation-test';
+		const testName = 'dwallet-creation-test-v2';
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
