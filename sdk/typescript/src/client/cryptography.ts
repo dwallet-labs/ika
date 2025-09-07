@@ -14,7 +14,6 @@ import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 import {
 	centralized_and_decentralized_parties_dkg_output_match,
-	create_dkg_centralized_output_v2,
 	create_dkg_centralized_output_v1 as create_dkg_user_output,
 	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
 	create_sign_centralized_party_message as create_sign_user_message,
@@ -32,7 +31,7 @@ import {
  *
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
-export interface DKGRequestInput {
+export interface DKGSecondRoundRequestInput {
 	/** The user's public key share along with its zero-knowledge proof */
 	userDKGMessage: Uint8Array;
 	/** The user's public output from the DKG process */
@@ -161,7 +160,7 @@ export async function prepareDKGSecondRound(
 	protocolPublicParameters: Uint8Array,
 	dWallet: DWallet,
 	encryptionKey: Uint8Array,
-): Promise<DKGRequestInput> {
+): Promise<DKGSecondRoundRequestInput> {
 	const networkFirstRoundOutput =
 		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
 
@@ -173,40 +172,6 @@ export async function prepareDKGSecondRound(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
 	);
-
-	const encryptedUserShareAndProof = await encryptSecretShare(
-		userSecretKeyShare,
-		encryptionKey,
-		protocolPublicParameters,
-	);
-
-	return {
-		userDKGMessage: Uint8Array.from(userDKGMessage),
-		userPublicOutput: Uint8Array.from(userPublicOutput),
-		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
-		userSecretKeyShare: Uint8Array.from(userSecretKeyShare),
-	};
-}
-
-/**
- * Prepare all cryptographic data needed for the second round of DKG.
- * This function combines the DKG output generation and secret share encryption.
- *
- * @param protocolPublicParameters - The protocol public parameters
- * @param encryptionKey - The user's public encryption key
- * @param session_id
- * @returns Complete prepared data for the second DKG round
- * @throws {Error} If the first round output is not available in the DWallet
- *
- * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
- */
-export async function prepareDKG(
-	protocolPublicParameters: Uint8Array,
-	encryptionKey: Uint8Array,
-	session_id: Uint8Array,
-): Promise<DKGRequestInput> {
-	const [userDKGMessage, userPublicOutput, userSecretKeyShare] =
-		await create_dkg_centralized_output_v2(protocolPublicParameters, session_id);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(
 		userSecretKeyShare,
@@ -238,7 +203,7 @@ export async function prepareDKGSecondRoundAsync(
 	ikaClient: IkaClient,
 	dWallet: DWallet,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
-): Promise<DKGRequestInput> {
+): Promise<DKGSecondRoundRequestInput> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
 	return prepareDKGSecondRound(
@@ -246,28 +211,6 @@ export async function prepareDKGSecondRoundAsync(
 		dWallet,
 		userShareEncryptionKeys.encryptionKey,
 	);
-}
-
-/**
- * Asynchronously prepare all cryptographic data needed for the second round of DKG.
- * This function fetches network parameters automatically and prepares the second round data.
- *
- * @param ikaClient - The IkaClient instance to fetch network parameters from
- * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
- * @param sessionId
- * @returns Promise resolving to complete prepared data for the second DKG round
- * @throws {Error} If the first round output is not available or network parameters cannot be fetched
- *
- * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
- */
-export async function prepareDKGAsync(
-	ikaClient: IkaClient,
-	userShareEncryptionKeys: UserShareEncryptionKeys,
-	sessionId: Uint8Array,
-): Promise<DKGRequestInput> {
-	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
-
-	return prepareDKG(protocolPublicParameters, userShareEncryptionKeys.encryptionKey, sessionId);
 }
 
 /**

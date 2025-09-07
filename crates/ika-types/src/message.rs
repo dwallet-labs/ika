@@ -18,7 +18,7 @@ pub struct DKGFirstRoundOutput {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Serialize, Deserialize)]
-pub struct DWalletDKGOutput {
+pub struct DKGSecondRoundOutput {
     pub dwallet_id: Vec<u8>,
     pub encrypted_secret_share_id: Vec<u8>,
     pub output: Vec<u8>,
@@ -103,7 +103,7 @@ pub struct DWalletImportedKeyVerificationOutput {
 #[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum DWalletCheckpointMessageKind {
     RespondDWalletDKGFirstRoundOutput(DKGFirstRoundOutput),
-    RespondDWalletDKGSecondRoundOutput(DWalletDKGOutput),
+    RespondDWalletDKGSecondRoundOutput(DKGSecondRoundOutput),
     RespondDWalletEncryptedUserShare(EncryptedUserShareOutput),
     RespondMakeDWalletUserSecretKeySharesPublic(MakeDWalletUserSecretKeySharesPublicOutput),
     RespondDWalletImportedKeyVerificationOutput(DWalletImportedKeyVerificationOutput),
@@ -115,7 +115,6 @@ pub enum DWalletCheckpointMessageKind {
     SetMaxActiveSessionsBuffer(u64),
     SetGasFeeReimbursementSuiSystemCallValue(u64),
     EndOfPublish,
-    RespondDWalletDKGOutput(DWalletDKGOutput),
 }
 
 impl DWalletCheckpointMessageKind {
@@ -154,7 +153,6 @@ impl DWalletCheckpointMessageKind {
                 "SetGasFeeReimbursementSuiSystemCallValue"
             }
             DWalletCheckpointMessageKind::EndOfPublish => "EndOfPublish",
-            DWalletCheckpointMessageKind::RespondDWalletDKGOutput(_) => "RespondDWalletDKGOutput",
         }
     }
 
@@ -223,9 +221,6 @@ impl Display for DWalletCheckpointMessageKind {
             }
             DWalletCheckpointMessageKind::EndOfPublish => {
                 writeln!(writer, "MessageKind : EndOfPublish")?;
-            }
-            DWalletCheckpointMessageKind::RespondDWalletDKGOutput(_) => {
-                writeln!(writer, "MessageKind : RespondDwalletDKGOutput")?;
             }
         }
         write!(f, "{writer}")
@@ -320,13 +315,6 @@ impl Debug for DWalletCheckpointMessageKind {
             }
             DWalletCheckpointMessageKind::EndOfPublish => {
                 writeln!(writer, "MessageKind : EndOfPublish")?;
-            }
-            DWalletCheckpointMessageKind::RespondDWalletDKGOutput(_) => {
-                writeln!(
-                    writer,
-                    "MessageKind : RespondDwalletDKGOutput {:?}",
-                    self.digest()
-                )?;
             }
         }
         write!(f, "{writer}")

@@ -4,7 +4,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,
+    DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
     DWalletNetworkDKGEncryptionKeyRequestEvent, EncryptedShareVerificationRequestEvent,
     FutureSignRequestEvent, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
@@ -40,15 +40,6 @@ pub struct DKGSecondData {
     pub curve: DWalletCurve,
     pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
     pub encryption_key: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
-#[display("dWallet DKG Second Round")]
-pub struct DWalletDKGData {
-    pub curve: DWalletCurve,
-    pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
-    pub encryption_key: Vec<u8>,
-    pub centralized_public_key_share_and_proof: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
@@ -123,13 +114,6 @@ pub enum ProtocolData {
         data: DKGFirstData,
         dwallet_id: ObjectID,
         dwallet_network_encryption_key_id: ObjectID,
-    },
-
-    DWalletDKG {
-        data: DWalletDKGData,
-        dwallet_id: ObjectID,
-        dwallet_network_encryption_key_id: ObjectID,
-        encrypted_secret_share_id: ObjectID,
     },
 
     DKGSecond {
@@ -225,24 +209,6 @@ pub fn dwallet_dkg_first_protocol_data(
         },
         dwallet_id: request_event_data.dwallet_id,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
-    })
-}
-
-pub fn dwallet_dkg_protocol_data(
-    request_event_data: DWalletDKGRequestEvent,
-) -> DwalletMPCResult<ProtocolData> {
-    Ok(ProtocolData::DWalletDKG {
-        data: DWalletDKGData {
-            curve: request_event_data.curve.try_into()?,
-            encrypted_centralized_secret_share_and_proof: request_event_data
-                .encrypted_centralized_secret_share_and_proof,
-            encryption_key: request_event_data.encryption_key,
-            centralized_public_key_share_and_proof: request_event_data
-                .centralized_public_key_share_and_proof,
-        },
-        dwallet_id: request_event_data.dwallet_id,
-        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
-        encrypted_secret_share_id: request_event_data.encrypted_user_secret_key_share_id,
     })
 }
 
@@ -357,11 +323,7 @@ pub fn partial_signature_verification_protocol_data(
 impl ProtocolData {
     pub fn network_encryption_key_id(&self) -> Option<ObjectID> {
         match self {
-            ProtocolData::DWalletDKG {
-                dwallet_network_encryption_key_id,
-                ..
-            }
-            | ProtocolData::DKGFirst {
+            ProtocolData::DKGFirst {
                 dwallet_network_encryption_key_id,
                 ..
             }
