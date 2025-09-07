@@ -8,9 +8,9 @@ use ika_config::validator_info::ValidatorInfo;
 use ika_move_contracts::save_contracts_to_temp_dir;
 use ika_types::ika_coin::IKACoin;
 use ika_types::messages_dwallet_mpc::{
-    DKG_FIRST_ROUND_PROTOCOL_FLAG, DKG_SECOND_ROUND_PROTOCOL_FLAG, FUTURE_SIGN_PROTOCOL_FLAG,
-    IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG, IkaNetworkConfig, IkaObjectsConfig,
-    IkaPackageConfig, MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG,
+    DKG_FIRST_ROUND_PROTOCOL_FLAG, DKG_SECOND_ROUND_PROTOCOL_FLAG, DWALLET_DKG_PROTOCOL_FLAG,
+    FUTURE_SIGN_PROTOCOL_FLAG, IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG, IkaNetworkConfig,
+    IkaObjectsConfig, IkaPackageConfig, MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG,
     PRESIGN_PROTOCOL_FLAG, RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG, SIGN_PROTOCOL_FLAG,
     SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG,
 };
@@ -510,6 +510,8 @@ pub async fn ika_system_initialize(
     let sign_with_partial_user_signature_protocol_flag = ptb.input(CallArg::Pure(
         bcs::to_bytes(&SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG)?,
     ))?;
+    let dwallet_dkg_protocol_flag =
+        ptb.input(CallArg::Pure(bcs::to_bytes(&DWALLET_DKG_PROTOCOL_FLAG)?))?;
 
     let zero_price = ptb.input(CallArg::Pure(bcs::to_bytes(&0u64)?))?;
 
@@ -665,6 +667,22 @@ pub async fn ika_system_initialize(
             zero,
             zero_option,
             sign_with_partial_user_signature_protocol_flag,
+            zero_price,
+            zero_price,
+            zero_price,
+        ],
+    );
+
+    ptb.programmable_move_call(
+        ika_dwallet_2pc_mpc_package_id,
+        ident_str!("pricing").into(),
+        ident_str!("insert_or_update_pricing").into(),
+        vec![],
+        vec![
+            pricing,
+            zero,
+            zero_option,
+            dwallet_dkg_protocol_flag,
             zero_price,
             zero_price,
             zero_price,
