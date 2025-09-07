@@ -127,7 +127,7 @@ async fn get_decryption_key_shares_from_public_output(
                     }
                     VersionedDecryptionKeyReconfigurationOutput::V2(public_output) => {
                         match bcs::from_bytes::<
-                            <twopc_mpc::reconfiguration::Party as mpc::Party>::PublicOutput,
+                            <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput,
                         >(public_output)
                         {
                             Ok(public_output) => public_output

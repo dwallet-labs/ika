@@ -6,6 +6,7 @@
 //! local DB every [`READ_INTERVAL_MS`] seconds
 //! and forward them to the [`DWalletMPCManager`].
 
+use crate::SuiDataReceivers;
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::authority::{AuthorityState, AuthorityStateTrait};
 use crate::consensus_manager::ReplayWaiter;
@@ -23,7 +24,6 @@ use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::request_protocol_data::ProtocolData;
-use crate::SuiDataReceivers;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
