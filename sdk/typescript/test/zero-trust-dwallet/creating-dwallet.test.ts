@@ -1,8 +1,8 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { toHex } from '@mysten/bcs/dist/esm';
-import { Ed25519Keypair } from '@mysten/sui/keypairs';
+import { toHex } from '@mysten/bcs';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, expect, it } from 'vitest';
 
