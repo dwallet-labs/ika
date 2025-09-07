@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
-import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+import type { Transaction, TransactionObjectArgument, TransactionResult } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator.js';
 import type { DKGRequestInput, ImportDWalletVerificationRequestInput } from './cryptography.js';
@@ -199,12 +199,12 @@ export class IkaTransaction {
 		sessionIdentifierObjID: string;
 		dwalletNetworkEncryptionKeyId: string;
 		curve: number;
-	}) {
+	}): TransactionResult {
 		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
 
-		coordinatorTx.requestDWalletDKG(
+		return coordinatorTx.requestDWalletDKG(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			dwalletNetworkEncryptionKeyId,
@@ -219,8 +219,6 @@ export class IkaTransaction {
 			suiCoin,
 			this.#transaction,
 		);
-
-		return this;
 	}
 
 	/**

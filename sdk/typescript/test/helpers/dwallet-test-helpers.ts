@@ -285,11 +285,12 @@ export async function requestTestDkg(
 	sessionIdentifierObjID: string,
 	dwalletNetworkEncryptionKeyId: string,
 	curve: number,
+	signerAddress: string,
 ) {
 	const transaction = new Transaction();
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
-	ikaTransaction.requestDWalletDKG({
+	const dWalletCap = ikaTransaction.requestDWalletDKG({
 		dkgSecondRoundRequestInput,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
@@ -297,6 +298,7 @@ export async function requestTestDkg(
 		dwalletNetworkEncryptionKeyId,
 		curve,
 	});
+	transaction.transferObjects([dWalletCap], signerAddress);
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 

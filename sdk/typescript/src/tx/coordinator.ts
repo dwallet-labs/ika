@@ -1,10 +1,14 @@
+;
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { bcs } from '@mysten/sui/bcs';
-import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+import type { Transaction, TransactionObjectArgument, TransactionResult } from '@mysten/sui/transactions';
+
+
 
 import type { IkaConfig } from '../client/types.js';
+
 
 export function registerEncryptionKeyTx(
 	ikaConfig: IkaConfig,
@@ -161,8 +165,8 @@ export function requestDWalletDKG(
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
-) {
-	tx.moveCall({
+): TransactionResult {
+	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg`,
 		arguments: [
 			coordinatorObjectRef,
