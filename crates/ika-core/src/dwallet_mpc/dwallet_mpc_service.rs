@@ -26,7 +26,7 @@ use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
-use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, MPCMessage};
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
 #[cfg(feature = "test-utils")]
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
@@ -865,7 +865,7 @@ impl DWalletMPCService {
                         dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                             .to_vec(),
                         public_output: vec![],
-                        supported_curves: vec![DWalletMPCNetworkKeyScheme::Secp256k1 as u32],
+                        supported_curves: vec![DWalletCurve::Secp256k1 as u32],
                         is_last: true,
                         rejected: true,
                         session_sequence_number: session_request.session_sequence_number,
@@ -877,7 +877,7 @@ impl DWalletMPCService {
                             dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                                 .to_vec(),
                             public_output: public_output_chunk,
-                            supported_curves: vec![DWalletMPCNetworkKeyScheme::Secp256k1 as u32],
+                            supported_curves: vec![DWalletCurve::Secp256k1 as u32],
                             is_last,
                             rejected: false,
                             session_sequence_number: session_request.session_sequence_number,
@@ -900,7 +900,7 @@ impl DWalletMPCService {
                         dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                             .to_vec(),
                         public_output: vec![],
-                        supported_curves: vec![DWalletMPCNetworkKeyScheme::Secp256k1 as u32],
+                        supported_curves: vec![DWalletCurve::Secp256k1 as u32],
                         is_last: true,
                         rejected: true,
                         session_sequence_number: session_request.session_sequence_number,
@@ -913,7 +913,7 @@ impl DWalletMPCService {
                                 .clone()
                                 .to_vec(),
                             public_output: public_output_chunk,
-                            supported_curves: vec![DWalletMPCNetworkKeyScheme::Secp256k1 as u32],
+                            supported_curves: vec![DWalletCurve::Secp256k1 as u32],
                             is_last,
                             rejected: false,
                             session_sequence_number: session_request.session_sequence_number,
