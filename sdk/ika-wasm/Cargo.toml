@@ -7,6 +7,9 @@ edition = "2024"
 license = "BSD-3-Clause-Clear"
 publish = false
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 #[profile.dev]
 #wasm-opt = true
 #
