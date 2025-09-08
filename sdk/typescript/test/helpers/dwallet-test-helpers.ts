@@ -224,7 +224,9 @@ export async function createCompleteDWalletV2(
 	);
 	console.log(
 		'DWallet Output (base64):',
-		Buffer.from(awaitingKeyHolderSignatureDWallet.state.AwaitingKeyHolderSignature.public_output).toString('base64'),
+		Buffer.from(
+			awaitingKeyHolderSignatureDWallet.state.AwaitingKeyHolderSignature.public_output,
+		).toString('base64'),
 	);
 
 	// Step 7: Accept encrypted user share

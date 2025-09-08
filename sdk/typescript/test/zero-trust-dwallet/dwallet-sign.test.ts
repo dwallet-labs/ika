@@ -4,7 +4,11 @@ import { Transaction } from '@mysten/sui/transactions';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { Hash, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
-import { createCompleteDWallet, createCompleteDWalletV2, testPresign } from '../helpers/dwallet-test-helpers';
+import {
+	createCompleteDWallet,
+	createCompleteDWalletV2,
+	testPresign,
+} from '../helpers/dwallet-test-helpers';
 import { createIndividualTestSetup, getSharedTestSetup } from '../helpers/shared-test-setup';
 import {
 	createEmptyTestIkaToken,
@@ -178,7 +182,6 @@ describe('DWallet Signing', () => {
 		expect(dWalletAfterSigning.state.$kind).toBe('Active');
 	});
 
-
 	it('should create a V2 DWallet and sign a message', async () => {
 		const testName = 'dwallet-sign-test';
 
@@ -195,7 +198,10 @@ describe('DWallet Signing', () => {
 		expect(activeDWallet.state.$kind).toBe('Active');
 		expect(activeDWallet.id.id).toMatch(/^0x[a-f0-9]+$/);
 		// log the dwallet output in base 64
-		console.log('DWallet Output (base64):', Buffer.from(activeDWallet.state.Active.public_output).toString('base64'));
+		console.log(
+			'DWallet Output (base64):',
+			Buffer.from(activeDWallet.state.Active.public_output).toString('base64'),
+		);
 		// return;
 		// Create presign
 		const presignRequestEvent = await testPresign(
