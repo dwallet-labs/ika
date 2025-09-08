@@ -3639,7 +3639,6 @@ name = "dwallet-mpc-centralized-party"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "bcs",
  "class_groups",
  "commitment",
