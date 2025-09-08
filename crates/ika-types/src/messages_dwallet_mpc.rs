@@ -51,6 +51,7 @@ pub const PRESIGN_PROTOCOL_FLAG: u32 = 5;
 pub const SIGN_PROTOCOL_FLAG: u32 = 6;
 pub const FUTURE_SIGN_PROTOCOL_FLAG: u32 = 7;
 pub const SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG: u32 = 8;
+pub const DWALLET_DKG_PROTOCOL_FLAG: u32 = 9;
 
 /// This is a wrapper type for the [`SuiEvent`] type that is being used to write it to the local RocksDB.
 /// This is needed because the [`SuiEvent`] cannot be directly written to the RocksDB.
