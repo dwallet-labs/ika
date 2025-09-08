@@ -1,13 +1,17 @@
+;
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
+import { bitcoin_address_from_dwallet_output } from '@ika.xyz/ika-wasm';
 import { public_key_from_dwallet_output } from '@ika.xyz/mpc-wasm';
 import { Transaction } from '@mysten/sui/transactions';
 import * as bitcoin from 'bitcoinjs-lib';
 import { networks, payments, Psbt } from 'bitcoinjs-lib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+
+
 import { Hash, SignatureAlgorithm } from '../../src/client/types';
-import { createCompleteDWallet, testPresign } from '../helpers/dwallet-test-helpers';
+import { createCompleteDWallet, createCompleteDWalletV2, testPresign } from '../helpers/dwallet-test-helpers';
 import { createIndividualTestSetup, getSharedTestSetup } from '../helpers/shared-test-setup';
 import {
 	createEmptyTestIkaToken,
@@ -17,6 +21,7 @@ import {
 	executeTestTransaction,
 	retryUntil,
 } from '../helpers/test-utils';
+
 
 // Setup shared resources before all tests
 beforeAll(async () => {
@@ -115,15 +120,13 @@ describe('DWallet Signing', () => {
 			encryptedUserSecretKeyShare,
 			userShareEncryptionKeys,
 			signerAddress,
-		} = await createCompleteDWallet(ikaClient, suiClient, testName);
-		let dwalletPubKey = public_key_from_dwallet_output(
+		} = await createCompleteDWalletV2(ikaClient, suiClient, testName);
+
+		const dwalletBitcoinAddress = bitcoin_address_from_dwallet_output(
 			Uint8Array.from(activeDWallet.state.Active.public_output),
 		);
-		const address = bitcoin.payments.p2wpkh({
-			pubkey: Buffer.from(dwalletPubKey),
-			network: bitcoin.networks.regtest,
-		}).address!;
-		console.log(`DWallet Address: ${address}`);
+		console.log("DWallet's Bitcoin address:", dwalletBitcoinAddress);
+		return;
 	});
 
 	it('should create a DWallet and sign a message', async () => {

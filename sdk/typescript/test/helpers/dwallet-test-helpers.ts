@@ -187,6 +187,8 @@ export async function createCompleteDWalletV2(
 		registeredSessionIDEvent?.bcs as string,
 	);
 
+	await delay(5); // Wait for 5 seconds to ensure the DWallet is created
+
 	// Step 2: Register encryption key
 	await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
 

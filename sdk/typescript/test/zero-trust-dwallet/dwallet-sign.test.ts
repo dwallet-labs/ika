@@ -5,7 +5,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { Hash, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
-import { createCompleteDWallet, testPresign } from '../helpers/dwallet-test-helpers';
+import { createCompleteDWallet, createCompleteDWalletV2, testPresign } from '../helpers/dwallet-test-helpers';
 import { createIndividualTestSetup, getSharedTestSetup } from '../helpers/shared-test-setup';
 import {
 	createEmptyTestIkaToken,
@@ -94,7 +94,7 @@ describe('DWallet Signing', () => {
 			encryptedUserSecretKeyShare,
 			userShareEncryptionKeys,
 			signerAddress,
-		} = await createCompleteDWallet(ikaClient, suiClient, testName);
+		} = await createCompleteDWalletV2(ikaClient, suiClient, testName);
 
 		const dwalletBitcoinAddress = bitcoin_address_from_dwallet_output(
 			Uint8Array.from(activeDWallet.state.Active.public_output),
