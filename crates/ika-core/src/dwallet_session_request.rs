@@ -205,7 +205,7 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: Some(data.hash_scheme.clone()),
                 signature_algorithm: Some(data.signature_algorithm.clone()),
             },
-            ProtocolCryptographicData::NetworkEncryptionKeyDkg { data, .. } => {
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 { data, .. } => {
                 // TODO (#1508): Remove the curve label completely from protocols the curve label is irrelevant for
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
@@ -249,6 +249,15 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
             ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
+                    // TODO (#1491): Set curve, hash scheme & signature algorithm metrics fields for each protocol
+                    curve: None,
+                    hash_scheme: None,
+                    signature_algorithm: None,
+                }
+            }
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgV2 { .. } => {
+                DWalletSessionRequestMetricData {
+                    name: "NetworkEncryptionKeyDkgV2".to_string(),
                     // TODO (#1491): Set curve, hash scheme & signature algorithm metrics fields for each protocol
                     curve: None,
                     hash_scheme: None,
