@@ -1,5 +1,5 @@
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput, SignatureAlgorithm,
+    DWalletCurve, DWalletSignatureScheme, SerializedWrappedMPCPublicOutput,
 };
 use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -15,7 +15,7 @@ use sui_types::base_types::ObjectID;
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Imported Key Verification")]
 pub struct ImportedKeyVerificationData {
-    pub curve: DWalletMPCNetworkKeyScheme,
+    pub curve: DWalletCurve,
     pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
     pub encryption_key: Vec<u8>,
 }
@@ -23,7 +23,7 @@ pub struct ImportedKeyVerificationData {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Make DWallet User Secret Key Shares Public")]
 pub struct MakeDWalletUserSecretKeySharesPublicData {
-    pub curve: DWalletMPCNetworkKeyScheme,
+    pub curve: DWalletCurve,
     pub public_user_secret_key_shares: Vec<u8>,
     pub dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
 }
@@ -31,13 +31,13 @@ pub struct MakeDWalletUserSecretKeySharesPublicData {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("dWallet DKG First Round")]
 pub struct DKGFirstData {
-    pub curve: DWalletMPCNetworkKeyScheme,
+    pub curve: DWalletCurve,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("dWallet DKG Second Round")]
 pub struct DKGSecondData {
-    pub curve: DWalletMPCNetworkKeyScheme,
+    pub curve: DWalletCurve,
     pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
     pub encryption_key: Vec<u8>,
 }
@@ -45,23 +45,21 @@ pub struct DKGSecondData {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Presign")]
 pub struct PresignData {
-    pub curve: DWalletMPCNetworkKeyScheme,
-    pub signature_algorithm: SignatureAlgorithm,
+    pub curve: DWalletCurve,
+    pub signature_algorithm: DWalletSignatureScheme,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Sign")]
 pub struct SignData {
-    pub curve: DWalletMPCNetworkKeyScheme,
+    pub curve: DWalletCurve,
     pub hash_scheme: HashType,
-    pub signature_algorithm: SignatureAlgorithm,
+    pub signature_algorithm: DWalletSignatureScheme,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Network Encryption Key DKG")]
-pub struct NetworkEncryptionKeyDkgData {
-    pub key_scheme: DWalletMPCNetworkKeyScheme,
-}
+pub struct NetworkEncryptionKeyDkgData {}
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Network Encryption Key Reconfiguration")]
@@ -78,7 +76,7 @@ pub struct NetworkEncryptionKeyV2ReconfigurationData {}
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Encrypted Share Verification")]
 pub struct EncryptedShareVerificationData {
-    pub curve: DWalletMPCNetworkKeyScheme,
+    pub curve: DWalletCurve,
     pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
     pub decentralized_public_output: SerializedWrappedMPCPublicOutput,
     pub encryption_key: Vec<u8>,
@@ -87,10 +85,10 @@ pub struct EncryptedShareVerificationData {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Partial Signature Verification")]
 pub struct PartialSignatureVerificationData {
-    pub curve: DWalletMPCNetworkKeyScheme,
+    pub curve: DWalletCurve,
     pub message: Vec<u8>,
     pub hash_type: HashType,
-    pub signature_algorithm: SignatureAlgorithm,
+    pub signature_algorithm: DWalletSignatureScheme,
     pub dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
     pub presign: SerializedWrappedMPCPublicOutput,
     pub partially_signed_message: SerializedWrappedMPCPublicOutput,
@@ -268,11 +266,10 @@ pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCRes
 }
 
 pub fn network_encryption_key_dkg_protocol_data(
-    key_scheme: DWalletMPCNetworkKeyScheme,
     request_event_data: DWalletNetworkDKGEncryptionKeyRequestEvent,
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::NetworkEncryptionKeyDkg {
-        data: NetworkEncryptionKeyDkgData { key_scheme },
+        data: NetworkEncryptionKeyDkgData {},
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
     })
 }

@@ -254,13 +254,16 @@ pub struct NetworkEncryptionKeyPublicDataV2 {
     Ord,
     PartialOrd,
 )]
-pub enum DWalletMPCNetworkKeyScheme {
+// useful to tell which protocol public parameters to use
+pub enum DWalletCurve {
     #[strum(to_string = "Secp256k1")]
     Secp256k1 = 0,
     #[strum(to_string = "Ristretto")]
     Ristretto = 1,
+    #[strum(to_string = "Curve25519")]
+    Curve25519 = 2,
     #[strum(to_string = "Secp256r1")]
-    Secp256r1 = 2,
+    Secp256r1 = 3,
 }
 
 #[repr(u32)]
@@ -277,9 +280,17 @@ pub enum DWalletMPCNetworkKeyScheme {
     Ord,
     PartialOrd,
 )]
-pub enum SignatureAlgorithm {
-    #[strum(to_string = "ECDSA")]
-    ECDSA,
+pub enum DWalletSignatureScheme {
+    #[strum(to_string = "ECDSASecp256k1")]
+    ECDSASecp256k1 = 0,
+    #[strum(to_string = "Taproot")]
+    Taproot = 1,
+    #[strum(to_string = "ECDSASecp256r1")]
+    ECDSASecp256r1 = 2,
+    #[strum(to_string = "EdDSA")]
+    EdDSA = 3,
+    #[strum(to_string = "SchnorrkelSubstrate")]
+    SchnorrkelSubstrate = 4,
 }
 
 // We can't import ika-types here since we import this module in there.
@@ -287,30 +298,36 @@ pub enum SignatureAlgorithm {
 #[derive(Debug, Error, Clone)]
 pub enum DwalletNetworkMPCError {
     #[error("invalid DWalletMPCNetworkKey value: {0}")]
-    InvalidDWalletMPCNetworkKey(u32),
+    InvalidDWalletMPCCurve(u32),
 
     #[error("invalid DWalletMPCSignatureAlgorithm value: {0}")]
     InvalidDWalletMPCSignatureAlgorithm(u32),
 }
 
-impl TryFrom<u32> for DWalletMPCNetworkKeyScheme {
+impl TryFrom<u32> for DWalletCurve {
     type Error = DwalletNetworkMPCError;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(DWalletMPCNetworkKeyScheme::Secp256k1),
-            1 => Ok(DWalletMPCNetworkKeyScheme::Ristretto),
-            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCNetworkKey(v)),
+            0 => Ok(DWalletCurve::Secp256k1),
+            1 => Ok(DWalletCurve::Ristretto),
+            2 => Ok(DWalletCurve::Curve25519),
+            3 => Ok(DWalletCurve::Secp256r1),
+            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCCurve(v)),
         }
     }
 }
 
-impl TryFrom<u32> for SignatureAlgorithm {
+impl TryFrom<u32> for DWalletSignatureScheme {
     type Error = DwalletNetworkMPCError;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(SignatureAlgorithm::ECDSA),
+            0 => Ok(DWalletSignatureScheme::ECDSASecp256k1),
+            1 => Ok(DWalletSignatureScheme::Taproot),
+            2 => Ok(DWalletSignatureScheme::ECDSASecp256r1),
+            3 => Ok(DWalletSignatureScheme::EdDSA),
+            4 => Ok(DWalletSignatureScheme::SchnorrkelSubstrate),
             v => Err(DwalletNetworkMPCError::InvalidDWalletMPCSignatureAlgorithm(
                 v,
             )),
