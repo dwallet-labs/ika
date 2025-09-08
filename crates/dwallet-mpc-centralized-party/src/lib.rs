@@ -40,6 +40,7 @@ use twopc_mpc::class_groups::{
     DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyOutput,
     DKGDecentralizedPartyVersionedOutput,
 };
+use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::VerifyingKey;
 use twopc_mpc::ecdsa::sign::verify_signature;
@@ -522,6 +523,11 @@ fn protocol_public_parameters(
                 encryption_scheme_public_parameters.clone(),
             );
             Ok(protocol_public_parameters)
+        }
+        VersionedNetworkDkgOutput::V2(network_dkg_public_output) => {
+            let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(network_dkg_public_output)?;
+            Ok(network_dkg_public_output.secp256k1_protocol_public_parameters()?)
         }
     }
 }

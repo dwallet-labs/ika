@@ -13,6 +13,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::AsyncProtocol;
 use mpc::Party;
+use twopc_mpc::BaseProtocolContext;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
@@ -110,18 +111,19 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
     fn generate_public_input(
         protocol_public_parameters: ProtocolPublicParameters,
     ) -> DwalletMPCResult<<DWalletDKGFirstParty as Party>::PublicInput> {
-        let secp256k1_public_input = twopc_mpc::dkg::encryption_of_secret_key_share::PublicInput::<
-            group::secp256k1::scalar::PublicParameters,
-            group::secp256k1::group_element::PublicParameters,
-            class_groups::Secp256k1EncryptionSchemePublicParameters,
-        > {
-            scalar_group_public_parameters: protocol_public_parameters
-                .scalar_group_public_parameters
-                .clone(),
-            group_public_parameters: protocol_public_parameters.group_public_parameters.clone(),
-            encryption_scheme_public_parameters: protocol_public_parameters
-                .encryption_scheme_public_parameters,
+        let base_protocol_context = BaseProtocolContext {
+            protocol_name: "2PC-MPC DKG".to_string(),
+            round_name: "1 - Encryption of Secret Key Share".to_string(),
+            proof_name: "Encryption of Secret Key Share and Public Key Share Proof".to_string(),
         };
+        let secp256k1_public_input =
+            twopc_mpc::dkg::encryption_of_secret_key_share::PublicInput::new_targeted_dkg(
+                protocol_public_parameters
+                    .scalar_group_public_parameters
+                    .clone(),
+                protocol_public_parameters.group_public_parameters.clone(),
+                protocol_public_parameters.encryption_scheme_public_parameters,
+            );
         let input: Self::PublicInput = secp256k1_public_input;
         Ok(input)
     }
