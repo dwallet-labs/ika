@@ -57,7 +57,7 @@ pub trait NetworkEncryptionKeyPublicData {
     fn secp256k1_protocol_public_parameters(
         &self,
     ) -> twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
-    
+
     fn secp256r1_protocol_public_parameters(
         &self,
     ) -> Option<twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters>;
@@ -67,7 +67,7 @@ pub trait NetworkEncryptionKeyPublicData {
     fn curve25519_protocol_public_parameters(
         &self,
     ) -> Option<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters>;
-    
+
     fn secp256r1_decryption_key_share_public_parameters(
         &self,
     ) -> Option<class_groups::Secp256r1DecryptionKeySharePublicParameters>;
@@ -457,19 +457,28 @@ impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV2 {
     fn secp256r1_decryption_key_share_public_parameters(
         &self,
     ) -> Option<class_groups::Secp256r1DecryptionKeySharePublicParameters> {
-        Some(self.secp256r1_decryption_key_share_public_parameters.clone())
+        Some(
+            self.secp256r1_decryption_key_share_public_parameters
+                .clone(),
+        )
     }
 
     fn ristretto_decryption_key_share_public_parameters(
         &self,
     ) -> Option<class_groups::RistrettoDecryptionKeySharePublicParameters> {
-        Some(self.ristretto_decryption_key_share_public_parameters.clone())
+        Some(
+            self.ristretto_decryption_key_share_public_parameters
+                .clone(),
+        )
     }
 
     fn curve25519_decryption_key_share_public_parameters(
         &self,
     ) -> Option<class_groups::Curve25519DecryptionKeySharePublicParameters> {
-        Some(self.curve25519_decryption_key_share_public_parameters.clone())
+        Some(
+            self.curve25519_decryption_key_share_public_parameters
+                .clone(),
+        )
     }
 }
 
