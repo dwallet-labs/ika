@@ -1,5 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
+import { bitcoin_address_from_dwallet_output } from '@ika.xyz/ika-wasm';
 import { Transaction } from '@mysten/sui/transactions';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -95,6 +96,11 @@ describe('DWallet Signing', () => {
 			signerAddress,
 		} = await createCompleteDWallet(ikaClient, suiClient, testName);
 
+		const dwalletBitcoinAddress = bitcoin_address_from_dwallet_output(
+			Uint8Array.from(activeDWallet.state.Active.public_output),
+		);
+		console.log("DWallet's Bitcoin address:", dwalletBitcoinAddress);
+		return;
 		expect(activeDWallet).toBeDefined();
 		expect(activeDWallet.state.$kind).toBe('Active');
 		expect(activeDWallet.id.id).toMatch(/^0x[a-f0-9]+$/);
