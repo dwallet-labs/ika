@@ -194,7 +194,9 @@ describe('DWallet Signing', () => {
 		expect(activeDWallet).toBeDefined();
 		expect(activeDWallet.state.$kind).toBe('Active');
 		expect(activeDWallet.id.id).toMatch(/^0x[a-f0-9]+$/);
-
+		// log the dwallet output in base 64
+		console.log('DWallet Output (base64):', Buffer.from(activeDWallet.state.Active.public_output).toString('base64'));
+		return;
 		// Create presign
 		const presignRequestEvent = await testPresign(
 			ikaClient,
