@@ -4,9 +4,9 @@
 import type { SuiClient } from '@mysten/sui/client';
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
-import type {
+import {
 	DKGRequestInput,
-	ImportDWalletVerificationRequestInput,
+	ImportDWalletVerificationRequestInput, prepareDKGAsync, sessionIdentifierDigest,
 } from '../../src/client/cryptography.js';
 import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
 import type { IkaClient } from '../../src/client/ika-client.js';
