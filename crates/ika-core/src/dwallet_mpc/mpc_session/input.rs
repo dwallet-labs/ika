@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGSecondParty, DWalletImportedKeyVerificationParty,
-    dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
+    DWalletDKGFirstParty, DWalletDKGParty, DWalletDKGPublicInputGenerator,
+    DWalletImportedKeyVerificationParty, dwallet_dkg_first_public_input,
+    dwallet_dkg_second_public_input,
 };
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_public_input};
 use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
@@ -18,7 +19,7 @@ use crate::request_protocol_data::ProtocolData;
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletMPCNetworkKeyScheme, MPCPrivateInput, VersionedImportedDWalletPublicOutput,
+    DWalletCurve, MPCPrivateInput, VersionedImportedDWalletPublicOutput,
 };
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
@@ -34,7 +35,7 @@ pub enum PublicInput {
         <DWalletImportedKeyVerificationParty as mpc::Party>::PublicInput,
     ),
     DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
-    DKGSecond(<DWalletDKGSecondParty as mpc::Party>::PublicInput),
+    DWalletDKG(<DWalletDKGParty as mpc::Party>::PublicInput),
     Presign(<PresignParty as mpc::Party>::PublicInput),
     Sign(<SignParty as mpc::Party>::PublicInput),
     NetworkEncryptionKeyDkg(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
@@ -77,6 +78,24 @@ pub(crate) fn session_input_from_request(
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
     match &request.protocol_data {
+        ProtocolData::DWalletDKG {
+            dwallet_network_encryption_key_id,
+            data,
+            ..
+        } => {
+            let protocol_public_parameters =
+                network_keys.get_protocol_public_parameters(dwallet_network_encryption_key_id)?;
+
+            Ok((
+                PublicInput::DWalletDKG(
+                    <DWalletDKGParty as DWalletDKGPublicInputGenerator>::generate_public_input(
+                        protocol_public_parameters,
+                        &data.centralized_public_key_share_and_proof,
+                    )?,
+                ),
+                None,
+            ))
+        }
         ProtocolData::ImportedKeyVerification {
             dwallet_network_encryption_key_id,
             centralized_party_message,
@@ -124,8 +143,6 @@ pub(crate) fn session_input_from_request(
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_public_input(
                     access_structure,
                     validators_class_groups_public_keys_and_proofs,
-                    // Todo (#473): Support generic network key scheme
-                    DWalletMPCNetworkKeyScheme::Secp256k1,
                 )?),
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
             ))
@@ -226,7 +243,7 @@ pub(crate) fn session_input_from_request(
             )?;
 
             Ok((
-                PublicInput::DKGSecond(dwallet_dkg_second_public_input(
+                PublicInput::DWalletDKG(dwallet_dkg_second_public_input(
                     first_round_output,
                     centralized_public_key_share_and_proof,
                     protocol_public_parameters,

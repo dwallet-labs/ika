@@ -14,9 +14,9 @@ use dwallet_mpc_centralized_party::{
     generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
 };
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
+use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
-use ika_types::message::{DKGSecondRoundOutput, DWalletCheckpointMessageKind};
+use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGOutput};
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletImportedKeyVerificationRequestEvent,
@@ -80,7 +80,7 @@ async fn dwallet_dkg_first_round() {
 
 pub(crate) struct DWalletTestResult {
     pub(crate) flow_completion_consensus_round: Round,
-    pub(crate) dkg_second_round_output: DKGSecondRoundOutput,
+    pub(crate) dkg_second_round_output: DWalletDKGOutput,
     pub(crate) dwallet_secret_key_share: Vec<u8>,
     pub(crate) class_groups_encryption_key: Vec<u8>,
     pub(crate) class_groups_decryption_key: Vec<u8>,
@@ -371,7 +371,7 @@ pub(crate) fn send_start_imported_dwallet_verification_event(
                 session_sequence_number,
                 protocol_data: ProtocolData::ImportedKeyVerification {
                     data: ImportedKeyVerificationData {
-                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        curve: DWalletCurve::Secp256k1,
                         encrypted_centralized_secret_share_and_proof:
                             encrypted_centralized_secret_share_and_proof.clone(),
                         encryption_key: encryption_key.clone(),
@@ -412,7 +412,7 @@ pub(crate) fn send_make_dwallet_public_event(
                 session_sequence_number,
                 protocol_data: ProtocolData::MakeDWalletUserSecretKeySharesPublic {
                     data: MakeDWalletUserSecretKeySharesPublicData {
-                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        curve: DWalletCurve::Secp256k1,
                         public_user_secret_key_shares: public_user_secret_key_shares.clone(),
                         dwallet_decentralized_output: public_output.clone(),
                     },

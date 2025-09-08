@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { bcs } from '@mysten/sui/bcs';
-import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+import type {
+	Transaction,
+	TransactionObjectArgument,
+	TransactionResult,
+} from '@mysten/sui/transactions';
 
 import type { IkaConfig } from '../client/types.js';
 
@@ -141,6 +145,39 @@ export function requestDWalletDKGSecondRound(
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(signerPublicKey)),
 			sessionIdentifier,
+			ikaCoin,
+			suiCoin,
+		],
+	});
+}
+
+export function requestDWalletDKG(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	dwalletNetworkEncryptionKeyId: string,
+	curve: number,
+	userPublicKeyShareAndProof: Uint8Array,
+	encryptedUserShareAndProof: Uint8Array,
+	encryptionKeyAddress: string,
+	userPublicOutput: Uint8Array,
+	signerPublicKey: Uint8Array,
+	sessionIdentifierObjID: string,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
+	tx: Transaction,
+): TransactionResult {
+	return tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg`,
+		arguments: [
+			coordinatorObjectRef,
+			tx.pure.id(dwalletNetworkEncryptionKeyId),
+			tx.pure.u32(curve),
+			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicKeyShareAndProof)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(encryptedUserShareAndProof)),
+			tx.pure.address(encryptionKeyAddress),
+			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(signerPublicKey)),
+			tx.object(sessionIdentifierObjID),
 			ikaCoin,
 			suiCoin,
 		],

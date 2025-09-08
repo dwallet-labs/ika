@@ -30,7 +30,6 @@ impl Request {
         computation_id: ComputationId,
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-        protocol_config: ProtocolConfig,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         info!(
             mpc_protocol=?self.protocol_data.to_string(),
@@ -50,7 +49,6 @@ impl Request {
                 computation_id.session_identifier,
                 root_seed,
                 dwallet_mpc_metrics,
-                &protocol_config,
             )
         } else {
             self.protocol_cryptographic_data

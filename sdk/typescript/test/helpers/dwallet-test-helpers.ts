@@ -5,7 +5,7 @@ import type { SuiClient } from '@mysten/sui/client';
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import type {
-	DKGSecondRoundRequestInput,
+	DKGRequestInput,
 	ImportDWalletVerificationRequestInput,
 } from '../../src/client/cryptography.js';
 import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
@@ -237,7 +237,7 @@ export async function requestTestDkgSecondRound(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
-	dkgSecondRoundRequestInput: DKGSecondRoundRequestInput,
+	dkgSecondRoundRequestInput: DKGRequestInput,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 ) {
@@ -271,6 +271,52 @@ export async function requestTestDkgSecondRound(
 	return SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.DWalletDKGSecondRoundRequestEvent,
 	).fromBase64(dkgSecondRoundRequestEvent.bcs as string);
+}
+
+/**
+ * Request DKG second round for testing
+ */
+export async function requestTestDkg(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dkgSecondRoundRequestInput: DKGRequestInput,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
+	testName: string,
+	sessionIdentifierObjID: string,
+	dwalletNetworkEncryptionKeyId: string,
+	curve: number,
+	signerAddress: string,
+) {
+	const transaction = new Transaction();
+	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
+	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
+	const dWalletCap = ikaTransaction.requestDWalletDKG({
+		dkgSecondRoundRequestInput,
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
+		sessionIdentifierObjID,
+		dwalletNetworkEncryptionKeyId,
+		curve,
+	});
+	transaction.transferObjects([dWalletCap], signerAddress);
+
+	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
+
+	const result = await executeTestTransaction(suiClient, transaction, testName);
+
+	const dkgRequestEvent = result.events?.find((event) => {
+		return (
+			event.type.includes('DWalletDKGRequestEvent') && event.type.includes('DWalletSessionEvent')
+		);
+	});
+
+	if (!dkgRequestEvent) {
+		throw new Error('Failed to find DWalletDKGSecondRoundRequestEvent');
+	}
+
+	return SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.DWalletDKGRequestEvent,
+	).fromBase64(dkgRequestEvent.bcs as string);
 }
 
 /**
