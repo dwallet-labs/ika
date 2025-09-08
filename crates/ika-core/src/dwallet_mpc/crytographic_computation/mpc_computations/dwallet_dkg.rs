@@ -36,55 +36,6 @@ pub(crate) type Curve25519DWalletDKGParty =
 pub(crate) type RistrettoDWalletDKGParty =
     <Ristretto255AsyncProtocol as Protocol>::DKGDecentralizedParty;
 
-pub(crate) fn dwallet_dkg_first_public_input(
-    protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-) -> DwalletMPCResult<<DWalletDKGFirstParty as mpc::Party>::PublicInput> {
-    <DWalletDKGFirstParty as DWalletDKGFirstPartyPublicInputGenerator>::generate_public_input(
-        protocol_public_parameters.clone(),
-    )
-}
-
-pub(crate) fn dwallet_dkg_second_public_input(
-    first_round_output: &SerializedWrappedMPCPublicOutput,
-    centralized_public_key_share_and_proof: &SerializedWrappedMPCPublicOutput,
-    protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-) -> DwalletMPCResult<<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput> {
-    <Secp256K1DWalletDKGParty as DWalletDKGSecondPartyPublicInputGenerator>::generate_public_input(
-        protocol_public_parameters,
-        first_round_output,
-        centralized_public_key_share_and_proof,
-    )
-}
-
-/// A trait for generating the public input for the initial round of the DKG protocol.
-///
-/// This trait is implemented to resolve compiler type ambiguities that arise in the 2PC-MPC library
-/// when accessing [`Party::PublicInput`].
-/// It defines the parameters and logic
-/// necessary to initiate the first round of the DKG protocol,
-/// preparing the party with the essential session information and other contextual data.
-pub(crate) trait DWalletDKGFirstPartyPublicInputGenerator: Party {
-    /// Generates the public input required for the first round of the DKG protocol.
-    fn generate_public_input(
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    ) -> DwalletMPCResult<<DWalletDKGFirstParty as mpc::Party>::PublicInput>;
-}
-
-/// A trait for generating the public input for the last round of the DKG protocol.
-///
-/// This trait is implemented to resolve compiler type ambiguities that arise in the 2PC-MPC library
-/// when accessing [`Party::PublicInput`].
-/// It defines the parameters and logic
-/// necessary to initiate the second round of the DKG protocol,
-/// preparing the party with the essential session information and other contextual data.
-pub(crate) trait DWalletDKGSecondPartyPublicInputGenerator: Party {
-    /// Generates the public input required for the second round of the DKG protocol.
-    fn generate_public_input(
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-        first_round_output: &SerializedWrappedMPCPublicOutput,
-        centralized_party_public_key_share: &SerializedWrappedMPCPublicOutput,
-    ) -> DwalletMPCResult<<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput>;
-}
 
 pub fn dwallet_dkg_generate_public_input(
     curve: &DWalletCurve,
@@ -171,6 +122,56 @@ pub fn dwallet_dkg_generate_public_input(
     };
 
     Ok(public_input)
+}
+
+pub(crate) fn dwallet_dkg_first_public_input(
+    protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+) -> DwalletMPCResult<<DWalletDKGFirstParty as mpc::Party>::PublicInput> {
+    <DWalletDKGFirstParty as DWalletDKGFirstPartyPublicInputGenerator>::generate_public_input(
+        protocol_public_parameters.clone(),
+    )
+}
+
+pub(crate) fn dwallet_dkg_second_public_input(
+    first_round_output: &SerializedWrappedMPCPublicOutput,
+    centralized_public_key_share_and_proof: &SerializedWrappedMPCPublicOutput,
+    protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+) -> DwalletMPCResult<<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput> {
+    <Secp256K1DWalletDKGParty as DWalletDKGSecondPartyPublicInputGenerator>::generate_public_input(
+        protocol_public_parameters,
+        first_round_output,
+        centralized_public_key_share_and_proof,
+    )
+}
+
+/// A trait for generating the public input for the initial round of the DKG protocol.
+///
+/// This trait is implemented to resolve compiler type ambiguities that arise in the 2PC-MPC library
+/// when accessing [`Party::PublicInput`].
+/// It defines the parameters and logic
+/// necessary to initiate the first round of the DKG protocol,
+/// preparing the party with the essential session information and other contextual data.
+pub(crate) trait DWalletDKGFirstPartyPublicInputGenerator: Party {
+    /// Generates the public input required for the first round of the DKG protocol.
+    fn generate_public_input(
+        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    ) -> DwalletMPCResult<<DWalletDKGFirstParty as mpc::Party>::PublicInput>;
+}
+
+/// A trait for generating the public input for the last round of the DKG protocol.
+///
+/// This trait is implemented to resolve compiler type ambiguities that arise in the 2PC-MPC library
+/// when accessing [`Party::PublicInput`].
+/// It defines the parameters and logic
+/// necessary to initiate the second round of the DKG protocol,
+/// preparing the party with the essential session information and other contextual data.
+pub(crate) trait DWalletDKGSecondPartyPublicInputGenerator: Party {
+    /// Generates the public input required for the second round of the DKG protocol.
+    fn generate_public_input(
+        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+        first_round_output: &SerializedWrappedMPCPublicOutput,
+        centralized_party_public_key_share: &SerializedWrappedMPCPublicOutput,
+    ) -> DwalletMPCResult<<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput>;
 }
 
 impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
