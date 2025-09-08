@@ -59,6 +59,17 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
     ) -> DwalletMPCResult<<ReconfigurationV2Secp256k1Party as Party>::PublicInput> {
+        let current_committee = current_committee.clone();
+        let current_access_structure =
+            generate_access_structure_from_committee(&current_committee)?;
+        let upcoming_access_structure =
+            generate_access_structure_from_committee(&upcoming_committee)?;
+
+        let current_encryption_keys_per_crt_prime_and_proofs =
+            extract_encryption_keys_from_committee(&current_committee)?;
+
+        let upcoming_encryption_keys_per_crt_prime_and_proofs =
+            extract_encryption_keys_from_committee(&upcoming_committee)?;
         match network_dkg_public_output {
             VersionedNetworkDkgOutput::V1(network_dkg_public_output) => {
                 let VersionedDecryptionKeyReconfigurationOutput::V2(
@@ -70,19 +81,6 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
                         .to_string(),
                 ));
                 };
-                let current_committee = current_committee.clone();
-
-                let current_access_structure =
-                    generate_access_structure_from_committee(&current_committee)?;
-                let upcoming_access_structure =
-                    generate_access_structure_from_committee(&upcoming_committee)?;
-
-                let current_encryption_keys_per_crt_prime_and_proofs =
-                    extract_encryption_keys_from_committee(&current_committee)?;
-
-                let upcoming_encryption_keys_per_crt_prime_and_proofs =
-                    extract_encryption_keys_from_committee(&upcoming_committee)?;
-
                 let public_input: <ReconfigurationV2Secp256k1Party as Party>::PublicInput =
                 <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicInput::new_from_reconfiguration_output(
                     &current_access_structure,
@@ -99,19 +97,6 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
                 Ok(public_input)
             }
             VersionedNetworkDkgOutput::V2(network_dkg_public_output) => {
-                let current_committee = current_committee.clone();
-
-                let current_access_structure =
-                    generate_access_structure_from_committee(&current_committee)?;
-                let upcoming_access_structure =
-                    generate_access_structure_from_committee(&upcoming_committee)?;
-
-                let current_encryption_keys_per_crt_prime_and_proofs =
-                    extract_encryption_keys_from_committee(&current_committee)?;
-
-                let upcoming_encryption_keys_per_crt_prime_and_proofs =
-                    extract_encryption_keys_from_committee(&upcoming_committee)?;
-
                 let public_input: <ReconfigurationV2Secp256k1Party as Party>::PublicInput =
                     <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_dkg_output(
                         &current_access_structure,
