@@ -352,6 +352,7 @@ impl ProtocolConfig {
                     .expect("failed to parse ProtocolConfig override env variables");
             overrides.apply_to(&mut ret);
         }
+        ret.network_encryption_key_version = Some(2);
 
         ret
     }
