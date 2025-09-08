@@ -79,6 +79,13 @@ pub trait NetworkEncryptionKeyPublicData {
     ) -> Option<class_groups::Curve25519DecryptionKeySharePublicParameters>;
 }
 
+#[enum_dispatch(NetworkEncryptionKeyPublicData)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VersionedNetworkEncryptionKeyPublicData {
+    V1(NetworkEncryptionKeyPublicDataV1),
+    V2(NetworkEncryptionKeyPublicDataV2),
+}
+
 /// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
 /// Created for each DKG protocol and modified for each Reconfiguration Protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,13 +106,6 @@ pub struct NetworkEncryptionKeyPublicDataV1 {
     pub network_dkg_output: VersionedNetworkDkgOutput,
     pub secp256k1_protocol_public_parameters:
         twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-}
-
-#[enum_dispatch(NetworkEncryptionKeyPublicData)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VersionedNetworkEncryptionKeyPublicData {
-    V1(NetworkEncryptionKeyPublicDataV1),
-    V2(NetworkEncryptionKeyPublicDataV2),
 }
 
 /// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
