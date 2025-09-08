@@ -28,6 +28,8 @@ import {
 /**
  * Prepared data for the second round of Distributed Key Generation (DKG).
  * Contains all cryptographic outputs needed to complete the DKG process.
+ *
+ * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
 export interface DKGSecondRoundRequestInput {
 	/** The user's public key share along with its zero-knowledge proof */
@@ -36,6 +38,8 @@ export interface DKGSecondRoundRequestInput {
 	userPublicOutput: Uint8Array;
 	/** The encrypted user share with its proof of correct encryption */
 	encryptedUserShareAndProof: Uint8Array;
+	/** The raw secret key share (user share) */
+	userSecretKeyShare: Uint8Array;
 }
 
 /**
@@ -146,10 +150,11 @@ export async function encryptSecretShare(
  *
  * @param protocolPublicParameters - The protocol public parameters
  * @param dWallet - The DWallet object containing first round output
- * @param sessionIdentifier - Unique identifier for this DKG session
  * @param encryptionKey - The user's public encryption key
  * @returns Complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available in the DWallet
+ *
+ * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
 export async function prepareDKGSecondRound(
 	protocolPublicParameters: Uint8Array,
@@ -178,6 +183,7 @@ export async function prepareDKGSecondRound(
 		userDKGMessage: Uint8Array.from(userDKGMessage),
 		userPublicOutput: Uint8Array.from(userPublicOutput),
 		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
+		userSecretKeyShare: Uint8Array.from(userSecretKeyShare),
 	};
 }
 
@@ -187,10 +193,11 @@ export async function prepareDKGSecondRound(
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param dWallet - The DWallet object containing first round output
- * @param sessionIdentifier - Unique identifier for this DKG session
  * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
  * @returns Promise resolving to complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available or network parameters cannot be fetched
+ *
+ * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
 export async function prepareDKGSecondRoundAsync(
 	ikaClient: IkaClient,

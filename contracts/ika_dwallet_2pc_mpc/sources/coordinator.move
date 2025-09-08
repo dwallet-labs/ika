@@ -35,6 +35,8 @@ use ika_dwallet_2pc_mpc::coordinator_inner::DWallet;
 const EWrongInnerVersion: u64 = 0;
 /// The migration is invalid.
 const EInvalidMigration: u64 = 1;
+/// The function is deprecated.
+const EDeprecatedFunction: u64 = 2;
 
 // === Constants ===
 /// Flag to indicate the version of the ika system.
@@ -259,30 +261,40 @@ public fun approve_imported_key_message(
         )
 }
 
+#[deprecated(note = b"Function `request_dwallet_dkg_first_round` is deprecated. Please use `request_dwallet_dkg` instead.")]
 public fun request_dwallet_dkg_first_round(
+    _self: &mut DWalletCoordinator,
+    _dwallet_network_encryption_key_id: ID,
+    _curve: u32,
+    _session_identifier: SessionIdentifier,
+    _payment_ika: &mut Coin<IKA>,
+    _payment_sui: &mut Coin<SUI>,
+    _ctx: &mut TxContext,
+): DWalletCap {
+    abort EDeprecatedFunction
+}
+
+#[deprecated(note = b"Function `request_dwallet_dkg_second_round` is deprecated. Please use `request_dwallet_dkg` instead.")]
+public fun request_dwallet_dkg_second_round(
+    _self: &mut DWalletCoordinator,
+    _dwallet_cap: &DWalletCap,
+    _centralized_public_key_share_and_proof: vector<u8>,
+    _encrypted_centralized_secret_share_and_proof: vector<u8>,
+    _encryption_key_address: address,
+    _user_public_output: vector<u8>,
+    _singer_public_key: vector<u8>,
+    _session_identifier: SessionIdentifier,
+    _payment_ika: &mut Coin<IKA>,
+    _payment_sui: &mut Coin<SUI>,
+    _ctx: &mut TxContext,
+) {
+    abort EDeprecatedFunction
+}
+
+public fun request_dwallet_dkg(
     self: &mut DWalletCoordinator,
     dwallet_network_encryption_key_id: ID,
     curve: u32,
-    session_identifier: SessionIdentifier,
-    payment_ika: &mut Coin<IKA>,
-    payment_sui: &mut Coin<SUI>,
-    ctx: &mut TxContext,
-): DWalletCap {
-    self
-        .inner_mut()
-        .request_dwallet_dkg_first_round(
-            dwallet_network_encryption_key_id,
-            curve,
-            session_identifier,
-            payment_ika,
-            payment_sui,
-            ctx,
-        )
-}
-
-public fun request_dwallet_dkg_second_round(
-    self: &mut DWalletCoordinator,
-    dwallet_cap: &DWalletCap,
     centralized_public_key_share_and_proof: vector<u8>,
     encrypted_centralized_secret_share_and_proof: vector<u8>,
     encryption_key_address: address,
@@ -292,11 +304,12 @@ public fun request_dwallet_dkg_second_round(
     payment_ika: &mut Coin<IKA>,
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
-) {
+): DWalletCap {
     self
         .inner_mut()
-        .request_dwallet_dkg_second_round(
-            dwallet_cap,
+        .request_dwallet_dkg(
+            dwallet_network_encryption_key_id,
+            curve,
             centralized_public_key_share_and_proof,
             encrypted_centralized_secret_share_and_proof,
             encryption_key_address,
