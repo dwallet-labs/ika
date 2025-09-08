@@ -214,7 +214,6 @@ impl DWalletSession {
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
                 authority=?self.validator_name,
-                computation_type=?self.computation_type,
                 status =? self.status,
                 "Received our output from consensus, marking session as computation completed",
             );
