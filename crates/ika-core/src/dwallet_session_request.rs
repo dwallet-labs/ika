@@ -206,6 +206,7 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 signature_algorithm: Some(data.signature_algorithm.clone()),
             },
             ProtocolCryptographicData::NetworkEncryptionKeyDkg { data, .. } => {
+                // TODO (#1508): Remove the curve label completely from protocols the curve label is irrelevant for
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
                     curve: None,
