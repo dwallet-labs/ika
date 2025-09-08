@@ -31,7 +31,7 @@ use homomorphic_encryption::{
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::AsyncProtocol;
+use ika_types::messages_dwallet_mpc::Secp256K1AsyncProtocol;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
@@ -74,8 +74,10 @@ pub struct ValidatorPrivateDecryptionKeyData {
     /// These shares are used in multi-party cryptographic protocols.
     /// NOTE: EACH PARTY IN HERE IS A **VIRTUAL PARTY**.
     /// NOTE 2: `ObjectID` is the ID of the network decryption key, not the party.
-    pub validator_decryption_key_shares:
-        HashMap<ObjectID, HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>>,
+    pub validator_decryption_key_shares: HashMap<
+        ObjectID,
+        HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
+    >,
 }
 
 async fn get_decryption_key_shares_from_public_output(
@@ -201,13 +203,15 @@ impl ValidatorPrivateDecryptionKeyData {
     fn convert_secret_key_shares_type_to_decryption_shares(
         secret_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
         public_parameters: &Secp256k1DecryptionKeySharePublicParameters,
-    ) -> DwalletMPCResult<HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>> {
+    ) -> DwalletMPCResult<HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>>
+    {
         secret_shares
             .into_iter()
             .map(|(virtual_party_id, secret_key_share)| {
-                let decryption_key_share = <AsyncProtocol as Protocol>::DecryptionKeyShare::new(
-                    secret_key_share.to_limbs(),
-                );
+                let decryption_key_share =
+                    <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare::new(
+                        secret_key_share.to_limbs(),
+                    );
 
                 Ok((virtual_party_id, decryption_key_share))
             })
@@ -280,7 +284,8 @@ impl DwalletMPCNetworkKeys {
     pub(crate) fn get_decryption_key_shares(
         &self,
         key_id: &ObjectID,
-    ) -> DwalletMPCResult<HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>> {
+    ) -> DwalletMPCResult<HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>>
+    {
         self.validator_private_dec_key_data
             .validator_decryption_key_shares
             .get(key_id)
@@ -290,6 +295,15 @@ impl DwalletMPCNetworkKeys {
 
     pub fn key_public_data_exists(&self, key_id: &ObjectID) -> bool {
         self.network_encryption_keys.contains_key(key_id)
+    }
+
+    pub fn get_network_encryption_key_public_data(
+        &self,
+        key_id: &ObjectID,
+    ) -> DwalletMPCResult<&VersionedNetworkEncryptionKeyPublicData> {
+        self.network_encryption_keys
+            .get(key_id)
+            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))
     }
 
     /// Retrieves the protocol public parameters for the specified key ID.

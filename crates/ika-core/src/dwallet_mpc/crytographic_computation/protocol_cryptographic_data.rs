@@ -1,5 +1,5 @@
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGParty, DWalletImportedKeyVerificationParty,
+    DWalletDKGFirstParty, DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
@@ -20,7 +20,7 @@ use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
-use ika_types::messages_dwallet_mpc::AsyncProtocol;
+use ika_types::messages_dwallet_mpc::Secp256K1AsyncProtocol;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
 use twopc_mpc::sign::Protocol;
@@ -45,15 +45,15 @@ pub enum ProtocolCryptographicData {
 
     DKGSecond {
         data: DKGSecondData,
-        public_input: <DWalletDKGParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<DWalletDKGParty as mpc::Party>::Message>,
+        public_input: <Secp256K1DWalletDKGParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<Secp256K1DWalletDKGParty as mpc::Party>::Message>,
         first_round_output: Vec<u8>,
     },
 
     DWalletDKG {
         data: DWalletDKGData,
-        public_input: <DWalletDKGParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<DWalletDKGParty as mpc::Party>::Message>,
+        public_input: <Secp256K1DWalletDKGParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<Secp256K1DWalletDKGParty as mpc::Party>::Message>,
     },
 
     Presign {
@@ -66,7 +66,8 @@ pub enum ProtocolCryptographicData {
         data: SignData,
         public_input: <SignParty as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<SignParty as mpc::Party>::Message>,
-        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+        decryption_key_shares:
+            HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyDkgV1 {
@@ -87,7 +88,8 @@ pub enum ProtocolCryptographicData {
         data: NetworkEncryptionKeyReconfigurationData,
         public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
-        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+        decryption_key_shares:
+            HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyV1ToV2Reconfiguration {
@@ -95,13 +97,15 @@ pub enum ProtocolCryptographicData {
         public_input: <ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput,
         advance_request:
             AdvanceRequest<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::Message>,
-        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+        decryption_key_shares:
+            HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
     NetworkEncryptionKeyV2Reconfiguration {
         data: NetworkEncryptionKeyV2ReconfigurationData,
         public_input: <ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationV2Secp256k1Party as mpc::Party>::Message>,
-        decryption_key_shares: HashMap<PartyID, <AsyncProtocol as Protocol>::DecryptionKeyShare>,
+        decryption_key_shares:
+            HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
 
     EncryptedShareVerification {

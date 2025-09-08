@@ -3,7 +3,7 @@
 
 use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGParty, DWalletImportedKeyVerificationParty,
+    DWalletDKGFirstParty, DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
@@ -37,7 +37,7 @@ use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{Secp256K1AsyncProtocol, SessionIdentifier};
 use mpc::guaranteed_output_delivery::{Party, ReadyToAdvanceResult};
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
@@ -100,11 +100,11 @@ impl ProtocolCryptographicData {
                 }
             }
             ProtocolData::DWalletDKG { data, .. } => {
-                let PublicInput::DWalletDKG(public_input) = public_input else {
+                let PublicInput::Secp256K1DWalletDKG(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result = Party::<DWalletDKGParty>::ready_to_advance(
+                let advance_request_result = Party::<Secp256K1DWalletDKGParty>::ready_to_advance(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -152,11 +152,11 @@ impl ProtocolCryptographicData {
                 first_round_output,
                 ..
             } => {
-                let PublicInput::DWalletDKG(public_input) = public_input else {
+                let PublicInput::Secp256K1DWalletDKG(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result = Party::<DWalletDKGParty>::ready_to_advance(
+                let advance_request_result = Party::<Secp256K1DWalletDKGParty>::ready_to_advance(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -508,7 +508,7 @@ impl ProtocolCryptographicData {
                         session_id
                     }
                 };
-                let result = Party::<DWalletDKGParty>::advance_with_guaranteed_output(
+                let result = Party::<Secp256K1DWalletDKGParty>::advance_with_guaranteed_output(
                     session_id,
                     party_id,
                     access_structure,
@@ -567,7 +567,7 @@ impl ProtocolCryptographicData {
                         private_output,
                     } => {
                         // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
-                        let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
+                        let decentralized_output: <Secp256K1AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
                         let decentralized_output = match decentralized_output {
                             DKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
                                 output, ..
@@ -594,7 +594,7 @@ impl ProtocolCryptographicData {
                 advance_request,
                 ..
             } => {
-                let result = Party::<DWalletDKGParty>::advance_with_guaranteed_output(
+                let result = Party::<Secp256K1DWalletDKGParty>::advance_with_guaranteed_output(
                     session_id,
                     party_id,
                     access_structure,
@@ -653,7 +653,7 @@ impl ProtocolCryptographicData {
                         private_output,
                     } => {
                         // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
-                        let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
+                        let decentralized_output: <Secp256K1AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
                         let decentralized_output = match decentralized_output {
                             DKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
                                 output, ..
