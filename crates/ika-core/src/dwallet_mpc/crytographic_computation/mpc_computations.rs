@@ -654,14 +654,6 @@ impl ProtocolCryptographicData {
                     } => {
                         // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
                         let decentralized_output: <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
-                        let decentralized_output = match decentralized_output {
-                            DKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
-                                output, ..
-                            } => output,
-                            DKGDecentralizedPartyVersionedOutputSecp256k1::TargetedPublicDKGOutput (
-                                output
-                            ) => output,
-                        };
                         let public_output_value =
                             bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
                                 bcs::to_bytes(&decentralized_output).unwrap(),
