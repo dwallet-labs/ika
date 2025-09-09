@@ -48,7 +48,7 @@ pub(crate) trait ReconfigurationV2PartyPublicInputGenerator: Party {
         committee: &Committee,
         new_committee: Committee,
         network_dkg_public_output: VersionedNetworkDkgOutput,
-        latest_reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
+        latest_reconfiguration_public_output: Option<VersionedDecryptionKeyReconfigurationOutput>,
     ) -> DwalletMPCResult<<ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput>;
 }
 
