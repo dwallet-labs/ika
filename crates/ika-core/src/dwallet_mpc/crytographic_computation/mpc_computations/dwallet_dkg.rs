@@ -8,8 +8,9 @@
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
+    DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
+    VersionedDwalletDKGFirstRoundPublicOutput, VersionedNetworkEncryptionKeyPublicData,
+    VersionedPublicKeyShareAndProof,
 };
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
@@ -34,7 +35,6 @@ pub(crate) type Curve25519DWalletDKGParty =
     <Curve25519AsyncProtocol as Protocol>::DKGDecentralizedParty;
 pub(crate) type RistrettoDWalletDKGParty =
     <Ristretto255AsyncProtocol as Protocol>::DKGDecentralizedParty;
-
 
 pub fn dwallet_dkg_generate_public_input(
     curve: &DWalletCurve,
@@ -69,11 +69,7 @@ pub fn dwallet_dkg_generate_public_input(
                 }
             };
             let input = (
-                encryption_key_public_data
-                    .secp256r1_protocol_public_parameters()
-                    .ok_or(DwalletMPCError::MissingProtocolPublicParametersForCurve(
-                        DWalletCurve::Secp256r1,
-                    ))?,
+                encryption_key_public_data.secp256r1_protocol_public_parameters()?,
                 centralized_party_public_key_share,
             )
                 .into();
@@ -88,11 +84,7 @@ pub fn dwallet_dkg_generate_public_input(
                 }
             };
             let input = (
-                encryption_key_public_data
-                    .curve25519_protocol_public_parameters()
-                    .ok_or(DwalletMPCError::MissingProtocolPublicParametersForCurve(
-                        DWalletCurve::Curve25519,
-                    ))?,
+                encryption_key_public_data.curve25519_protocol_public_parameters()?,
                 centralized_party_public_key_share,
             )
                 .into();
@@ -107,11 +99,7 @@ pub fn dwallet_dkg_generate_public_input(
                 }
             };
             let input = (
-                encryption_key_public_data
-                    .ristretto_protocol_public_parameters()
-                    .ok_or(DwalletMPCError::MissingProtocolPublicParametersForCurve(
-                        DWalletCurve::Ristretto,
-                    ))?,
+                encryption_key_public_data.ristretto_protocol_public_parameters()?,
                 centralized_party_public_key_share,
             )
                 .into();
