@@ -8,8 +8,7 @@
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
-    VersionedCentralizedDKGPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput,
+    DWalletCurve, NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
 };
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
