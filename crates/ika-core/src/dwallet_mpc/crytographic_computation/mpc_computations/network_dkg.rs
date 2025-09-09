@@ -19,7 +19,7 @@ use class_groups::{
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
+    DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataTrait,
     NetworkEncryptionKeyPublicDataV1, NetworkEncryptionKeyPublicDataV2,
     SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData,
@@ -94,7 +94,7 @@ async fn get_decryption_key_shares_from_public_output(
                 match &shares.network_dkg_output() {
                     VersionedNetworkDkgOutput::V1(public_output) => {
                         match bcs::from_bytes::<<Secp256k1Party as mpc::Party>::PublicOutput>(
-                            public_output,
+                            &public_output,
                         ) {
                             Ok(dkg_public_output) => dkg_public_output
                                 .default_decryption_key_shares::<secp256k1::GroupElement>(
@@ -108,7 +108,7 @@ async fn get_decryption_key_shares_from_public_output(
                     }
                     VersionedNetworkDkgOutput::V2(public_output) => {
                         match bcs::from_bytes::<<dkg::Party as mpc::Party>::PublicOutput>(
-                            public_output,
+                            &public_output,
                         ) {
                             Ok(dkg_public_output) => dkg_public_output
                                 .decrypt_decryption_key_shares(
@@ -130,7 +130,7 @@ async fn get_decryption_key_shares_from_public_output(
                     VersionedDecryptionKeyReconfigurationOutput::V1(public_output) => {
                         match bcs::from_bytes::<
                             <ReconfigurationSecp256k1Party as mpc::Party>::PublicOutput,
-                        >(public_output)
+                        >(&public_output)
                         {
                             Ok(public_output) => public_output
                                 .decrypt_decryption_key_shares::<secp256k1::GroupElement>(
@@ -145,7 +145,7 @@ async fn get_decryption_key_shares_from_public_output(
                     VersionedDecryptionKeyReconfigurationOutput::V2(public_output) => {
                         match bcs::from_bytes::<
                             <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput,
-                        >(public_output)
+                        >(&public_output)
                         {
                             Ok(public_output) => public_output
                                 .decrypt_decryption_key_shares(
