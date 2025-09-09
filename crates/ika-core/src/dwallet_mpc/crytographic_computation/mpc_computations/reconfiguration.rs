@@ -106,15 +106,17 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
                                 upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
                                 current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
                                     .clone(),
-                                bcs::from_bytes::<Secp256k1Party::PublicOutput>(&network_dkg_public_output)?.into(),
+                                bcs::from_bytes(&network_dkg_public_output)?,
                                 bcs::from_bytes(&latest_reconfiguration_public_output)?,
                             )
                                 .map_err(DwalletMPCError::from)?;
-                        Ok(public_input);
+                        Ok(public_input)
                     }
                 }
             }
             VersionedNetworkDkgOutput::V2(network_dkg_public_output) => {
+                let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
+                    bcs::from_bytes(&network_dkg_public_output)?;
                 let public_input: <ReconfigurationV2Secp256k1Party as Party>::PublicInput =
                     <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_dkg_output(
                         &current_access_structure,
@@ -123,7 +125,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
                         upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
                         current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
                             .clone(),
-                        bcs::from_bytes(&network_dkg_public_output)?,
+                        public_output.into(),
                     )
                         .map_err(DwalletMPCError::from)?;
 
