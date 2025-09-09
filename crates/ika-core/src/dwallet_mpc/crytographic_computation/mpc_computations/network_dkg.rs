@@ -322,10 +322,12 @@ impl DwalletMPCNetworkKeys {
     pub fn get_last_reconfiguration_output(
         &self,
         key_id: &ObjectID,
-    ) -> Option<Option<VersionedDecryptionKeyReconfigurationOutput>> {
-        self.network_encryption_keys
-            .get(key_id)
-            .map(|key| key.latest_network_reconfiguration_public_output().clone())
+    ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
+        let key = self.network_encryption_keys.get(key_id);
+        if key.is_none() {
+            return None;
+        }
+        key.unwrap().latest_network_reconfiguration_public_output()
     }
 }
 
