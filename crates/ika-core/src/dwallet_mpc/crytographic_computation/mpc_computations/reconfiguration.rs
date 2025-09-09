@@ -94,7 +94,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
                         ) = latest_reconfiguration_public_output
                         else {
                             return Err(DwalletMPCError::InternalError(
-                                "V2 Reconfiguration only supports latest reconfiguration public output of version V2"
+                                "The Reconfiguration v2 protocol can only be executed after a v1-to-v2 protocol, or after another reconfiguration v2 protocol."
                                     .to_string(),
                             ));
                         };
