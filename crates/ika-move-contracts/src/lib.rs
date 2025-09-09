@@ -15,7 +15,7 @@ pub fn save_contracts_to_temp_dir() -> anyhow::Result<TempDir> {
     let temp_dir =
         tempfile::tempdir().map_err(|e| anyhow::anyhow!("Failed to create temp dir: {}", e))?;
     let path = temp_dir.path();
-    save_dir_entries(path, CONTRACTS_DIR.entries())?;
+    save_dir_entries(path, MAINNET_CONTRACTS_DIR.entries())?;
     Ok(temp_dir)
 }
 
