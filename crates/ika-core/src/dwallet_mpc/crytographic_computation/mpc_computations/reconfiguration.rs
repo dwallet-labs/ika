@@ -74,19 +74,10 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
             VersionedNetworkDkgOutput::V1(network_dkg_public_output) => {
                 match latest_reconfiguration_public_output {
                     None => {
-                        let public_input: <ReconfigurationV2Secp256k1Party as Party>::PublicInput =
-                            <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicInput::new_from_dkg_output(
-                                &current_access_structure,
-                                upcoming_access_structure,
-                                current_encryption_keys_per_crt_prime_and_proofs.clone(),
-                                upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
-                                current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
-                                    .clone(),
-                                bcs::from_bytes(&network_dkg_public_output)?,
-                            )
-                                .map_err(DwalletMPCError::from)?;
-
-                        Ok(public_input)
+                        Err(DwalletMPCError::InternalError(
+                            "The Reconfiguration v2 protocol can only be executed after a v1-to-v2 protocol, or after another reconfiguration v2 protocol."
+                                .to_string(),
+                        ))
                     }
                     Some(latest_reconfiguration_public_output) => {
                         let VersionedDecryptionKeyReconfigurationOutput::V2(
@@ -115,21 +106,52 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Secp256k1Pa
                 }
             }
             VersionedNetworkDkgOutput::V2(network_dkg_public_output) => {
-                let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
-                    bcs::from_bytes(&network_dkg_public_output)?;
-                let public_input: <ReconfigurationV2Secp256k1Party as Party>::PublicInput =
-                    <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_dkg_output(
-                        &current_access_structure,
-                        upcoming_access_structure,
-                        current_encryption_keys_per_crt_prime_and_proofs.clone(),
-                        upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
-                        current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
-                            .clone(),
-                        public_output.into(),
-                    )
-                        .map_err(DwalletMPCError::from)?;
+                match latest_reconfiguration_public_output {
+                    None => {
+                        let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
+                            bcs::from_bytes(&network_dkg_public_output)?;
+                        let public_input: <ReconfigurationV2Secp256k1Party as Party>::PublicInput =
+                            <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_dkg_output(
+                                &current_access_structure,
+                                upcoming_access_structure,
+                                current_encryption_keys_per_crt_prime_and_proofs.clone(),
+                                upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
+                                current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
+                                    .clone(),
+                                public_output,
+                            )
+                                .map_err(DwalletMPCError::from)?;
 
-                Ok(public_input)
+                        Ok(public_input)
+                    }
+                    Some(latest_reconfiguration_public_output) => {
+                        let VersionedDecryptionKeyReconfigurationOutput::V2(
+                            latest_reconfiguration_public_output,
+                        ) = latest_reconfiguration_public_output
+                        else {
+                            return Err(DwalletMPCError::InternalError(
+                                "The Reconfiguration v2 protocol can only be executed after a v1-to-v2 protocol, or after another reconfiguration v2 protocol."
+                                    .to_string(),
+                            ));
+                        };
+                        let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
+                            bcs::from_bytes(&network_dkg_public_output)?;
+                        let public_input: <ReconfigurationV2Secp256k1Party as Party>::PublicInput =
+                            <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
+                                &current_access_structure,
+                                upcoming_access_structure,
+                                current_encryption_keys_per_crt_prime_and_proofs.clone(),
+                                upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
+                                current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
+                                    .clone(),
+                                public_output.into(),
+                                bcs::from_bytes(&latest_reconfiguration_public_output)?,
+                            )
+                                .map_err(DwalletMPCError::from)?;
+
+                        Ok(public_input)
+                    }
+                }
             }
         }
     }
@@ -343,22 +365,22 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 twopc_mpc::decentralized_party::reconfiguration::PublicOutput::secp256k1_protocol_public_parameters(
                     &public_output,
                 )
-                .map_err(DwalletMPCError::from)?;
+                    .map_err(DwalletMPCError::from)?;
             let secp256r1_protocol_public_parameters =
                 twopc_mpc::decentralized_party::reconfiguration::PublicOutput::secp256r1_protocol_public_parameters(
                     &public_output,
                 )
-                .map_err(DwalletMPCError::from)?;
+                    .map_err(DwalletMPCError::from)?;
             let ristretto_protocol_public_parameters =
                 twopc_mpc::decentralized_party::reconfiguration::PublicOutput::ristretto_protocol_public_parameters(
                     &public_output,
                 )
-                .map_err(DwalletMPCError::from)?;
+                    .map_err(DwalletMPCError::from)?;
             let curve25519_protocol_public_parameters =
                 twopc_mpc::decentralized_party::reconfiguration::PublicOutput::curve25519_protocol_public_parameters(
                     &public_output,
                 )
-                .map_err(DwalletMPCError::from)?;
+                    .map_err(DwalletMPCError::from)?;
             let secp256k1_decryption_key_share_public_parameters = public_output
                 .secp256k1_decryption_key_share_public_parameters(access_structure)
                 .map_err(DwalletMPCError::from)?;
