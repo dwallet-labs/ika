@@ -1,5 +1,6 @@
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty,
+    DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
+    DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
@@ -52,8 +53,8 @@ pub enum ProtocolCryptographicData {
 
     DWalletDKG {
         data: DWalletDKGData,
-        public_input: <Secp256K1DWalletDKGParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<Secp256K1DWalletDKGParty as mpc::Party>::Message>,
+        public_input: DWalletDKGPublicInputByCurve,
+        advance_request: DWalletDKGAdvanceRequestByCurve,
     },
 
     Presign {
@@ -156,7 +157,24 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::DWalletDKG {
-                advance_request, ..
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
+                ..
+            }
+            | ProtocolCryptographicData::DWalletDKG {
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
+                ..
+            }
+            | ProtocolCryptographicData::DWalletDKG {
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request),
+                ..
+            }
+            | ProtocolCryptographicData::DWalletDKG {
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
+                ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV2 {
                 advance_request, ..
@@ -170,7 +188,24 @@ impl ProtocolCryptographicData {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::DWalletDKG {
-                advance_request, ..
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
+                ..
+            }
+            | ProtocolCryptographicData::DWalletDKG {
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
+                ..
+            }
+            | ProtocolCryptographicData::DWalletDKG {
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request),
+                ..
+            }
+            | ProtocolCryptographicData::DWalletDKG {
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
+                ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::DKGSecond {
                 advance_request, ..

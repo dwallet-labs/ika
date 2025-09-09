@@ -183,6 +183,12 @@ pub enum DwalletMPCError {
 
     #[error("missing protocol public parameters for curve: {0:?}")]
     MissingProtocolPublicParametersForCurve(DWalletCurve),
+
+    #[error("centralized secret key share proof verification failed: {0}")]
+    CentralizedSecretKeyShareProofVerificationFailed(String),
+
+    #[error("failed to advance MPC step: {0}")]
+    FailedToAdvanceMPC(mpc::Error),
 }
 
 /// A wrapper type for the result of a runtime operation.

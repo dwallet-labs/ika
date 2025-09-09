@@ -34,8 +34,10 @@ pub enum PublicInput {
     DWalletImportedKeyVerificationRequest(
         <DWalletImportedKeyVerificationParty as mpc::Party>::PublicInput,
     ),
-    DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
     DWalletDKG(DWalletDKGPublicInputByCurve),
+    // Used only for V1 dWallets
+    DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
+    // Used only for V1 dWallets
     Secp256K1DWalletDKG(<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput),
     Presign(<PresignParty as mpc::Party>::PublicInput),
     Sign(<SignParty as mpc::Party>::PublicInput),
