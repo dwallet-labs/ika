@@ -170,7 +170,7 @@ impl IkaProtocolCommand {
                 bytecode_dump_base64_file,
                 ika_sui_config,
             } => {
-                let gas_budget = gas_budget.unwrap_or(DEFAULT_GAS_BUDGET);
+                let gas_budget \= gas_budget.unwrap_or(DEFAULT_GAS_BUDGET);
                 let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
                 let config = read_ika_sui_config_yaml(context, &config_path)?;
 
