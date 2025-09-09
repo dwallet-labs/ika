@@ -36,79 +36,89 @@ pub(crate) type Curve25519DWalletDKGParty =
 pub(crate) type RistrettoDWalletDKGParty =
     <Ristretto255AsyncProtocol as Protocol>::DKGDecentralizedParty;
 
-pub fn dwallet_dkg_generate_public_input(
-    curve: &DWalletCurve,
-    encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
-    centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
-) -> DwalletMPCResult<PublicInput> {
-    let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
-        bcs::from_bytes(centralized_party_public_key_share_buf)
-            .map_err(DwalletMPCError::BcsError)?;
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DWalletDKGPublicInputByCurve {
+    Secp256K1DWalletDKG(<Secp256K1DWalletDKGParty as Party>::PublicInput),
+    Secp256R1DWalletDKG(<Secp256R1DWalletDKGParty as Party>::PublicInput),
+    Curve25519DWalletDKG(<Curve25519DWalletDKGParty as Party>::PublicInput),
+    RistrettoDWalletDKG(<RistrettoDWalletDKGParty as Party>::PublicInput),
+}
 
-    let public_input = match curve {
-        DWalletCurve::Secp256k1 => {
-            let centralized_party_public_key_share = match centralized_party_public_key_share {
-                VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
-                    bcs::from_bytes(&centralized_party_public_key_share)
-                        .map_err(DwalletMPCError::BcsError)?
-                }
-            };
-            let input = (
-                encryption_key_public_data.secp256k1_protocol_public_parameters(),
-                centralized_party_public_key_share,
-            )
-                .into();
+impl DWalletDKGPublicInputByCurve {
+    pub fn try_new(
+        curve: &DWalletCurve,
+        encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
+    ) -> DwalletMPCResult<Self> {
+        let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
+            bcs::from_bytes(centralized_party_public_key_share_buf)
+                .map_err(DwalletMPCError::BcsError)?;
 
-            PublicInput::Secp256K1DWalletDKG(input)
-        }
-        DWalletCurve::Secp256r1 => {
-            let centralized_party_public_key_share = match centralized_party_public_key_share {
-                VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
-                    bcs::from_bytes(&centralized_party_public_key_share)
-                        .map_err(DwalletMPCError::BcsError)?
-                }
-            };
-            let input = (
-                encryption_key_public_data.secp256r1_protocol_public_parameters()?,
-                centralized_party_public_key_share,
-            )
-                .into();
+        let public_input = match curve {
+            DWalletCurve::Secp256k1 => {
+                let centralized_party_public_key_share = match centralized_party_public_key_share {
+                    VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
+                        bcs::from_bytes(&centralized_party_public_key_share)
+                            .map_err(DwalletMPCError::BcsError)?
+                    }
+                };
+                let input = (
+                    encryption_key_public_data.secp256k1_protocol_public_parameters(),
+                    centralized_party_public_key_share,
+                )
+                    .into();
 
-            PublicInput::Secp256R1DWalletDKG(input)
-        }
-        DWalletCurve::Curve25519 => {
-            let centralized_party_public_key_share = match centralized_party_public_key_share {
-                VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
-                    bcs::from_bytes(&centralized_party_public_key_share)
-                        .map_err(DwalletMPCError::BcsError)?
-                }
-            };
-            let input = (
-                encryption_key_public_data.curve25519_protocol_public_parameters()?,
-                centralized_party_public_key_share,
-            )
-                .into();
+                DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(input)
+            }
+            DWalletCurve::Secp256r1 => {
+                let centralized_party_public_key_share = match centralized_party_public_key_share {
+                    VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
+                        bcs::from_bytes(&centralized_party_public_key_share)
+                            .map_err(DwalletMPCError::BcsError)?
+                    }
+                };
+                let input = (
+                    encryption_key_public_data.secp256r1_protocol_public_parameters()?,
+                    centralized_party_public_key_share,
+                )
+                    .into();
 
-            PublicInput::Curve25519DWalletDKG(input)
-        }
-        DWalletCurve::Ristretto => {
-            let centralized_party_public_key_share = match centralized_party_public_key_share {
-                VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
-                    bcs::from_bytes(&centralized_party_public_key_share)
-                        .map_err(DwalletMPCError::BcsError)?
-                }
-            };
-            let input = (
-                encryption_key_public_data.ristretto_protocol_public_parameters()?,
-                centralized_party_public_key_share,
-            )
-                .into();
+                DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(input)
+            }
+            DWalletCurve::Curve25519 => {
+                let centralized_party_public_key_share = match centralized_party_public_key_share {
+                    VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
+                        bcs::from_bytes(&centralized_party_public_key_share)
+                            .map_err(DwalletMPCError::BcsError)?
+                    }
+                };
+                let input = (
+                    encryption_key_public_data.curve25519_protocol_public_parameters()?,
+                    centralized_party_public_key_share,
+                )
+                    .into();
 
-            PublicInput::RistrettoDWalletDKG(input)
-        }
-    };
+                DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(input)
+            }
+            DWalletCurve::Ristretto => {
+                let centralized_party_public_key_share = match centralized_party_public_key_share {
+                    VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
+                        bcs::from_bytes(&centralized_party_public_key_share)
+                            .map_err(DwalletMPCError::BcsError)?
+                    }
+                };
+                let input = (
+                    encryption_key_public_data.ristretto_protocol_public_parameters()?,
+                    centralized_party_public_key_share,
+                )
+                    .into();
 
-    Ok(public_input)
+                DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(input)
+            }
+        };
+
+        Ok(public_input)
+    }
 }
 
 pub(crate) fn dwallet_dkg_first_public_input(

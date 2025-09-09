@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::dwallet_dkg::{
-    Curve25519DWalletDKGParty, DWalletDKGFirstParty, DWalletImportedKeyVerificationParty,
-    RistrettoDWalletDKGParty, Secp256K1DWalletDKGParty, Secp256R1DWalletDKGParty,
-    dwallet_dkg_first_public_input, dwallet_dkg_generate_public_input,
-    dwallet_dkg_second_public_input,
+    Curve25519DWalletDKGParty, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
+    DWalletImportedKeyVerificationParty, RistrettoDWalletDKGParty, Secp256K1DWalletDKGParty,
+    Secp256R1DWalletDKGParty, dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
 };
 use crate::dwallet_mpc::network_dkg::{
     DwalletMPCNetworkKeys, network_dkg_v1_public_input, network_dkg_v2_public_input,
@@ -36,10 +35,8 @@ pub enum PublicInput {
         <DWalletImportedKeyVerificationParty as mpc::Party>::PublicInput,
     ),
     DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
+    DWalletDKG(DWalletDKGPublicInputByCurve),
     Secp256K1DWalletDKG(<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput),
-    Secp256R1DWalletDKG(<Secp256R1DWalletDKGParty as mpc::Party>::PublicInput),
-    RistrettoDWalletDKG(<RistrettoDWalletDKGParty as mpc::Party>::PublicInput),
-    Curve25519DWalletDKG(<Curve25519DWalletDKGParty as mpc::Party>::PublicInput),
     Presign(<PresignParty as mpc::Party>::PublicInput),
     Sign(<SignParty as mpc::Party>::PublicInput),
     NetworkEncryptionKeyDkgV1(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
@@ -94,11 +91,11 @@ pub(crate) fn session_input_from_request(
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
             Ok((
-                dwallet_dkg_generate_public_input(
+                PublicInput::DWalletDKG(DWalletDKGPublicInputByCurve::try_new(
                     &data.curve,
                     encryption_key_public_data,
                     &data.centralized_public_key_share_and_proof,
-                )?,
+                )?),
                 None,
             ))
         }
