@@ -184,16 +184,15 @@ impl ProtocolCryptographicData {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result = Party::<PresignParty>::ready_to_advance(
+                let advance_request_result = presign::PresignAdvanceRequestByCurve::try_new(
+                    &data.curve,
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::new(),
-                    &serialized_messages_by_consensus_round,
+                    serialized_messages_by_consensus_round,
                 )?;
 
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
+                let Some(advance_request) = advance_request_result else {
                     return Ok(None);
                 };
 

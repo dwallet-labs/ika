@@ -4,7 +4,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
-use crate::dwallet_mpc::presign::PresignParty;
+use crate::dwallet_mpc::presign::{PresignAdvanceRequestByCurve, PresignPublicInputByCurve};
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationSecp256k1Party, ReconfigurationV1toV2Secp256k1Party,
     ReconfigurationV2Secp256k1Party,
@@ -59,8 +59,8 @@ pub enum ProtocolCryptographicData {
 
     Presign {
         data: PresignData,
-        public_input: <PresignParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<PresignParty as mpc::Party>::Message>,
+        public_input: PresignPublicInputByCurve,
+        advance_request: PresignAdvanceRequestByCurve,
     },
 
     Sign {
