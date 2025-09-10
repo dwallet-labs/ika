@@ -7,6 +7,7 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction, UpgradePolicy } from '@mysten/sui/transactions';
 import { fromBase64 } from '@mysten/sui/utils';
+
 import { createTestIkaClient } from '../helpers/test-utils';
 
 const SUI = 'sui';
@@ -45,12 +46,23 @@ const { modules, dependencies, digest } = JSON.parse(
 
 const tx = new Transaction();
 const cap = tx.object(CAP_ID);
-const protocolCap = tx.object("<PROTOCOL-CAP-ID>");
+const protocolCap = tx.object('<PROTOCOL-CAP-ID>');
 const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
-const ikaClient = createTestIkaClient(suiClient)
-tx.moveCall(
-
-)
+const ikaClient = createTestIkaClient(suiClient);
+const systemStateArg = tx.sharedObjectRef({
+	objectId: ikaClient.ikaConfig.objects.ikaSystemObject.objectID,
+	initialSharedVersion: ikaClient.ikaConfig.objects.ikaSystemObject.initialSharedVersion,
+	mutable: false,
+});
+tx.moveCall({
+	target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::set_approved_upgrade_by_cap`,
+	arguments: [
+		systemStateArg,
+		tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage),
+		tx.pure(digest),
+		cap,
+	],
+});
 
 const ticket = tx.moveCall({
 	target: `${POLICY_PACKAGE_ID}::day_of_week::authorize_upgrade`,
