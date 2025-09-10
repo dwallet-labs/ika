@@ -49,22 +49,26 @@ export async function updateIkaCoordinator() {
 		],
 	});
 
-	// let [upgradeTicket, upgradeApprover] = tx.moveCall({
-	// 	target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::authorize_upgrade`,
-	// 	arguments: [systemStateArg, tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage)],
-	// });
-	//
-	// const receipt = tx.upgrade({
-	// 	modules,
-	// 	dependencies,
-	// 	package: ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage,
-	// 	ticket: upgradeTicket,
-	// });
-	//
-	// tx.moveCall({
-	// 	target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::commit_upgrade`,
-	// 	arguments: [systemStateArg, receipt, upgradeApprover],
-	// });
+	let [upgradeTicket, upgradeApprover] = tx.moveCall({
+		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::authorize_upgrade`,
+		arguments: [systemStateArg, tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage)],
+	});
+
+	const receipt = tx.upgrade({
+		modules,
+		dependencies,
+		package: ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage,
+		ticket: upgradeTicket,
+	});
+
+	tx.moveCall({
+		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::commit_upgrade`,
+		arguments: [systemStateArg, receipt, upgradeApprover],
+	});
+	tx.moveCall({
+		target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::commit_upgrade`,
+		arguments: [coordinatorStateArg, upgradeApprover],
+	});
 
 	// let verifiedProtocolCap = tx.moveCall({
 	// 	target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::verify_protocol_cap`,
@@ -81,8 +85,8 @@ export async function updateIkaCoordinator() {
 		signer,
 		transaction: tx,
 		options: {
-			showEffects: true,
-			showObjectChanges: true,
+			// showEffects: true,
+			// showObjectChanges: true,
 		},
 	});
 
