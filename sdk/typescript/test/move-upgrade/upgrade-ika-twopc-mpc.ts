@@ -54,6 +54,7 @@ const systemStateArg = tx.sharedObjectRef({
 	initialSharedVersion: ikaClient.ikaConfig.objects.ikaSystemObject.initialSharedVersion,
 	mutable: false,
 });
+
 tx.moveCall({
 	target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::set_approved_upgrade_by_cap`,
 	arguments: [
@@ -61,6 +62,14 @@ tx.moveCall({
 		tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage),
 		tx.pure(digest),
 		cap,
+	],
+});
+
+let [upgradeTicket, upgradeApprover] = tx.moveCall({
+	target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::authorize_upgrade`,
+	arguments: [
+		systemStateArg,
+		tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage),
 	],
 });
 
