@@ -27,7 +27,12 @@ async function main() {
 	const systemStateArg = tx.sharedObjectRef({
 		objectId: ikaClient.ikaConfig.objects.ikaSystemObject.objectID,
 		initialSharedVersion: ikaClient.ikaConfig.objects.ikaSystemObject.initialSharedVersion,
-		mutable: false,
+		mutable: true,
+	});
+	const coordinatorStateArg = tx.sharedObjectRef({
+		objectId: ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID,
+		initialSharedVersion: ikaClient.ikaConfig.objects.ikaDWalletCoordinator.initialSharedVersion,
+		mutable: true,
 	});
 
 	tx.moveCall({
@@ -55,6 +60,16 @@ async function main() {
 	tx.moveCall({
 		target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::commit_upgrade`,
 		arguments: [systemStateArg, receipt, upgradeApprover],
+	});
+
+	let verifiedProtocolCap = tx.moveCall({
+		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::verify_protocol_cap`,
+		arguments: [systemStateArg, protocolCap],
+	});
+
+	tx.moveCall({
+		target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::try_migrate_by_cap`,
+		arguments: [coordinatorStateArg, verifiedProtocolCap],
 	});
 
 	const client = new SuiClient({ url: getFullnodeUrl('localnet') });
