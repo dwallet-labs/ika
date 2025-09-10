@@ -189,6 +189,9 @@ pub enum DwalletMPCError {
 
     #[error("failed to advance MPC step: {0}")]
     FailedToAdvanceMPC(mpc::Error),
+
+    #[error("public input mismatch")]
+    PublicInputMismatch,
 }
 
 /// A wrapper type for the result of a runtime operation.

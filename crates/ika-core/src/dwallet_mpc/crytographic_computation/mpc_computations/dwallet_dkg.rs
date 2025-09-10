@@ -40,66 +40,6 @@ pub(crate) type Curve25519DWalletDKGParty =
 pub(crate) type RistrettoDWalletDKGParty =
     <RistrettoAsyncProtocol as Protocol>::DKGDecentralizedParty;
 
-pub fn compute_dwallet_dkg<P: Protocol>(
-    party_id: PartyID,
-    access_structure: &WeightedThresholdAccessStructure,
-    session_id: CommitmentSizedNumber,
-    advance_request: AdvanceRequest<<P::DKGDecentralizedParty as Party>::Message>,
-    protocol_public_parameters: P::ProtocolPublicParameters,
-    public_input: <P::DKGDecentralizedParty as Party>::PublicInput,
-    encryption_key: P::EncryptionKey,
-    encrypted_secret_key_share_message: P::EncryptedSecretKeyShareMessage,
-    rng: &mut impl CsRng,
-) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    let result = mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::advance_with_guaranteed_output(
-        session_id,
-        party_id,
-        access_structure,
-        advance_request,
-        None,
-        &public_input.clone(),
-        rng,
-    ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
-
-    match result {
-        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-        }
-        GuaranteedOutputDeliveryRoundResult::Finalize {
-            public_output_value,
-            malicious_parties,
-            private_output,
-        } => {
-            let decentralized_output: P::DecentralizedPartyDKGOutput =
-                bcs::from_bytes(&public_output_value)?;
-            P::verify_encryption_of_centralized_party_share_proof(
-                &protocol_public_parameters,
-                decentralized_output.clone(),
-                encryption_key,
-                encrypted_secret_key_share_message,
-                &mut group::OsCsRng,
-            )
-            .map_err(|e| {
-                DwalletMPCError::CentralizedSecretKeyShareProofVerificationFailed(e.to_string())
-            })?;
-
-            // Convert the decentralized output to the proper format for serialization
-            // For now, we serialize the decentralized output directly since the generic type
-            // doesn't have a direct conversion to Output
-            let dkg_output = decentralized_output;
-            let public_output_value = bcs::to_bytes(
-                &VersionedDwalletDKGSecondRoundPublicOutput::V2(bcs::to_bytes(&dkg_output)?),
-            )?;
-
-            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                public_output_value,
-                malicious_parties,
-                private_output,
-            })
-        }
-    }
-}
-
 pub(crate) enum DWalletDKGAdvanceRequestByCurve {
     Secp256K1DWalletDKG(AdvanceRequest<<Secp256K1DWalletDKGParty as mpc::Party>::Message>),
     Secp256R1DWalletDKG(AdvanceRequest<<Secp256R1DWalletDKGParty as mpc::Party>::Message>),
@@ -189,19 +129,100 @@ impl DWalletDKGAdvanceRequestByCurve {
         Ok(Some(advance_request))
     }
 
-    pub fn compute_mpc(self) {
+    pub fn compute_mpc(
+        self,
+        party_id: PartyID,
+        access_structure: &WeightedThresholdAccessStructure,
+        session_id: CommitmentSizedNumber,
+        public_input: DWalletDKGPublicInputByCurve,
+        encryption_key: &[u8],
+        encrypted_secret_key_share_message: &[u8],
+        rng: &mut impl CsRng,
+    ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         match self {
-            DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(_advance_request) => {
-                // TODO: Implement Secp256K1DWalletDKG compute_mpc
+            DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request) => {
+                let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) = public_input
+                else {
+                    return Err(DwalletMPCError::PublicInputMismatch);
+                };
+                let encryption_key = bcs::from_bytes(encryption_key)?;
+                let encrypted_secret_key_share_message =
+                    bcs::from_bytes(encrypted_secret_key_share_message)?;
+
+                compute_dwallet_dkg::<Secp256K1AsyncProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input.protocol_public_parameters.clone(),
+                    public_input,
+                    encryption_key,
+                    encrypted_secret_key_share_message,
+                    rng,
+                )
             }
-            DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(_advance_request) => {
-                // TODO: Implement Secp256R1DWalletDKG compute_mpc
+            DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request) => {
+                let DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input) = public_input
+                else {
+                    return Err(DwalletMPCError::PublicInputMismatch);
+                };
+                let encryption_key = bcs::from_bytes(encryption_key)?;
+                let encrypted_secret_key_share_message =
+                    bcs::from_bytes(encrypted_secret_key_share_message)?;
+
+                compute_dwallet_dkg::<Secp256R1AsyncProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input.protocol_public_parameters.clone(),
+                    public_input,
+                    encryption_key,
+                    encrypted_secret_key_share_message,
+                    rng,
+                )
             }
-            DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(_advance_request) => {
-                // TODO: Implement Curve25519DWalletDKG compute_mpc
+            DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request) => {
+                let DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input) = public_input
+                else {
+                    return Err(DwalletMPCError::PublicInputMismatch);
+                };
+                let encryption_key = bcs::from_bytes(encryption_key)?;
+                let encrypted_secret_key_share_message =
+                    bcs::from_bytes(encrypted_secret_key_share_message)?;
+
+                compute_dwallet_dkg::<Curve25519AsyncProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input.protocol_public_parameters.clone(),
+                    public_input,
+                    encryption_key,
+                    encrypted_secret_key_share_message,
+                    rng,
+                )
             }
-            DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(_advance_request) => {
-                // TODO: Implement RistrettoDWalletDKG compute_mpc
+            DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request) => {
+                let DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input) = public_input
+                else {
+                    return Err(DwalletMPCError::PublicInputMismatch);
+                };
+                let encryption_key = bcs::from_bytes(encryption_key)?;
+                let encrypted_secret_key_share_message =
+                    bcs::from_bytes(encrypted_secret_key_share_message)?;
+
+                compute_dwallet_dkg::<RistrettoAsyncProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input.protocol_public_parameters.clone(),
+                    public_input,
+                    encryption_key,
+                    encrypted_secret_key_share_message,
+                    rng,
+                )
             }
         }
     }
@@ -419,6 +440,66 @@ impl DWalletDKGSecondPartyPublicInputGenerator for Secp256K1DWalletDKGParty {
 
                 Ok(input)
             }
+        }
+    }
+}
+
+pub fn compute_dwallet_dkg<P: Protocol>(
+    party_id: PartyID,
+    access_structure: &WeightedThresholdAccessStructure,
+    session_id: CommitmentSizedNumber,
+    advance_request: AdvanceRequest<<P::DKGDecentralizedParty as Party>::Message>,
+    protocol_public_parameters: P::ProtocolPublicParameters,
+    public_input: <P::DKGDecentralizedParty as Party>::PublicInput,
+    encryption_key: P::EncryptionKey,
+    encrypted_secret_key_share_message: P::EncryptedSecretKeyShareMessage,
+    rng: &mut impl CsRng,
+) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+    let result = mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::advance_with_guaranteed_output(
+        session_id,
+        party_id,
+        access_structure,
+        advance_request,
+        None,
+        &public_input.clone(),
+        rng,
+    ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
+
+    match result {
+        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+        }
+        GuaranteedOutputDeliveryRoundResult::Finalize {
+            public_output_value,
+            malicious_parties,
+            private_output,
+        } => {
+            let decentralized_output: P::DecentralizedPartyDKGOutput =
+                bcs::from_bytes(&public_output_value)?;
+            P::verify_encryption_of_centralized_party_share_proof(
+                &protocol_public_parameters,
+                decentralized_output.clone(),
+                encryption_key,
+                encrypted_secret_key_share_message,
+                &mut group::OsCsRng,
+            )
+            .map_err(|e| {
+                DwalletMPCError::CentralizedSecretKeyShareProofVerificationFailed(e.to_string())
+            })?;
+
+            // Convert the decentralized output to the proper format for serialization
+            // For now, we serialize the decentralized output directly since the generic type
+            // doesn't have a direct conversion to Output
+            let dkg_output = decentralized_output;
+            let public_output_value = bcs::to_bytes(
+                &VersionedDwalletDKGSecondRoundPublicOutput::V2(bcs::to_bytes(&dkg_output)?),
+            )?;
+
+            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                public_output_value,
+                malicious_parties,
+                private_output,
+            })
         }
     }
 }

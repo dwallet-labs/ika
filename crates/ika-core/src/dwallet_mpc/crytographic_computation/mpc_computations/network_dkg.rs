@@ -189,10 +189,11 @@ impl ValidatorPrivateDecryptionKeyData {
         )
         .await?;
 
-        let self_decryption_key_shares = Self::convert_secret_key_shares_type_to_decryption_shares(
-            secret_key_shares,
-            &key.secp256k1_decryption_key_share_public_parameters(),
-        )?;
+        let self_decryption_key_shares =
+            Self::convert_secret_key_shares_type_to_secp256k1_decryption_shares(
+                secret_key_shares,
+                &key.secp256k1_decryption_key_share_public_parameters(),
+            )?;
 
         self.validator_decryption_key_shares
             .insert(key_id, self_decryption_key_shares);
@@ -200,7 +201,7 @@ impl ValidatorPrivateDecryptionKeyData {
     }
 
     /// Only for type convertion.
-    fn convert_secret_key_shares_type_to_decryption_shares(
+    fn convert_secret_key_shares_type_to_secp256k1_decryption_shares(
         secret_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
         public_parameters: &Secp256k1DecryptionKeySharePublicParameters,
     ) -> DwalletMPCResult<HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>>
@@ -280,8 +281,8 @@ impl DwalletMPCNetworkKeys {
         })
     }
 
-    /// Retrieves the decryption key shares for the current authority.
-    pub(crate) fn get_decryption_key_shares(
+    /// Retrieves the secp256k1 decryption key shares for the current authority.
+    pub(crate) fn secp256k1_decryption_key_shares(
         &self,
         key_id: &ObjectID,
     ) -> DwalletMPCResult<HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>>
