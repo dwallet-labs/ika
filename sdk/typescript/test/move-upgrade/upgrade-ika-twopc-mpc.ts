@@ -70,6 +70,11 @@ export async function updateIkaCoordinator() {
 		arguments: [coordinatorStateArg, upgradeApprover],
 	});
 
+	tx.moveCall({
+		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::finalize_upgrade`,
+		arguments: [systemStateArg, upgradeApprover],
+	});
+
 	// let verifiedProtocolCap = tx.moveCall({
 	// 	target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::verify_protocol_cap`,
 	// 	arguments: [systemStateArg, protocolCap],
