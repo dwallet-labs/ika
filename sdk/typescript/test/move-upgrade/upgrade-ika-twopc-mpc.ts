@@ -1,4 +1,5 @@
 import { execSync } from 'child_process';
+import { bcs } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
@@ -7,18 +8,26 @@ import { createTestIkaClient } from '../helpers/test-utils';
 
 const packagePath = '/root/code/dwallet-network/contracts/ika_dwallet_2pc_mpc';
 
-async function main() {
-	let signer = Ed25519Keypair.deriveKeypair('walnut near write remember shrimp clarify veteran drastic antique blade barrel flash');
+export async function updateIkaCoordinator() {
+	let signer = Ed25519Keypair.deriveKeypair(
+		'walnut near write remember shrimp clarify veteran drastic antique blade barrel flash',
+	);
 	const { modules, dependencies, digest } = JSON.parse(
-		execSync(`sui move build --dump-bytecode-as-base64 --path ${packagePath}`, {
-			encoding: 'utf-8',
-		}),
+		execSync(
+			`sui move build --dump-bytecode-as-base64 --with-unpublished-dependencies --path ${packagePath}`,
+			{
+				encoding: 'utf-8',
+			},
+		),
 	);
 
 	const tx = new Transaction();
-	const protocolCap = tx.object('0x0764674039bfa734701bd4075fb51cffc0a0eec074afcceb5f47ae9f732b5a43');
+	const protocolCap = tx.object(
+		'0x0764674039bfa734701bd4075fb51cffc0a0eec074afcceb5f47ae9f732b5a43',
+	);
 	const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
 	const ikaClient = createTestIkaClient(suiClient);
+	await ikaClient.initialize();
 	const systemStateArg = tx.sharedObjectRef({
 		objectId: ikaClient.ikaConfig.objects.ikaSystemObject.objectID,
 		initialSharedVersion: ikaClient.ikaConfig.objects.ikaSystemObject.initialSharedVersion,
@@ -35,7 +44,7 @@ async function main() {
 		arguments: [
 			systemStateArg,
 			tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage),
-			tx.pure(digest),
+			tx.pure(bcs.vector(bcs.u8()).serialize(digest)),
 			protocolCap,
 		],
 	});
@@ -79,10 +88,3 @@ async function main() {
 
 	console.log(result);
 }
-
-main()
-	.catch((e) => {
-		console.error(e);
-		process.exit(1);
-	})
-	.then(() => process.exit(0));
