@@ -42,6 +42,51 @@ pub type DKGDecentralizedPartyVersionedOutputSecp256k1 = DKGDecentralizedPartyVe
     group::secp256k1::GroupElement,
 >;
 
+#[enum_dispatch]
+pub trait NetworkEncryptionKeyPublicDataTrait {
+    fn epoch(&self) -> u64;
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput;
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType;
+    fn latest_network_reconfiguration_public_output(
+        &self,
+    ) -> Option<VersionedDecryptionKeyReconfigurationOutput>;
+
+    // Secp256k1 parameters are available from V1, while other curve types are only available in V2.
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters;
+    fn secp256k1_protocol_public_parameters(
+        &self,
+    ) -> twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+
+    fn secp256r1_protocol_public_parameters(
+        &self,
+    ) -> Result<twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters, DwalletNetworkMPCError>;
+    fn ristretto_protocol_public_parameters(
+        &self,
+    ) -> Result<twopc_mpc::ristretto::class_groups::ProtocolPublicParameters, DwalletNetworkMPCError>;
+    fn curve25519_protocol_public_parameters(
+        &self,
+    ) -> Result<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters, DwalletNetworkMPCError>;
+
+    fn secp256r1_decryption_key_share_public_parameters(
+        &self,
+    ) -> Result<class_groups::Secp256r1DecryptionKeySharePublicParameters, DwalletNetworkMPCError>;
+    fn ristretto_decryption_key_share_public_parameters(
+        &self,
+    ) -> Result<class_groups::RistrettoDecryptionKeySharePublicParameters, DwalletNetworkMPCError>;
+    fn curve25519_decryption_key_share_public_parameters(
+        &self,
+    ) -> Result<class_groups::Curve25519DecryptionKeySharePublicParameters, DwalletNetworkMPCError>;
+}
+
+#[enum_dispatch(NetworkEncryptionKeyPublicDataTrait)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VersionedNetworkEncryptionKeyPublicData {
+    V1(NetworkEncryptionKeyPublicDataV1),
+    V2(NetworkEncryptionKeyPublicDataV2),
+}
+
 /// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
 /// Created for each DKG protocol and modified for each Reconfiguration Protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,148 +107,6 @@ pub struct NetworkEncryptionKeyPublicDataV1 {
     pub network_dkg_output: VersionedNetworkDkgOutput,
     pub secp256k1_protocol_public_parameters:
         twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-}
-
-pub trait NetworkEncryptionKeyPublicData {
-    fn epoch(&self) -> u64;
-    fn secp256k1_decryption_key_share_public_parameters(
-        &self,
-    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters;
-    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput;
-    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType;
-    fn latest_network_reconfiguration_public_output(
-        &self,
-    ) -> Option<VersionedDecryptionKeyReconfigurationOutput>;
-    fn secp256k1_protocol_public_parameters(
-        &self,
-    ) -> twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
-}
-
-impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV1 {
-    fn epoch(&self) -> u64 {
-        self.epoch
-    }
-
-    fn secp256k1_decryption_key_share_public_parameters(
-        &self,
-    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
-        self.secp256k1_decryption_key_share_public_parameters
-            .clone()
-    }
-
-    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
-        &self.network_dkg_output
-    }
-
-    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
-        &self.state
-    }
-
-    fn latest_network_reconfiguration_public_output(
-        &self,
-    ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
-        self.latest_network_reconfiguration_public_output.clone()
-    }
-
-    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
-        self.secp256k1_protocol_public_parameters.clone()
-    }
-}
-
-impl NetworkEncryptionKeyPublicData for NetworkEncryptionKeyPublicDataV2 {
-    fn epoch(&self) -> u64 {
-        self.epoch
-    }
-
-    fn secp256k1_decryption_key_share_public_parameters(
-        &self,
-    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
-        self.secp256k1_decryption_key_share_public_parameters
-            .clone()
-    }
-    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
-        &self.network_dkg_output
-    }
-    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
-        &self.state
-    }
-
-    fn latest_network_reconfiguration_public_output(
-        &self,
-    ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
-        self.latest_network_reconfiguration_public_output.clone()
-    }
-
-    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
-        self.secp256k1_protocol_public_parameters.clone()
-    }
-}
-
-impl NetworkEncryptionKeyPublicData for VersionedNetworkEncryptionKeyPublicData {
-    fn epoch(&self) -> u64 {
-        match self {
-            VersionedNetworkEncryptionKeyPublicData::V1(data) => data.epoch(),
-            VersionedNetworkEncryptionKeyPublicData::V2(data) => data.epoch(),
-        }
-    }
-
-    fn secp256k1_decryption_key_share_public_parameters(
-        &self,
-    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
-        match self {
-            VersionedNetworkEncryptionKeyPublicData::V1(data) => {
-                data.secp256k1_decryption_key_share_public_parameters()
-            }
-            VersionedNetworkEncryptionKeyPublicData::V2(data) => {
-                data.secp256k1_decryption_key_share_public_parameters()
-            }
-        }
-    }
-
-    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
-        match self {
-            VersionedNetworkEncryptionKeyPublicData::V1(data) => data.network_dkg_output(),
-            VersionedNetworkEncryptionKeyPublicData::V2(data) => data.network_dkg_output(),
-        }
-    }
-
-    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
-        match self {
-            VersionedNetworkEncryptionKeyPublicData::V1(data) => data.state(),
-            VersionedNetworkEncryptionKeyPublicData::V2(data) => data.state(),
-        }
-    }
-
-    fn latest_network_reconfiguration_public_output(
-        &self,
-    ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
-        match self {
-            VersionedNetworkEncryptionKeyPublicData::V1(data) => {
-                data.latest_network_reconfiguration_public_output()
-            }
-            VersionedNetworkEncryptionKeyPublicData::V2(data) => {
-                data.latest_network_reconfiguration_public_output()
-            }
-        }
-    }
-
-    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
-        match self {
-            VersionedNetworkEncryptionKeyPublicData::V1(data) => {
-                data.secp256k1_protocol_public_parameters()
-            }
-            VersionedNetworkEncryptionKeyPublicData::V2(data) => {
-                data.secp256k1_protocol_public_parameters()
-            }
-        }
-    }
-}
-
-#[enum_dispatch(NetworkEncryptionKeyPublicData)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VersionedNetworkEncryptionKeyPublicData {
-    V1(NetworkEncryptionKeyPublicDataV1),
-    V2(NetworkEncryptionKeyPublicDataV2),
 }
 
 /// The public output of the DKG and/or Reconfiguration protocols, which holds the (encrypted) decryption key shares.
@@ -302,6 +205,9 @@ pub enum DwalletNetworkMPCError {
 
     #[error("invalid DWalletMPCSignatureAlgorithm value: {0}")]
     InvalidDWalletMPCSignatureAlgorithm(u32),
+
+    #[error("missing protocol public parameters for curve: {0}")]
+    MissingProtocolPublicParametersForCurve(DWalletCurve),
 }
 
 impl TryFrom<u32> for DWalletCurve {
@@ -435,5 +341,180 @@ pub trait MPCDataTrait {
 impl MPCDataTrait for MPCDataV1 {
     fn class_groups_public_key_and_proof(&self) -> ClassGroupsPublicKeyAndProofBytes {
         self.class_groups_public_key_and_proof.clone()
+    }
+}
+
+impl NetworkEncryptionKeyPublicDataTrait for NetworkEncryptionKeyPublicDataV1 {
+    fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
+        &self.network_dkg_output
+    }
+
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
+        &self.state
+    }
+
+    fn latest_network_reconfiguration_public_output(
+        &self,
+    ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
+        self.latest_network_reconfiguration_public_output.clone()
+    }
+
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
+        self.secp256k1_decryption_key_share_public_parameters
+            .clone()
+    }
+
+    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
+        self.secp256k1_protocol_public_parameters.clone()
+    }
+
+    fn secp256r1_protocol_public_parameters(
+        &self,
+    ) -> Result<twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters, DwalletNetworkMPCError>
+    {
+        Err(
+            DwalletNetworkMPCError::MissingProtocolPublicParametersForCurve(
+                DWalletCurve::Secp256r1,
+            ),
+        )
+    }
+
+    fn ristretto_protocol_public_parameters(
+        &self,
+    ) -> Result<twopc_mpc::ristretto::class_groups::ProtocolPublicParameters, DwalletNetworkMPCError>
+    {
+        Err(
+            DwalletNetworkMPCError::MissingProtocolPublicParametersForCurve(
+                DWalletCurve::Ristretto,
+            ),
+        )
+    }
+
+    fn curve25519_protocol_public_parameters(
+        &self,
+    ) -> Result<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters, DwalletNetworkMPCError>
+    {
+        Err(
+            DwalletNetworkMPCError::MissingProtocolPublicParametersForCurve(
+                DWalletCurve::Curve25519,
+            ),
+        )
+    }
+
+    fn secp256r1_decryption_key_share_public_parameters(
+        &self,
+    ) -> Result<class_groups::Secp256r1DecryptionKeySharePublicParameters, DwalletNetworkMPCError>
+    {
+        Err(
+            DwalletNetworkMPCError::MissingProtocolPublicParametersForCurve(
+                DWalletCurve::Secp256r1,
+            ),
+        )
+    }
+
+    fn ristretto_decryption_key_share_public_parameters(
+        &self,
+    ) -> Result<class_groups::RistrettoDecryptionKeySharePublicParameters, DwalletNetworkMPCError>
+    {
+        Err(
+            DwalletNetworkMPCError::MissingProtocolPublicParametersForCurve(
+                DWalletCurve::Ristretto,
+            ),
+        )
+    }
+
+    fn curve25519_decryption_key_share_public_parameters(
+        &self,
+    ) -> Result<class_groups::Curve25519DecryptionKeySharePublicParameters, DwalletNetworkMPCError>
+    {
+        Err(
+            DwalletNetworkMPCError::MissingProtocolPublicParametersForCurve(
+                DWalletCurve::Curve25519,
+            ),
+        )
+    }
+}
+
+impl NetworkEncryptionKeyPublicDataTrait for NetworkEncryptionKeyPublicDataV2 {
+    fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
+        &self.network_dkg_output
+    }
+    fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
+        &self.state
+    }
+
+    fn latest_network_reconfiguration_public_output(
+        &self,
+    ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
+        self.latest_network_reconfiguration_public_output.clone()
+    }
+
+    fn secp256k1_decryption_key_share_public_parameters(
+        &self,
+    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
+        self.secp256k1_decryption_key_share_public_parameters
+            .clone()
+    }
+
+    fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
+        self.secp256k1_protocol_public_parameters.clone()
+    }
+
+    fn secp256r1_protocol_public_parameters(
+        &self,
+    ) -> Result<twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters, DwalletNetworkMPCError>
+    {
+        Ok(self.secp256r1_protocol_public_parameters.clone())
+    }
+
+    fn ristretto_protocol_public_parameters(
+        &self,
+    ) -> Result<twopc_mpc::ristretto::class_groups::ProtocolPublicParameters, DwalletNetworkMPCError>
+    {
+        Ok(self.ristretto_protocol_public_parameters.clone())
+    }
+
+    fn curve25519_protocol_public_parameters(
+        &self,
+    ) -> Result<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters, DwalletNetworkMPCError>
+    {
+        Ok(self.curve25519_protocol_public_parameters.clone())
+    }
+
+    fn secp256r1_decryption_key_share_public_parameters(
+        &self,
+    ) -> Result<class_groups::Secp256r1DecryptionKeySharePublicParameters, DwalletNetworkMPCError>
+    {
+        Ok(self
+            .secp256r1_decryption_key_share_public_parameters
+            .clone())
+    }
+
+    fn ristretto_decryption_key_share_public_parameters(
+        &self,
+    ) -> Result<class_groups::RistrettoDecryptionKeySharePublicParameters, DwalletNetworkMPCError>
+    {
+        Ok(self
+            .ristretto_decryption_key_share_public_parameters
+            .clone())
+    }
+
+    fn curve25519_decryption_key_share_public_parameters(
+        &self,
+    ) -> Result<class_groups::Curve25519DecryptionKeySharePublicParameters, DwalletNetworkMPCError>
+    {
+        Ok(self
+            .curve25519_decryption_key_share_public_parameters
+            .clone())
     }
 }
