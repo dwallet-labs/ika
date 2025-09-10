@@ -11,8 +11,6 @@ import { fromBase64 } from '@mysten/sui/utils';
 import { createTestIkaClient } from '../helpers/test-utils';
 
 const SUI = 'sui';
-const POLICY_PACKAGE_ID = '<POLICY-PACKAGE>';
-const EXAMPLE_PACKAGE_ID = '<EXAMPLE-PACKAGE>';
 const CAP_ID = '<EXAMPLE-UPGRADE-CAP>';
 const sender = execSync(`${SUI} client active-address`, { encoding: 'utf8' }).trim();
 const signer = (() => {
@@ -45,7 +43,6 @@ const { modules, dependencies, digest } = JSON.parse(
 );
 
 const tx = new Transaction();
-const cap = tx.object(CAP_ID);
 const protocolCap = tx.object('<PROTOCOL-CAP-ID>');
 const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
 const ikaClient = createTestIkaClient(suiClient);
@@ -61,7 +58,7 @@ tx.moveCall({
 		systemStateArg,
 		tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage),
 		tx.pure(digest),
-		cap,
+		protocolCap,
 	],
 });
 
@@ -73,21 +70,17 @@ let [upgradeTicket, upgradeApprover] = tx.moveCall({
 	],
 });
 
-const ticket = tx.moveCall({
-	target: `${POLICY_PACKAGE_ID}::day_of_week::authorize_upgrade`,
-	arguments: [cap, tx.pure(UpgradePolicy.COMPATIBLE), tx.pure(digest)],
-});
-
 const receipt = tx.upgrade({
 	modules,
 	dependencies,
-	packageId: EXAMPLE_PACKAGE_ID,
-	ticket,
+	package: ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage,
+	ticket: upgradeTicket,
 });
 
+
 tx.moveCall({
-	target: `${POLICY_PACKAGE_ID}::day_of_week::commit_upgrade`,
-	arguments: [cap, receipt],
+	target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::commit_upgrade`,
+	arguments: [systemStateArg, receipt, upgradeApprover],
 });
 
 const client = new SuiClient({ url: getFullnodeUrl('localnet') });
