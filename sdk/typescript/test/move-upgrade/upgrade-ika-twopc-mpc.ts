@@ -14,7 +14,7 @@ export async function updateIkaCoordinator() {
 	);
 	const { modules, dependencies, digest } = JSON.parse(
 		execSync(
-			`sui move build --dump-bytecode-as-base64 --with-unpublished-dependencies --path ${packagePath}`,
+			`sui move build --dump-bytecode-as-base64 --path ${packagePath}`,
 			{
 				encoding: 'utf-8',
 			},
