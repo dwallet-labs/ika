@@ -53,7 +53,7 @@ async function main() {
 	});
 
 	tx.moveCall({
-		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::commit_upgrade`,
+		target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::commit_upgrade`,
 		arguments: [systemStateArg, receipt, upgradeApprover],
 	});
 
