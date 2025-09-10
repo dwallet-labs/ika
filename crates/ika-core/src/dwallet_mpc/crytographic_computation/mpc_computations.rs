@@ -21,7 +21,7 @@ use crate::dwallet_mpc::reconfiguration::{
 use crate::dwallet_mpc::sign::SignParty;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
-    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
+    DWalletDKGData, NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
     NetworkEncryptionKeyV2ReconfigurationData, ProtocolData, SignData,
 };
 use anyhow::anyhow;
@@ -38,7 +38,10 @@ use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{Secp256K1AsyncProtocol, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{
+    Curve25519AsyncProtocol, RistrettoAsyncProtocol, Secp256K1AsyncProtocol,
+    Secp256R1AsyncProtocol, SessionIdentifier,
+};
 use mpc::guaranteed_output_delivery::{Party, ReadyToAdvanceResult};
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
@@ -589,34 +592,73 @@ impl ProtocolCryptographicData {
                 }
             }
             ProtocolCryptographicData::DWalletDKG {
-                public_input,
+                public_input: DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input),
                 data,
-                advance_request,
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
                 ..
-            } => {
-                let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) = public_input
-                else {
-                    return Err(DwalletMPCError::InvalidSessionPublicInput);
-                };
-
-                let DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request) =
-                    advance_request
-                else {
-                    return Err(DwalletMPCError::InvalidSessionPublicInput);
-                };
-
-                Ok(compute_dwallet_dkg::<Secp256K1AsyncProtocol>(
-                    party_id,
-                    access_structure,
-                    session_id,
-                    advance_request,
-                    public_input.protocol_public_parameters.clone(),
-                    public_input,
-                    bcs::from_bytes(&data.encryption_key)?,
-                    bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
-                    &mut rng,
-                )?)
-            }
+            } => Ok(compute_dwallet_dkg::<Secp256K1AsyncProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input.protocol_public_parameters.clone(),
+                public_input,
+                bcs::from_bytes(&data.encryption_key)?,
+                bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::DWalletDKG {
+                public_input: DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input),
+                data,
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
+                ..
+            } => Ok(compute_dwallet_dkg::<Secp256R1AsyncProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input.protocol_public_parameters.clone(),
+                public_input,
+                bcs::from_bytes(&data.encryption_key)?,
+                bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::DWalletDKG {
+                public_input: DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input),
+                data,
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request),
+                ..
+            } => Ok(compute_dwallet_dkg::<Curve25519AsyncProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input.protocol_public_parameters.clone(),
+                public_input,
+                bcs::from_bytes(&data.encryption_key)?,
+                bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::DWalletDKG {
+                public_input: DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input),
+                data,
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
+                ..
+            } => Ok(compute_dwallet_dkg::<RistrettoAsyncProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input.protocol_public_parameters.clone(),
+                public_input,
+                bcs::from_bytes(&data.encryption_key)?,
+                bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
+                &mut rng,
+            )?),
             ProtocolCryptographicData::Presign {
                 public_input,
                 advance_request,

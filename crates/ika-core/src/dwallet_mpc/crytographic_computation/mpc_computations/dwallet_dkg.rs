@@ -14,8 +14,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    Curve25519AsyncProtocol, Ristretto255AsyncProtocol, Secp256K1AsyncProtocol,
-    Secp256R1AsyncProtocol,
+    Curve25519AsyncProtocol, RistrettoAsyncProtocol, Secp256K1AsyncProtocol, Secp256R1AsyncProtocol,
 };
 use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
 use mpc::{
@@ -39,7 +38,7 @@ pub(crate) type Secp256R1DWalletDKGParty =
 pub(crate) type Curve25519DWalletDKGParty =
     <Curve25519AsyncProtocol as Protocol>::DKGDecentralizedParty;
 pub(crate) type RistrettoDWalletDKGParty =
-    <Ristretto255AsyncProtocol as Protocol>::DKGDecentralizedParty;
+    <RistrettoAsyncProtocol as Protocol>::DKGDecentralizedParty;
 
 pub fn compute_dwallet_dkg<P: Protocol>(
     party_id: PartyID,
