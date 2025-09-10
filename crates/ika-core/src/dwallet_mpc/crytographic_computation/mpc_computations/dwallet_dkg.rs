@@ -5,6 +5,7 @@
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
+use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
@@ -22,7 +23,6 @@ use mpc::{
     WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
-use twopc_mpc::BaseProtocolContext;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
@@ -369,7 +369,7 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
     ) -> DwalletMPCResult<<DWalletDKGFirstParty as Party>::PublicInput> {
         let base_protocol_context = BaseProtocolContext {
             protocol_name: "2PC-MPC DKG".to_string(),
-            round_name: "1 - Encryption of Secret Key Share".to_string(),
+            round: 1,
             proof_name: "Encryption of Secret Key Share and Public Key Share Proof".to_string(),
         };
         let secp256k1_public_input =
