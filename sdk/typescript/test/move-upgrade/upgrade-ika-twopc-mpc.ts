@@ -75,23 +75,23 @@ export async function updateIkaCoordinator() {
 		arguments: [systemStateArg, upgradeApprover],
 	});
 
-	// let verifiedProtocolCap = tx.moveCall({
-	// 	target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::verify_protocol_cap`,
-	// 	arguments: [systemStateArg, protocolCap],
-	// });
-	//
-	// tx.moveCall({
-	// 	target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::try_migrate_by_cap`,
-	// 	arguments: [coordinatorStateArg, verifiedProtocolCap],
-	// });
+	let verifiedProtocolCap = tx.moveCall({
+		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::verify_protocol_cap`,
+		arguments: [systemStateArg, protocolCap],
+	});
+
+	tx.moveCall({
+		target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::try_migrate_by_cap`,
+		arguments: [coordinatorStateArg, verifiedProtocolCap],
+	});
 
 	const client = new SuiClient({ url: getFullnodeUrl('localnet') });
 	const result = await client.signAndExecuteTransaction({
 		signer,
 		transaction: tx,
 		options: {
-			// showEffects: true,
-			// showObjectChanges: true,
+			showEffects: true,
+			showObjectChanges: true,
 		},
 	});
 
