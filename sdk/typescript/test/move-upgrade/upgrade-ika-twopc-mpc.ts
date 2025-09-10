@@ -1,12 +1,7 @@
 import { execSync } from 'child_process';
-import { readFileSync } from 'fs';
-import { homedir } from 'os';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { Transaction, UpgradePolicy } from '@mysten/sui/transactions';
-import { fromBase64 } from '@mysten/sui/utils';
+import { Transaction } from '@mysten/sui/transactions';
 
 import { createTestIkaClient } from '../helpers/test-utils';
 
