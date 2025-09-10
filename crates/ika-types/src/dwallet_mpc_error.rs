@@ -192,6 +192,9 @@ pub enum DwalletMPCError {
 
     #[error("public input mismatch")]
     PublicInputMismatch,
+
+    #[error("dWallet DKG parameters missmatch: curve {0}, advance request {1}")]
+    MPCParametersMissmatchInputToRequest(String, String),
 }
 
 /// A wrapper type for the result of a runtime operation.

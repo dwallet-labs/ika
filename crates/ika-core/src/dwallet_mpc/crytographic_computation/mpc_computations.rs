@@ -377,7 +377,7 @@ impl ProtocolCryptographicData {
         Ok(Some(res))
     }
 
-    pub(crate) fn compute_mpc(
+    pub(crate) fn advance(
         self,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
@@ -656,6 +656,14 @@ impl ProtocolCryptographicData {
                 bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
                 &mut rng,
             )?),
+            ProtocolCryptographicData::DWalletDKG {
+                public_input,
+                advance_request,
+                ..
+            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                public_input.to_string(),
+                advance_request.to_string(),
+            )),
             ProtocolCryptographicData::Presign {
                 public_input,
                 advance_request,

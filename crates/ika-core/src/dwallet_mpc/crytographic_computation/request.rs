@@ -41,7 +41,7 @@ impl Request {
         );
 
         if let Some(mpc_round) = computation_id.mpc_round {
-            self.protocol_cryptographic_data.compute_mpc(
+            self.protocol_cryptographic_data.advance(
                 self.party_id,
                 &self.access_structure,
                 mpc_round,

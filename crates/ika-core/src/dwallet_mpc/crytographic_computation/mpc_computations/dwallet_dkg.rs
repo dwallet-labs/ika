@@ -5,6 +5,7 @@
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
+use crate::dwallet_mpc::mpc_session::SessionStatus;
 use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -23,6 +24,7 @@ use mpc::{
     WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
+use std::fmt;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
@@ -229,11 +231,51 @@ impl DWalletDKGAdvanceRequestByCurve {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum DWalletDKGPublicInputByCurve {
+pub enum DWalletDKGPublicInputByCurve {
     Secp256K1DWalletDKG(<Secp256K1DWalletDKGParty as Party>::PublicInput),
     Secp256R1DWalletDKG(<Secp256R1DWalletDKGParty as Party>::PublicInput),
     Curve25519DWalletDKG(<Curve25519DWalletDKGParty as Party>::PublicInput),
     RistrettoDWalletDKG(<RistrettoDWalletDKGParty as Party>::PublicInput),
+}
+
+impl fmt::Display for DWalletDKGPublicInputByCurve {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(_) => {
+                write!(f, "Secp256K1DWalletDKG")
+            }
+            DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(_) => {
+                write!(f, "Secp256R1DWalletDKG")
+            }
+            DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(_) => {
+                write!(f, "Curve25519DWalletDKG")
+            }
+            DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(_) => {
+                write!(f, "RistrettoDWalletDKG")
+            }
+        }
+    }
+}
+
+impl fmt::Display for DWalletDKGAdvanceRequestByCurve {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(_) => {
+                write!(f, "Secp256K1DWalletDKG")
+            }
+            DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(_) => {
+                write!(f, "Secp256R1DWalletDKG")
+            }
+
+            DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(_) => {
+                write!(f, "Curve25519DWalletDKG")
+            }
+
+            DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(_) => {
+                write!(f, "RistrettoDWalletDKG")
+            }
+        }
+    }
 }
 
 impl DWalletDKGPublicInputByCurve {
