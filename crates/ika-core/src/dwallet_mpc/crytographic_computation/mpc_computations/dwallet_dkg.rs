@@ -131,7 +131,7 @@ impl DWalletDKGAdvanceRequestByCurve {
         Ok(Some(advance_request))
     }
 
-    pub fn compute_mpc(
+    pub fn advance(
         self,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,

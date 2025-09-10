@@ -377,7 +377,7 @@ impl ProtocolCryptographicData {
         Ok(Some(res))
     }
 
-    pub(crate) fn advance(
+    pub(crate) fn compute_mpc(
         self,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
