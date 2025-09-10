@@ -44,37 +44,37 @@ export async function updateIkaCoordinator() {
 		arguments: [
 			systemStateArg,
 			tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage),
-			tx.pure(bcs.vector(bcs.u8()).serialize(digest)),
+			tx.pure(bcs.option(bcs.vector(bcs.u8())).serialize(digest)),
 			protocolCap,
 		],
 	});
 
-	let [upgradeTicket, upgradeApprover] = tx.moveCall({
-		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::authorize_upgrade`,
-		arguments: [systemStateArg, tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage)],
-	});
+	// let [upgradeTicket, upgradeApprover] = tx.moveCall({
+	// 	target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::authorize_upgrade`,
+	// 	arguments: [systemStateArg, tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage)],
+	// });
+	//
+	// const receipt = tx.upgrade({
+	// 	modules,
+	// 	dependencies,
+	// 	package: ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage,
+	// 	ticket: upgradeTicket,
+	// });
+	//
+	// tx.moveCall({
+	// 	target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::commit_upgrade`,
+	// 	arguments: [systemStateArg, receipt, upgradeApprover],
+	// });
 
-	const receipt = tx.upgrade({
-		modules,
-		dependencies,
-		package: ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage,
-		ticket: upgradeTicket,
-	});
-
-	tx.moveCall({
-		target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::commit_upgrade`,
-		arguments: [systemStateArg, receipt, upgradeApprover],
-	});
-
-	let verifiedProtocolCap = tx.moveCall({
-		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::verify_protocol_cap`,
-		arguments: [systemStateArg, protocolCap],
-	});
-
-	tx.moveCall({
-		target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::try_migrate_by_cap`,
-		arguments: [coordinatorStateArg, verifiedProtocolCap],
-	});
+	// let verifiedProtocolCap = tx.moveCall({
+	// 	target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::verify_protocol_cap`,
+	// 	arguments: [systemStateArg, protocolCap],
+	// });
+	//
+	// tx.moveCall({
+	// 	target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::try_migrate_by_cap`,
+	// 	arguments: [coordinatorStateArg, verifiedProtocolCap],
+	// });
 
 	const client = new SuiClient({ url: getFullnodeUrl('localnet') });
 	const result = await client.signAndExecuteTransaction({
