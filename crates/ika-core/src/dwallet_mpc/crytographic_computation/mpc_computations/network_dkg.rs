@@ -31,7 +31,7 @@ use homomorphic_encryption::{
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::Secp256K1AsyncProtocol;
+use ika_types::messages_dwallet_mpc::Secp256K1AsyncECDSAProtocol;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
@@ -76,7 +76,7 @@ pub struct ValidatorPrivateDecryptionKeyData {
     /// NOTE 2: `ObjectID` is the ID of the network decryption key, not the party.
     pub validator_decryption_key_shares: HashMap<
         ObjectID,
-        HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
+        HashMap<PartyID, <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
     >,
 }
 
@@ -204,13 +204,14 @@ impl ValidatorPrivateDecryptionKeyData {
     fn convert_secret_key_shares_type_to_secp256k1_decryption_shares(
         secret_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
         public_parameters: &Secp256k1DecryptionKeySharePublicParameters,
-    ) -> DwalletMPCResult<HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>>
-    {
+    ) -> DwalletMPCResult<
+        HashMap<PartyID, <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
+    > {
         secret_shares
             .into_iter()
             .map(|(virtual_party_id, secret_key_share)| {
                 let decryption_key_share =
-                    <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare::new(
+                    <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare::new(
                         secret_key_share.to_limbs(),
                     );
 
@@ -285,8 +286,9 @@ impl DwalletMPCNetworkKeys {
     pub(crate) fn secp256k1_decryption_key_shares(
         &self,
         key_id: &ObjectID,
-    ) -> DwalletMPCResult<HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>>
-    {
+    ) -> DwalletMPCResult<
+        HashMap<PartyID, <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
+    > {
         self.validator_private_dec_key_data
             .validator_decryption_key_shares
             .get(key_id)

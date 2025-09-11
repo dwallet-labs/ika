@@ -20,7 +20,7 @@ use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
-use ika_types::messages_dwallet_mpc::Secp256K1AsyncProtocol;
+use ika_types::messages_dwallet_mpc::Secp256K1AsyncECDSAProtocol;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
 use twopc_mpc::sign::Protocol;
@@ -67,7 +67,7 @@ pub enum ProtocolCryptographicData {
         public_input: <SignParty as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<SignParty as mpc::Party>::Message>,
         decryption_key_shares:
-            HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
+            HashMap<PartyID, <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
     },
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyDkgV1 {
@@ -89,7 +89,7 @@ pub enum ProtocolCryptographicData {
         public_input: <ReconfigurationParty as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationParty as mpc::Party>::Message>,
         decryption_key_shares:
-            HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
+            HashMap<PartyID, <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
     },
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyV1ToV2Reconfiguration {
@@ -97,14 +97,14 @@ pub enum ProtocolCryptographicData {
         public_input: <ReconfigurationV1toV2Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationV1toV2Party as mpc::Party>::Message>,
         decryption_key_shares:
-            HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
+            HashMap<PartyID, <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
     },
     NetworkEncryptionKeyV2Reconfiguration {
         data: NetworkEncryptionKeyV2ReconfigurationData,
         public_input: <ReconfigurationV2Party as mpc::Party>::PublicInput,
         advance_request: AdvanceRequest<<ReconfigurationV2Party as mpc::Party>::Message>,
         decryption_key_shares:
-            HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
+            HashMap<PartyID, <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
     },
 
     EncryptedShareVerification {

@@ -3,8 +3,10 @@
 
 use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
-    DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty, compute_dwallet_dkg,
+    Curve25519AsyncDKGProtocol, DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty,
+    DWalletDKGPublicInputByCurve, DWalletImportedKeyVerificationParty, RistrettoAsyncDKGProtocol,
+    Secp256K1AsyncDKGProtocol, Secp256K1DWalletDKGParty, Secp256R1AsyncDKGProtocol,
+    compute_dwallet_dkg,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
@@ -37,10 +39,7 @@ use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{
-    Curve25519AsyncProtocol, RistrettoAsyncProtocol, Secp256K1AsyncProtocol,
-    Secp256R1AsyncProtocol, SessionIdentifier,
-};
+use ika_types::messages_dwallet_mpc::{Secp256K1AsyncECDSAProtocol, SessionIdentifier};
 use mpc::guaranteed_output_delivery::{Party, ReadyToAdvanceResult};
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
@@ -565,8 +564,7 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
-                        // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
-                        let decentralized_output: <Secp256K1AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
+                        let decentralized_output: <Secp256K1AsyncECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
                         let decentralized_output = match decentralized_output {
                             DKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
                                 output, ..
@@ -593,7 +591,7 @@ impl ProtocolCryptographicData {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
                 ..
-            } => Ok(compute_dwallet_dkg::<Secp256K1AsyncProtocol>(
+            } => Ok(compute_dwallet_dkg::<Secp256K1AsyncDKGProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -610,7 +608,7 @@ impl ProtocolCryptographicData {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
                 ..
-            } => Ok(compute_dwallet_dkg::<Secp256R1AsyncProtocol>(
+            } => Ok(compute_dwallet_dkg::<Secp256R1AsyncDKGProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -627,7 +625,7 @@ impl ProtocolCryptographicData {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request),
                 ..
-            } => Ok(compute_dwallet_dkg::<Curve25519AsyncProtocol>(
+            } => Ok(compute_dwallet_dkg::<Curve25519AsyncDKGProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -644,7 +642,7 @@ impl ProtocolCryptographicData {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
                 ..
-            } => Ok(compute_dwallet_dkg::<RistrettoAsyncProtocol>(
+            } => Ok(compute_dwallet_dkg::<RistrettoAsyncDKGProtocol>(
                 party_id,
                 access_structure,
                 session_id,
