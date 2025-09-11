@@ -88,9 +88,6 @@ async function testSignWithResult(
 }
 
 describe('DWallet Signing', () => {
-	it('should update the dwallet coordinator', async () => {
-		await updateIkaCoordinator();
-	});
 
 	it('should create a DWallet and sign a message', async () => {
 		const testName = 'dwallet-sign-test';

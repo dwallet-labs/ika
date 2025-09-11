@@ -1,12 +1,12 @@
 import { execSync } from 'child_process';
 import { bcs } from '@mysten/bcs';
-import { SuiClient } from '@mysten/sui/client';
+import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 
 import { IkaClient } from '../../src';
-
-const packagePath = '/root/code/dwallet-network/contracts/ika_dwallet_2pc_mpc';
+import { describe, it } from 'vitest';
+import { createTestIkaClient } from '../helpers/test-utils';
 
 export async function deployUpgradedPackage(
 	suiClient: SuiClient,
@@ -118,3 +118,19 @@ export async function migrateCoordinator(
 		},
 	});
 }
+
+
+describe('Upgrade twopc_mpc Move package', () => {
+	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
+		const signer = Ed25519Keypair.deriveKeypair('<PUBLISHER_MNEMONIC>');
+		const protocolCapID = '<PROTOCOL_CAP_OBJECT_ID>';
+
+		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+
+		const packagePath = '/root/code/dwallet-network/contracts/ika_dwallet_2pc_mpc';
+
+		const upgradedPackageID = await deployUpgradedPackage(suiClient, signer, packagePath, ikaClient, protocolCapID);
+	});
+};
