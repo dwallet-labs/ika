@@ -119,7 +119,6 @@ export async function migrateCoordinator(
 	});
 }
 
-
 describe('Upgrade twopc_mpc Move package', () => {
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
 		const signer = Ed25519Keypair.deriveKeypair('<PUBLISHER_MNEMONIC>');
@@ -132,5 +131,6 @@ describe('Upgrade twopc_mpc Move package', () => {
 		const packagePath = '/root/code/dwallet-network/contracts/ika_dwallet_2pc_mpc';
 
 		const upgradedPackageID = await deployUpgradedPackage(suiClient, signer, packagePath, ikaClient, protocolCapID);
+		await migrateCoordinator(suiClient, signer, ikaClient, protocolCapID, upgradedPackageID);
 	});
 };
