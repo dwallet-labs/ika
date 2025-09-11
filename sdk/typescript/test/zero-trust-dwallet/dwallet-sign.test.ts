@@ -19,7 +19,6 @@ import {
 	executeTestTransaction,
 	retryUntil,
 } from '../helpers/test-utils';
-import { updateIkaCoordinator } from '../move-upgrade/upgrade-ika-twopc-mpc';
 
 // Setup shared resources before all tests
 beforeAll(async () => {
@@ -88,7 +87,6 @@ async function testSignWithResult(
 }
 
 describe('DWallet Signing', () => {
-
 	it('should create a DWallet and sign a message', async () => {
 		const testName = 'dwallet-sign-test';
 
