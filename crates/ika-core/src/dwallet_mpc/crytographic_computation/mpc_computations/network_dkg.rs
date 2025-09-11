@@ -74,10 +74,8 @@ pub struct ValidatorPrivateDecryptionKeyData {
     /// These shares are used in multi-party cryptographic protocols.
     /// NOTE: EACH PARTY IN HERE IS A **VIRTUAL PARTY**.
     /// NOTE 2: `ObjectID` is the ID of the network decryption key, not the party.
-    pub validator_decryption_key_shares: HashMap<
-        ObjectID,
-        HashMap<PartyID, <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
-    >,
+    pub validator_decryption_key_shares:
+        HashMap<ObjectID, HashMap<PartyID, SecretKeyShareSizedInteger>>,
 }
 
 async fn get_decryption_key_shares_from_public_output(
@@ -181,7 +179,7 @@ impl ValidatorPrivateDecryptionKeyData {
         key: VersionedNetworkEncryptionKeyPublicData,
         access_structure: &WeightedThresholdAccessStructure,
     ) -> DwalletMPCResult<()> {
-        let secret_key_shares = get_decryption_key_shares_from_public_output(
+        let decryption_key_shares = get_decryption_key_shares_from_public_output(
             key.clone(),
             self.party_id,
             self.class_groups_decryption_key,
@@ -189,35 +187,9 @@ impl ValidatorPrivateDecryptionKeyData {
         )
         .await?;
 
-        let self_decryption_key_shares =
-            Self::convert_secret_key_shares_type_to_secp256k1_decryption_shares(
-                secret_key_shares,
-                &key.secp256k1_decryption_key_share_public_parameters(),
-            )?;
-
         self.validator_decryption_key_shares
-            .insert(key_id, self_decryption_key_shares);
+            .insert(key_id, decryption_key_shares);
         Ok(())
-    }
-
-    /// Only for type convertion.
-    fn convert_secret_key_shares_type_to_secp256k1_decryption_shares(
-        secret_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
-        public_parameters: &Secp256k1DecryptionKeySharePublicParameters,
-    ) -> DwalletMPCResult<
-        HashMap<PartyID, <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
-    > {
-        secret_shares
-            .into_iter()
-            .map(|(virtual_party_id, secret_key_share)| {
-                let decryption_key_share =
-                    <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare::new(
-                        secret_key_share.to_limbs(),
-                    );
-
-                Ok((virtual_party_id, decryption_key_share))
-            })
-            .collect::<DwalletMPCResult<HashMap<_, _>>>()
     }
 }
 
@@ -282,13 +254,11 @@ impl DwalletMPCNetworkKeys {
         })
     }
 
-    /// Retrieves the secp256k1 decryption key shares for the current authority.
-    pub(crate) fn secp256k1_decryption_key_shares(
+    /// Retrieves the decryption key shares for the current authority.
+    pub(crate) fn decryption_key_shares(
         &self,
         key_id: &ObjectID,
-    ) -> DwalletMPCResult<
-        HashMap<PartyID, <Secp256K1AsyncECDSAProtocol as Protocol>::DecryptionKeyShare>,
-    > {
+    ) -> DwalletMPCResult<HashMap<PartyID, SecretKeyShareSizedInteger>> {
         self.validator_private_dec_key_data
             .validator_decryption_key_shares
             .get(key_id)
