@@ -224,7 +224,7 @@ impl ProtocolCryptographicData {
                 };
 
                 let decryption_key_shares = decryption_key_shares
-                    .secp256k1_decryption_key_shares(dwallet_network_encryption_key_id)?;
+                    .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                 ProtocolCryptographicData::Sign {
                     data: data.clone(),
@@ -305,7 +305,7 @@ impl ProtocolCryptographicData {
                     };
 
                     let decryption_key_shares = decryption_key_shares
-                        .secp256k1_decryption_key_shares(dwallet_network_encryption_key_id)?;
+                        .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                     ProtocolCryptographicData::NetworkEncryptionKeyV1Reconfiguration {
                         data: data.clone(),
@@ -331,7 +331,7 @@ impl ProtocolCryptographicData {
                     };
 
                     let decryption_key_shares = decryption_key_shares
-                        .secp256k1_decryption_key_shares(dwallet_network_encryption_key_id)?;
+                        .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                     ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
                         data: NetworkEncryptionKeyV1ToV2ReconfigurationData {},
@@ -356,7 +356,7 @@ impl ProtocolCryptographicData {
                     };
 
                     let decryption_key_shares = decryption_key_shares
-                        .secp256k1_decryption_key_shares(dwallet_network_encryption_key_id)?;
+                        .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                     ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration {
                         data: NetworkEncryptionKeyV2ReconfigurationData {},
