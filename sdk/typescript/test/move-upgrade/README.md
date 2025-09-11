@@ -1,4 +1,4 @@
-### How to Upgrade the 2pc-mpc Move Module
+### How to Upgrade the 2pc-mpc Move Package
 
 ### Step 1: Update Move Dependencies to Use Deployed Packages
 Open `contracts/ika_dwallet_2pc_mpc/Move.toml` and add the following under `addresses`:
