@@ -21,10 +21,8 @@ use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
-use ika_types::messages_dwallet_mpc::Secp256K1AsyncECDSAProtocol;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
-use twopc_mpc::sign::Protocol;
 
 pub enum ProtocolCryptographicData {
     ImportedKeyVerification {

@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::dwallet_dkg::{
-    Curve25519DWalletDKGParty, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
-    DWalletImportedKeyVerificationParty, RistrettoDWalletDKGParty, Secp256K1DWalletDKGParty,
-    Secp256R1DWalletDKGParty, dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
+    DWalletDKGFirstParty, DWalletDKGPublicInputByCurve, DWalletImportedKeyVerificationParty,
+    Secp256K1DWalletDKGParty, dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
 };
 use crate::dwallet_mpc::network_dkg::{
     DwalletMPCNetworkKeys, network_dkg_v1_public_input, network_dkg_v2_public_input,

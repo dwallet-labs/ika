@@ -5,7 +5,6 @@
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
-use crate::dwallet_mpc::mpc_session::SessionStatus;
 use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -15,6 +14,10 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::messages_dwallet_mpc::{
+    Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
+    Secp256R1AsyncDKGProtocol,
+};
 use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, Party,
@@ -38,11 +41,6 @@ pub(crate) type Curve25519DWalletDKGParty =
     <Curve25519AsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
 pub(crate) type RistrettoDWalletDKGParty =
     <RistrettoAsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
-
-pub type Secp256K1AsyncDKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
-pub type Secp256R1AsyncDKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
-pub type Curve25519AsyncDKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
-pub type RistrettoAsyncDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
 
 pub(crate) enum DWalletDKGAdvanceRequestByCurve {
     Secp256K1DWalletDKG(AdvanceRequest<<Secp256K1DWalletDKGParty as mpc::Party>::Message>),
