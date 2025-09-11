@@ -42,7 +42,6 @@ jobs:
           git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - name: Build and push Docker image
         working-directory: sdk/typescript/test/system-tests
-        env:
         run: |
           touch .env
           ./build.sh ${{ github.event.inputs.cargo_build_flags }}
