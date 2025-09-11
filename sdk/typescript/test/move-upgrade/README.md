@@ -1,19 +1,14 @@
-### How to upgrade the 2pc-mpc Move module
+### How to Upgrade the 2pc-mpc Move Module
 
-### Step 1: Update the Move dependencies to use the already deployed dependencies
-Open `contracts/ika_dwallet_2pc_mpc/Move.toml`, and add an entry to the `addresses` entry:
-```
+### Step 1: Update Move Dependencies to Use Already Deployed Packages
+Open `contracts/ika_dwallet_2pc_mpc/Move.toml` and add the following under `addresses`:
 ika = "<IKA_PACKAGE_ID>"
-```
-Replace the ika package ID with the one from the ika_config.json file.
-In the `contracts/ika/Move.toml`, add the following entry to the `package` entry:
-```
-published-at = "<IKA_PACKAGE_ID>"
-```
-and update the `ika` entry to the "<IKA_PACKAGE_ID>" as well.
+Replace `<IKA_PACKAGE_ID>` with the value from `ika_config.json`.
 
-In the `contracts/ika_common/Move.toml`, add the following entry to the `package` entry:
-```
+In `contracts/ika/Move.toml`, add the following under `package`:
+published-at = "<IKA_PACKAGE_ID>"
+Also update the `ika` entry to `<IKA_PACKAGE_ID>`.
+
+In `contracts/ika_common/Move.toml`, add the following under `package`:
 published-at = "<IKA_COMMON_PACKAGE_ID>"
-```
-and update the `ika_common` entry to the "<IKA_COMMON_PACKAGE_ID>" as well.
+Also update the `ika_common` entry to `<IKA_COMMON_PACKAGE_ID>`.
