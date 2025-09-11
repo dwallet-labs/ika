@@ -19,7 +19,7 @@ use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncEdDSAProtocol, RistrettoAsyncSchnorrkelSubstrateProtocol,
     Secp256K1AsyncECDSAProtocol, Secp256R1AsyncECDSAProtocol, SessionIdentifier,
 };
-use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
+use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
@@ -28,18 +28,29 @@ use twopc_mpc::presign::Protocol;
 
 pub(crate) type PresignParty<P: Protocol> = <P as Protocol>::PresignParty;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub(crate) enum PresignPublicInputByCurve {
+    #[strum(to_string = "Presign Public Input - curve: Secp256k1, protocol: ECDSA")]
     Secp256k1(<PresignParty<Secp256K1AsyncECDSAProtocol> as mpc::Party>::PublicInput),
+    #[strum(to_string = "Presign Public Input - curve: Secp256r1, protocol: ECDSA")]
     Secp256r1(<PresignParty<Secp256R1AsyncECDSAProtocol> as mpc::Party>::PublicInput),
+    #[strum(to_string = "Presign Public Input - curve: Curve25519, protocol: EdDSA")]
     Curve25519(<PresignParty<Curve25519AsyncEdDSAProtocol> as mpc::Party>::PublicInput),
+    #[strum(to_string = "Presign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrate")]
     Ristretto(<PresignParty<RistrettoAsyncSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput),
 }
 
+#[derive(strum_macros::Display)]
 pub(crate) enum PresignAdvanceRequestByCurve {
+    #[strum(to_string = "Presign Advance Request - curve: Secp256k1, protocol: ECDSA")]
     Secp256k1(AdvanceRequest<<PresignParty<Secp256K1AsyncECDSAProtocol> as mpc::Party>::Message>),
+    #[strum(to_string = "Presign Advance Request - curve: Secp256r1, protocol: ECDSA")]
     Secp256r1(AdvanceRequest<<PresignParty<Secp256R1AsyncECDSAProtocol> as mpc::Party>::Message>),
+    #[strum(to_string = "Presign Advance Request - curve: Curve25519, protocol: EdDSA")]
     Curve25519(AdvanceRequest<<PresignParty<Curve25519AsyncEdDSAProtocol> as mpc::Party>::Message>),
+    #[strum(
+        to_string = "Presign Advance Request - curve: Ristretto, protocol: Schnorrkel Substrate"
+    )]
     Ristretto(
         AdvanceRequest<
             <PresignParty<RistrettoAsyncSchnorrkelSubstrateProtocol> as mpc::Party>::Message,
@@ -214,7 +225,8 @@ pub fn compute_presign<P: Protocol>(
             None,
             &public_input,
             rng,
-        ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
+        )
+        .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
 
     match result {
         GuaranteedOutputDeliveryRoundResult::Advance { message } => {

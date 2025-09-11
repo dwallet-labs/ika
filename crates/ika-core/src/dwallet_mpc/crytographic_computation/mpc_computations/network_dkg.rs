@@ -6,7 +6,6 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationParty,
     instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output,
@@ -24,12 +23,10 @@ use dwallet_mpc_types::dwallet_mpc::{
     SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData,
 };
-use group::{GroupElement, OsCsRng, PartyID, secp256k1};
+use group::{GroupElement, PartyID, secp256k1};
 use homomorphic_encryption::GroupsPublicParametersAccessors;
-use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::Secp256K1AsyncECDSAProtocol;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
@@ -47,7 +44,6 @@ use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
 };
-use twopc_mpc::sign::Protocol;
 
 /// Holds the network (decryption) keys of the network MPC protocols.
 pub struct DwalletMPCNetworkKeys {

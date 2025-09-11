@@ -5,6 +5,7 @@
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
+use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -23,12 +24,10 @@ use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, Party,
     WeightedThresholdAccessStructure,
 };
+use mpc_computations::try_ready_to_advance;
 use std::collections::HashMap;
-use std::fmt;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
-use mpc_computations::try_ready_to_advance;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
@@ -44,10 +43,15 @@ pub(crate) type Curve25519DWalletDKGParty =
 pub(crate) type RistrettoDWalletDKGParty =
     <RistrettoAsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
 
+#[derive(strum_macros::Display)]
 pub(crate) enum DWalletDKGAdvanceRequestByCurve {
+    #[strum(to_string = "dWallet DKG Advance Request for curve Secp256K1")]
     Secp256K1DWalletDKG(AdvanceRequest<<Secp256K1DWalletDKGParty as mpc::Party>::Message>),
+    #[strum(to_string = "dWallet DKG Advance Request for curve Secp256R1")]
     Secp256R1DWalletDKG(AdvanceRequest<<Secp256R1DWalletDKGParty as mpc::Party>::Message>),
+    #[strum(to_string = "dWallet DKG Advance Request for curve Curve25519")]
     Curve25519DWalletDKG(AdvanceRequest<<Curve25519DWalletDKGParty as mpc::Party>::Message>),
+    #[strum(to_string = "dWallet DKG Advance Request for curve Ristretto")]
     RistrettoDWalletDKG(AdvanceRequest<<RistrettoDWalletDKGParty as mpc::Party>::Message>),
 }
 
@@ -61,43 +65,39 @@ impl DWalletDKGAdvanceRequestByCurve {
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match curve {
             DWalletCurve::Secp256k1 => {
-                let advance_request =
-                    try_ready_to_advance::<Secp256K1AsyncDKGProtocol>(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        &serialized_messages_by_consensus_round,
-                    )?;
+                let advance_request = try_ready_to_advance::<Secp256K1DWalletDKGParty>(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    &serialized_messages_by_consensus_round,
+                )?;
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG)
             }
             DWalletCurve::Secp256r1 => {
-                let advance_request =
-                    try_ready_to_advance::<Secp256R1AsyncDKGProtocol>(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        &serialized_messages_by_consensus_round,
-                    )?;
+                let advance_request = try_ready_to_advance::<Secp256R1DWalletDKGParty>(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    &serialized_messages_by_consensus_round,
+                )?;
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG)
             }
             DWalletCurve::Curve25519 => {
-                let advance_request =
-                    try_ready_to_advance::<Curve25519AsyncDKGProtocol>(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        &serialized_messages_by_consensus_round,
-                    )?;
+                let advance_request = try_ready_to_advance::<Curve25519DWalletDKGParty>(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    &serialized_messages_by_consensus_round,
+                )?;
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG)
             }
             DWalletCurve::Ristretto => {
-                let advance_request =
-                    try_ready_to_advance::<RistrettoAsyncDKGProtocol>(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        &serialized_messages_by_consensus_round,
-                    )?;
+                let advance_request = try_ready_to_advance::<RistrettoDWalletDKGParty>(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    &serialized_messages_by_consensus_round,
+                )?;
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG)
             }
         };
@@ -106,52 +106,16 @@ impl DWalletDKGAdvanceRequestByCurve {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub enum DWalletDKGPublicInputByCurve {
+    #[strum(to_string = "dWallet DKG Public Input for curve Secp256K1")]
     Secp256K1DWalletDKG(<Secp256K1DWalletDKGParty as Party>::PublicInput),
+    #[strum(to_string = "dWallet DKG Public Input for curve Secp256R1")]
     Secp256R1DWalletDKG(<Secp256R1DWalletDKGParty as Party>::PublicInput),
+    #[strum(to_string = "dWallet DKG Public Input for curve Curve25519")]
     Curve25519DWalletDKG(<Curve25519DWalletDKGParty as Party>::PublicInput),
+    #[strum(to_string = "dWallet DKG Public Input for curve Ristretto")]
     RistrettoDWalletDKG(<RistrettoDWalletDKGParty as Party>::PublicInput),
-}
-
-impl fmt::Display for DWalletDKGPublicInputByCurve {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(_) => {
-                write!(f, "Secp256K1DWalletDKG")
-            }
-            DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(_) => {
-                write!(f, "Secp256R1DWalletDKG")
-            }
-            DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(_) => {
-                write!(f, "Curve25519DWalletDKG")
-            }
-            DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(_) => {
-                write!(f, "RistrettoDWalletDKG")
-            }
-        }
-    }
-}
-
-impl fmt::Display for DWalletDKGAdvanceRequestByCurve {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(_) => {
-                write!(f, "Secp256K1DWalletDKG")
-            }
-            DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(_) => {
-                write!(f, "Secp256R1DWalletDKG")
-            }
-
-            DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(_) => {
-                write!(f, "Curve25519DWalletDKG")
-            }
-
-            DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(_) => {
-                write!(f, "RistrettoDWalletDKG")
-            }
-        }
-    }
 }
 
 impl DWalletDKGPublicInputByCurve {

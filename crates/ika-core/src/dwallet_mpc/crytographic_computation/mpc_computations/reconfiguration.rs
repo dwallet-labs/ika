@@ -6,7 +6,7 @@ use crate::dwallet_mpc::{
 };
 use class_groups::reconfiguration::{PublicInput, Secp256k1Party};
 use class_groups::{
-    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters, dkg,
+    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
 };
 use dwallet_mpc_types::dwallet_mpc::{
     NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataV1,

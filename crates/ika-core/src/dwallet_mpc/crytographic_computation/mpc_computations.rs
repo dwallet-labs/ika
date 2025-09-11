@@ -13,7 +13,7 @@ use crate::dwallet_mpc::network_dkg::{
     DwalletMPCNetworkKeys, advance_network_dkg_v1, advance_network_dkg_v2,
 };
 use crate::dwallet_mpc::presign::{
-    PresignAdvanceRequestByCurve, PresignParty, PresignPublicInputByCurve, compute_presign,
+    PresignAdvanceRequestByCurve, PresignPublicInputByCurve, compute_presign,
 };
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::{
@@ -32,11 +32,9 @@ use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletSignatureScheme,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
-    VersionedPresignOutput, VersionedSignOutput,
 };
 use dwallet_rng::RootSeed;
 use group::PartyID;
-use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
@@ -53,10 +51,7 @@ use mpc::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
-use twopc_mpc::Protocol;
-use twopc_mpc::class_groups::{
-    DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
-};
+use twopc_mpc::class_groups::DKGDecentralizedPartyVersionedOutput;
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
 use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
 use twopc_mpc::sign::EncodableSignature;
@@ -957,7 +952,7 @@ fn parse_signature_from_sign_output(
     }
 }
 
-fn try_ready_to_advance<P: mpc::Party>(
+fn try_ready_to_advance<P: mpc::Party + mpc::AsynchronouslyAdvanceable>(
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
     consensus_round: u64,
