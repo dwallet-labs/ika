@@ -40,7 +40,7 @@ const EDeprecatedFunction: u64 = 2;
 
 // === Constants ===
 /// Flag to indicate the version of the ika system.
-const VERSION: u64 = 3;
+const VERSION: u64 = 2;
 
 // === Structs ===
 
