@@ -6,7 +6,6 @@
 //! It integrates both Presign parties (each representing a round in the Presign protocol).
 
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
-use crate::dwallet_mpc::dwallet_dkg::{DWalletDKGPublicInputByCurve, RistrettoAsyncDKGProtocol};
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
@@ -215,7 +214,7 @@ pub fn compute_presign<P: Protocol>(
             None,
             &public_input,
             rng,
-        )?;
+        ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
 
     match result {
         GuaranteedOutputDeliveryRoundResult::Advance { message } => {

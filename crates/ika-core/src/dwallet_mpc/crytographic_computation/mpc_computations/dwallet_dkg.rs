@@ -27,6 +27,8 @@ use std::collections::HashMap;
 use std::fmt;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use mpc_computations::try_ready_to_advance;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
@@ -60,7 +62,7 @@ impl DWalletDKGAdvanceRequestByCurve {
         let advance_request = match curve {
             DWalletCurve::Secp256k1 => {
                 let advance_request =
-                    mpc_computations::try_ready_to_advance::<Secp256K1AsyncDKGProtocol>(
+                    try_ready_to_advance::<Secp256K1AsyncDKGProtocol>(
                         party_id,
                         access_structure,
                         consensus_round,
@@ -70,7 +72,7 @@ impl DWalletDKGAdvanceRequestByCurve {
             }
             DWalletCurve::Secp256r1 => {
                 let advance_request =
-                    mpc_computations::try_ready_to_advance::<Secp256R1AsyncDKGProtocol>(
+                    try_ready_to_advance::<Secp256R1AsyncDKGProtocol>(
                         party_id,
                         access_structure,
                         consensus_round,
@@ -80,7 +82,7 @@ impl DWalletDKGAdvanceRequestByCurve {
             }
             DWalletCurve::Curve25519 => {
                 let advance_request =
-                    mpc_computations::try_ready_to_advance::<Curve25519AsyncDKGProtocol>(
+                    try_ready_to_advance::<Curve25519AsyncDKGProtocol>(
                         party_id,
                         access_structure,
                         consensus_round,
@@ -90,7 +92,7 @@ impl DWalletDKGAdvanceRequestByCurve {
             }
             DWalletCurve::Ristretto => {
                 let advance_request =
-                    mpc_computations::try_ready_to_advance::<RistrettoAsyncDKGProtocol>(
+                    try_ready_to_advance::<RistrettoAsyncDKGProtocol>(
                         party_id,
                         access_structure,
                         consensus_round,
