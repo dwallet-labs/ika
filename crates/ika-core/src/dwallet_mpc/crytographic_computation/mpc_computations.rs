@@ -3,18 +3,20 @@
 
 use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
 use crate::dwallet_mpc::dwallet_dkg::{
-    compute_dwallet_dkg, Curve25519AsyncDKGProtocol, DWalletDKGAdvanceRequestByCurve,
-    DWalletDKGFirstParty, DWalletDKGPublicInputByCurve, DWalletImportedKeyVerificationParty,
-    RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol, Secp256K1DWalletDKGParty,
-    Secp256R1AsyncDKGProtocol,
+    Curve25519AsyncDKGProtocol, DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty,
+    DWalletDKGPublicInputByCurve, DWalletImportedKeyVerificationParty, RistrettoAsyncDKGProtocol,
+    Secp256K1AsyncDKGProtocol, Secp256K1DWalletDKGParty, Secp256R1AsyncDKGProtocol,
+    compute_dwallet_dkg,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::network_dkg::{
-    advance_network_dkg_v1, advance_network_dkg_v2, DwalletMPCNetworkKeys,
+    DwalletMPCNetworkKeys, advance_network_dkg_v1, advance_network_dkg_v2,
 };
-use crate::dwallet_mpc::presign::PresignParty;
+use crate::dwallet_mpc::presign::{
+    PresignAdvanceRequestByCurve, PresignParty, PresignPublicInputByCurve, compute_presign,
+};
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationParty, ReconfigurationV1toV2Party, ReconfigurationV2Party,
@@ -39,7 +41,10 @@ use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{Secp256K1AsyncECDSAProtocol, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{
+    Curve25519AsyncEdDSAProtocol, RistrettoAsyncSchnorrkelSubstrateProtocol,
+    Secp256K1AsyncECDSAProtocol, Secp256R1AsyncECDSAProtocol, SessionIdentifier,
+};
 use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResult};
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
@@ -662,40 +667,63 @@ impl ProtocolCryptographicData {
                 advance_request.to_string(),
             )),
             ProtocolCryptographicData::Presign {
+                public_input: PresignPublicInputByCurve::Secp256k1(public_input),
+                advance_request: PresignAdvanceRequestByCurve::Secp256k1(advance_request),
+                ..
+            } => Ok(compute_presign::<Secp256K1AsyncECDSAProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::Presign {
+                public_input: PresignPublicInputByCurve::Secp256r1(public_input),
+                advance_request: PresignAdvanceRequestByCurve::Secp256r1(advance_request),
+                ..
+            } => Ok(compute_presign::<Secp256R1AsyncECDSAProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::Presign {
+                public_input: PresignPublicInputByCurve::Curve25519(public_input),
+                advance_request: PresignAdvanceRequestByCurve::Curve25519(advance_request),
+                ..
+            } => Ok(compute_presign::<Curve25519AsyncEdDSAProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::Presign {
+                public_input: PresignPublicInputByCurve::Ristretto(public_input),
+                advance_request: PresignAdvanceRequestByCurve::Ristretto(advance_request),
+                ..
+            } => Ok(
+                compute_presign::<RistrettoAsyncSchnorrkelSubstrateProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    &mut rng,
+                )?,
+            ),
+            ProtocolCryptographicData::Presign {
                 public_input,
                 advance_request,
                 ..
-            } => {
-                let result = Party::<PresignParty>::advance_with_guaranteed_output(
-                    session_id,
-                    party_id,
-                    access_structure,
-                    advance_request,
-                    None,
-                    &public_input,
-                    &mut rng,
-                )?;
-
-                match result {
-                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-                    }
-                    GuaranteedOutputDeliveryRoundResult::Finalize {
-                        public_output_value,
-                        malicious_parties,
-                        private_output,
-                    } => {
-                        // Wrap the public output with its version.
-                        let public_output_value =
-                            bcs::to_bytes(&VersionedPresignOutput::V1(public_output_value))?;
-                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                            public_output_value,
-                            malicious_parties,
-                            private_output,
-                        })
-                    }
-                }
-            }
+            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                public_input.to_string(),
+                advance_request.to_string(),
+            )),
             ProtocolCryptographicData::Sign {
                 public_input,
                 advance_request,
@@ -934,15 +962,14 @@ fn try_ready_to_advance<P: mpc::Party>(
     consensus_round: u64,
     serialized_messages_by_consensus_round: &HashMap<u64, HashMap<PartyID, Vec<u8>>>,
 ) -> DwalletMPCResult<Option<AdvanceRequest<<P>::Message>>> {
-    let advance_request_result =
-        mpc::guaranteed_output_delivery::Party::<P>::ready_to_advance(
-            party_id,
-            access_structure,
-            consensus_round,
-            HashMap::new(),
-            serialized_messages_by_consensus_round,
-        )
-        .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
+    let advance_request_result = mpc::guaranteed_output_delivery::Party::<P>::ready_to_advance(
+        party_id,
+        access_structure,
+        consensus_round,
+        HashMap::new(),
+        serialized_messages_by_consensus_round,
+    )
+    .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
 
     match advance_request_result {
         ReadyToAdvanceResult::ReadyToAdvance(advance_request) => Ok(Some(advance_request)),
