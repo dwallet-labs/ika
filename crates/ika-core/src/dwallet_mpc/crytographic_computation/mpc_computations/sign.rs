@@ -22,7 +22,7 @@ use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
-use twopc_mpc::{secp256k1, sign};
+use twopc_mpc::sign;
 
 pub(crate) type SignParty =
     <Secp256K1AsyncECDSAProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedParty;

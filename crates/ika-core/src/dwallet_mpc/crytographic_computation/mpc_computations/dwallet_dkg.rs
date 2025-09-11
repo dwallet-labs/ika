@@ -5,7 +5,6 @@
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -15,6 +14,10 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::messages_dwallet_mpc::{
+    Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
+    Secp256R1AsyncDKGProtocol,
+};
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, Party,
@@ -38,11 +41,6 @@ pub(crate) type Curve25519DWalletDKGParty =
     <Curve25519AsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
 pub(crate) type RistrettoDWalletDKGParty =
     <RistrettoAsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
-
-pub type Secp256K1AsyncDKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
-pub type Secp256R1AsyncDKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
-pub type Curve25519AsyncDKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
-pub type RistrettoAsyncDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
 
 pub(crate) enum DWalletDKGAdvanceRequestByCurve {
     Secp256K1DWalletDKG(AdvanceRequest<<Secp256K1DWalletDKGParty as mpc::Party>::Message>),
@@ -103,104 +101,6 @@ impl DWalletDKGAdvanceRequestByCurve {
         };
 
         Ok(advance_request)
-    }
-
-    pub fn advance(
-        self,
-        party_id: PartyID,
-        access_structure: &WeightedThresholdAccessStructure,
-        session_id: CommitmentSizedNumber,
-        public_input: DWalletDKGPublicInputByCurve,
-        encryption_key: &[u8],
-        encrypted_secret_key_share_message: &[u8],
-        rng: &mut impl CsRng,
-    ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-        match self {
-            DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request) => {
-                let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) = public_input
-                else {
-                    return Err(DwalletMPCError::PublicInputMismatch);
-                };
-                let encryption_key = bcs::from_bytes(encryption_key)?;
-                let encrypted_secret_key_share_message =
-                    bcs::from_bytes(encrypted_secret_key_share_message)?;
-
-                compute_dwallet_dkg::<Secp256K1AsyncDKGProtocol>(
-                    party_id,
-                    access_structure,
-                    session_id,
-                    advance_request,
-                    public_input.protocol_public_parameters.clone(),
-                    public_input,
-                    encryption_key,
-                    encrypted_secret_key_share_message,
-                    rng,
-                )
-            }
-            DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request) => {
-                let DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input) = public_input
-                else {
-                    return Err(DwalletMPCError::PublicInputMismatch);
-                };
-                let encryption_key = bcs::from_bytes(encryption_key)?;
-                let encrypted_secret_key_share_message =
-                    bcs::from_bytes(encrypted_secret_key_share_message)?;
-
-                compute_dwallet_dkg::<Secp256R1AsyncDKGProtocol>(
-                    party_id,
-                    access_structure,
-                    session_id,
-                    advance_request,
-                    public_input.protocol_public_parameters.clone(),
-                    public_input,
-                    encryption_key,
-                    encrypted_secret_key_share_message,
-                    rng,
-                )
-            }
-            DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request) => {
-                let DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input) = public_input
-                else {
-                    return Err(DwalletMPCError::PublicInputMismatch);
-                };
-                let encryption_key = bcs::from_bytes(encryption_key)?;
-                let encrypted_secret_key_share_message =
-                    bcs::from_bytes(encrypted_secret_key_share_message)?;
-
-                compute_dwallet_dkg::<Curve25519AsyncDKGProtocol>(
-                    party_id,
-                    access_structure,
-                    session_id,
-                    advance_request,
-                    public_input.protocol_public_parameters.clone(),
-                    public_input,
-                    encryption_key,
-                    encrypted_secret_key_share_message,
-                    rng,
-                )
-            }
-            DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request) => {
-                let DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input) = public_input
-                else {
-                    return Err(DwalletMPCError::PublicInputMismatch);
-                };
-                let encryption_key = bcs::from_bytes(encryption_key)?;
-                let encrypted_secret_key_share_message =
-                    bcs::from_bytes(encrypted_secret_key_share_message)?;
-
-                compute_dwallet_dkg::<RistrettoAsyncDKGProtocol>(
-                    party_id,
-                    access_structure,
-                    session_id,
-                    advance_request,
-                    public_input.protocol_public_parameters.clone(),
-                    public_input,
-                    encryption_key,
-                    encrypted_secret_key_share_message,
-                    rng,
-                )
-            }
-        }
     }
 }
 

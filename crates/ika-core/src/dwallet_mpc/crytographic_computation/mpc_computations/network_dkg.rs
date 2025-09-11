@@ -25,9 +25,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData,
 };
 use group::{GroupElement, OsCsRng, PartyID, secp256k1};
-use homomorphic_encryption::{
-    AdditivelyHomomorphicDecryptionKeyShare, GroupsPublicParametersAccessors,
-};
+use homomorphic_encryption::GroupsPublicParametersAccessors;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};

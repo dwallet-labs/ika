@@ -237,6 +237,11 @@ pub type Curve25519AsyncEdDSAProtocol = twopc_mpc::curve25519::class_groups::EdD
 pub type RistrettoAsyncSchnorrkelSubstrateProtocol =
     twopc_mpc::ristretto::class_groups::SchnorrkelSubstrateProtocol;
 
+pub type Secp256K1AsyncDKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
+pub type Secp256R1AsyncDKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
+pub type Curve25519AsyncDKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
+pub type RistrettoAsyncDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
+
 /// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletSessionEvent`.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
 pub struct DWalletSessionEvent<E: DWalletSessionEventTrait> {
