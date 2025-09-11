@@ -127,7 +127,7 @@ pub fn create_dkg_output_by_curve_v2(
     }
 }
 
-fn centralized_dkg_output_v2<P: Protocol>(
+fn centralized_dkg_output_v2<P: twopc_mpc::dkg::Protocol>(
     protocol_pp: Vec<u8>,
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {

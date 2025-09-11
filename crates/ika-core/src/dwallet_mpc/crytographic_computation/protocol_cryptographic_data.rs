@@ -6,8 +6,7 @@ use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
 use crate::dwallet_mpc::presign::{PresignAdvanceRequestByCurve, PresignPublicInputByCurve};
 use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationSecp256k1Party, ReconfigurationV1toV2Secp256k1Party,
-    ReconfigurationV2Secp256k1Party,
+    ReconfigurationParty, ReconfigurationV1toV2Party, ReconfigurationV2Party,
 };
 use crate::dwallet_mpc::sign::SignParty;
 use crate::request_protocol_data::{
@@ -87,24 +86,23 @@ pub enum ProtocolCryptographicData {
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyV1Reconfiguration {
         data: NetworkEncryptionKeyReconfigurationData,
-        public_input: <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<ReconfigurationSecp256k1Party as mpc::Party>::Message>,
+        public_input: <ReconfigurationParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<ReconfigurationParty as mpc::Party>::Message>,
         decryption_key_shares:
             HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyV1ToV2Reconfiguration {
         data: NetworkEncryptionKeyV1ToV2ReconfigurationData,
-        public_input: <ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput,
-        advance_request:
-            AdvanceRequest<<ReconfigurationV1toV2Secp256k1Party as mpc::Party>::Message>,
+        public_input: <ReconfigurationV1toV2Party as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<ReconfigurationV1toV2Party as mpc::Party>::Message>,
         decryption_key_shares:
             HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },
     NetworkEncryptionKeyV2Reconfiguration {
         data: NetworkEncryptionKeyV2ReconfigurationData,
-        public_input: <ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<ReconfigurationV2Secp256k1Party as mpc::Party>::Message>,
+        public_input: <ReconfigurationV2Party as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<ReconfigurationV2Party as mpc::Party>::Message>,
         decryption_key_shares:
             HashMap<PartyID, <Secp256K1AsyncProtocol as Protocol>::DecryptionKeyShare>,
     },

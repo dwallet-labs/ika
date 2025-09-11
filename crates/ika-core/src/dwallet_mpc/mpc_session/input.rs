@@ -11,9 +11,9 @@ use crate::dwallet_mpc::network_dkg::{
 };
 use crate::dwallet_mpc::presign::PresignPublicInputByCurve;
 use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationPartyPublicInputGenerator, ReconfigurationSecp256k1Party,
-    ReconfigurationV1ToV2PartyPublicInputGenerator, ReconfigurationV1toV2Secp256k1Party,
-    ReconfigurationV2PartyPublicInputGenerator, ReconfigurationV2Secp256k1Party,
+    ReconfigurationParty, ReconfigurationPartyPublicInputGenerator,
+    ReconfigurationV1ToV2PartyPublicInputGenerator, ReconfigurationV1toV2Party,
+    ReconfigurationV2Party, ReconfigurationV2PartyPublicInputGenerator,
 };
 use crate::dwallet_mpc::sign::{sign_session_public_input, SignParty};
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -48,16 +48,12 @@ pub enum PublicInput {
     EncryptedShareVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     PartialSignatureVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
-    NetworkEncryptionKeyReconfigurationV1(
-        <ReconfigurationSecp256k1Party as mpc::Party>::PublicInput,
-    ),
+    NetworkEncryptionKeyReconfigurationV1(<ReconfigurationParty as mpc::Party>::PublicInput),
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyReconfigurationV1ToV2(
-        <ReconfigurationV1toV2Secp256k1Party as mpc::Party>::PublicInput,
+        <ReconfigurationV1toV2Party as mpc::Party>::PublicInput,
     ),
-    NetworkEncryptionKeyReconfigurationV2(
-        <ReconfigurationV2Secp256k1Party as mpc::Party>::PublicInput,
-    ),
+    NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Party as mpc::Party>::PublicInput),
     MakeDWalletUserSecretKeySharesPublic(
         twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
     ),
@@ -176,7 +172,7 @@ pub(crate) fn session_input_from_request(
                 network_keys.get_network_key_version(dwallet_network_encryption_key_id)?;
             if (key_version == 1) && protocol_config.network_encryption_key_version == Some(2) {
                 Ok((
-                    PublicInput::NetworkEncryptionKeyReconfigurationV1ToV2(<ReconfigurationV1toV2Secp256k1Party as ReconfigurationV1ToV2PartyPublicInputGenerator>::generate_public_input(
+                    PublicInput::NetworkEncryptionKeyReconfigurationV1ToV2(<ReconfigurationV1toV2Party as ReconfigurationV1ToV2PartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
                         network_keys
@@ -194,7 +190,7 @@ pub(crate) fn session_input_from_request(
                 ))
             } else if protocol_config.network_encryption_key_version == Some(2) {
                 Ok((
-                    PublicInput::NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Secp256k1Party as ReconfigurationV2PartyPublicInputGenerator>::generate_public_input(
+                    PublicInput::NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Party as ReconfigurationV2PartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
                         network_keys
@@ -204,7 +200,7 @@ pub(crate) fn session_input_from_request(
                         network_keys
                             .get_last_reconfiguration_output(
                                 dwallet_network_encryption_key_id,
-                            )?.ok_or(DwalletMPCError::InternalError("reconfiguration output missing".to_string()))?,
+                            ),
                     )?),
                     Some(bcs::to_bytes(
                         &class_groups_decryption_key
@@ -212,7 +208,7 @@ pub(crate) fn session_input_from_request(
                 ))
             } else {
                 Ok((
-                    PublicInput::NetworkEncryptionKeyReconfigurationV1(<ReconfigurationSecp256k1Party as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
+                    PublicInput::NetworkEncryptionKeyReconfigurationV1(<ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
                         network_keys.get_decryption_key_share_public_parameters(

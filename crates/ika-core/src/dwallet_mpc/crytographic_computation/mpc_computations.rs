@@ -15,8 +15,7 @@ use crate::dwallet_mpc::network_dkg::{
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationSecp256k1Party, ReconfigurationV1toV2Secp256k1Party,
-    ReconfigurationV2Secp256k1Party,
+    ReconfigurationParty, ReconfigurationV1toV2Party, ReconfigurationV2Party,
 };
 use crate::dwallet_mpc::sign::SignParty;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
@@ -291,14 +290,13 @@ impl ProtocolCryptographicData {
                 dwallet_network_encryption_key_id,
             } => match public_input {
                 PublicInput::NetworkEncryptionKeyReconfigurationV1(public_input) => {
-                    let advance_request_result =
-                        Party::<ReconfigurationSecp256k1Party>::ready_to_advance(
-                            party_id,
-                            access_structure,
-                            consensus_round,
-                            HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
-                            &serialized_messages_by_consensus_round,
-                        )?;
+                    let advance_request_result = Party::<ReconfigurationParty>::ready_to_advance(
+                        party_id,
+                        access_structure,
+                        consensus_round,
+                        HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
+                        &serialized_messages_by_consensus_round,
+                    )?;
 
                     let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
                         advance_request_result
@@ -318,7 +316,7 @@ impl ProtocolCryptographicData {
                 }
                 PublicInput::NetworkEncryptionKeyReconfigurationV1ToV2(public_input) => {
                     let advance_request_result =
-                        Party::<ReconfigurationV1toV2Secp256k1Party>::ready_to_advance(
+                        Party::<ReconfigurationV1toV2Party>::ready_to_advance(
                             party_id,
                             access_structure,
                             consensus_round,
@@ -343,14 +341,13 @@ impl ProtocolCryptographicData {
                     }
                 }
                 PublicInput::NetworkEncryptionKeyReconfigurationV2(public_input) => {
-                    let advance_request_result =
-                        Party::<ReconfigurationV2Secp256k1Party>::ready_to_advance(
-                            party_id,
-                            access_structure,
-                            consensus_round,
-                            HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
-                            &serialized_messages_by_consensus_round,
-                        )?;
+                    let advance_request_result = Party::<ReconfigurationV2Party>::ready_to_advance(
+                        party_id,
+                        access_structure,
+                        consensus_round,
+                        HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
+                        &serialized_messages_by_consensus_round,
+                    )?;
 
                     let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
                         advance_request_result
@@ -658,6 +655,14 @@ impl ProtocolCryptographicData {
                 bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
                 &mut rng,
             )?),
+            ProtocolCryptographicData::DWalletDKG {
+                public_input,
+                advance_request,
+                ..
+            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                public_input.to_string(),
+                advance_request.to_string(),
+            )),
             ProtocolCryptographicData::Presign {
                 public_input,
                 advance_request,
@@ -778,16 +783,15 @@ impl ProtocolCryptographicData {
                 decryption_key_shares,
                 ..
             } => {
-                let result =
-                    Party::<ReconfigurationSecp256k1Party>::advance_with_guaranteed_output(
-                        session_id,
-                        party_id,
-                        access_structure,
-                        advance_request,
-                        Some(decryption_key_shares.clone()),
-                        &public_input,
-                        &mut rng,
-                    )?;
+                let result = Party::<ReconfigurationParty>::advance_with_guaranteed_output(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    Some(decryption_key_shares.clone()),
+                    &public_input,
+                    &mut rng,
+                )?;
 
                 match result {
                     GuaranteedOutputDeliveryRoundResult::Advance { message } => {
@@ -817,16 +821,15 @@ impl ProtocolCryptographicData {
                 decryption_key_shares,
                 ..
             } => {
-                let result =
-                    Party::<ReconfigurationV1toV2Secp256k1Party>::advance_with_guaranteed_output(
-                        session_id,
-                        party_id,
-                        access_structure,
-                        advance_request,
-                        Some(decryption_key_shares.clone()),
-                        &public_input,
-                        &mut rng,
-                    )?;
+                let result = Party::<ReconfigurationV1toV2Party>::advance_with_guaranteed_output(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    Some(decryption_key_shares.clone()),
+                    &public_input,
+                    &mut rng,
+                )?;
 
                 match result {
                     GuaranteedOutputDeliveryRoundResult::Advance { message } => {
@@ -856,16 +859,15 @@ impl ProtocolCryptographicData {
                 decryption_key_shares,
                 ..
             } => {
-                let result =
-                    Party::<ReconfigurationV2Secp256k1Party>::advance_with_guaranteed_output(
-                        session_id,
-                        party_id,
-                        access_structure,
-                        advance_request,
-                        Some(decryption_key_shares.clone()),
-                        &public_input,
-                        &mut rng,
-                    )?;
+                let result = Party::<ReconfigurationV2Party>::advance_with_guaranteed_output(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    Some(decryption_key_shares.clone()),
+                    &public_input,
+                    &mut rng,
+                )?;
 
                 match result {
                     GuaranteedOutputDeliveryRoundResult::Advance { message } => {
