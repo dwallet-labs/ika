@@ -5,37 +5,38 @@
 //!
 //! It integrates both Presign parties (each representing a round in the Presign protocol).
 
-use std::collections::HashMap;
+use crate::dwallet_mpc::dwallet_dkg::{DWalletDKGPublicInputByCurve, RistrettoAsyncDKGProtocol};
 use commitment::CommitmentSizedNumber;
-use group::{CsRng, PartyID};
 use dwallet_mpc_types::dwallet_mpc::NetworkEncryptionKeyPublicDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, SerializedWrappedMPCPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput, VersionedNetworkEncryptionKeyPublicData,
 };
+use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
-use ika_types::messages_dwallet_mpc::{Curve25519AsyncProtocol, RistrettoAsyncProtocol, Secp256K1AsyncProtocol, Secp256R1AsyncProtocol, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{Curve25519AsyncEdDSAProtocol, RistrettoAsyncSchnorrkelSubstrateProtocol, Secp256K1AsyncECDSAProtocol, Secp256R1AsyncECDSAProtocol, SessionIdentifier};
 use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
 use mpc::{GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure};
+use std::collections::HashMap;
 use twopc_mpc::presign::Protocol;
-use crate::dwallet_mpc::dwallet_dkg::{DWalletDKGAdvanceRequestByCurve, DWalletDKGPublicInputByCurve, Secp256K1DWalletDKGParty};
+use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 
 pub(crate) type PresignParty<P: Protocol> = <P as Protocol>::PresignParty;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PresignPublicInputByCurve {
-    Secp256k1(<PresignParty<Secp256K1AsyncProtocol> as mpc::Party>::PublicInput),
-    Secp256r1(<PresignParty<Secp256R1AsyncProtocol> as mpc::Party>::PublicInput),
-    Curve25519(<PresignParty<Curve25519AsyncProtocol> as mpc::Party>::PublicInput),
-    Ristretto(<PresignParty<RistrettoAsyncProtocol> as mpc::Party>::PublicInput),
+    Secp256k1(<PresignParty<Secp256K1AsyncECDSAProtocol> as mpc::Party>::PublicInput),
+    Secp256r1(<PresignParty<Secp256R1AsyncECDSAProtocol> as mpc::Party>::PublicInput),
+    Curve25519(<PresignParty<Curve25519AsyncEdDSAProtocol> as mpc::Party>::PublicInput),
+    Ristretto(<PresignParty<RistrettoAsyncSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput),
 }
 
 pub(crate) enum PresignAdvanceRequestByCurve {
-    Secp256k1(AdvanceRequest<<PresignParty<Secp256K1AsyncProtocol> as mpc::Party>::Message>),
-    Secp256r1(AdvanceRequest<<PresignParty<Secp256R1AsyncProtocol> as mpc::Party>::Message>),
-    Curve25519(AdvanceRequest<<PresignParty<Curve25519AsyncProtocol> as mpc::Party>::Message>),
-    Ristretto(AdvanceRequest<<PresignParty<RistrettoAsyncProtocol> as mpc::Party>::Message>),
+    Secp256k1(AdvanceRequest<<PresignParty<Secp256K1AsyncECDSAProtocol> as mpc::Party>::Message>),
+    Secp256r1(AdvanceRequest<<PresignParty<Secp256R1AsyncECDSAProtocol> as mpc::Party>::Message>),
+    Curve25519(AdvanceRequest<<PresignParty<Curve25519AsyncEdDSAProtocol> as mpc::Party>::Message>),
+    Ristretto(AdvanceRequest<<PresignParty<RistrettoAsyncSchnorrkelSubstrateProtocol> as mpc::Party>::Message>),
 }
 
 impl PresignAdvanceRequestByCurve {
@@ -48,79 +49,51 @@ impl PresignAdvanceRequestByCurve {
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match curve {
             DWalletCurve::Secp256k1 => {
-                let advance_request_result = mpc::guaranteed_output_delivery::Party::<
-                    PresignParty<Secp256K1AsyncProtocol>,
-                >::ready_to_advance(
+                let advance_request = mpc_computations::try_ready_to_advance::<PresignParty<Secp256K1AsyncECDSAProtocol>>(
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::new(),
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
-                    return Ok(None);
-                };
-                PresignAdvanceRequestByCurve::Secp256k1(advance_request)
+                advance_request.map(PresignAdvanceRequestByCurve::Secp256k1)
             }
             DWalletCurve::Ristretto => {
-                let advance_request_result = mpc::guaranteed_output_delivery::Party::<
-                    PresignParty<RistrettoAsyncProtocol>,
-                >::ready_to_advance(
+                let advance_request = mpc_computations::try_ready_to_advance::<PresignParty<RistrettoAsyncSchnorrkelSubstrateProtocol>>(
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::new(),
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
-                    return Ok(None);
-                };
-                PresignAdvanceRequestByCurve::Ristretto(advance_request)
+                advance_request.map(PresignAdvanceRequestByCurve::Ristretto)
             }
             DWalletCurve::Curve25519 => {
-                let advance_request_result = mpc::guaranteed_output_delivery::Party::<
-                    PresignParty<Curve25519AsyncProtocol>,
-                >::ready_to_advance(
+                let advance_request = mpc_computations::try_ready_to_advance::<PresignParty<Curve25519AsyncEdDSAProtocol>>(
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::new(),
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
-                    return Ok(None);
-                };
-                PresignAdvanceRequestByCurve::Curve25519(advance_request)
+                advance_request.map(PresignAdvanceRequestByCurve::Curve25519)
             }
             DWalletCurve::Secp256r1 => {
-                let advance_request_result = mpc::guaranteed_output_delivery::Party::<
-                    PresignParty<Secp256R1AsyncProtocol>,
-                >::ready_to_advance(
+                let advance_request = mpc_computations::try_ready_to_advance::<PresignParty<Secp256R1AsyncECDSAProtocol>>(
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::new(),
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
-                    return Ok(None);
-                };
-                PresignAdvanceRequestByCurve::Secp256r1(advance_request)
+                advance_request.map(PresignAdvanceRequestByCurve::Secp256r1)
             }
         };
 
-        Ok(Some(advance_request))
+        Ok(advance_request)
     }
 
-    pub fn compute_mpc(
+    pub fn advance(
         self,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
@@ -129,7 +102,14 @@ impl PresignAdvanceRequestByCurve {
         encryption_key: &[u8],
         encrypted_secret_key_share_message: &[u8],
         rng: &mut impl CsRng,
-    ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {}
+    ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+        match self {
+            PresignAdvanceRequestByCurve::Secp256k1(_) => {}
+            PresignAdvanceRequestByCurve::Secp256r1(_) => {}
+            PresignAdvanceRequestByCurve::Curve25519(_) => {}
+            PresignAdvanceRequestByCurve::Ristretto(_) => {}
+        }
+    }
 }
 
 impl PresignPublicInputByCurve {
@@ -143,7 +123,7 @@ impl PresignPublicInputByCurve {
             DWalletCurve::Secp256k1 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
-                PresignPublicInputByCurve::Secp256k1(generate_presign_public_input::<Secp256K1AsyncProtocol>(
+                PresignPublicInputByCurve::Secp256k1(generate_presign_public_input::<Secp256K1AsyncECDSAProtocol>(
                     session_identifier,
                     protocol_public_parameters,
                     dwallet_public_output,
@@ -152,7 +132,7 @@ impl PresignPublicInputByCurve {
             DWalletCurve::Ristretto => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .ristretto_protocol_public_parameters()?;
-                PresignPublicInputByCurve::Ristretto(generate_presign_public_input::<RistrettoAsyncProtocol>(
+                PresignPublicInputByCurve::Ristretto(generate_presign_public_input::<RistrettoAsyncSchnorrkelSubstrateProtocol>(
                     session_identifier,
                     protocol_public_parameters,
                     dwallet_public_output,
@@ -161,7 +141,7 @@ impl PresignPublicInputByCurve {
             DWalletCurve::Curve25519 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .curve25519_protocol_public_parameters()?;
-                PresignPublicInputByCurve::Curve25519(generate_presign_public_input::<Curve25519AsyncProtocol>(
+                PresignPublicInputByCurve::Curve25519(generate_presign_public_input::<Curve25519AsyncEdDSAProtocol>(
                     session_identifier,
                     protocol_public_parameters,
                     dwallet_public_output,
@@ -170,7 +150,7 @@ impl PresignPublicInputByCurve {
             DWalletCurve::Secp256r1 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256r1_protocol_public_parameters()?;
-                PresignPublicInputByCurve::Secp256r1(generate_presign_public_input::<Secp256R1AsyncProtocol>(
+                PresignPublicInputByCurve::Secp256r1(generate_presign_public_input::<Secp256R1AsyncECDSAProtocol>(
                     session_identifier,
                     protocol_public_parameters,
                     dwallet_public_output,

@@ -3,16 +3,16 @@
 
 use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
 use crate::dwallet_mpc::dwallet_dkg::{
-    Curve25519AsyncDKGProtocol, DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty,
-    DWalletDKGPublicInputByCurve, DWalletImportedKeyVerificationParty, RistrettoAsyncDKGProtocol,
-    Secp256K1AsyncDKGProtocol, Secp256K1DWalletDKGParty, Secp256R1AsyncDKGProtocol,
-    compute_dwallet_dkg,
+    compute_dwallet_dkg, Curve25519AsyncDKGProtocol, DWalletDKGAdvanceRequestByCurve,
+    DWalletDKGFirstParty, DWalletDKGPublicInputByCurve, DWalletImportedKeyVerificationParty,
+    RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol, Secp256K1DWalletDKGParty,
+    Secp256R1AsyncDKGProtocol,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::network_dkg::{
-    DwalletMPCNetworkKeys, advance_network_dkg_v1, advance_network_dkg_v2,
+    advance_network_dkg_v1, advance_network_dkg_v2, DwalletMPCNetworkKeys,
 };
 use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
@@ -40,7 +40,7 @@ use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{Secp256K1AsyncECDSAProtocol, SessionIdentifier};
-use mpc::guaranteed_output_delivery::{Party, ReadyToAdvanceResult};
+use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResult};
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
@@ -925,5 +925,27 @@ fn parse_signature_from_sign_output(
             let signature: TaprootSignature = bcs::from_bytes(&public_output_value)?;
             Ok(signature.to_bytes().to_vec())
         }
+    }
+}
+
+fn try_ready_to_advance<P: mpc::Party>(
+    party_id: PartyID,
+    access_structure: &WeightedThresholdAccessStructure,
+    consensus_round: u64,
+    serialized_messages_by_consensus_round: &HashMap<u64, HashMap<PartyID, Vec<u8>>>,
+) -> DwalletMPCResult<Option<AdvanceRequest<<P>::Message>>> {
+    let advance_request_result =
+        mpc::guaranteed_output_delivery::Party::<P>::ready_to_advance(
+            party_id,
+            access_structure,
+            consensus_round,
+            HashMap::new(),
+            serialized_messages_by_consensus_round,
+        )
+        .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
+
+    match advance_request_result {
+        ReadyToAdvanceResult::ReadyToAdvance(advance_request) => Ok(Some(advance_request)),
+        _ => Ok(None),
     }
 }

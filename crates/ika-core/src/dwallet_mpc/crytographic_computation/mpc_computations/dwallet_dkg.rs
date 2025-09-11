@@ -5,7 +5,6 @@
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
-use crate::dwallet_mpc::mpc_session::SessionStatus;
 use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -15,7 +14,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
+use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, Party,
     WeightedThresholdAccessStructure,
@@ -24,6 +23,7 @@ use std::collections::HashMap;
 use std::fmt;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
@@ -61,7 +61,7 @@ impl DWalletDKGAdvanceRequestByCurve {
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match curve {
             DWalletCurve::Secp256k1 => {
-                let advance_request = try_ready_to_advance::<Secp256K1AsyncDKGProtocol>(
+                let advance_request = mpc_computations::try_ready_to_advance::<Secp256K1AsyncDKGProtocol>(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -70,7 +70,7 @@ impl DWalletDKGAdvanceRequestByCurve {
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG)
             }
             DWalletCurve::Secp256r1 => {
-                let advance_request = try_ready_to_advance::<Secp256R1AsyncDKGProtocol>(
+                let advance_request = mpc_computations::try_ready_to_advance::<Secp256R1AsyncDKGProtocol>(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -79,7 +79,7 @@ impl DWalletDKGAdvanceRequestByCurve {
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG)
             }
             DWalletCurve::Curve25519 => {
-                let advance_request = try_ready_to_advance::<Curve25519AsyncDKGProtocol>(
+                let advance_request = mpc_computations::try_ready_to_advance::<Curve25519AsyncDKGProtocol>(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -88,7 +88,7 @@ impl DWalletDKGAdvanceRequestByCurve {
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG)
             }
             DWalletCurve::Ristretto => {
-                let advance_request = try_ready_to_advance::<RistrettoAsyncDKGProtocol>(
+                let advance_request = mpc_computations::try_ready_to_advance::<RistrettoAsyncDKGProtocol>(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -453,28 +453,6 @@ impl DWalletDKGSecondPartyPublicInputGenerator for Secp256K1DWalletDKGParty {
                 Ok(input)
             }
         }
-    }
-}
-
-fn try_ready_to_advance<P: Protocol>(
-    party_id: PartyID,
-    access_structure: &WeightedThresholdAccessStructure,
-    consensus_round: u64,
-    serialized_messages_by_consensus_round: &HashMap<u64, HashMap<PartyID, Vec<u8>>>,
-) -> DwalletMPCResult<Option<AdvanceRequest<<P::DKGDecentralizedParty as Party>::Message>>> {
-    let advance_request_result =
-        mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::ready_to_advance(
-            party_id,
-            access_structure,
-            consensus_round,
-            HashMap::new(),
-            serialized_messages_by_consensus_round,
-        )
-        .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
-
-    match advance_request_result {
-        ReadyToAdvanceResult::ReadyToAdvance(advance_request) => Ok(Some(advance_request)),
-        _ => Ok(None),
     }
 }
 
