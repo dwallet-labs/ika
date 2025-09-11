@@ -10,7 +10,7 @@ ika_common = { local = "../ika_common" }
 
 [addresses]
 ika_dwallet_2pc_mpc = "0x0"
-ika = "0x36252c188e0a1c0c888735673824db9dd17c80b7fc5d3d811519753e67044a2d"
+ika = "0x417875d6c11fe5b93f184a1b667f6d1e82e6c7322bb54c4df21507657832ba3f"
 
 [dev-dependencies]
 

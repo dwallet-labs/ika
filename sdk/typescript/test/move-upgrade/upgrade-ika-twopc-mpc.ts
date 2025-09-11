@@ -10,7 +10,7 @@ const packagePath = '/root/code/dwallet-network/contracts/ika_dwallet_2pc_mpc';
 
 export async function updateIkaCoordinator() {
 	let signer = Ed25519Keypair.deriveKeypair(
-		'walnut near write remember shrimp clarify veteran drastic antique blade barrel flash',
+		'olive concert bargain feel shoot clean reward swim network castle aspect parade',
 	);
 	const { modules, dependencies, digest } = JSON.parse(
 		execSync(
@@ -23,17 +23,17 @@ export async function updateIkaCoordinator() {
 
 	const tx = new Transaction();
 	const protocolCap = tx.object(
-		'0x0764674039bfa734701bd4075fb51cffc0a0eec074afcceb5f47ae9f732b5a43',
+		'0x67cfbdf4d56c2bea5746dd523e2d8fabd885e3e090e8da5400b86f7c316430c3',
 	);
 	const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
 	const ikaClient = createTestIkaClient(suiClient);
 	await ikaClient.initialize();
-	const systemStateArg = tx.sharedObjectRef({
+	let systemStateArg = tx.sharedObjectRef({
 		objectId: ikaClient.ikaConfig.objects.ikaSystemObject.objectID,
 		initialSharedVersion: ikaClient.ikaConfig.objects.ikaSystemObject.initialSharedVersion,
 		mutable: true,
 	});
-	const coordinatorStateArg = tx.sharedObjectRef({
+	let coordinatorStateArg = tx.sharedObjectRef({
 		objectId: ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID,
 		initialSharedVersion: ikaClient.ikaConfig.objects.ikaDWalletCoordinator.initialSharedVersion,
 		mutable: true,
@@ -74,17 +74,6 @@ export async function updateIkaCoordinator() {
 		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::finalize_upgrade`,
 		arguments: [systemStateArg, upgradeApprover],
 	});
-
-	let verifiedProtocolCap = tx.moveCall({
-		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::verify_protocol_cap`,
-		arguments: [systemStateArg, protocolCap],
-	});
-
-	tx.moveCall({
-		target: `${ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::try_migrate_by_cap`,
-		arguments: [coordinatorStateArg, verifiedProtocolCap],
-	});
-
 	const client = new SuiClient({ url: getFullnodeUrl('localnet') });
 	const result = await client.signAndExecuteTransaction({
 		signer,
@@ -92,8 +81,39 @@ export async function updateIkaCoordinator() {
 		options: {
 			showEffects: true,
 			showObjectChanges: true,
+
 		},
 	});
 
 	console.log(result);
+	systemStateArg = tx.sharedObjectRef({
+		objectId: ikaClient.ikaConfig.objects.ikaSystemObject.objectID,
+		initialSharedVersion: ikaClient.ikaConfig.objects.ikaSystemObject.initialSharedVersion,
+		mutable: true,
+	});
+
+	coordinatorStateArg = tx.sharedObjectRef({
+		objectId: ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID,
+		initialSharedVersion: ikaClient.ikaConfig.objects.ikaDWalletCoordinator.initialSharedVersion,
+		mutable: true,
+	});
+
+	const migrateTx = new Transaction();
+	let verifiedProtocolCap = migrateTx.moveCall({
+		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::verify_protocol_cap`,
+		arguments: [systemStateArg, protocolCap],
+	});
+
+	migrateTx.moveCall({
+		target: `${result.effects.created.at(0).reference.objectId}::coordinator::try_migrate_by_cap`,
+		arguments: [coordinatorStateArg, verifiedProtocolCap],
+	});
+	const migrateResult = await client.signAndExecuteTransaction({
+		signer,
+		transaction: tx,
+		options: {
+			showEffects: true,
+			showObjectChanges: true,
+		},
+	});
 }
