@@ -14,6 +14,7 @@ on:
 
 env:
   GH_PRIVATE_REPO_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
+  GITHUB_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   CLOUDSDK_CORE_PROJECT: common-449616
   DOCKER_TAG: "us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:${{ github.event.inputs.imageTag }}"
