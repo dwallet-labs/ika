@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 1;
-const MAX_PROTOCOL_VERSION: u64 = 2;
+const MAX_PROTOCOL_VERSION: u64 = 1;
 
 // Record history of protocol version allocations here:
 //
@@ -477,12 +477,6 @@ impl ProtocolConfig {
         for cur in 2..=version.0 {
             match cur {
                 1 => unreachable!(),
-                2 => {
-                    info!(
-                        "protocol config version have been successfully upgraded to v2"
-                    );
-                    cfg.network_encryption_key_version = Some(2)
-                }
                 // Use this template when making changes:
                 //
                 //     // modify an existing constant.
