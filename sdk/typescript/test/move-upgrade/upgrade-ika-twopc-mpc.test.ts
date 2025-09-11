@@ -3,9 +3,9 @@ import { bcs } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
+import { describe, it } from 'vitest';
 
 import { IkaClient } from '../../src';
-import { describe, it } from 'vitest';
 import { createTestIkaClient, delay } from '../helpers/test-utils';
 
 export async function deployUpgradedPackage(
@@ -121,7 +121,9 @@ export async function migrateCoordinator(
 
 describe('Upgrade twopc_mpc Move package', () => {
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
-		const signer = Ed25519Keypair.deriveKeypair('nature carry layer home plunge alter long space struggle ethics siege clerk');
+		const signer = Ed25519Keypair.deriveKeypair(
+			'nature carry layer home plunge alter long space struggle ethics siege clerk',
+		);
 		const protocolCapID = '0xd7eef0703c67aebdc1651ba5a3e21881c8272626030f3324e79e1378c690d0af';
 		const packagePath = '/root/code/dwallet-network/contracts/ika_dwallet_2pc_mpc';
 
@@ -130,7 +132,13 @@ describe('Upgrade twopc_mpc Move package', () => {
 
 		await ikaClient.initialize();
 
-		const upgradedPackageID = await deployUpgradedPackage(suiClient, signer, packagePath, ikaClient, protocolCapID);
+		const upgradedPackageID = await deployUpgradedPackage(
+			suiClient,
+			signer,
+			packagePath,
+			ikaClient,
+			protocolCapID,
+		);
 		await delay(5); // wait for the upgrade to be fully processed
 		await migrateCoordinator(suiClient, signer, ikaClient, protocolCapID, upgradedPackageID);
 	});
