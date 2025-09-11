@@ -123,12 +123,12 @@ describe('Upgrade twopc_mpc Move package', () => {
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
 		const signer = Ed25519Keypair.deriveKeypair('nature carry layer home plunge alter long space struggle ethics siege clerk');
 		const protocolCapID = '0xd7eef0703c67aebdc1651ba5a3e21881c8272626030f3324e79e1378c690d0af';
+		const packagePath = '/root/code/dwallet-network/contracts/ika_dwallet_2pc_mpc';
 
 		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
 		const ikaClient = createTestIkaClient(suiClient);
-		await ikaClient.initialize();
 
-		const packagePath = '/root/code/dwallet-network/contracts/ika_dwallet_2pc_mpc';
+		await ikaClient.initialize();
 
 		const upgradedPackageID = await deployUpgradedPackage(suiClient, signer, packagePath, ikaClient, protocolCapID);
 		await delay(5); // wait for the upgrade to be fully processed
