@@ -21,6 +21,7 @@ WORKDIR ${WORKDIR}/ika
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 COPY contracts contracts
+COPY deployed_contracts deployed_contracts
 RUN git config --global url."https://x-access-token:$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"
 RUN cargo build ${CARGO_BUILD_FLAGS} --profile release --bin ika-node
 
