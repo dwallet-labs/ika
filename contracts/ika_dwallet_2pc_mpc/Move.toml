@@ -3,14 +3,14 @@ name = "ika_dwallet_2pc_mpc"
 edition = "2024"
 license = "BSD-3-Clause-Clear"
 authors = ["dWallet Labs, Ltd. <dev@dwalletlabs.com>"]
-published-at = "0x017d21a12af8a07f04fcb70609561c73bf8dccc97b4e228f15c304d23dc7c704"
+published-at = "0x0474150a1cdfde54a73b220c63b25deeb06bbbfe34f99ae8ae6dbeead2d4d09e"
 
 [dependencies]
 ika = { local = "../ika" }
 ika_common = { local = "../ika_common" }
 
 [addresses]
-ika_dwallet_2pc_mpc = "0x017d21a12af8a07f04fcb70609561c73bf8dccc97b4e228f15c304d23dc7c704"
+ika_dwallet_2pc_mpc = "0x0474150a1cdfde54a73b220c63b25deeb06bbbfe34f99ae8ae6dbeead2d4d09e"
 
 [dev-dependencies]
 

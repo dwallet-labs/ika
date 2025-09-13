@@ -9,5 +9,5 @@ ika_dwallet_2pc_mpc = { local = "../../../contracts/ika_dwallet_2pc_mpc" }
 
 [addresses]
 ika_btc_multisig = "0x0"
-ika = "0x1519776790584d156e128d4f4251501094a6e28aa784b7d71a06a39c344889bf"
-ika_dwallet_2pc_mpc = "0x017d21a12af8a07f04fcb70609561c73bf8dccc97b4e228f15c304d23dc7c704"
+ika = "0x877ac493d6cea5721490cb0cf7f994ebba5c7035ce9263deb7a6e9ed81cf72a1"
+ika_dwallet_2pc_mpc = "0x0474150a1cdfde54a73b220c63b25deeb06bbbfe34f99ae8ae6dbeead2d4d09e"

@@ -25,6 +25,7 @@ import {
 	validateAddress,
 } from '@/lib/bitcoin-utils';
 
+import { SignRequestEvent } from '../../../../../sdk/typescript/dist/esm/generated/ika_dwallet_2pc_mpc/coordinator_inner';
 import * as EventWrapperModule from '../generated/ika_btc_multisig/event_wrapper';
 import * as MultisigModule from '../generated/ika_btc_multisig/multisig';
 import * as MultisigEventsModule from '../generated/ika_btc_multisig/multisig_events';
@@ -41,7 +42,7 @@ export const useMultisig = () => {
 			Curve.SECP256K1,
 		);
 	}, []);
-	const MULTISIG_PACKAGE = '0x849e9ecb3edf79eeca9471d97717d2b150de7c7cfde7db44f0a1db2f8be2ccfc';
+	const MULTISIG_PACKAGE = '0x31055e1145f91fa6c119fc1637ab7ba4f27d745a9bb58e61b4ce1f1785bb63b8';
 
 	const executeTransaction = async (tx: Transaction) => {
 		const signedTransaction = await signTransaction({
@@ -68,153 +69,226 @@ export const useMultisig = () => {
 		return res2;
 	};
 
-	const createMultisig = async () => {
+	const createMultisig = async (
+		params: {
+			members: string[];
+			approvalThreshold: number;
+			rejectionThreshold: number;
+			expirationDuration: number;
+		},
+		onStateUpdate?: (
+			stateId: string,
+			status: 'pending' | 'in_progress' | 'completed' | 'error',
+			error?: string,
+		) => void,
+	) => {
 		if (!ikaClient) {
 			throw new Error('IKA client not initialized');
 		}
 
-		const userShareEncryptionKeys = await getUserShareEncryptionKeys();
+		try {
+			onStateUpdate?.('encryption_key', 'in_progress');
+			const userShareEncryptionKeys = await getUserShareEncryptionKeys();
 
-		const tx = new Transaction();
+			const activeEncryptionKey = await ikaClient
+				.getActiveEncryptionKey(userShareEncryptionKeys.getSuiAddress())
+				.catch((_) => {
+					return null;
+				});
 
-		const emptyIkaCoin = tx.moveCall({
-			target: `0x2::coin::zero`,
-			arguments: [],
-			typeArguments: [`${ikaClient.ikaConfig.packages.ikaPackage}::ika::IKA`],
-		});
+			if (!activeEncryptionKey) {
+				console.log('No active encryption key found, registering one');
 
-		tx.moveCall({
-			target: `${MULTISIG_PACKAGE}::multisig::new_multisig`,
-			arguments: [
-				tx.object(ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID),
-				emptyIkaCoin,
-				tx.splitCoins(tx.gas, [1_000_000_000]),
-				tx.pure.id((await ikaClient.getLatestNetworkEncryptionKey()).id),
-				tx.pure.vector('address', [
-					'0xa5b1611d756c1b2723df1b97782cacfd10c8f94df571935db87b7f54ef653d66',
-					'0x0c96b48925580099ddb1e9398ed51f3e8504b7793ffd7cee7b7f5b2c8c0e9271',
-					'0x2c1507b83627174a0b561cc3747511a29dcca2d6839897e9ebb3367e9c7699b5',
-				]),
-				tx.pure.u64(3),
-				tx.pure.u64(2),
-				tx.pure.u64(1000000000000000),
-			],
-		});
+				const registertx = new Transaction();
+				const ikaregistertx = new IkaTransaction({
+					ikaClient,
+					transaction: registertx as any,
+					userShareEncryptionKeys,
+				});
+				await ikaregistertx.registerEncryptionKey({
+					curve: Curve.SECP256K1,
+				});
 
-		const createMultisigResult = await executeTransaction(tx);
+				await executeTransaction(registertx);
+			}
 
-		const startDKGFirstRoundEvents = createMultisigResult.events
-			?.map((event) =>
-				event.type.includes('DWalletDKGFirstRoundRequestEvent') &&
-				event.type.includes('DWalletSessionEvent')
-					? SessionsManagerModule.DWalletSessionEvent(
-							CoordinatorInnerModule.DWalletDKGFirstRoundRequestEvent,
-						).fromBase64(event.bcs)
+			onStateUpdate?.('encryption_key', 'completed');
+
+			onStateUpdate?.('create_multisig', 'in_progress');
+			const tx = new Transaction();
+
+			const emptyIkaCoin = tx.moveCall({
+				target: `0x2::coin::zero`,
+				arguments: [],
+				typeArguments: [`${ikaClient.ikaConfig.packages.ikaPackage}::ika::IKA`],
+			});
+
+			tx.moveCall({
+				target: `${MULTISIG_PACKAGE}::multisig::new_multisig`,
+				arguments: [
+					tx.object(ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID),
+					emptyIkaCoin,
+					tx.splitCoins(tx.gas, [1_000_000_000]),
+					tx.pure.id((await ikaClient.getLatestNetworkEncryptionKey()).id),
+					tx.pure.vector('address', params.members),
+					tx.pure.u64(params.members.length),
+					tx.pure.u64(params.approvalThreshold),
+					tx.pure.u64(params.expirationDuration),
+				],
+			});
+
+			const createMultisigResult = await executeTransaction(tx);
+			onStateUpdate?.('create_multisig', 'completed');
+
+			const startDKGFirstRoundEvents = createMultisigResult.events
+				?.map((event) =>
+					event.type.includes('DWalletDKGFirstRoundRequestEvent') &&
+					event.type.includes('DWalletSessionEvent')
+						? SessionsManagerModule.DWalletSessionEvent(
+								CoordinatorInnerModule.DWalletDKGFirstRoundRequestEvent,
+							).fromBase64(event.bcs)
+						: null,
+				)
+				.filter(Boolean);
+
+			if (!startDKGFirstRoundEvents?.[0]) {
+				throw new Error('Failed to get DKG first round request event');
+			}
+
+			const multisigCreatedEvent = createMultisigResult.events?.find((event) =>
+				event.type.includes('MultisigCreated')
+					? EventWrapperModule.Event(MultisigEventsModule.MultisigCreated).fromBase64(event.bcs)
 					: null,
-			)
-			.filter(Boolean);
-
-		if (!startDKGFirstRoundEvents?.[0]) {
-			throw new Error('Failed to get DKG first round request event');
-		}
-
-		const multisigCreatedEvent = createMultisigResult.events?.find((event) =>
-			event.type.includes('MultisigCreated')
-				? EventWrapperModule.Event(MultisigEventsModule.MultisigCreated).fromBase64(event.bcs)
-				: null,
-		);
-
-		const dwalletID = startDKGFirstRoundEvents?.[0]?.event_data.dwallet_id;
-
-		const multisigID = (
-			(multisigCreatedEvent?.parsedJson as any)
-				.pos0 as typeof MultisigEventsModule.MultisigCreated.$inferType
-		).multisig_id;
-
-		const dWallet = await ikaClient.getDWalletInParticularState(
-			dwalletID,
-			'AwaitingUserDKGVerificationInitiation',
-		);
-
-		const dkgSecondRoundInput = await prepareDKGSecondRoundAsync(
-			ikaClient,
-			dWallet,
-			userShareEncryptionKeys,
-		);
-
-		const secondRoundTx = new Transaction();
-
-		secondRoundTx.moveCall({
-			target: `${MULTISIG_PACKAGE}::multisig::multisig_dkg_second_round`,
-			arguments: [
-				secondRoundTx.object(multisigID),
-				secondRoundTx.object(ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID),
-				secondRoundTx.pure.vector('u8', dkgSecondRoundInput.userDKGMessage),
-				secondRoundTx.pure.vector('u8', dkgSecondRoundInput.encryptedUserShareAndProof),
-				secondRoundTx.pure.vector('u8', dkgSecondRoundInput.userPublicOutput),
-			],
-		});
-
-		const secondRoundResult = await executeTransaction(secondRoundTx);
-
-		const dkgSecondRoundRequestEvent = secondRoundResult.events?.find((event) => {
-			return (
-				event.type.includes('DWalletDKGSecondRoundRequestEvent') &&
-				event.type.includes('DWalletSessionEvent')
 			);
-		});
 
-		const dkgSecondRoundEvent = SessionsManagerModule.DWalletSessionEvent(
-			CoordinatorInnerModule.DWalletDKGSecondRoundRequestEvent,
-		).fromBase64(dkgSecondRoundRequestEvent?.bcs as string);
+			const dwalletID = startDKGFirstRoundEvents?.[0]?.event_data.dwallet_id;
 
-		const awaitingKeyHolderSignatureDWallet = await ikaClient.getDWalletInParticularState(
-			dwalletID!,
-			'AwaitingKeyHolderSignature',
-		);
+			const multisigID = (
+				(multisigCreatedEvent?.parsedJson as any)
+					.pos0 as typeof MultisigEventsModule.MultisigCreated.$inferType
+			).multisig_id;
 
-		const acceptAndShareTx = new Transaction();
+			onStateUpdate?.('dkg_second_round', 'in_progress');
+			const dWallet = await ikaClient.getDWalletInParticularState(
+				dwalletID,
+				'AwaitingUserDKGVerificationInitiation',
+			);
 
-		acceptAndShareTx.moveCall({
-			target: `${MULTISIG_PACKAGE}::multisig::multisig_accept_and_share`,
-			arguments: [
-				acceptAndShareTx.object(multisigID),
-				acceptAndShareTx.object(ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID),
-				acceptAndShareTx.pure.id(dkgSecondRoundEvent.event_data.encrypted_user_secret_key_share_id),
-				acceptAndShareTx.pure.vector(
-					'u8',
-					await userShareEncryptionKeys.getUserOutputSignature(
-						awaitingKeyHolderSignatureDWallet,
-						dkgSecondRoundInput.userPublicOutput,
+			const dkgSecondRoundInput = await prepareDKGSecondRoundAsync(
+				ikaClient,
+				dWallet,
+				userShareEncryptionKeys,
+			);
+
+			const secondRoundTx = new Transaction();
+
+			secondRoundTx.moveCall({
+				target: `${MULTISIG_PACKAGE}::multisig::multisig_dkg_second_round`,
+				arguments: [
+					secondRoundTx.object(multisigID),
+					secondRoundTx.object(ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID),
+					secondRoundTx.pure.vector('u8', dkgSecondRoundInput.userDKGMessage),
+					secondRoundTx.pure.vector('u8', dkgSecondRoundInput.encryptedUserShareAndProof),
+					secondRoundTx.pure.vector('u8', dkgSecondRoundInput.userPublicOutput),
+				],
+			});
+
+			const secondRoundResult = await executeTransaction(secondRoundTx);
+			onStateUpdate?.('dkg_second_round', 'completed');
+
+			const dkgSecondRoundRequestEvent = secondRoundResult.events?.find((event) => {
+				return (
+					event.type.includes('DWalletDKGSecondRoundRequestEvent') &&
+					event.type.includes('DWalletSessionEvent')
+				);
+			});
+
+			const dkgSecondRoundEvent = SessionsManagerModule.DWalletSessionEvent(
+				CoordinatorInnerModule.DWalletDKGSecondRoundRequestEvent,
+			).fromBase64(dkgSecondRoundRequestEvent?.bcs as string);
+
+			onStateUpdate?.('accept_and_share', 'in_progress');
+			const awaitingKeyHolderSignatureDWallet = await ikaClient.getDWalletInParticularState(
+				dwalletID!,
+				'AwaitingKeyHolderSignature',
+			);
+
+			const acceptAndShareTx = new Transaction();
+
+			acceptAndShareTx.moveCall({
+				target: `${MULTISIG_PACKAGE}::multisig::multisig_accept_and_share`,
+				arguments: [
+					acceptAndShareTx.object(multisigID),
+					acceptAndShareTx.object(ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID),
+					acceptAndShareTx.pure.id(
+						dkgSecondRoundEvent.event_data.encrypted_user_secret_key_share_id,
 					),
+					acceptAndShareTx.pure.vector(
+						'u8',
+						await userShareEncryptionKeys.getUserOutputSignature(
+							awaitingKeyHolderSignatureDWallet,
+							dkgSecondRoundInput.userPublicOutput,
+						),
+					),
+					acceptAndShareTx.pure.vector('u8', dkgSecondRoundInput.userSecretKeyShare),
+				],
+			});
+
+			await executeTransaction(acceptAndShareTx);
+			onStateUpdate?.('accept_and_share', 'completed');
+
+			onStateUpdate?.('generate_address', 'in_progress');
+			const publickey = await publicKeyFromDWalletOutput(
+				Uint8Array.from(
+					awaitingKeyHolderSignatureDWallet.state.AwaitingKeyHolderSignature
+						?.public_output as number[],
 				),
-				acceptAndShareTx.pure.vector('u8', dkgSecondRoundInput.userSecretKeyShare),
-			],
-		});
+			);
 
-		await executeTransaction(acceptAndShareTx);
+			const bitcoinAddress = await BitcoinUtils.getAddressFromPublicKey(publickey);
+			onStateUpdate?.('generate_address', 'completed');
 
-		const publickey = await publicKeyFromDWalletOutput(
-			Uint8Array.from(
-				awaitingKeyHolderSignatureDWallet.state.AwaitingKeyHolderSignature
-					?.public_output as number[],
-			),
-		);
+			console.log('=== MULTISIG CREATION RESULT ===');
+			console.log('Multisig ID:', multisigID);
+			console.log('DWallet ID:', dwalletID);
+			console.log('Bitcoin Address:', bitcoinAddress);
+			console.log('Address validation in multisig:', BitcoinUtils.validateAddress(bitcoinAddress));
+			console.log('=================================');
 
-		const bitcoinAddress = await BitcoinUtils.getAddressFromPublicKey(publickey);
-
-		console.log('=== MULTISIG CREATION RESULT ===');
-		console.log('Multisig ID:', multisigID);
-		console.log('DWallet ID:', dwalletID);
-		console.log('Bitcoin Address:', bitcoinAddress);
-		console.log('Address validation in multisig:', BitcoinUtils.validateAddress(bitcoinAddress));
-		console.log('=================================');
-
-		return {
-			multisigID,
-			dwalletID,
-			bitcoinAddress,
-		};
+			return {
+				multisigID,
+				dwalletID,
+				bitcoinAddress,
+			};
+		} catch (error) {
+			// Update all states to error if something goes wrong
+			onStateUpdate?.(
+				'encryption_key',
+				'error',
+				error instanceof Error ? error.message : 'Unknown error',
+			);
+			onStateUpdate?.(
+				'create_multisig',
+				'error',
+				error instanceof Error ? error.message : 'Unknown error',
+			);
+			onStateUpdate?.(
+				'dkg_second_round',
+				'error',
+				error instanceof Error ? error.message : 'Unknown error',
+			);
+			onStateUpdate?.(
+				'accept_and_share',
+				'error',
+				error instanceof Error ? error.message : 'Unknown error',
+			);
+			onStateUpdate?.(
+				'generate_address',
+				'error',
+				error instanceof Error ? error.message : 'Unknown error',
+			);
+			throw error;
+		}
 	};
 
 	const fetchMultisig = async (multisigID: string) => {
@@ -296,7 +370,6 @@ export const useMultisig = () => {
 			throw new Error('IKA client not initialized');
 		}
 
-		// Validate Bitcoin addresses
 		if (!validateAddress(toAddress)) {
 			throw new Error('Invalid recipient Bitcoin address');
 		}
@@ -520,6 +593,46 @@ export const useMultisig = () => {
 		return result;
 	};
 
+	const fetchSingleRequest = async (multisigID: string, requestId: number) => {
+		if (!ikaClient) {
+			throw new Error('IKA client not initialized');
+		}
+
+		try {
+			const multisig = await suiClient
+				.getObject({
+					id: multisigID,
+					options: {
+						showBcs: true,
+					},
+				})
+				.then((obj) => MultisigModule.Multisig.fromBase64(objResToBcs(obj)));
+
+			const requestList = multisig.requests.id.id;
+			let requestDynamicFields = await suiClient.getDynamicFields({
+				parentId: requestList,
+			});
+
+			const targetRequest = requestDynamicFields.data.find(
+				(df) => df.name.value === requestId.toString(),
+			);
+			if (!targetRequest) {
+				throw new Error(`Request ${requestId} not found`);
+			}
+
+			const request = await suiClient.getObject({
+				id: targetRequest.objectId,
+				options: {
+					showBcs: true,
+				},
+			});
+
+			return DynamicField(RequestModule.Request).fromBase64(objResToBcs(request)).value;
+		} catch (error) {
+			throw new Error(`Failed to fetch request ${requestId}: ${error}`);
+		}
+	};
+
 	const executeRequest = async (multisigID: string, requestId: number) => {
 		if (!ikaClient) {
 			throw new Error('IKA client not initialized');
@@ -538,6 +651,54 @@ export const useMultisig = () => {
 		});
 
 		const result = await executeTransaction(tx);
+
+		const signEvent = result.events?.find((event) => {
+			return event.type.includes('SignRequestEvent');
+		});
+
+		const parsedSignEvent = SessionsManagerModule.DWalletSessionEvent(SignRequestEvent).fromBase64(
+			signEvent?.bcs as string,
+		);
+
+		const sign = await ikaClient.getSignInParticularState(
+			parsedSignEvent.event_data.sign_id,
+			'Completed',
+		);
+
+		// Extract the signature and broadcast to Bitcoin network
+		if (sign.state.Completed?.signature) {
+			try {
+				const signature = Uint8Array.from(sign.state.Completed.signature as number[]);
+
+				// Get the original request to extract the PSBT
+				const request = await fetchSingleRequest(multisigID, requestId);
+				if (request && request.request_type.Transaction) {
+					// Convert the transaction data (which is stored as a vector<u8> in Move)
+					const psbtHex = request.request_type.Transaction as unknown as Buffer;
+
+					// Create the signed transaction by applying the signature to the PSBT
+					const signedTxHex = await BitcoinUtils.applySignatureToPSBT(psbtHex, signature);
+
+					// Broadcast the transaction to the Bitcoin network
+					const txid = await BitcoinUtils.broadcastTransaction(signedTxHex);
+
+					console.log('=== BITCOIN TRANSACTION BROADCAST ===');
+					console.log('Transaction ID:', txid);
+					console.log('Explorer URL:', `https://mempool.space/testnet/tx/${txid}`);
+					console.log('=====================================');
+
+					return {
+						...result,
+						bitcoinTxid: txid,
+						explorerUrl: `https://mempool.space/testnet/tx/${txid}`,
+					};
+				}
+			} catch (error) {
+				console.error('Failed to broadcast Bitcoin transaction:', error);
+				// Don't throw here - the signing was successful, broadcasting is additional
+			}
+		}
+
 		return result;
 	};
 

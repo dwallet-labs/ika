@@ -32,21 +32,21 @@ export function IkaClientProvider({ children, suiClient }: IkaClientProviderProp
 						objects: {
 							ikaDWalletCoordinator: {
 								initialSharedVersion: 0,
-								objectID: '0xf846b4ab160ee09c0e7c651e01cdf06a2775a476735292b49165f1ce0bc1b909',
+								objectID: '0x78324f81d37437e3aa4e5486a8d666121ffb0644f7ae1db4f295a1a542a87905',
 							},
 							ikaSystemObject: {
 								initialSharedVersion: 0,
-								objectID: '0x9b0208aa6bdf3105a94d7062b577fddf6fd0e28913f821547beeca6ddae4dd7a',
+								objectID: '0xcfecb9bd8b5b8753ded313b93e7c8aa14e9f1eb752c6914fa0e717b6859a113a',
 							},
 						},
 						packages: {
 							ikaCommonPackage:
-								'0x43730a07bd232acf53845950a8da594dc9c1a00ee4fd2e284d0a580ba4a1a9cb',
+								'0xfbdfdb133c9de288aa3c68261d46dc0a6ba9e72fff7ffd67c6febf6c0f5627b3',
 							ikaDwallet2pcMpcPackage:
-								'0x017d21a12af8a07f04fcb70609561c73bf8dccc97b4e228f15c304d23dc7c704',
-							ikaPackage: '0x1519776790584d156e128d4f4251501094a6e28aa784b7d71a06a39c344889bf',
+								'0x0474150a1cdfde54a73b220c63b25deeb06bbbfe34f99ae8ae6dbeead2d4d09e',
+							ikaPackage: '0x877ac493d6cea5721490cb0cf7f994ebba5c7035ce9263deb7a6e9ed81cf72a1',
 							ikaSystemPackage:
-								'0xccc67ba9f28cc5f09b103f87ddf230516d9dd60f96e48ea01b0eae44f9646ee2',
+								'0x16416a19f097fce5bdb4b11af0bd7a7f36236b4fdf3e31785231e3ed83d9cd3f',
 						},
 					},
 				});

@@ -13,7 +13,13 @@ import {
 import React, { useState } from 'react';
 
 import { BitcoinFaucet } from '@/components/BitcoinFaucet';
+import { CreateMultisigModal, MultisigParams } from '@/components/CreateMultisigModal';
 import { CreateTransaction } from '@/components/CreateTransaction';
+import {
+	TransactionState,
+	TransactionStates,
+	useTransactionStates,
+} from '@/components/TransactionStates';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -45,6 +51,40 @@ export function MultisigDashboard() {
 	const [error, setError] = useState<string | null>(null);
 	const [showCreateTransaction, setShowCreateTransaction] = useState<string | null>(null);
 	const [showFaucet, setShowFaucet] = useState(false);
+	const [showCreateModal, setShowCreateModal] = useState(false);
+
+	// Transaction states for multisig creation
+	const {
+		states: transactionStates,
+		setStateStatus,
+		resetStates,
+	} = useTransactionStates([
+		{
+			id: 'encryption_key',
+			title: 'Register Encryption Key',
+			description: 'Setting up user encryption keys for secure communication',
+		},
+		{
+			id: 'create_multisig',
+			title: 'Create Multisig Contract',
+			description: 'Deploying the multisig wallet contract on the blockchain',
+		},
+		{
+			id: 'dkg_second_round',
+			title: 'Distributed Key Generation',
+			description: 'Generating shared cryptographic keys across participants',
+		},
+		{
+			id: 'accept_and_share',
+			title: 'Accept & Share Keys',
+			description: 'Finalizing key distribution and accepting the generated keys',
+		},
+		{
+			id: 'generate_address',
+			title: 'Generate Bitcoin Address',
+			description: 'Creating the Bitcoin address from the distributed public key',
+		},
+	]);
 
 	// Fetch multisig state
 	const [fetchMultisigId, setFetchMultisigId] = useState('');
@@ -72,12 +112,13 @@ export function MultisigDashboard() {
 		rejectionThreshold: number;
 	} | null>(null);
 
-	const handleCreateMultisig = async () => {
+	const handleCreateMultisig = async (params: MultisigParams) => {
 		try {
 			setIsCreating(true);
 			setError(null);
+			resetStates();
 
-			const result = await createMultisig();
+			const result = await createMultisig(params, setStateStatus);
 
 			console.log('=== DASHBOARD RECEIVED RESULT ===');
 			console.log('Result multisigID:', result.multisigID);
@@ -94,18 +135,15 @@ export function MultisigDashboard() {
 				id: result.multisigID,
 				dwalletID: result.dwalletID,
 				bitcoinAddress: result.bitcoinAddress,
-				participants: [
-					'0xa5b1611d756c1b2723df1b97782cacfd10c8f94df571935db87b7f54ef653d66',
-					'0x0c96b48925580099ddb1e9398ed51f3e8504b7793ffd7cee7b7f5b2c8c0e9271',
-					'0x2c1507b83627174a0b561cc3747511a29dcca2d6839897e9ebb3367e9c7699b5',
-				],
-				threshold: 2,
-				totalParticipants: 3,
+				participants: params.members,
+				threshold: params.approvalThreshold,
+				totalParticipants: params.members.length,
 				status: 'active',
 				createdAt: new Date(),
 			};
 
 			setMultisigWallets((prev) => [newWallet, ...prev]);
+			setShowCreateModal(false);
 		} catch (err) {
 			console.error('Failed to create multisig:', err);
 			setError(err instanceof Error ? err.message : 'Failed to create multisig wallet');
@@ -341,14 +379,15 @@ export function MultisigDashboard() {
 							Create New Multisig Wallet
 						</CardTitle>
 						<CardDescription>
-							Create a new 2-of-3 multisignature wallet with distributed key generation
+							Create a new multisignature wallet with customizable parameters and distributed key
+							generation
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
 						<div className="flex items-center gap-4 mb-4">
 							<div className="flex items-center gap-2">
 								<Users className="w-4 h-4 text-muted-foreground" />
-								<span className="text-sm text-muted-foreground">2 of 3 required</span>
+								<span className="text-sm text-muted-foreground">Customizable thresholds</span>
 							</div>
 							<div className="flex items-center gap-2">
 								<Wallet className="w-4 h-4 text-muted-foreground" />
@@ -364,24 +403,24 @@ export function MultisigDashboard() {
 						)}
 
 						<Button
-							onClick={handleCreateMultisig}
+							onClick={() => setShowCreateModal(true)}
 							disabled={isCreating}
 							className="w-full sm:w-auto"
 						>
-							{isCreating ? (
-								<>
-									<div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-									Creating Multisig...
-								</>
-							) : (
-								<>
-									<Plus className="w-4 h-4 mr-2" />
-									Create Multisig Wallet
-								</>
-							)}
+							<Plus className="w-4 h-4 mr-2" />
+							Create Multisig Wallet
 						</Button>
 					</CardContent>
 				</Card>
+
+				{/* Transaction States Display */}
+				{isCreating && (
+					<TransactionStates
+						states={transactionStates}
+						title="Multisig Creation Progress"
+						className="mb-8"
+					/>
+				)}
 
 				{/* Fetch Existing Multisig Card */}
 				<Card className="mb-8">
@@ -638,7 +677,7 @@ export function MultisigDashboard() {
 								<p className="text-muted-foreground text-center mb-4">
 									Create your first multisignature wallet to get started
 								</p>
-								<Button onClick={handleCreateMultisig} disabled={isCreating}>
+								<Button onClick={() => setShowCreateModal(true)} disabled={isCreating}>
 									<Plus className="w-4 h-4 mr-2" />
 									Create Your First Wallet
 								</Button>
@@ -816,6 +855,14 @@ export function MultisigDashboard() {
 
 			{/* Bitcoin Faucet Modal */}
 			{showFaucet && <BitcoinFaucet onClose={() => setShowFaucet(false)} />}
+
+			{/* Create Multisig Modal */}
+			<CreateMultisigModal
+				isOpen={showCreateModal}
+				onClose={() => setShowCreateModal(false)}
+				onSubmit={handleCreateMultisig}
+				isCreating={isCreating}
+			/>
 		</div>
 	);
 }

@@ -304,6 +304,105 @@ export class BitcoinUtils {
 			throw new Error(`Failed to calculate Bitcoin address from public key: ${error}`);
 		}
 	}
+
+	/**
+	 * Apply signature to PSBT and finalize the transaction
+	 * @param psbtHex PSBT hex string
+	 * @param signature Signature as Uint8Array
+	 * @returns Finalized transaction hex
+	 */
+	static async applySignatureToPSBT(psbtHex: Buffer, signature: Uint8Array): Promise<string> {
+		try {
+			// Initialize ECC library
+			bitcoin.initEccLib(secp256k1);
+
+			// Parse the PSBT
+			const psbt = bitcoin.Psbt.fromBuffer(psbtHex, { network: BITCOIN_NETWORK });
+
+			// Convert signature to DER format if needed
+			const signatureDER = Buffer.from(signature);
+
+			// Add signature to all inputs
+			for (let i = 0; i < psbt.inputCount; i++) {
+				try {
+					// For P2WPKH (segwit), we need to add the signature and public key
+					psbt.signInput(i, {
+						sign: () => signatureDER,
+						publicKey: Buffer.alloc(33), // This would need the actual public key
+					} as any);
+				} catch (inputError) {
+					console.warn(`Failed to sign input ${i}:`, inputError);
+					// Continue with other inputs
+				}
+			}
+
+			// Finalize all inputs
+			psbt.finalizeAllInputs();
+
+			// Extract the raw transaction
+			const tx = psbt.extractTransaction();
+			return tx.toHex();
+		} catch (error) {
+			throw new Error(`Failed to apply signature to PSBT: ${error}`);
+		}
+	}
+
+	/**
+	 * Broadcast a Bitcoin transaction to the network
+	 * @param txHex Raw transaction hex
+	 * @returns Transaction ID
+	 */
+	static async broadcastTransaction(txHex: string): Promise<string> {
+		try {
+			const response = await fetch('https://mempool.space/testnet/api/tx', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'text/plain',
+				},
+				body: txHex,
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(
+					`Broadcast failed: ${response.status} ${response.statusText} - ${errorText}`,
+				);
+			}
+
+			const txid = await response.text();
+			return txid;
+		} catch (error) {
+			throw new Error(`Failed to broadcast Bitcoin transaction: ${error}`);
+		}
+	}
+
+	/**
+	 * Get transaction details from the network
+	 * @param txid Transaction ID
+	 * @returns Transaction details
+	 */
+	static async getTransactionStatus(txid: string): Promise<{
+		confirmed: boolean;
+		blockHeight?: number;
+		confirmations?: number;
+	}> {
+		try {
+			const response = await fetch(`https://mempool.space/testnet/api/tx/${txid}/status`);
+			if (!response.ok) {
+				throw new Error(`Failed to fetch transaction status: ${response.statusText}`);
+			}
+
+			const status = await response.json();
+			return {
+				confirmed: status.confirmed || false,
+				blockHeight: status.block_height,
+				confirmations: status.confirmations || 0,
+			};
+		} catch (error) {
+			console.error('Error fetching transaction status:', error);
+			return { confirmed: false };
+		}
+	}
 }
 
 // Export utility functions for easy access

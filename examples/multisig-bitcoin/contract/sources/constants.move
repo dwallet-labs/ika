@@ -33,5 +33,5 @@ public(package) macro fun signature_algorithm(): u32 {
 /// Uses the standard Bitcoin hash scheme (double SHA256) which is the standard hash scheme for Bitcoin.
 /// This hash scheme provides the cryptographic foundation for all multisig operations.
 public(package) macro fun hash_scheme(): u32 {
-  2
+  1
 }
