@@ -423,7 +423,7 @@ impl DWalletMPCMetrics {
             .with_label_values(&[
                 &protocol_data.to_string(),
                 &protocol_data.curve(),
-                "native", // @todo: we need to find a way to remove this hardcoded value
+                "0",
                 &protocol_data.hash_scheme(),
                 &protocol_data.signature_algorithm(),
             ])
@@ -444,7 +444,7 @@ impl DWalletMPCMetrics {
             .with_label_values(&[
                 &protocol_data.to_string(),
                 &protocol_data.curve(),
-                "native", // @todo: we need to find a way to remove this hardcoded value
+                "0",
                 &protocol_data.hash_scheme(),
                 &protocol_data.signature_algorithm(),
             ])
@@ -455,7 +455,7 @@ impl DWalletMPCMetrics {
                 .with_label_values(&[
                     &protocol_data.to_string(),
                     &protocol_data.curve(),
-                    "native", // @todo: we need to find a way to remove this hardcoded value
+                    "0",
                     &protocol_data.hash_scheme(),
                     &protocol_data.signature_algorithm(),
                 ])
@@ -471,7 +471,7 @@ impl DWalletMPCMetrics {
                 .with_label_values(&[
                     &protocol_data.to_string(),
                     &protocol_data.curve(),
-                    "native", // @todo: we need to find a way to remove this hardcoded value
+                    "0",
                     &protocol_data.hash_scheme(),
                     &protocol_data.signature_algorithm(),
                 ])
@@ -481,7 +481,7 @@ impl DWalletMPCMetrics {
                 .with_label_values(&[
                     &protocol_data.to_string(),
                     &protocol_data.curve(),
-                    "native", // @todo: we need to find a way to remove this hardcoded value
+                    "0",
                     &protocol_data.hash_scheme(),
                     &protocol_data.signature_algorithm(),
                 ])
