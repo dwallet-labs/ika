@@ -17,12 +17,12 @@ use class_groups::{
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
-    DWalletMPCNetworkKeyScheme, SerializedWrappedMPCPublicOutput,
-    VersionedCentralizedDKGPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedDwalletUserSecretShare,
-    VersionedEncryptedUserShare, VersionedImportedDWalletPublicOutput,
-    VersionedImportedDwalletOutgoingMessage, VersionedNetworkDkgOutput, VersionedPresignOutput,
-    VersionedPublicKeyShareAndProof, VersionedSignOutput, VersionedUserSignedMessage,
+    DWalletCurve, SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
+    VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
+    VersionedImportedDWalletPublicOutput, VersionedImportedDwalletOutgoingMessage,
+    VersionedNetworkDkgOutput, VersionedPresignOutput, VersionedPublicKeyShareAndProof,
+    VersionedSignOutput, VersionedUserSignedMessage,
 };
 use group::{CyclicGroupElement, GroupElement, HashType, OsCsRng, Samplable, secp256k1};
 use homomorphic_encryption::{
@@ -40,6 +40,7 @@ use twopc_mpc::class_groups::{
     DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyOutput,
     DKGDecentralizedPartyVersionedOutput,
 };
+use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::VerifyingKey;
 use twopc_mpc::ecdsa::sign::verify_signature;
@@ -75,10 +76,7 @@ pub struct CentralizedDKGWasmResult {
 pub fn network_dkg_public_output_to_protocol_pp_inner(
     network_dkg_public_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
-    let public_parameters = protocol_public_parameters_by_key_scheme(
-        network_dkg_public_output,
-        DWalletMPCNetworkKeyScheme::Secp256k1 as u32,
-    )?;
+    let public_parameters = protocol_public_parameters(network_dkg_public_output)?;
     Ok(bcs::to_bytes(&public_parameters)?)
 }
 
@@ -475,9 +473,8 @@ pub fn create_imported_dwallet_centralized_step_inner(
     }
 }
 
-fn protocol_public_parameters_by_key_scheme(
+fn protocol_public_parameters(
     network_dkg_public_output: SerializedWrappedMPCPublicOutput,
-    key_scheme: u32,
 ) -> anyhow::Result<ProtocolPublicParameters> {
     let network_dkg_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(&network_dkg_public_output)?;
@@ -485,54 +482,52 @@ fn protocol_public_parameters_by_key_scheme(
     match &network_dkg_public_output {
         // TODO (#1473): Add support for V2 network keys.
         VersionedNetworkDkgOutput::V1(network_dkg_public_output) => {
-            let key_scheme = DWalletMPCNetworkKeyScheme::try_from(key_scheme)?;
-            match key_scheme {
-                DWalletMPCNetworkKeyScheme::Secp256k1 => {
-                    let network_dkg_public_output: <Secp256k1Party as mpc::Party>::PublicOutput =
-                        bcs::from_bytes(network_dkg_public_output)?;
-                    let encryption_scheme_public_parameters = network_dkg_public_output
-                        .default_encryption_scheme_public_parameters::<secp256k1::GroupElement>(
-                    )?;
+            let network_dkg_public_output: <Secp256k1Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(network_dkg_public_output)?;
+            let encryption_scheme_public_parameters = network_dkg_public_output
+                .default_encryption_scheme_public_parameters::<secp256k1::GroupElement>(
+            )?;
 
-                    let setup_parameters =
-                        class_groups::setup::SetupParameters::<
-                            SECP256K1_SCALAR_LIMBS,
-                            SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                            SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                            group::secp256k1::scalar::PublicParameters,
-                        >::derive_from_plaintext_parameters::<group::secp256k1::Scalar>(
-                            group::secp256k1::scalar::PublicParameters::default(),
-                            DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-                        )?;
+            let setup_parameters = class_groups::setup::SetupParameters::<
+                SECP256K1_SCALAR_LIMBS,
+                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                group::secp256k1::scalar::PublicParameters,
+            >::derive_from_plaintext_parameters::<group::secp256k1::Scalar>(
+                group::secp256k1::scalar::PublicParameters::default(),
+                DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
+            )?;
 
-                    let neutral_group_value =
-                        group::secp256k1::GroupElement::neutral_from_public_parameters(
-                            &group::secp256k1::group_element::PublicParameters::default(),
-                        )
-                        .map_err(twopc_mpc::Error::from)?
-                        .value();
-                    let neutral_ciphertext_value = ::class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(&setup_parameters.ciphertext_space_public_parameters())?.value();
+            let neutral_group_value =
+                group::secp256k1::GroupElement::neutral_from_public_parameters(
+                    &group::secp256k1::group_element::PublicParameters::default(),
+                )
+                .map_err(twopc_mpc::Error::from)?
+                .value();
+            let neutral_ciphertext_value =
+                ::class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
+                    &setup_parameters.ciphertext_space_public_parameters(),
+                )?
+                .value();
 
-                    let protocol_public_parameters = ProtocolPublicParameters::new::<
-                        { secp256k1::SCALAR_LIMBS },
-                        { SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                        { SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                        secp256k1::GroupElement,
-                    >(
-                        neutral_group_value,
-                        neutral_group_value,
-                        neutral_ciphertext_value,
-                        neutral_ciphertext_value,
-                        encryption_scheme_public_parameters.clone(),
-                    );
-                    Ok(protocol_public_parameters)
-                }
-                DWalletMPCNetworkKeyScheme::Ristretto => {
-                    // To add support here, we need to either make this
-                    // function generic or have an enum over `ProtocolPublicParameters`.
-                    todo!()
-                }
-            }
+            let protocol_public_parameters = ProtocolPublicParameters::new::<
+                { secp256k1::SCALAR_LIMBS },
+                { SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                { SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                secp256k1::GroupElement,
+            >(
+                neutral_group_value,
+                neutral_group_value,
+                neutral_ciphertext_value,
+                neutral_ciphertext_value,
+                encryption_scheme_public_parameters.clone(),
+            );
+            Ok(protocol_public_parameters)
+        }
+        VersionedNetworkDkgOutput::V2(network_dkg_public_output) => {
+            let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(network_dkg_public_output)?;
+            Ok(network_dkg_public_output.secp256k1_protocol_public_parameters()?)
         }
     }
 }

@@ -214,7 +214,6 @@ impl DWalletSession {
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
                 authority=?self.validator_name,
-                computation_type=?self.computation_type,
                 status =? self.status,
                 "Received our output from consensus, marking session as computation completed",
             );
@@ -304,6 +303,7 @@ impl TryFrom<&DWalletCheckpointMessageKind> for SessionComputationType {
             | DWalletCheckpointMessageKind::RespondDWalletPresign(_)
             | DWalletCheckpointMessageKind::RespondDWalletSign(_)
             | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletDKGOutput(_)
             | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(_) => {
                 Ok(SessionComputationType::MPC {
                     messages_by_consensus_round: HashMap::new(),

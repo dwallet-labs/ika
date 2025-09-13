@@ -1,6 +1,6 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::request_protocol_data::ProtocolData;
-use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, SignatureAlgorithm};
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureScheme};
 use group::HashType;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use std::cmp::Ordering;
@@ -24,9 +24,9 @@ pub struct DWalletSessionRequest {
 #[display("{name}")]
 pub struct DWalletSessionRequestMetricData {
     name: String,
-    curve: Option<DWalletMPCNetworkKeyScheme>,
+    curve: Option<DWalletCurve>,
     hash_scheme: Option<HashType>,
-    signature_algorithm: Option<SignatureAlgorithm>,
+    signature_algorithm: Option<DWalletSignatureScheme>,
 }
 
 impl PartialOrd<Self> for DWalletSessionRequest {
@@ -78,6 +78,12 @@ impl DWalletSessionRequestMetricData {
 impl From<&ProtocolData> for DWalletSessionRequestMetricData {
     fn from(protocol_specific_data: &ProtocolData) -> Self {
         match protocol_specific_data {
+            ProtocolData::DWalletDKG { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve.clone()),
+                hash_scheme: None,
+                signature_algorithm: None,
+            },
             ProtocolData::ImportedKeyVerification { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve.clone()),
@@ -118,7 +124,7 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
             },
             ProtocolData::NetworkEncryptionKeyDkg { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.key_scheme.clone()),
+                curve: None,
                 hash_scheme: None,
                 signature_algorithm: None,
             },
@@ -181,6 +187,12 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: None,
                 signature_algorithm: None,
             },
+            ProtocolCryptographicData::DWalletDKG { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve.clone()),
+                hash_scheme: None,
+                signature_algorithm: None,
+            },
             ProtocolCryptographicData::Presign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve.clone()),
@@ -193,10 +205,11 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: Some(data.hash_scheme.clone()),
                 signature_algorithm: Some(data.signature_algorithm.clone()),
             },
-            ProtocolCryptographicData::NetworkEncryptionKeyDkg { data, .. } => {
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 { data, .. } => {
+                // TODO (#1508): Remove the curve label completely from protocols the curve label is irrelevant for
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
-                    curve: Some(data.key_scheme.clone()),
+                    curve: None,
                     hash_scheme: None,
                     signature_algorithm: None,
                 }
@@ -236,6 +249,15 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
             ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
+                    // TODO (#1491): Set curve, hash scheme & signature algorithm metrics fields for each protocol
+                    curve: None,
+                    hash_scheme: None,
+                    signature_algorithm: None,
+                }
+            }
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgV2 { .. } => {
+                DWalletSessionRequestMetricData {
+                    name: "NetworkEncryptionKeyDkgV2".to_string(),
                     // TODO (#1491): Set curve, hash scheme & signature algorithm metrics fields for each protocol
                     curve: None,
                     hash_scheme: None,

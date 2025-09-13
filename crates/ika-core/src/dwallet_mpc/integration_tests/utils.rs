@@ -7,7 +7,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::{DWalletMPCNetworkKeyScheme, SignatureAlgorithm};
+use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use dwallet_rng::RootSeed;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
@@ -607,9 +607,7 @@ pub(crate) fn send_configurable_start_network_dkg_event(
                     ),
                     session_sequence_number,
                     protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
-                        data: NetworkEncryptionKeyDkgData {
-                            key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
-                        },
+                        data: NetworkEncryptionKeyDkgData {},
                         dwallet_network_encryption_key_id: key_id,
                     },
                     epoch: 1,
@@ -641,7 +639,7 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
                 session_sequence_number,
                 protocol_data: ProtocolData::DKGFirst {
                     data: DKGFirstData {
-                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        curve: DWalletCurve::Secp256k1,
                     },
                     dwallet_id,
                     dwallet_network_encryption_key_id,
@@ -680,7 +678,7 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
                 session_sequence_number,
                 protocol_data: ProtocolData::DKGSecond {
                     data: DKGSecondData {
-                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        curve: DWalletCurve::Secp256k1,
                         encrypted_centralized_secret_share_and_proof:
                             encrypted_centralized_secret_share_and_proof.clone(),
                         encryption_key: encryption_key.clone(),

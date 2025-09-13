@@ -4,7 +4,11 @@ import { Transaction } from '@mysten/sui/transactions';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { Hash, SignatureAlgorithm, ZeroTrustDWallet } from '../../src/client/types';
-import { createCompleteDWallet, testPresign } from '../helpers/dwallet-test-helpers';
+import {
+	createCompleteDWallet,
+	createCompleteDWalletV2,
+	testPresign,
+} from '../helpers/dwallet-test-helpers';
 import { createIndividualTestSetup, getSharedTestSetup } from '../helpers/shared-test-setup';
 import {
 	createEmptyTestIkaToken,
@@ -99,6 +103,106 @@ describe('DWallet Signing', () => {
 		expect(activeDWallet.state.$kind).toBe('Active');
 		expect(activeDWallet.id.id).toMatch(/^0x[a-f0-9]+$/);
 
+		// Create presign
+		const presignRequestEvent = await testPresign(
+			ikaClient,
+			suiClient,
+			activeDWallet,
+			SignatureAlgorithm.ECDSA,
+			signerAddress,
+			testName,
+		);
+
+		expect(presignRequestEvent).toBeDefined();
+		expect(presignRequestEvent.event_data.presign_id).toBeDefined();
+
+		// Wait for presign to complete
+		const presignObject = await retryUntil(
+			() =>
+				ikaClient.getPresignInParticularState(
+					presignRequestEvent.event_data.presign_id,
+					'Completed',
+				),
+			(presign) => presign !== null,
+			30,
+			2000,
+		);
+
+		expect(presignObject).toBeDefined();
+		expect((presignObject as any).state.$kind).toBe('Completed');
+
+		// Sign a message and validate result
+		const message = createTestMessage(testName);
+		const signingResult = await testSignWithResult(
+			ikaClient,
+			suiClient,
+			activeDWallet,
+			userShareEncryptionKeys,
+			presignObject,
+			encryptedUserSecretKeyShare,
+			message,
+			Hash.KECCAK256,
+			SignatureAlgorithm.ECDSA,
+			testName,
+		);
+
+		// Validate transaction succeeded
+		expect(signingResult).toBeDefined();
+		expect(signingResult.digest).toBeDefined();
+		expect(signingResult.digest).toMatch(/^[a-zA-Z0-9]+$/); // Base58-like transaction digest
+		expect(signingResult.digest.length).toBeGreaterThan(20); // Transaction digest should be substantial
+		expect(signingResult.digest.length).toBeLessThan(100); // But not unreasonably long
+
+		// Validate transaction execution metadata
+		expect(signingResult.confirmedLocalExecution).toBe(false);
+
+		// Validate events were emitted - signing should generate multiple events
+		expect(signingResult.events).toBeDefined();
+		expect(signingResult.events!.length).toBeGreaterThan(0);
+
+		// Check for specific signing-related events
+		const hasSigningEvents = signingResult.events!.some(
+			(event) =>
+				event.type.includes('Sign') ||
+				event.type.includes('Message') ||
+				event.type.includes('Signature'),
+		);
+		expect(hasSigningEvents).toBe(true);
+
+		// Validate BCS data is present (indicates proper encoding)
+		const hasBcsData = signingResult.events!.some((event) => event.bcs && event.bcs.length > 0);
+		expect(hasBcsData).toBe(true);
+
+		// Verify DWallet is still active after signing
+		const dWalletAfterSigning = await ikaClient.getDWalletInParticularState(
+			activeDWallet.id.id,
+			'Active',
+		);
+		expect(dWalletAfterSigning).toBeDefined();
+		expect(dWalletAfterSigning.state.$kind).toBe('Active');
+	});
+
+	it('should create a V2 DWallet and sign a message', async () => {
+		const testName = 'dwallet-sign-test';
+
+		// Use shared clients but create individual DWallet to avoid gas conflicts
+		const { suiClient, ikaClient } = await createIndividualTestSetup(testName);
+		const {
+			dWallet: activeDWallet,
+			encryptedUserSecretKeyShare,
+			userShareEncryptionKeys,
+			signerAddress,
+		} = await createCompleteDWalletV2(ikaClient, suiClient, testName);
+
+		expect(activeDWallet).toBeDefined();
+		expect(activeDWallet.state.$kind).toBe('Active');
+		expect(activeDWallet.id.id).toMatch(/^0x[a-f0-9]+$/);
+		// log the dwallet output in base 64
+		console.log(
+			'DWallet Output (base64):',
+			Buffer.from(activeDWallet.state.Active.public_output).toString('base64'),
+		);
+		// return;
 		// Create presign
 		const presignRequestEvent = await testPresign(
 			ikaClient,

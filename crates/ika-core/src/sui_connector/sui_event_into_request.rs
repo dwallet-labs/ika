@@ -1,15 +1,15 @@
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
-    dwallet_dkg_first_protocol_data, dwallet_dkg_second_protocol_data,
+    dwallet_dkg_first_protocol_data, dwallet_dkg_protocol_data, dwallet_dkg_second_protocol_data,
     encrypted_share_verification_protocol_data, imported_key_verification_protocol_data,
     make_dwallet_user_secret_key_shares_public_protocol_data,
     network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data,
     partial_signature_verification_protocol_data, presign_protocol_data, sign_protocol_data,
 };
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
+use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    DWalletDKGFirstRoundRequestEvent, DWalletDKGSecondRoundRequestEvent,
+    DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
     DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
     EncryptedShareVerificationRequestEvent, FutureSignRequestEvent, IkaNetworkConfig,
@@ -68,6 +68,11 @@ pub fn sui_event_into_session_request(
             deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(&contents, pulled)?,
             pulled,
         )?
+    } else if event_type == DWalletSessionEvent::<DWalletDKGRequestEvent>::type_(packages_config) {
+        dwallet_dkg_session_request(
+            deserialize_event_contents::<DWalletDKGRequestEvent>(&contents, pulled)?,
+            pulled,
+        )?
     } else if event_type
         == DWalletSessionEvent::<DWalletDKGSecondRoundRequestEvent>::type_(packages_config)
     {
@@ -96,11 +101,7 @@ pub fn sui_event_into_session_request(
         let deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
-        network_dkg_session_request(
-            deserialized_event,
-            DWalletMPCNetworkKeyScheme::Secp256k1,
-            pulled,
-        )?
+        network_dkg_session_request(deserialized_event, pulled)?
     } else if event_type
         == DWalletSessionEvent::<DWalletEncryptionKeyReconfigurationRequestEvent>::type_(
             packages_config,
@@ -157,6 +158,22 @@ fn dwallet_imported_key_verification_request_event_session_request(
         protocol_data: imported_key_verification_protocol_data(
             deserialized_event.event_data.clone(),
         )?,
+        epoch: deserialized_event.epoch,
+        requires_network_key_data: true,
+        requires_next_active_committee: false,
+        pulled,
+    })
+}
+
+fn dwallet_dkg_session_request(
+    deserialized_event: DWalletSessionEvent<DWalletDKGRequestEvent>,
+    pulled: bool,
+) -> DwalletMPCResult<DWalletSessionRequest> {
+    Ok(DWalletSessionRequest {
+        session_type: deserialized_event.session_type,
+        session_identifier: deserialized_event.session_identifier_digest(),
+        session_sequence_number: deserialized_event.session_sequence_number,
+        protocol_data: dwallet_dkg_protocol_data(deserialized_event.event_data.clone())?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,
@@ -248,21 +265,6 @@ fn get_verify_partial_signatures_session_request(
 
 fn network_dkg_session_request(
     deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
-    key_scheme: DWalletMPCNetworkKeyScheme,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    match key_scheme {
-        DWalletMPCNetworkKeyScheme::Secp256k1 => {
-            network_dkg_secp256k1_session_request(deserialized_event, pulled)
-        }
-        DWalletMPCNetworkKeyScheme::Ristretto => {
-            network_dkg_ristretto_session_request(deserialized_event, pulled)
-        }
-    }
-}
-
-fn network_dkg_secp256k1_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
@@ -270,26 +272,6 @@ fn network_dkg_secp256k1_session_request(
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
         protocol_data: network_encryption_key_dkg_protocol_data(
-            DWalletMPCNetworkKeyScheme::Secp256k1,
-            deserialized_event.event_data.clone(),
-        )?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: false,
-        requires_next_active_committee: false,
-        pulled,
-    })
-}
-
-fn network_dkg_ristretto_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent>,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: network_encryption_key_dkg_protocol_data(
-            DWalletMPCNetworkKeyScheme::Ristretto,
             deserialized_event.event_data.clone(),
         )?,
         epoch: deserialized_event.epoch,

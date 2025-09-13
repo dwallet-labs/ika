@@ -51,6 +51,7 @@ pub const PRESIGN_PROTOCOL_FLAG: u32 = 5;
 pub const SIGN_PROTOCOL_FLAG: u32 = 6;
 pub const FUTURE_SIGN_PROTOCOL_FLAG: u32 = 7;
 pub const SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG: u32 = 8;
+pub const DWALLET_DKG_PROTOCOL_FLAG: u32 = 9;
 
 /// This is a wrapper type for the [`SuiEvent`] type that is being used to write it to the local RocksDB.
 /// This is needed because the [`SuiEvent`] cannot be directly written to the RocksDB.
@@ -309,6 +310,17 @@ impl DWalletSessionEventTrait for EncryptedShareVerificationRequestEvent {
     }
 }
 
+impl DWalletSessionEventTrait for DWalletDKGRequestEvent {
+    fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
+        StructTag {
+            address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
+            name: ident_str!("DWalletDKGRequestEvent").to_owned(),
+            module: DWALLET_2PC_MPC_COORDINATOR_INNER_MODULE_NAME.to_owned(),
+            type_params: vec![],
+        }
+    }
+}
+
 /// Rust representation of the Move `FutureSignRequestEvent` Event.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
 pub struct FutureSignRequestEvent {
@@ -479,6 +491,23 @@ pub struct DWalletDKGFirstRoundRequestEvent {
     pub dwallet_id: ObjectID,
     /// The `DWalletCap` object's ID associated with the `DWallet`.
     pub dwallet_cap_id: ObjectID,
+    pub dwallet_network_encryption_key_id: ObjectID,
+    pub curve: u32,
+}
+
+/// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletDKGFirstRoundRequestEvent`.
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
+pub struct DWalletDKGRequestEvent {
+    pub encrypted_user_secret_key_share_id: ObjectID,
+    pub dwallet_id: ObjectID,
+    pub centralized_public_key_share_and_proof: Vec<u8>,
+    pub dwallet_cap_id: ObjectID,
+    pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
+    pub encryption_key: Vec<u8>,
+    pub encryption_key_id: ObjectID,
+    pub encryption_key_address: SuiAddress,
+    pub user_public_output: Vec<u8>,
+    pub signer_public_key: Vec<u8>,
     pub dwallet_network_encryption_key_id: ObjectID,
     pub curve: u32,
 }
