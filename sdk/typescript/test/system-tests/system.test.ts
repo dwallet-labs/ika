@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
+import { KubeConfig } from '@kubernetes/client-node';
 import { execa } from 'execa';
 import { describe, it } from 'vitest';
 
@@ -12,28 +12,8 @@ import {
 	waitForEpochSwitch,
 } from '../helpers/test-utils';
 import { createConfigMaps } from './config-map';
-import { NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
-import { createNetworkServices } from './network-service';
-import { createPods, createValidatorPod, killValidatorPod } from './pods';
-
-const createNamespace = async (kc: KubeConfig, namespaceName: string) => {
-	const k8sApi = kc.makeApiClient(CoreV1Api);
-	const namespaceBody: V1Namespace = {
-		metadata: {
-			name: namespaceName,
-		},
-	};
-	await k8sApi.createNamespace({ body: namespaceBody });
-};
-
-async function deployIkaNetwork() {
-	const kc = new KubeConfig();
-	kc.loadFromDefault();
-	await createNamespace(kc, NAMESPACE_NAME);
-	await createConfigMaps(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM));
-	await createPods(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM));
-	await createNetworkServices(kc, NAMESPACE_NAME);
-}
+import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
+import { createValidatorPod, killValidatorPod } from './pods';
 
 describe('system tests', () => {
 	it('deploy the ika network from the current directory to the local kubernetes cluster', async () => {
