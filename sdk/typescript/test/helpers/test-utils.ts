@@ -368,7 +368,7 @@ export function delay(seconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
 }
 
-export async function runSignFullFlow(
+export async function runSignFullFlowWithV1Dwallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	testName: string,

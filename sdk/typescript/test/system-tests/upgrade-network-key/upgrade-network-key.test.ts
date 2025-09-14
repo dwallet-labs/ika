@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
 	createTestIkaClient,
-	createTestSuiClient, delay,
+	createTestSuiClient, delay, runSignFullFlowWithV1Dwallet,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
 import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from '../globals';
@@ -58,6 +58,9 @@ describe('system tests', () => {
 		networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.publicOutputID);
 		const newNetworkKeyVersion = network_key_version(networkKeyBytes);
 		expect(newNetworkKeyVersion).toBe(2);
+		console.log('Network key version is V2, verifying v1 dWallet full flow still works');
+		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, `v1-dwallet-sign-full-flow-test`);
+		console.log('V1 dWallet full flow works, upgrading the Move contracts to V2');
 
 		// console.log('Ika network deployed, waiting for epoch switch');
 	}, 3_600_000);
