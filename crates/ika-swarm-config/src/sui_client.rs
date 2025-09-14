@@ -485,7 +485,7 @@ pub async fn ika_system_initialize(
     let supported_curves = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![0u32])?))?;
     let supported_hashes = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![vec![
         0u32, 1u32, 2u32, 3u32, 4u32,
-    ]])?))?; // @todo: maybe we can rename this variable better
+    ]])?))?;
     let zero = ptb.input(CallArg::Pure(bcs::to_bytes(&0u32)?))?;
     let zero_option = ptb.input(CallArg::Pure(bcs::to_bytes(&Some(0u32))?))?;
     let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
