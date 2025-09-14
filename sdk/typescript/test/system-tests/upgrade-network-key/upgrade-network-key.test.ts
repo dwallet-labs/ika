@@ -24,8 +24,9 @@ import { createValidatorPod, killValidatorPod } from '../pods';
 
 describe('system tests', () => {
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
-		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
+		const v2NetworkKeyDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key';
 
+		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		// ------------ Create Ika Genesis ------------
 		const createIkaGenesisPath = `${TEST_ROOT_DIR}/create-ika-genesis-mac.sh`;
 		await execa({
@@ -33,11 +34,11 @@ describe('system tests', () => {
 			stderr: ['pipe', 'inherit'],
 			cwd: TEST_ROOT_DIR,
 		})`${createIkaGenesisPath}`;
+
 		await fs.copyFile(
 			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/ika_config.json`,
 			path.resolve(process.cwd(), '../../ika_config.json'),
 		);
-
 		console.log(`Ika genesis created, deploying ika network`);
 		await deployIkaNetwork();
 		console.log('Ika network deployed, waiting for epoch switch');
@@ -51,7 +52,7 @@ describe('system tests', () => {
 		const networkKeyVersion = network_key_version(networkKeyBytes);
 		expect(networkKeyVersion).toBe(1);
 		console.log('Network key version is V1, upgrading validators binaries to V2');
-		process.env.DOCKER_TAG = 'us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key';
+		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
 		for (let i = 0; i < Number(process.env.VALIDATOR_NUM); i++) {
