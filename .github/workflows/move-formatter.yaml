@@ -7,7 +7,7 @@ name: Move Formatter
 
 on:
   push:
-    branches: [main, dev, move-formatter-workflow]
+    branches: [main, dev]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
