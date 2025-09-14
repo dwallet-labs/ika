@@ -5,7 +5,7 @@ import { execa } from 'execa';
 export const CONFIG_MAP_NAME = 'ika-system-test-config';
 export const NETWORK_SERVICE_NAME = 'ika-dns-service';
 export const NAMESPACE_NAME = 'ika';
-export const TEST_ROOT_DIR = `${process.cwd()}/test/system-test`;
+export const TEST_ROOT_DIR = `${process.cwd()}/test/system-tests`;
 
 export async function createIkaGenesis() {
 	require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });

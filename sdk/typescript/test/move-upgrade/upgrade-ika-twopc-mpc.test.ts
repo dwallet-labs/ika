@@ -7,11 +7,19 @@ import { describe, it } from 'vitest';
 
 import { IkaClient } from '../../src';
 import { createTestIkaClient, delay } from '../helpers/test-utils';
-import { createIkaGenesis } from '../system-tests/globals';
+import { createIkaGenesis, TEST_ROOT_DIR } from '../system-tests/globals';
+import { promises as fs } from 'fs';
+import path from 'path';
 
 describe('Upgrade twopc_mpc Move package', () => {
 	it('should read the publisher mnemonic and protocol cap id', async () => {
-
+		console.log({TEST_ROOT_DIR})
+		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
+	await delay(1);
+		let publisherMnemonic = await fs.readFile(
+			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/sui_config/publisher.seed`,
+		);
+		console.log({publisherMnemonic})
 	});
 
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
