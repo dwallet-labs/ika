@@ -10,10 +10,10 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
-use ika_types::messages_dwallet_mpc::{Secp256K1AsyncECDSAProtocol, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{Secp256K1ECDSAProtocol, SessionIdentifier};
 
 pub(crate) type PresignParty =
-    <Secp256K1AsyncECDSAProtocol as twopc_mpc::presign::Protocol>::PresignParty;
+    <Secp256K1ECDSAProtocol as twopc_mpc::presign::Protocol>::PresignParty;
 
 pub(crate) fn presign_public_input(
     session_identifier: SessionIdentifier,
