@@ -11,30 +11,6 @@ import { IkaClient } from '../../src';
 import { createTestIkaClient, delay } from '../helpers/test-utils';
 import { createIkaGenesis, TEST_ROOT_DIR } from '../system-tests/globals';
 
-async function getPublisherKeypair(): Promise<Ed25519Keypair> {
-	let publisherMnemonicBytes = await fs.readFile(
-		`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/sui_config/publisher.seed`,
-	);
-	const publisherMnemonic = new TextDecoder().decode(publisherMnemonicBytes);
-	return Ed25519Keypair.deriveKeypair(publisherMnemonic.trimEnd());
-}
-
-async function getProtocolCapID(
-	suiClient: SuiClient,
-	publisherAddress: string,
-	ikaClient: IkaClient,
-): Promise<string> {
-	const protocolCapID = (
-		await suiClient.getOwnedObjects({
-			owner: publisherAddress,
-			filter: {
-				StructType: `${ikaClient.ikaConfig.packages.ikaCommonPackage}::protocol_cap::ProtocolCap`,
-			},
-		})
-	).data.at(0).data.objectId;
-	return protocolCapID;
-}
-
 describe('Upgrade twopc_mpc Move package', () => {
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
 		await createIkaGenesis();
@@ -63,6 +39,30 @@ describe('Upgrade twopc_mpc Move package', () => {
 		await migrateCoordinator(suiClient, signer, ikaClient, protocolCapID, upgradedPackageID);
 	});
 });
+
+async function getPublisherKeypair(): Promise<Ed25519Keypair> {
+	let publisherMnemonicBytes = await fs.readFile(
+		`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/sui_config/publisher.seed`,
+	);
+	const publisherMnemonic = new TextDecoder().decode(publisherMnemonicBytes);
+	return Ed25519Keypair.deriveKeypair(publisherMnemonic.trimEnd());
+}
+
+async function getProtocolCapID(
+	suiClient: SuiClient,
+	publisherAddress: string,
+	ikaClient: IkaClient,
+): Promise<string> {
+	const protocolCapID = (
+		await suiClient.getOwnedObjects({
+			owner: publisherAddress,
+			filter: {
+				StructType: `${ikaClient.ikaConfig.packages.ikaCommonPackage}::protocol_cap::ProtocolCap`,
+			},
+		})
+	).data.at(0).data.objectId;
+	return protocolCapID;
+}
 
 async function deployUpgradedPackage(
 	suiClient: SuiClient,
