@@ -39,7 +39,7 @@
 		"lint": "pnpm run eslint:check && pnpm run prettier:check",
 		"lint:fix": "pnpm run eslint:fix && pnpm run prettier:fix",
 		"test:e2e": "vitest run e2e",
-		"postinstall": "pnpm create-summaries && pnpm sui-ts-codegen generate",
+		"prepare": "pnpm create-summaries && pnpm sui-ts-codegen generate",
 		"create-summaries:ika": "cd ../../contracts/ika && sui move summary",
 		"create-summaries:dwallet_2pc_mpc": "cd ../../contracts/ika_dwallet_2pc_mpc && sui move summary",
 		"create-summaries:common": "cd ../../contracts/ika_common && sui move summary",
