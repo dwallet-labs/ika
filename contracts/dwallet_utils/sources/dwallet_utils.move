@@ -1,39 +1,39 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-module dwallet_utils::dwallet_utils {
-	use ika_dwallet_2pc_mpc::coordinator_inner::DWallet;
-	use sui::bcs;
+module dwallet_utils::dwallet_utils;
 
-	// === Public Functions ===
+use ika_dwallet_2pc_mpc::coordinator_inner::DWallet;
+use sui::bcs;
 
-	public fun dwallet_public_key_ecdsa_k1_compressed(dwallet: &DWallet): Option<vector<u8>> {
-		let dwallet_public_output = dwallet.validate_active_and_get_public_output();
-		if (dwallet_public_output[0] == 0) {
-			let mut i = 0;
-			let mut public_key_bytes = vector[];
-			while (i < dwallet_public_output.length()) {
-				if (i >= 38 && i <= 70) {
-					public_key_bytes.push_back(dwallet_public_output[i]);
-				};
-				i = i + 1;
-			};
-			option::some(public_key_bytes)
-		} else {
-			option::none()
-		}
-	}
+// === Public Functions ===
 
-	public fun non_recoverable_ecdsa_k1_signature(dwallet: &DWallet, sign_id: ID): vector<u8> {
-		let sign_session = dwallet.get_sign_session(sign_id);
-		let mut signature = sign_session.get_sign_signature();
+public fun dwallet_public_key_ecdsa_k1_compressed(dwallet: &DWallet): Option<vector<u8>> {
+    let dwallet_public_output = dwallet.validate_active_and_get_public_output();
+    if (dwallet_public_output[0] == 0) {
+        let mut i = 0;
+        let mut public_key_bytes = vector[];
+        while (i < dwallet_public_output.length()) {
+            if (i >= 38 && i <= 70) {
+                public_key_bytes.push_back(dwallet_public_output[i]);
+            };
+            i = i + 1;
+        };
+        option::some(public_key_bytes)
+    } else {
+        option::none()
+    }
+}
 
-		let mut bcs_bytes = bcs::new(signature.extract());
-		let mut r = bcs_bytes.peel_vec_u8();
-		let s = bcs_bytes.peel_vec_u8();
-		r.append(s);
-		r
-	}
+public fun non_recoverable_ecdsa_k1_signature(dwallet: &DWallet, sign_id: ID): vector<u8> {
+    let sign_session = dwallet.get_sign_session(sign_id);
+    let mut signature = sign_session.get_sign_signature();
+
+    let mut bcs_bytes = bcs::new(signature.extract());
+    let mut r = bcs_bytes.peel_vec_u8();
+    let s = bcs_bytes.peel_vec_u8();
+    r.append(s);
+    r
 }
 
 // #[test]
