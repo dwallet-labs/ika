@@ -37,11 +37,12 @@ use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
-    Secp256R1AsyncDKGProtocol,
+    Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
+    RistrettoSchnorrkelSubstrateProtocol, Secp256K1AsyncDKGProtocol, Secp256R1AsyncDKGProtocol,
+    Secp256R1ECDSAProtocol,
 };
 use ika_types::messages_dwallet_mpc::{Secp256K1ECDSAProtocol, SessionIdentifier};
-use mpc::guaranteed_output_delivery::{Party, ReadyToAdvanceResult};
+use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResult};
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
@@ -663,7 +664,7 @@ impl ProtocolCryptographicData {
                 public_input: PresignPublicInputByCurve::Secp256k1(public_input),
                 advance_request: PresignAdvanceRequestByCurve::Secp256k1(advance_request),
                 ..
-            } => Ok(compute_presign::<Secp256K1AsyncECDSAProtocol>(
+            } => Ok(compute_presign::<Secp256K1ECDSAProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -675,7 +676,7 @@ impl ProtocolCryptographicData {
                 public_input: PresignPublicInputByCurve::Secp256r1(public_input),
                 advance_request: PresignAdvanceRequestByCurve::Secp256r1(advance_request),
                 ..
-            } => Ok(compute_presign::<Secp256R1AsyncECDSAProtocol>(
+            } => Ok(compute_presign::<Secp256R1ECDSAProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -687,7 +688,7 @@ impl ProtocolCryptographicData {
                 public_input: PresignPublicInputByCurve::Curve25519(public_input),
                 advance_request: PresignAdvanceRequestByCurve::Curve25519(advance_request),
                 ..
-            } => Ok(compute_presign::<Curve25519AsyncEdDSAProtocol>(
+            } => Ok(compute_presign::<Curve25519EdDSAProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -699,16 +700,14 @@ impl ProtocolCryptographicData {
                 public_input: PresignPublicInputByCurve::Ristretto(public_input),
                 advance_request: PresignAdvanceRequestByCurve::Ristretto(advance_request),
                 ..
-            } => Ok(
-                compute_presign::<RistrettoAsyncSchnorrkelSubstrateProtocol>(
-                    party_id,
-                    access_structure,
-                    session_id,
-                    advance_request,
-                    public_input,
-                    &mut rng,
-                )?,
-            ),
+            } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                &mut rng,
+            )?),
             ProtocolCryptographicData::Presign {
                 public_input,
                 advance_request,
