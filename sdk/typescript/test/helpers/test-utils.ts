@@ -23,7 +23,12 @@ import {
 	ZeroTrustDWallet,
 } from '../../src/client/types.js';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
-import { createCompleteDWallet, createCompleteDWalletV2, testPresign, testSign } from './dwallet-test-helpers';
+import {
+	createCompleteDWallet,
+	createCompleteDWalletV2,
+	testPresign,
+	testSign,
+} from './dwallet-test-helpers';
 
 // Store random seeds per test to ensure deterministic behavior within each test
 const testSeeds = new Map<string, Uint8Array>();

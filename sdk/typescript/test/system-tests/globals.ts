@@ -1,8 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { execa } from 'execa';
-
 import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
+import { execa } from 'execa';
 
 import { createConfigMaps } from './config-map';
 import { createNetworkServices } from './network-service';

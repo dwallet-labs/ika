@@ -1,10 +1,7 @@
 import type { KubeConfig, V1Pod } from '@kubernetes/client-node';
 import { CoreV1Api } from '@kubernetes/client-node';
 
-
-
 import { CONFIG_MAP_NAME, NETWORK_SERVICE_NAME } from './globals.js';
-
 
 export function getPodNameForValidatorID(validatorID: number): string {
 	return `ika-val-${validatorID}`;
