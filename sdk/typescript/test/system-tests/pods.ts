@@ -1,7 +1,10 @@
 import type { KubeConfig, V1Pod } from '@kubernetes/client-node';
 import { CoreV1Api } from '@kubernetes/client-node';
 
+
+
 import { CONFIG_MAP_NAME, NETWORK_SERVICE_NAME } from './globals.js';
+
 
 export function getPodNameForValidatorID(validatorID: number): string {
 	return `ika-val-${validatorID}`;
@@ -59,6 +62,10 @@ export async function createValidatorPod(
 					},
 					volumeMounts: [
 						{
+							name: 'db-vol',
+							mountPath: '/opt/ika/db',
+						},
+						{
 							name: 'config-vol',
 							mountPath: '/opt/ika/key-pairs/root-seed.key',
 							subPath: 'root-seed.key',
@@ -87,6 +94,12 @@ export async function createValidatorPod(
 				},
 			],
 			volumes: [
+				{
+					name: 'db-vol',
+					persistentVolumeClaim: {
+						claimName: `ika-val-${validatorID}-pvc`,
+					},
+				},
 				{
 					name: 'config-vol',
 					configMap: {
