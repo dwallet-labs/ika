@@ -21,7 +21,7 @@ describe('Upgrade twopc_mpc Move package', () => {
 		);
 		const publisherMnemonic = new TextDecoder().decode(publisherMnemonicBytes);
 		console.log({ publisherMnemonic });
-		const publisherKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
+		const publisherKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic.trimEnd());
 		const publisherAddress = publisherKeypair.getPublicKey().toSuiAddress();
 		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
 		const ikaClient = createTestIkaClient(suiClient);
