@@ -91,8 +91,3 @@ ika_config.json
 sdk/typescript/docs
 move_pkg_lock_root.lock
 node-compile-cache
-
-# System testing auto-generated files
-sdk/typescript/test/system-tests/ika
-sdk/typescript/test/system-tests/ika-swarm-config
-sdk/typescript/test/system-tests/ika-dns-service.ika.svc.cluster.local/

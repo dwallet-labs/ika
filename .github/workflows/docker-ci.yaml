@@ -12,16 +12,9 @@ on:
         required: false
         default: 'latest'
 
-env:
-  GH_PRIVATE_REPO_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
-  GITHUB_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
-  CARGO_NET_GIT_FETCH_WITH_CLI: true
-  CLOUDSDK_CORE_PROJECT: common-449616
-  DOCKER_TAG: "us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:${{ github.event.inputs.imageTag }}"
-
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 [Beta]
 
     permissions:
       contents: read
@@ -38,11 +31,13 @@ jobs:
           EOF
           gcloud auth activate-service-account --key-file=key.json
           gcloud auth configure-docker us-docker.pkg.dev --quiet
-      - name: Configure git with personal access token
-        run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+        env:
+          CLOUDSDK_CORE_PROJECT: common-449616
+
       - name: Build and push Docker image
-        working-directory: sdk/typescript/test/system-tests
+        working-directory: sdk/typescript/test/system-test
+        env:
+          DOCKER_TAG: "us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:${{ github.event.inputs.imageTag }}"
         run: |
           touch .env
           ./build.sh ${{ github.event.inputs.cargo_build_flags }}

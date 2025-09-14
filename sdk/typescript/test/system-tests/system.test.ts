@@ -12,7 +12,7 @@ import {
 	waitForEpochSwitch,
 } from '../helpers/test-utils';
 import { createConfigMaps } from './config-map';
-import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
+import { createIkaGenesis, deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from './globals';
 import { createValidatorPod, killValidatorPod } from './pods';
 
 describe('system tests', () => {
@@ -46,17 +46,7 @@ describe('system tests', () => {
 
 		const startCommitteeSize = Number(process.env.VALIDATOR_NUM);
 		// ------------ Create Ika Genesis ------------
-		const createIkaGenesisPath = `${TEST_ROOT_DIR}/create-ika-genesis-mac.sh`;
-		await execa({
-			stdout: ['pipe', 'inherit'],
-			stderr: ['pipe', 'inherit'],
-			cwd: TEST_ROOT_DIR,
-		})`${createIkaGenesisPath}`;
-		await fs.copyFile(
-			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/ika_config.json`,
-			path.resolve(process.cwd(), '../../ika_config.json'),
-		);
-
+		await createIkaGenesis();
 		console.log(
 			`Ika genesis created, adding ${numOfValidatorsToAdd} validators to the next committee`,
 		);
