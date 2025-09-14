@@ -23,7 +23,7 @@ import {
 	ZeroTrustDWallet,
 } from '../../src/client/types.js';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
-import { createCompleteDWallet, testPresign, testSign } from './dwallet-test-helpers';
+import { createCompleteDWallet, createCompleteDWalletV2, testPresign, testSign } from './dwallet-test-helpers';
 
 // Store random seeds per test to ensure deterministic behavior within each test
 const testSeeds = new Map<string, Uint8Array>();
@@ -379,6 +379,59 @@ export async function runSignFullFlowWithV1Dwallet(
 		userShareEncryptionKeys,
 		signerAddress,
 	} = await createCompleteDWallet(ikaClient, suiClient, testName);
+
+	// Step 2: Create presign
+	const presignRequestEvent = await testPresign(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		SignatureAlgorithm.ECDSA,
+		signerAddress,
+		testName,
+	);
+
+	expect(presignRequestEvent).toBeDefined();
+	expect(presignRequestEvent.event_data.presign_id).toBeDefined();
+
+	// Step 3: Wait for presign to complete
+	const presignObject = await retryUntil(
+		() =>
+			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
+		(presign) => presign !== null,
+		30,
+		2000,
+	);
+
+	expect(presignObject).toBeDefined();
+	expect(presignObject.state.$kind).toBe('Completed');
+
+	// Step 4: Sign a message
+	const message = createTestMessage(testName);
+	await testSign(
+		ikaClient,
+		suiClient,
+		activeDWallet as ZeroTrustDWallet,
+		userShareEncryptionKeys,
+		presignObject,
+		encryptedUserSecretKeyShare,
+		message,
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
+		testName,
+	);
+}
+
+export async function runSignFullFlowWithV2Dwallet(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	testName: string,
+) {
+	const {
+		dWallet: activeDWallet,
+		encryptedUserSecretKeyShare,
+		userShareEncryptionKeys,
+		signerAddress,
+	} = await createCompleteDWalletV2(ikaClient, suiClient, testName);
 
 	// Step 2: Create presign
 	const presignRequestEvent = await testPresign(

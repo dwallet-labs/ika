@@ -2,14 +2,23 @@ import fs from 'fs';
 import path from 'path';
 import { network_key_version } from '@ika.xyz/ika-wasm';
 import { KubeConfig } from '@kubernetes/client-node';
+import { SuiClient } from '@mysten/sui/client';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { execa } from 'execa';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
 	createTestIkaClient,
-	createTestSuiClient, delay, runSignFullFlowWithV1Dwallet,
+	createTestSuiClient,
+	delay,
+	runSignFullFlowWithV1Dwallet,
+	runSignFullFlowWithV2Dwallet,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
+import {
+	deployUpgradedPackage,
+	migrateCoordinator,
+} from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from '../globals';
 import { createValidatorPod, killValidatorPod } from '../pods';
 
@@ -51,7 +60,9 @@ describe('system tests', () => {
 			await delay(1);
 			await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
 		}
-		console.log('All validators upgraded, waiting for two epoch switches (the protocol version may have been changed after the epoch middle)');
+		console.log(
+			'All validators upgraded, waiting for two epoch switches (the protocol version may have been changed after the epoch middle)',
+		);
 		await waitForEpochSwitch(ikaClient);
 		await waitForEpochSwitch(ikaClient);
 		console.log('Two epochs switched, verifying the network key version is V2');
@@ -61,7 +72,24 @@ describe('system tests', () => {
 		console.log('Network key version is V2, verifying v1 dWallet full flow still works');
 		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, `v1-dwallet-sign-full-flow-test`);
 		console.log('V1 dWallet full flow works, upgrading the Move contracts to V2');
+		const signer = Ed25519Keypair.deriveKeypair(
+			'nature carry layer home plunge alter long space struggle ethics siege clerk',
+		);
+		const protocolCapID = '0xd7eef0703c67aebdc1651ba5a3e21881c8272626030f3324e79e1378c690d0af';
+		const packagePath = '/root/code/dwallet-network/contracts/ika_dwallet_2pc_mpc';
 
-		// console.log('Ika network deployed, waiting for epoch switch');
+		const upgradedPackageID = await deployUpgradedPackage(
+			suiClient,
+			signer,
+			packagePath,
+			ikaClient,
+			protocolCapID,
+		);
+		await delay(5); // wait for the upgrade to be fully processed
+		await migrateCoordinator(suiClient, signer, ikaClient, protocolCapID, upgradedPackageID);
+		await delay(5); // wait for the migration to be fully processed
+		console.log('Move contracts upgraded to V2, verifying v2 dWallet full flow works');
+		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, `v2-dwallet-sign-full-flow-test`);
+		console.log('V2 dWallet full flow works, test completed successfully');
 	}, 3_600_000);
 });

@@ -33,7 +33,7 @@ describe('Upgrade twopc_mpc Move package', () => {
 	});
 });
 
-async function deployUpgradedPackage(
+export async function deployUpgradedPackage(
 	suiClient: SuiClient,
 	signer: Ed25519Keypair,
 	packagePath: string,
@@ -105,7 +105,7 @@ async function deployUpgradedPackage(
 	return result.effects.created.at(0).reference.objectId;
 }
 
-async function migrateCoordinator(
+export async function migrateCoordinator(
 	suiClient: SuiClient,
 	signer: Ed25519Keypair,
 	ikaClient: IkaClient,
