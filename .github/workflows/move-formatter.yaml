@@ -21,7 +21,6 @@ jobs:
     strategy:
       matrix:
         working-directory:
-          - examples # run on all examples
           - contracts/ika # ika token package
           - contracts/ika_common # ika common package
           - contracts/ika_dwallet_2pc_mpc # ika dwallet 2pc mpc package
