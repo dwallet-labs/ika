@@ -1,4 +1,4 @@
-# Checks formatting in all examples and system packages (TBD for Sui System and Bridge)
+# Checks formatting in all move contracts
 # Uses a fixed NPM version to separate prettier-move release changes from system package
 # changes.
 #
