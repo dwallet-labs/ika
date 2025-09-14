@@ -1,4 +1,6 @@
 import { execSync } from 'child_process';
+import { promises as fs } from 'fs';
+import path from 'path';
 import { bcs } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
@@ -8,18 +10,30 @@ import { describe, it } from 'vitest';
 import { IkaClient } from '../../src';
 import { createTestIkaClient, delay } from '../helpers/test-utils';
 import { createIkaGenesis, TEST_ROOT_DIR } from '../system-tests/globals';
-import { promises as fs } from 'fs';
-import path from 'path';
 
 describe('Upgrade twopc_mpc Move package', () => {
 	it('should read the publisher mnemonic and protocol cap id', async () => {
-		console.log({TEST_ROOT_DIR})
+		console.log({ TEST_ROOT_DIR });
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
-	await delay(1);
-		let publisherMnemonic = await fs.readFile(
+		await delay(1);
+		let publisherMnemonicBytes = await fs.readFile(
 			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/sui_config/publisher.seed`,
 		);
-		console.log({publisherMnemonic})
+		const publisherMnemonic = new TextDecoder().decode(publisherMnemonicBytes);
+		console.log({ publisherMnemonic });
+		const publisherKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic);
+		const publisherAddress = publisherKeypair.getPublicKey().toSuiAddress();
+		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
+		const ikaClient = createTestIkaClient(suiClient);
+		const protocolCapID = (
+			await suiClient.getOwnedObjects({
+				owner: publisherAddress,
+				filter: {
+					StructType: `${ikaClient.ikaConfig.packages.ikaCommonPackage}::protocol_cap::ProtocolCap`,
+				},
+			})
+		).data.at(0).data.objectId;
+		console.log({ protocolCapID });
 	});
 
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
