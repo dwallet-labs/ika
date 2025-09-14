@@ -55,6 +55,7 @@ describe('system tests', () => {
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
+		// Restart each validator pod one by one to pick up the docker tag change
 		for (let i = 0; i < Number(process.env.VALIDATOR_NUM); i++) {
 			await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
 			await delay(1);
