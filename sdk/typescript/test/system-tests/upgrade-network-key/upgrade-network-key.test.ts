@@ -16,7 +16,9 @@ import {
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
 import {
-	deployUpgradedPackage, getProtocolCapID, getPublisherKeypair,
+	deployUpgradedPackage,
+	getProtocolCapID,
+	getPublisherKeypair,
 	migrateCoordinator,
 } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from '../globals';
@@ -24,7 +26,8 @@ import { createValidatorPod, killValidatorPod } from '../pods';
 
 describe('system tests', () => {
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
-		const v2NetworkKeyDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key';
+		const v2NetworkKeyDockerTag =
+			'us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key';
 
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		// ------------ Create Ika Genesis ------------
