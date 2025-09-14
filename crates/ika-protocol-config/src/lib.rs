@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 1;
-const MAX_PROTOCOL_VERSION: u64 = 1;
+const MAX_PROTOCOL_VERSION: u64 = 2;
 
 // Record history of protocol version allocations here:
 //
@@ -487,6 +487,9 @@ impl ProtocolConfig {
                 //
                 //     // Remove a constant (ensure that it is never accessed during this version).
                 //     existing_constant: None,
+                2 => {
+                    cfg.network_encryption_key_version = Some(2);
+                }
                 _ => panic!("unsupported version {version:?}"),
             }
         }
