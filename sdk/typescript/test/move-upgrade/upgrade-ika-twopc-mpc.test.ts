@@ -7,9 +7,16 @@ import { describe, it } from 'vitest';
 
 import { IkaClient } from '../../src';
 import { createTestIkaClient, delay } from '../helpers/test-utils';
+import { createIkaGenesis } from '../system-tests/globals';
 
 describe('Upgrade twopc_mpc Move package', () => {
+	it('should read the publisher mnemonic and protocol cap id', async () => {
+
+	});
+
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
+		await createIkaGenesis();
+
 		const signer = Ed25519Keypair.deriveKeypair(
 			'<PUBLISHER_MNEMONIC_PHRASE>', // replace with actual publisher's mnemonic phrase
 		);
