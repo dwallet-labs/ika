@@ -11,49 +11,51 @@ import { IkaClient } from '../../src';
 import { createTestIkaClient, delay } from '../helpers/test-utils';
 import { createIkaGenesis, TEST_ROOT_DIR } from '../system-tests/globals';
 
-describe('Upgrade twopc_mpc Move package', () => {
-	it('should read the publisher mnemonic and protocol cap id', async () => {
-		console.log({ TEST_ROOT_DIR });
-		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
-		await delay(1);
-		let publisherMnemonicBytes = await fs.readFile(
-			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/sui_config/publisher.seed`,
-		);
-		const publisherMnemonic = new TextDecoder().decode(publisherMnemonicBytes);
-		console.log({ publisherMnemonic });
-		const publisherKeypair = Ed25519Keypair.deriveKeypair(publisherMnemonic.trimEnd());
-		const publisherAddress = publisherKeypair.getPublicKey().toSuiAddress();
-		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
-		const ikaClient = createTestIkaClient(suiClient);
-		const protocolCapID = (
-			await suiClient.getOwnedObjects({
-				owner: publisherAddress,
-				filter: {
-					StructType: `${ikaClient.ikaConfig.packages.ikaCommonPackage}::protocol_cap::ProtocolCap`,
-				},
-			})
-		).data.at(0).data.objectId;
-		console.log({ protocolCapID });
-	});
+async function getPublisherKeypair(): Promise<Ed25519Keypair> {
+	let publisherMnemonicBytes = await fs.readFile(
+		`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/sui_config/publisher.seed`,
+	);
+	const publisherMnemonic = new TextDecoder().decode(publisherMnemonicBytes);
+	return Ed25519Keypair.deriveKeypair(publisherMnemonic.trimEnd());
+}
 
+async function getProtocolCapID(
+	suiClient: SuiClient,
+	publisherAddress: string,
+	ikaClient: IkaClient,
+): Promise<string> {
+	const protocolCapID = (
+		await suiClient.getOwnedObjects({
+			owner: publisherAddress,
+			filter: {
+				StructType: `${ikaClient.ikaConfig.packages.ikaCommonPackage}::protocol_cap::ProtocolCap`,
+			},
+		})
+	).data.at(0).data.objectId;
+	return protocolCapID;
+}
+
+describe('Upgrade twopc_mpc Move package', () => {
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
 		await createIkaGenesis();
-
-		const signer = Ed25519Keypair.deriveKeypair(
-			'<PUBLISHER_MNEMONIC_PHRASE>', // replace with actual publisher's mnemonic phrase
+		const signer = await getPublisherKeypair();
+		const twopc_mpc_contracts_path = path.join(
+			TEST_ROOT_DIR,
+			'../../../../contracts/ika_dwallet_2pc_mpc',
 		);
-		const protocolCapID = '<PROTOCOL_CAP_OBJECT_ID>'; // replace with actual protocol cap object ID
-		const packagePath = '<PATH_TO_UPGRADED_2PC_MPC_PACKAGE>'; // replace with actual path to the upgraded package
-
 		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
 		const ikaClient = createTestIkaClient(suiClient);
-
 		await ikaClient.initialize();
+		const protocolCapID = await getProtocolCapID(
+			suiClient,
+			signer.getPublicKey().toSuiAddress(),
+			ikaClient,
+		);
 
 		const upgradedPackageID = await deployUpgradedPackage(
 			suiClient,
 			signer,
-			packagePath,
+			twopc_mpc_contracts_path,
 			ikaClient,
 			protocolCapID,
 		);
