@@ -200,7 +200,7 @@ MAX_JOBS=10
 JOB_COUNT=0
 
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-  request_and_generate_yaml "$i" &
+  request_and_generate_yaml "$i"
 
   (( JOB_COUNT++ ))
 
