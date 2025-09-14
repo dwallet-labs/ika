@@ -1,5 +1,5 @@
 use crate::messages_dwallet_mpc::SessionIdentifier;
-use dwallet_mpc_types::dwallet_mpc::DwalletNetworkMPCError;
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DwalletNetworkMPCError};
 use group::PartyID;
 use sui_types::base_types::{EpochId, ObjectID};
 
@@ -180,6 +180,21 @@ pub enum DwalletMPCError {
 
     #[error("Internal error: {0}")]
     InternalError(String),
+
+    #[error("missing protocol public parameters for curve: {0:?}")]
+    MissingProtocolPublicParametersForCurve(DWalletCurve),
+
+    #[error("centralized secret key share proof verification failed: {0}")]
+    CentralizedSecretKeyShareProofVerificationFailed(String),
+
+    #[error("failed to advance MPC step: {0}")]
+    FailedToAdvanceMPC(mpc::Error),
+
+    #[error("public input mismatch")]
+    PublicInputMismatch,
+
+    #[error("dWallet DKG parameters missmatch: curve {0}, advance request {1}")]
+    MPCParametersMissmatchInputToRequest(String, String),
 }
 
 /// A wrapper type for the result of a runtime operation.

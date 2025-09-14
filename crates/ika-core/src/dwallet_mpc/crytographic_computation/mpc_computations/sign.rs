@@ -14,7 +14,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use group::{HashType, OsCsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{AsyncProtocol, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{Secp256K1ECDSAProtocol, SessionIdentifier};
 use mpc::{Party, Weight, WeightedThresholdAccessStructure};
 use rand_core::SeedableRng;
 use std::collections::HashSet;
@@ -22,11 +22,12 @@ use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
-use twopc_mpc::{secp256k1, sign};
+use twopc_mpc::sign;
 
-pub(crate) type SignParty = <AsyncProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
+pub(crate) type SignParty =
+    <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
 pub(crate) type SignPublicInput =
-    <AsyncProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedPartyPublicInput;
+    <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignDecentralizedPartyPublicInput;
 
 /// Deterministically determine the set of expected decrypters for an optimization of the
 /// threshold decryption in the Sign protocol.
@@ -128,7 +129,7 @@ pub(crate) trait SignPartyPublicInputGenerator: Party {
         message: Vec<u8>,
         presign: &SerializedWrappedMPCPublicOutput,
         centralized_signed_message: &Vec<u8>,
-        decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
+        decryption_key_share_public_parameters: <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
         hash_scheme: HashType,
     ) -> DwalletMPCResult<<SignParty as Party>::PublicInput>;
@@ -141,7 +142,7 @@ impl SignPartyPublicInputGenerator for SignParty {
         message: Vec<u8>,
         presign: &SerializedWrappedMPCPublicOutput,
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
-        decryption_key_share_public_parameters: <AsyncProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
+        decryption_key_share_public_parameters: <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
         hash_scheme: HashType,
     ) -> DwalletMPCResult<<SignParty as Party>::PublicInput> {
@@ -167,8 +168,10 @@ impl SignPartyPublicInputGenerator for SignParty {
             HashType::try_from(hash_scheme as u32)
                 .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
             decentralized_dkg_output,
-            bcs::from_bytes::<<AsyncProtocol as twopc_mpc::presign::Protocol>::Presign>(&presign)?,
-            bcs::from_bytes::<<AsyncProtocol as twopc_mpc::sign::Protocol>::SignMessage>(
+            bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign>(
+                &presign,
+            )?,
+            bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage>(
                 &centralized_signed_message,
             )?,
             decryption_key_share_public_parameters,
@@ -205,12 +208,12 @@ pub(crate) fn verify_partial_signature(
         bcs::from_bytes(partially_signed_message)?;
     let VersionedPresignOutput::V1(presign) = presign;
     let VersionedUserSignedMessage::V1(partially_signed_message) = partially_signed_message;
-    let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
+    let presign: <Secp256K1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
         bcs::from_bytes(&presign)?;
-    let partial: <AsyncProtocol as twopc_mpc::sign::Protocol>::SignMessage =
+    let partial: <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage =
         bcs::from_bytes(&partially_signed_message)?;
 
-    <AsyncProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
+    <Secp256K1ECDSAProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
         message,
         hash_type.clone(),
         decentralized_dkg_output,

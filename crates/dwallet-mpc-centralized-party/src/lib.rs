@@ -37,23 +37,27 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
 use twopc_mpc::class_groups::{
-    DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyOutput,
+    DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput,
     DKGDecentralizedPartyVersionedOutput,
 };
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::VerifyingKey;
-use twopc_mpc::ecdsa::sign::verify_signature;
-use twopc_mpc::secp256k1::class_groups::{
-    FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, ProtocolPublicParameters,
-};
+use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
-type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
-type DKGCentralizedParty = <AsyncProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
-pub type SignCentralizedParty = <AsyncProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
+type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
-pub type DKGDecentralizedOutput =
-    <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
+type Secp256K1DKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
+type Secp256R1DKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
+type Curve25519DKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
+type RistrettoDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
+
+type DKGCentralizedParty =
+    <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
+type SignCentralizedParty =
+    <Secp256K1DKGProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
+type DKGDecentralizedOutput =
+    <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 
 type SignedMessage = Vec<u8>;
 
@@ -65,7 +69,7 @@ type Secp256k1EncryptionKey = EncryptionKey<
 >;
 
 type ImportSecretKeyFirstStep =
-    <AsyncProtocol as twopc_mpc::dkg::Protocol>::TrustedDealerDKGCentralizedPartyRound;
+    <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::TrustedDealerDKGCentralizedPartyRound;
 
 pub struct CentralizedDKGWasmResult {
     pub public_key_share_and_proof: Vec<u8>,
@@ -104,19 +108,40 @@ pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOf
 /// # Errors
 /// Return an error if decoding or advancing the protocol fails.
 /// This is okay since a malicious blockchain can always block a client.
-pub fn create_dkg_output_v2(
+pub fn create_dkg_output_by_curve_v2(
+    dwallet_curve: DWalletCurve,
     protocol_pp: Vec<u8>,
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    let protocol_public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
+    match dwallet_curve {
+        DWalletCurve::Secp256k1 => {
+            centralized_dkg_output_v2::<Secp256K1DKGProtocol>(protocol_pp, session_id)
+        }
+        DWalletCurve::Ristretto => {
+            centralized_dkg_output_v2::<RistrettoDKGProtocol>(protocol_pp, session_id)
+        }
+        DWalletCurve::Curve25519 => {
+            centralized_dkg_output_v2::<Curve25519DKGProtocol>(protocol_pp, session_id)
+        }
+        DWalletCurve::Secp256r1 => {
+            centralized_dkg_output_v2::<Secp256R1DKGProtocol>(protocol_pp, session_id)
+        }
+    }
+}
+
+fn centralized_dkg_output_v2<P: twopc_mpc::dkg::Protocol>(
+    protocol_pp: Vec<u8>,
+    session_id: Vec<u8>,
+) -> anyhow::Result<CentralizedDKGWasmResult> {
+    let protocol_public_parameters: P::ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let session_identifier = CommitmentSizedNumber::from_le_slice(&session_id);
-    let round_result = DKGCentralizedParty::advance(
+    let round_result = P::DKGCentralizedPartyRound::advance(
         (),
         &(),
         &(protocol_public_parameters, session_identifier).into(),
         &mut OsCsRng,
     )
-    .context("advance() failed on the DKGCentralizedParty")?;
+    .map_err(|e| anyhow!("advance() failed on the DKGCentralizedParty: {}", e.into()))?;
 
     // Centralized Public Key Share and Proof.
     let public_key_share_and_proof =
@@ -143,6 +168,7 @@ pub fn create_dkg_output_v2(
         centralized_secret_output,
     })
 }
+
 /// Executes the second phase of the DKG protocol, part of a three-phase DKG flow.
 ///
 /// This function is invoked by the centralized party to produce:
@@ -369,10 +395,10 @@ pub fn advance_centralized_sign_party(
             group::secp256k1::GroupElement,
         >::from(output),
     };
-    let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
+    let presign: <Secp256K1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
         bcs::from_bytes(&presign)?;
     let centralized_party_public_input =
-        <AsyncProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+        <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
             message,
             HashType::try_from(hash_type)?,
             centralized_public_output.clone().into(),
@@ -570,7 +596,7 @@ pub fn encrypt_secret_key_share_and_prove(
         VersionedDwalletUserSecretShare::V1(secret_key_share) => {
             let encryption_key = bcs::from_bytes(&encryption_key)?;
             let secret_key_share = bcs::from_bytes(&secret_key_share)?;
-            let result = <AsyncProtocol as twopc_mpc::dkg::Protocol>::encrypt_and_prove_centralized_party_share(&protocol_public_params, encryption_key, secret_key_share, &mut OsCsRng)?;
+            let result = <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::encrypt_and_prove_centralized_party_share(&protocol_public_params, encryption_key, secret_key_share, &mut OsCsRng)?;
             Ok(bcs::to_bytes(&VersionedEncryptedUserShare::V1(
                 bcs::to_bytes(&result)?,
             ))?)
@@ -628,15 +654,15 @@ pub fn decrypt_user_share_inner(
         }
     };
 
-    let (_, encryption_of_discrete_log): <AsyncProtocol as twopc_mpc::dkg::Protocol>::EncryptedSecretKeyShareMessage = bcs::from_bytes(&encrypted_user_share_and_proof)?;
-    <twopc_mpc::secp256k1::class_groups::ECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
+    let (_, encryption_of_discrete_log): <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::EncryptedSecretKeyShareMessage = bcs::from_bytes(&encrypted_user_share_and_proof)?;
+    <Secp256K1DKGProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_params,
         dwallet_dkg_output,
         bcs::from_bytes(&encryption_key)?,
         bcs::from_bytes(&encrypted_user_share_and_proof)?,
         &mut OsCsRng,
     )
-        .map_err(Into::<anyhow::Error>::into)?;
+    .map_err(Into::<anyhow::Error>::into)?;
     let decryption_key = bcs::from_bytes(&decryption_key)?;
     let public_parameters = homomorphic_encryption::PublicParameters::<
         SCALAR_LIMBS,
