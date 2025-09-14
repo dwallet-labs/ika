@@ -39,12 +39,12 @@ use ika_dwallet_2pc_mpc::pricing::{PricingInfo, PricingInfoValue};
 use ika_dwallet_2pc_mpc::pricing_and_fee_manager::{Self, PricingAndFeeManager};
 use ika_dwallet_2pc_mpc::sessions_manager::{Self, SessionsManager, SessionIdentifier};
 use ika_dwallet_2pc_mpc::support_config::{Self, SupportConfig};
+use ika_dwallet_2pc_mpc::event_wrapper;
 use sui::bag::{Self, Bag};
 use sui::balance::{Self, Balance};
 use sui::bcs;
 use sui::coin::Coin;
 use sui::ed25519::ed25519_verify;
-use sui::event;
 use sui::object_table::{Self, ObjectTable};
 use sui::sui::SUI;
 use sui::table::Table;
@@ -2401,7 +2401,7 @@ public(package) fun register_encryption_key(
         );
 
     // Emit an event to signal the creation of the encryption key
-    event::emit(CreatedEncryptionKeyEvent {
+    event_wrapper::emit_event(CreatedEncryptionKeyEvent {
         encryption_key_id,
         signer_address,
     });
@@ -2933,7 +2933,7 @@ public(package) fun accept_encrypted_user_share(
             },
             _ => abort EWrongState,
         };
-    event::emit(AcceptEncryptedUserShareEvent {
+    event_wrapper::emit_event(AcceptEncryptedUserShareEvent {
         encrypted_user_secret_key_share_id,
         dwallet_id,
         user_output_signature,
@@ -4374,7 +4374,7 @@ fun process_checkpoint_message(
     );
     self.last_processed_checkpoint_sequence_number = sequence_number;
 
-    event::emit(DWalletCheckpointInfoEvent {
+    event_wrapper::emit_event(DWalletCheckpointInfoEvent {
         epoch,
         sequence_number,
     });
@@ -4537,7 +4537,7 @@ fun process_checkpoint_message(
             },
             END_OF_EPOCH_MESSAGE_TYPE => {
                 self.received_end_of_publish = true;
-                event::emit(EndOfEpochEvent {
+                event_wrapper::emit_event(EndOfEpochEvent {
                     epoch: self.current_epoch,
                 });
             },
@@ -4554,7 +4554,7 @@ fun set_max_active_sessions_buffer(
     max_active_sessions_buffer: u64,
 ) {
     self.sessions_manager.set_max_active_sessions_buffer(max_active_sessions_buffer);
-    event::emit(SetMaxActiveSessionsBufferEvent {
+    event_wrapper::emit_event(SetMaxActiveSessionsBufferEvent {
         max_active_sessions_buffer,
     });
 }
@@ -4568,7 +4568,7 @@ fun set_gas_fee_reimbursement_sui_system_call_value(
         .set_gas_fee_reimbursement_sui_system_call_value(
             gas_fee_reimbursement_sui_system_call_value,
         );
-    event::emit(SetGasFeeReimbursementSuiSystemCallValueEvent {
+    event_wrapper::emit_event(SetGasFeeReimbursementSuiSystemCallValueEvent {
         gas_fee_reimbursement_sui_system_call_value,
     });
 }

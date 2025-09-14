@@ -17,7 +17,7 @@ use std::string::String;
 use sui::bag::{Self, Bag};
 use sui::balance::{Self, Balance};
 use sui::coin::Coin;
-use sui::event;
+use ika_system::event_wrapper;
 use sui::object_table::{Self, ObjectTable};
 use sui::table::Table;
 use sui::vec_map::{Self, VecMap};
@@ -245,7 +245,7 @@ public(package) fun update_pending_active_set(
         let removed_validator = self.get_validator_mut(removed_validator_id.extract());
         let new_epoch = current_epoch + 1;
         removed_validator.deactivate(new_epoch);
-        event::emit(ValidatorLeaveEvent {
+        event_wrapper::emit_event(ValidatorLeaveEvent {
             withdrawing_epoch: new_epoch,
             validator_id,
             is_voluntary: false,
@@ -327,7 +327,7 @@ public(package) fun request_remove_validator(
     };
     validator.set_withdrawing(cap, withdrawing_epoch);
     self.pending_active_set.borrow_mut().remove(validator_id);
-    event::emit(ValidatorLeaveEvent {
+    event_wrapper::emit_event(ValidatorLeaveEvent {
         withdrawing_epoch,
         validator_id,
         is_voluntary: true,
@@ -683,7 +683,7 @@ fun activate_added_validators(self: &mut ValidatorSet, new_epoch: u64) {
         let validator = self.get_validator_mut(member.validator_id());
         if (validator.activation_epoch().is_some_and!(|epoch| epoch == new_epoch)) {
             validator.advance_epoch(balance::zero(), new_epoch);
-            event::emit(ValidatorJoinEvent {
+            event_wrapper::emit_event(ValidatorJoinEvent {
                 epoch: new_epoch,
                 validator_id: validator.validator_id(),
             });
@@ -1016,7 +1016,7 @@ fun emit_validator_epoch_events(
             vector[]
         };
         let tallying_rule_global_score = if (slashed_validators.contains(&validator_id)) 0 else 1;
-        event::emit(ValidatorEpochInfoEventV1 {
+        event_wrapper::emit_event(ValidatorEpochInfoEventV1 {
             epoch: new_epoch,
             validator_id,
             //reference_gas_survey_quote: validator.computation_price(),
