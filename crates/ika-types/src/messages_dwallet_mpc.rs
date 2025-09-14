@@ -231,10 +231,10 @@ impl Ord for SessionIdentifier {
     }
 }
 
-pub type Secp256K1AsyncECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
-pub type Secp256R1AsyncECDSAProtocol = twopc_mpc::secp256r1::class_groups::ECDSAProtocol;
-pub type Curve25519AsyncEdDSAProtocol = twopc_mpc::curve25519::class_groups::EdDSAProtocol;
-pub type RistrettoAsyncSchnorrkelSubstrateProtocol =
+pub type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
+pub type Secp256R1ECDSAProtocol = twopc_mpc::secp256r1::class_groups::ECDSAProtocol;
+pub type Curve25519EdDSAProtocol = twopc_mpc::curve25519::class_groups::EdDSAProtocol;
+pub type RistrettoSchnorrkelSubstrateProtocol =
     twopc_mpc::ristretto::class_groups::SchnorrkelSubstrateProtocol;
 
 pub type Secp256K1AsyncDKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;

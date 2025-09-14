@@ -15,6 +15,7 @@ use dwallet_mpc_types::dwallet_mpc::{NetworkEncryptionKeyPublicDataTrait, Versio
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
+use ika_types::messages_dwallet_mpc::{Secp256K1ECDSAProtocol, SessionIdentifier};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncEdDSAProtocol, RistrettoAsyncSchnorrkelSubstrateProtocol,
     Secp256K1AsyncECDSAProtocol, Secp256R1AsyncECDSAProtocol, SessionIdentifier,
@@ -116,7 +117,6 @@ impl PresignAdvanceRequestByCurve {
                 advance_request.map(PresignAdvanceRequestByCurve::Secp256r1)
             }
         };
-
         Ok(advance_request)
     }
 }
