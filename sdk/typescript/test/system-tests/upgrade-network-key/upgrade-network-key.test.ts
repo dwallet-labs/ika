@@ -39,7 +39,6 @@ describe('system tests', () => {
 		);
 
 		console.log(`Ika genesis created, deploying ika network`);
-		console.log('Validators added to the next committee, deploying ika network');
 		await deployIkaNetwork();
 		console.log('Ika network deployed, waiting for epoch switch');
 		const suiClient = createTestSuiClient();
