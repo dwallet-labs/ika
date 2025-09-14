@@ -124,6 +124,48 @@ export async function createValidatorPod(
 	});
 }
 
+export async function createPVCs(kc: KubeConfig, namespaceName: string, numOfValidators: number) {
+	const k8sApi = kc.makeApiClient(CoreV1Api);
+	for (let i = 0; i < numOfValidators; i++) {
+		const pvc = {
+			metadata: {
+				name: `ika-val-${i + 1}-pvc`,
+				namespace: namespaceName,
+			},
+			spec: {
+				accessModes: ['ReadWriteOnce'],
+				resources: {
+					requests: {
+						storage: '5Gi',
+					},
+				},
+			},
+		};
+		await k8sApi.createNamespacedPersistentVolumeClaim({
+			namespace: namespaceName,
+			body: pvc,
+		});
+	}
+	const fullnodePVC = {
+		metadata: {
+			name: `ika-fullnode-pvc`,
+			namespace: namespaceName,
+		},
+		spec: {
+			accessModes: ['ReadWriteOnce'],
+			resources: {
+				requests: {
+					storage: '5Gi',
+				},
+			},
+		},
+	};
+	await k8sApi.createNamespacedPersistentVolumeClaim({
+		namespace: namespaceName,
+		body: fullnodePVC,
+	});
+}
+
 export async function createPods(kc: KubeConfig, namespaceName: string, numOfValidators: number) {
 	const k8sApi = kc.makeApiClient(CoreV1Api);
 	for (let i = 0; i < numOfValidators; i++) {

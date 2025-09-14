@@ -9,7 +9,6 @@ describe('system tests', () => {
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 
-		const startCommitteeSize = Number(process.env.VALIDATOR_NUM);
 		// ------------ Create Ika Genesis ------------
 		const createIkaGenesisPath = `${TEST_ROOT_DIR}/create-ika-genesis-mac.sh`;
 		await execa({
@@ -23,7 +22,6 @@ describe('system tests', () => {
 		);
 
 		console.log(`Ika genesis created, deploying ika network`);
-		const addValidatorScriptPath = `${TEST_ROOT_DIR}/add-validators-to-next-committee.sh`;
 		console.log('Validators added to the next committee, deploying ika network');
 		await deployIkaNetwork();
 

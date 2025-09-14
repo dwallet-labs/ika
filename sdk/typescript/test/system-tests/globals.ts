@@ -2,7 +2,7 @@ import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
 
 import { createConfigMaps } from './config-map';
 import { createNetworkServices } from './network-service';
-import { createPods } from './pods';
+import { createPods, createPVCs } from './pods';
 
 export const CONFIG_MAP_NAME = 'ika-system-test-config';
 export const NETWORK_SERVICE_NAME = 'ika-dns-service';
@@ -23,6 +23,7 @@ export async function deployIkaNetwork() {
 	kc.loadFromDefault();
 	await createNamespace(kc, NAMESPACE_NAME);
 	await createConfigMaps(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM));
+	await createPVCs(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM));
 	await createPods(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM));
 	await createNetworkServices(kc, NAMESPACE_NAME);
 }
