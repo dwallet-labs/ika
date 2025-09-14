@@ -74,6 +74,7 @@ process_validator() {
     # Set up clean local SUI config dir
     rm -rf "$LOCAL_SUI_CONFIG_DIR"
     mkdir -p "$LOCAL_SUI_CONFIG_DIR"
+    sleep 1
     cp -r "$VALIDATOR_DIR/$SUI_BACKUP_DIR/sui_config/"* "$LOCAL_SUI_CONFIG_DIR"
     # Update keystore path in client.yaml to the current validator's sui.keystore
     yq e ".keystore.File = \"$LOCAL_SUI_CONFIG_DIR/sui.keystore\"" -i "$LOCAL_SUI_CONFIG_DIR/client.yaml"
