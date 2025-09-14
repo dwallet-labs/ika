@@ -16,7 +16,7 @@ import {
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
 import {
-	deployUpgradedPackage,
+	deployUpgradedPackage, getProtocolCapID, getPublisherKeypair,
 	migrateCoordinator,
 } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from '../globals';
@@ -73,16 +73,21 @@ describe('system tests', () => {
 		console.log('Network key version is V2, verifying v1 dWallet full flow still works');
 		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, `v1-dwallet-sign-full-flow-test`);
 		console.log('V1 dWallet full flow works, upgrading the Move contracts to V2');
-		const signer = Ed25519Keypair.deriveKeypair(
-			'nature carry layer home plunge alter long space struggle ethics siege clerk',
+		const twopc_mpc_contracts_path = path.join(
+			TEST_ROOT_DIR,
+			'../../../../contracts/ika_dwallet_2pc_mpc',
 		);
-		const protocolCapID = '0xd7eef0703c67aebdc1651ba5a3e21881c8272626030f3324e79e1378c690d0af';
-		const packagePath = '/root/code/dwallet-network/contracts/ika_dwallet_2pc_mpc';
+		const signer = await getPublisherKeypair();
+		const protocolCapID = await getProtocolCapID(
+			suiClient,
+			signer.getPublicKey().toSuiAddress(),
+			ikaClient,
+		);
 
 		const upgradedPackageID = await deployUpgradedPackage(
 			suiClient,
 			signer,
-			packagePath,
+			twopc_mpc_contracts_path,
 			ikaClient,
 			protocolCapID,
 		);

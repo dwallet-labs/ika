@@ -40,7 +40,7 @@ describe('Upgrade twopc_mpc Move package', () => {
 	});
 });
 
-async function getPublisherKeypair(): Promise<Ed25519Keypair> {
+export async function getPublisherKeypair(): Promise<Ed25519Keypair> {
 	let publisherMnemonicBytes = await fs.readFile(
 		`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/sui_config/publisher.seed`,
 	);
@@ -48,7 +48,7 @@ async function getPublisherKeypair(): Promise<Ed25519Keypair> {
 	return Ed25519Keypair.deriveKeypair(publisherMnemonic.trimEnd());
 }
 
-async function getProtocolCapID(
+export async function getProtocolCapID(
 	suiClient: SuiClient,
 	publisherAddress: string,
 	ikaClient: IkaClient,
