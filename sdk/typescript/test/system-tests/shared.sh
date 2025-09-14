@@ -43,7 +43,7 @@ request_and_generate_yaml() {
     if [[ "$response" == "201" || "$response" == "200" ]]; then
         echo "[Faucet] ✅ Success for '$VALIDATOR_NAME'"
         jq . "$VALIDATOR_DIR/faucet_response.json"
-        break
+        return 0
       else
         echo "[Faucet] ❌ Attempt $attempt failed with HTTP $response for '$VALIDATOR_NAME'"
         (( attempt++ ))

@@ -195,23 +195,10 @@ echo "Ika dWallet 2PC MPC Package ID: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
 # Request Tokens and Create Validator.yaml (Max 5 Parallel + Retry)
 ############################
 
-# Concurrency control (compatible with bash < 4.3)
-MAX_JOBS=10
-JOB_COUNT=0
-
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
+  echo "Processing validator $i for token request and YAML generation..."
   request_and_generate_yaml "$i"
-
-  (( JOB_COUNT++ ))
-
-  if [[ $JOB_COUNT -ge $MAX_JOBS ]]; then
-    wait  # wait for all background jobs
-    JOB_COUNT=0
-  fi
 done
-
-# Wait for any remaining background jobs
-wait
 
 # This is needed later for the publisher, in oder to update the ika_sui_config.yaml.
 $BINARY_NAME validator config-env \
@@ -232,23 +219,9 @@ TUPLES_FILE="$TMP_OUTPUT_DIR/tuples.txt"
 mkdir -p "$TMP_OUTPUT_DIR"
 rm -f "$TUPLES_FILE"
 
-# Launch jobs with a max concurrency of 5 using a simple counter
-MAX_JOBS=10
-JOB_COUNT=0
-
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
     process_validator "$i"
-
-    (( JOB_COUNT++ ))
-
-    if [[ $JOB_COUNT -ge $MAX_JOBS ]]; then
-        wait
-        JOB_COUNT=0
-    fi
 done
-
-# Final wait for any remaining jobs
-wait
 
 # Read tuples file after all jobs complete
 if [[ -f "$TUPLES_FILE" ]]; then
