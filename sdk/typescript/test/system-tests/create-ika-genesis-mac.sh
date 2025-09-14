@@ -237,7 +237,7 @@ MAX_JOBS=10
 JOB_COUNT=0
 
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-    process_validator "$i" &
+    process_validator "$i"
 
     (( JOB_COUNT++ ))
 
