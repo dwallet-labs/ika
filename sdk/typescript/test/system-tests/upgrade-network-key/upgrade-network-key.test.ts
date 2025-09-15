@@ -26,6 +26,16 @@ import {
 } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from '../globals';
 import { createValidatorPod, killValidatorPod } from '../pods';
+import { IkaClient } from '../../../src';
+
+async function waitForV2NetworkKey(ikaClient: IkaClient, suiClient: SuiClient) {
+	let networkKeyVersion = 1;
+	while (networkKeyVersion !== 2) {
+		const networkKey = await ikaClient.getConfiguredNetworkEncryptionKey();
+		const networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.publicOutputID);
+		networkKeyVersion = network_key_version(networkKeyBytes);
+	}
+}
 
 describe('system tests', () => {
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
@@ -77,6 +87,11 @@ describe('system tests', () => {
 			suiClient,
 			dwallet,
 			`v1-dwallet-sign-full-flow-test`,
+		);
+
+		await waitForV2NetworkKey(
+			ikaClient,
+			suiClient,
 		);
 
 		await waitForEpochSwitch(ikaClient);
