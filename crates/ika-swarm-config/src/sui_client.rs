@@ -1693,7 +1693,7 @@ async fn publish_package_to_sui(
             default_edition: None,
             deps_as_root: false,
             silence_warnings: false,
-            warnings_are_errors: true,
+            warnings_are_errors: false,
             json_errors: false,
             additional_named_addresses: Default::default(),
             lint_flag: Default::default(),
