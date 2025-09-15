@@ -56,7 +56,7 @@ describe('system tests', () => {
 		const networkKeyVersion = network_key_version(networkKeyBytes);
 		expect(networkKeyVersion).toBe(1);
 		console.log('Network key version is V1, creating a dWallet with it');
-		await createCompleteDWallet(ikaClient, suiClient, 'create-complete-dwallet');
+		const dwallet = await createCompleteDWallet(ikaClient, suiClient, 'create-complete-dwallet');
 		console.log('DWallet created successfully, upgrading the validators docker image');
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		const kc = new KubeConfig();
@@ -70,6 +70,7 @@ describe('system tests', () => {
 		console.log(
 			'All validators upgraded, waiting for two epoch switches (the protocol version may have been changed after the epoch middle)',
 		);
+
 		await waitForEpochSwitch(ikaClient);
 		await waitForEpochSwitch(ikaClient);
 		console.log('Two epochs switched, verifying the network key version is V2');

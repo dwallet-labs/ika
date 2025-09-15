@@ -17,6 +17,8 @@ import { IkaTransaction } from '../../src/client/ika-transaction.js';
 import { getNetworkConfig } from '../../src/client/network-configs.js';
 import {
 	Curve,
+	DWallet,
+	EncryptedUserSecretKeyShare,
 	Hash,
 	IkaConfig,
 	SignatureAlgorithm,
@@ -371,6 +373,63 @@ export async function retryUntil<T>(
 
 export function delay(seconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+}
+
+export async function runSignFullFlowWithDWallet(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	createDWalletResponse: {
+		dWallet: DWallet;
+		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+		userShareEncryptionKeys: UserShareEncryptionKeys;
+		signerAddress: string;
+	},
+	testName: string,
+) {
+	const {
+		dWallet: activeDWallet,
+		encryptedUserSecretKeyShare,
+		userShareEncryptionKeys,
+		signerAddress,
+	} = createDWalletResponse;
+	const presignRequestEvent = await testPresign(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		SignatureAlgorithm.ECDSA,
+		signerAddress,
+		testName,
+	);
+
+	expect(presignRequestEvent).toBeDefined();
+	expect(presignRequestEvent.event_data.presign_id).toBeDefined();
+
+	// Step 3: Wait for presign to complete
+	const presignObject = await retryUntil(
+		() =>
+			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
+		(presign) => presign !== null,
+		30,
+		2000,
+	);
+
+	expect(presignObject).toBeDefined();
+	expect(presignObject.state.$kind).toBe('Completed');
+
+	// Step 4: Sign a message
+	const message = createTestMessage(testName);
+	await testSign(
+		ikaClient,
+		suiClient,
+		activeDWallet as ZeroTrustDWallet,
+		userShareEncryptionKeys,
+		presignObject,
+		encryptedUserSecretKeyShare,
+		message,
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
+		testName,
+	);
 }
 
 export async function runSignFullFlowWithV1Dwallet(
