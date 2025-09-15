@@ -84,6 +84,12 @@ describe('system tests', () => {
 		const newNetworkKeyVersion = network_key_version(networkKeyBytes);
 		expect(newNetworkKeyVersion).toBe(2);
 		console.log('Network key version is V2, verifying v1 dWallet full flow still works');
+		await runSignFullFlowWithDWallet(
+			ikaClient,
+			suiClient,
+			dwallet,
+			`post-2epoch-switch-v1-dwallet-sign-full-flow-test`,
+		)
 		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, `v1-dwallet-sign-full-flow-test`);
 		console.log('V1 dWallet full flow works, upgrading the Move contracts to V2');
 		const twopc_mpc_contracts_path = path.join(
