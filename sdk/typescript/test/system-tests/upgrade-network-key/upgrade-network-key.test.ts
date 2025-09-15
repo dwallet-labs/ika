@@ -24,6 +24,7 @@ import {
 } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from '../globals';
 import { createValidatorPod, killValidatorPod } from '../pods';
+import {runSignFullFlowTestWithImportedDwallet} from "../../imported-dwallet/imported-dwallet-sign.test";
 
 describe('system tests', () => {
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
@@ -115,7 +116,13 @@ describe('system tests', () => {
 		await delay(5); // wait for the upgrade to be fully processed
 		await migrateCoordinator(suiClient, signer, ikaClient, protocolCapID, upgradedPackageID);
 		await delay(5); // wait for the migration to be fully processed
-		console.log('Move contracts upgraded to V2, verifying v2 dWallet full flow works');
+		console.log('Move contracts upgraded to V2, creating an imported dWallet and verifying it works');
+		await runSignFullFlowTestWithImportedDwallet(
+			`imported-dwallet-sign-full-flow-test`,
+			ikaClient,
+			suiClient,
+		);
+		console.log('Imported dWallet full flow works, creating a new v2 dWallet and verifying it works');
 		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, `v2-dwallet-sign-full-flow-test`);
 		console.log('V2 dWallet full flow works, test completed successfully');
 	}, 3_600_000);
