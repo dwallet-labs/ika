@@ -69,7 +69,14 @@ describe('system tests', () => {
 		expect(networkKeyVersion).toBe(1);
 		console.log('Network key version is V1, creating a dWallet with it');
 		const dwallet = await createCompleteDWallet(ikaClient, suiClient, 'create-complete-dwallet');
-		console.log('DWallet created successfully, upgrading the validators docker image');
+		console.log('DWallet created successfully, running a full sign flow with it');
+		await runSignFullFlowWithDWallet(
+			ikaClient,
+			suiClient,
+			dwallet,
+			`pre-upgrade-v1-dwallet-sign-full-flow-test`,
+		);
+		console.log('V1 dWallet full flow works, upgrading the validators docker image');
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
