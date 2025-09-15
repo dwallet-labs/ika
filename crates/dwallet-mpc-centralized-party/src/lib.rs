@@ -7,6 +7,7 @@
 #![allow(unused_qualifications)]
 
 use anyhow::{Context, anyhow};
+use bitcoin::{Address, CompressedPublicKey, Network};
 use class_groups::dkg::Secp256k1Party;
 use class_groups::setup::get_setup_parameters_secp256k1;
 use class_groups::{
@@ -46,6 +47,7 @@ use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::VerifyingKey;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use web_sys::js_sys::Atomics::add;
 
 type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
@@ -347,7 +349,11 @@ pub fn bitcoin_address_from_dwallet_output_inner(
                 &AffinePoint::from(public_key).to_bytes(),
             )
             .expect("creation of public key from affine failed");
-            Ok(pk.to_string())
+            let addr = Address::p2wpkh(
+                &CompressedPublicKey::from_slice(&pk.serialize())?,
+                Network::Regtest,
+            );
+            Ok(addr.to_string())
         }
     }
 }
