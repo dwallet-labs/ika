@@ -1,0 +1,13 @@
+[package]
+name = "ika_btc_multisig"
+edition = "2024.beta"
+license = "BSD-3-Clause-Clear"
+
+[dependencies]
+ika = { local = "../../../contracts/ika" }
+ika_dwallet_2pc_mpc = { local = "../../../contracts/ika_dwallet_2pc_mpc" }
+
+[addresses]
+ika_btc_multisig = "0x0"
+ika = "0x877ac493d6cea5721490cb0cf7f994ebba5c7035ce9263deb7a6e9ed81cf72a1"
+ika_dwallet_2pc_mpc = "0x0474150a1cdfde54a73b220c63b25deeb06bbbfe34f99ae8ae6dbeead2d4d09e"

@@ -31,6 +31,8 @@ import type {
 	Presign,
 	PresignState,
 	SharedObjectOwner,
+	Sign,
+	SignState,
 	SystemInner,
 } from './types.js';
 import { objResToBcs } from './utils.js';
@@ -495,6 +497,64 @@ export class IkaClient {
 		throw new Error(
 			`Timeout waiting for partial user signature ${partialCentralizedSignedMessageID} to reach state ${state}`,
 		);
+	}
+
+	/**
+	 * Retrieve a sign session object by its ID.
+	 *
+	 * @param signID - The unique identifier of the sign session to retrieve
+	 * @returns Promise resolving to the Sign object
+	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 */
+	async getSign(signID: string): Promise<Sign> {
+		await this.ensureInitialized();
+
+		return this.client
+			.getObject({
+				id: signID,
+				options: { showBcs: true },
+			})
+			.then((obj) => {
+				return CoordinatorInnerModule.SignSession.fromBase64(objResToBcs(obj));
+			});
+	}
+
+	/**
+	 * Retrieve a sign session object in a particular state, waiting until it reaches that state.
+	 * This method polls the sign until it matches the specified state.
+	 *
+	 * @param signID - The unique identifier of the sign session to retrieve
+	 * @param state - The target state to wait for
+	 * @param options - Optional configuration for polling behavior
+	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
+	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @returns Promise resolving to the Sign object when it reaches the target state
+	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
+	 * @throws {NetworkError} If the network request fails
+	 * @throws {Error} If timeout is reached before the target state is achieved
+	 */
+	async getSignInParticularState(
+		signID: string,
+		state: SignState,
+		options: { timeout?: number; interval?: number } = {},
+	): Promise<Sign> {
+		await this.ensureInitialized();
+
+		const { timeout = 30000, interval = 1000 } = options;
+		const startTime = Date.now();
+
+		while (Date.now() - startTime < timeout) {
+			const sign = await this.getSign(signID);
+
+			if (sign.state.$kind === state) {
+				return sign;
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, interval));
+		}
+
+		throw new Error(`Timeout waiting for sign ${signID} to reach state ${state}`);
 	}
 
 	/**
