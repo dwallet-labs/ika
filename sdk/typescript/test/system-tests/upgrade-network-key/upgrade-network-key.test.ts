@@ -11,7 +11,7 @@ import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
-	delay,
+	delay, runSignFullFlowWithDWallet,
 	runSignFullFlowWithV1Dwallet,
 	runSignFullFlowWithV2Dwallet,
 	waitForEpochSwitch,
@@ -68,8 +68,14 @@ describe('system tests', () => {
 			await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
 		}
 		console.log(
-			'All validators upgraded, waiting for two epoch switches (the protocol version may have been changed after the epoch middle)',
+			'All validators upgraded, running a full sign flow with the previously created v1 dWallet',
 		);
+		await runSignFullFlowWithDWallet(
+			ikaClient,
+			suiClient,
+			dwallet,
+			`v1-dwallet-sign-full-flow-test`,
+		)
 
 		await waitForEpochSwitch(ikaClient);
 		await waitForEpochSwitch(ikaClient);
