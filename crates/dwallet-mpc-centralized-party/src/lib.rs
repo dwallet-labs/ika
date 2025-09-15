@@ -109,11 +109,11 @@ pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOf
 /// Return an error if decoding or advancing the protocol fails.
 /// This is okay since a malicious blockchain can always block a client.
 pub fn create_dkg_output_by_curve_v2(
-    dwallet_curve: DWalletCurve,
+    dwallet_curve: u32,
     protocol_pp: Vec<u8>,
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    match dwallet_curve {
+    match DWalletCurve::try_from(dwallet_curve)? {
         DWalletCurve::Secp256k1 => {
             centralized_dkg_output_v2::<Secp256K1DKGProtocol>(protocol_pp, session_id)
         }
