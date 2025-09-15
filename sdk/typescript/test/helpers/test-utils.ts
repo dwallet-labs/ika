@@ -3,6 +3,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { dwallet_version } from '@ika.xyz/ika-wasm';
 import { toHex } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
@@ -496,7 +497,7 @@ export async function runSignFullFlowWithV2Dwallet(
 		userShareEncryptionKeys,
 		signerAddress,
 	} = await createCompleteDWalletV2(ikaClient, suiClient, testName);
-
+	expect(dwallet_version(Uint8Array.from(activeDWallet.state.Active.public_output))).toBe(2);
 	// Step 2: Create presign
 	const presignRequestEvent = await testPresign(
 		ikaClient,
