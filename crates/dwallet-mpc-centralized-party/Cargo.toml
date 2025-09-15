@@ -6,7 +6,7 @@ version.workspace = true
 [dependencies]
 mpc.workspace = true
 twopc_mpc.workspace = true
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "8ed56680" }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "0603ae2d" }
 web-sys = "0.3.77"
 bitcoin = "0.32.7"
 k256.workspace = true

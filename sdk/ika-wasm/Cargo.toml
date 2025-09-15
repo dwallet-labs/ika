@@ -9,9 +9,6 @@ publish = false
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
 
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
-
 #[profile.dev]
 #wasm-opt = true
 #

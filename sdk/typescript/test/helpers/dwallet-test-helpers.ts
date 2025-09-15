@@ -6,9 +6,11 @@ import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions
 
 import {
 	DKGRequestInput,
-	ImportDWalletVerificationRequestInput, prepareDKGAsync, sessionIdentifierDigest,
+	ImportDWalletVerificationRequestInput,
+	prepareDKGAsync,
+	prepareDKGSecondRoundAsync,
+	sessionIdentifierDigest,
 } from '../../src/client/cryptography.js';
-import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography.js';
 import type { IkaClient } from '../../src/client/ika-client.js';
 import {
 	Curve,
@@ -219,6 +221,12 @@ export async function createCompleteDWalletV2(
 		(wallet) => wallet !== null,
 		30,
 		2000,
+	);
+	console.log(
+		'DWallet Output (base64):',
+		Buffer.from(
+			awaitingKeyHolderSignatureDWallet.state.AwaitingKeyHolderSignature.public_output,
+		).toString('base64'),
 	);
 
 	// Step 7: Accept encrypted user share

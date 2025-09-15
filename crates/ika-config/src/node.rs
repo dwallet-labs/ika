@@ -34,7 +34,7 @@ use sui_types::event::EventID;
 use sui_types::multiaddr::Multiaddr;
 
 pub fn get_testing_sui_fullnode_rpc_url() -> String {
-    std::env::var("SUI_TESTNET_URL")
+    std::env::var("SUI_FULLNODE_RPC_URL")
         .unwrap_or_else(|_| LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL.to_string())
 }
 
