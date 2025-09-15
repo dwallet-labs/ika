@@ -160,6 +160,7 @@ describe('system tests', () => {
 		console.log(
 			'Imported dWallet full flow works, creating a new v2 dWallet and verifying it works',
 		);
+		// TODO (#1530): Verify sign works with all supported curves in the network key update system test
 		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, `v2-dwallet-sign-full-flow-test`);
 		console.log('V2 dWallet full flow works, test completed successfully');
 	}, 3_600_000);
