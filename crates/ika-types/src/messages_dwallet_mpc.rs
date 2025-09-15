@@ -231,7 +231,16 @@ impl Ord for SessionIdentifier {
     }
 }
 
-pub type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
+pub type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
+pub type Secp256R1ECDSAProtocol = twopc_mpc::secp256r1::class_groups::ECDSAProtocol;
+pub type Curve25519EdDSAProtocol = twopc_mpc::curve25519::class_groups::EdDSAProtocol;
+pub type RistrettoSchnorrkelSubstrateProtocol =
+    twopc_mpc::ristretto::class_groups::SchnorrkelSubstrateProtocol;
+
+pub type Secp256K1AsyncDKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
+pub type Secp256R1AsyncDKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
+pub type Curve25519AsyncDKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
+pub type RistrettoAsyncDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
 
 /// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletSessionEvent`.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
