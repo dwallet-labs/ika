@@ -36,6 +36,8 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
+use k256::elliptic_curve::group::GroupEncoding;
+use k256::{AffinePoint, PublicKey};
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput,
     DKGDecentralizedPartyVersionedOutput,
@@ -319,7 +321,7 @@ pub fn bitcoin_address_from_dwallet_output_inner(
             let pk = bitcoin::secp256k1::PublicKey::from_slice(
                 &AffinePoint::from(output.public_key).to_bytes(),
             )
-                .expect("creation of public key from affine failed");
+            .expect("creation of public key from affine failed");
             Ok(pk.to_string())
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) => {
@@ -344,7 +346,7 @@ pub fn bitcoin_address_from_dwallet_output_inner(
             let pk = bitcoin::secp256k1::PublicKey::from_slice(
                 &AffinePoint::from(public_key).to_bytes(),
             )
-                .expect("creation of public key from affine failed");
+            .expect("creation of public key from affine failed");
             Ok(pk.to_string())
         }
     }
