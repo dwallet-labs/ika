@@ -88,11 +88,19 @@ describe('system tests', () => {
 			dwallet,
 			`v1-dwallet-sign-full-flow-test`,
 		);
-
+		console.log("Signing with the old v1 dWallet works, waiting for the network key to upgrade to V2");
 		await waitForV2NetworkKey(
 			ikaClient,
 			suiClient,
 		);
+		console.log('Network key upgraded to V2, verifying the v1 dWallet full flow still works');
+		await runSignFullFlowWithDWallet(
+			ikaClient,
+			suiClient,
+			dwallet,
+			`v1-dwallet-sign-full-flow-test`,
+		);
+		console.log('V1 dWallet full flow works, waiting for two epoch switches');
 
 		await waitForEpochSwitch(ikaClient);
 		await waitForEpochSwitch(ikaClient);
