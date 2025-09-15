@@ -7,6 +7,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { execa } from 'execa';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { IkaClient } from '../../../src';
 import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
@@ -26,7 +27,6 @@ import {
 } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from '../globals';
 import { createValidatorPod, killValidatorPod } from '../pods';
-import { IkaClient } from '../../../src';
 
 async function waitForV2NetworkKey(ikaClient: IkaClient, suiClient: SuiClient) {
 	let networkKeyVersion = 1;
@@ -95,11 +95,10 @@ describe('system tests', () => {
 			dwallet,
 			`v1-dwallet-sign-full-flow-test`,
 		);
-		console.log("Signing with the old v1 dWallet works, waiting for the network key to upgrade to V2");
-		await waitForV2NetworkKey(
-			ikaClient,
-			suiClient,
+		console.log(
+			'Signing with the old v1 dWallet works, waiting for the network key to upgrade to V2',
 		);
+		await waitForV2NetworkKey(ikaClient, suiClient);
 		console.log('Network key upgraded to V2, verifying the v1 dWallet full flow still works');
 		await runSignFullFlowWithDWallet(
 			ikaClient,
