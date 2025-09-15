@@ -11,11 +11,13 @@ import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
-	delay, runSignFullFlowWithDWallet,
+	delay,
+	runSignFullFlowWithDWallet,
 	runSignFullFlowWithV1Dwallet,
 	runSignFullFlowWithV2Dwallet,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
+import { runSignFullFlowTestWithImportedDwallet } from '../../imported-dwallet/imported-dwallet-sign.test';
 import {
 	deployUpgradedPackage,
 	getProtocolCapID,
@@ -24,7 +26,6 @@ import {
 } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from '../globals';
 import { createValidatorPod, killValidatorPod } from '../pods';
-import {runSignFullFlowTestWithImportedDwallet} from "../../imported-dwallet/imported-dwallet-sign.test";
 
 describe('system tests', () => {
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
@@ -76,7 +77,7 @@ describe('system tests', () => {
 			suiClient,
 			dwallet,
 			`v1-dwallet-sign-full-flow-test`,
-		)
+		);
 
 		await waitForEpochSwitch(ikaClient);
 		await waitForEpochSwitch(ikaClient);
@@ -92,7 +93,9 @@ describe('system tests', () => {
 			dwallet,
 			`post-2epoch-switch-v1-dwallet-sign-full-flow-test`,
 		);
-		console.log('signing with the old v1 dWallet works, creating a new v1 dWallet and verifying it works');
+		console.log(
+			'signing with the old v1 dWallet works, creating a new v1 dWallet and verifying it works',
+		);
 		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, `v1-dwallet-sign-full-flow-test`);
 		console.log('V1 dWallet full flow works, upgrading the Move contracts to V2');
 		const twopc_mpc_contracts_path = path.join(
@@ -116,13 +119,17 @@ describe('system tests', () => {
 		await delay(5); // wait for the upgrade to be fully processed
 		await migrateCoordinator(suiClient, signer, ikaClient, protocolCapID, upgradedPackageID);
 		await delay(5); // wait for the migration to be fully processed
-		console.log('Move contracts upgraded to V2, creating an imported dWallet and verifying it works');
+		console.log(
+			'Move contracts upgraded to V2, creating an imported dWallet and verifying it works',
+		);
 		await runSignFullFlowTestWithImportedDwallet(
 			`imported-dwallet-sign-full-flow-test`,
 			ikaClient,
 			suiClient,
 		);
-		console.log('Imported dWallet full flow works, creating a new v2 dWallet and verifying it works');
+		console.log(
+			'Imported dWallet full flow works, creating a new v2 dWallet and verifying it works',
+		);
 		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, `v2-dwallet-sign-full-flow-test`);
 		console.log('V2 dWallet full flow works, test completed successfully');
 	}, 3_600_000);
