@@ -432,6 +432,18 @@ pub fn network_key_version_inner(
     }
 }
 
+pub fn dwallet_version_inner(
+    dwallet_output: SerializedWrappedMPCPublicOutput,
+) -> anyhow::Result<u32> {
+    let dwallet_output: VersionedDwalletDKGSecondRoundPublicOutput =
+        bcs::from_bytes(&dwallet_output)?;
+
+    match &dwallet_output {
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(_) => Ok(1),
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(_) => Ok(2),
+    }
+}
+
 pub fn sample_dwallet_keypair_inner(protocol_pp: Vec<u8>) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let protocol_public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let secret_key = twopc_mpc::secp256k1::Scalar::sample(
