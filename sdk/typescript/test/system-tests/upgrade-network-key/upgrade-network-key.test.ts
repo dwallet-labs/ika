@@ -7,6 +7,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { execa } from 'execa';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
@@ -54,7 +55,9 @@ describe('system tests', () => {
 		let networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.publicOutputID);
 		const networkKeyVersion = network_key_version(networkKeyBytes);
 		expect(networkKeyVersion).toBe(1);
-		console.log('Network key version is V1, upgrading validators binaries to V2');
+		console.log('Network key version is V1, creating a dWallet with it');
+		await createCompleteDWallet(ikaClient, suiClient, 'create-complete-dwallet');
+		console.log('DWallet created successfully, upgrading the validators docker image');
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
