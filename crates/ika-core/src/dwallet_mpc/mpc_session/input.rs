@@ -14,7 +14,7 @@ use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationV1ToV2PartyPublicInputGenerator, ReconfigurationV1toV2Party,
     ReconfigurationV2Party, ReconfigurationV2PartyPublicInputGenerator,
 };
-use crate::dwallet_mpc::sign::{SignParty, sign_session_public_input};
+use crate::dwallet_mpc::sign::{SignParty, SignPublicInputByCurve};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{PresignData, ProtocolData};
 use class_groups::dkg;
@@ -39,7 +39,7 @@ pub enum PublicInput {
     // Used only for V1 dWallets
     Secp256K1DWalletDKG(<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput),
     Presign(PresignPublicInputByCurve),
-    Sign(<SignParty as mpc::Party>::PublicInput),
+    Sign(SignPublicInputByCurve),
     NetworkEncryptionKeyDkgV1(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
     NetworkEncryptionKeyDkgV2(
         <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,

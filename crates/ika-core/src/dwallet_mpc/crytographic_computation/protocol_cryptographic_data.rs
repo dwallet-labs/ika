@@ -8,7 +8,7 @@ use crate::dwallet_mpc::presign::{PresignAdvanceRequestByCurve, PresignPublicInp
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationParty, ReconfigurationV1toV2Party, ReconfigurationV2Party,
 };
-use crate::dwallet_mpc::sign::SignParty;
+use crate::dwallet_mpc::sign::{SignAdvanceRequestByCurve, SignPublicInputByCurve};
 use crate::request_protocol_data::{
     DKGFirstData, DKGSecondData, DWalletDKGData, EncryptedShareVerificationData,
     ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData,
@@ -63,8 +63,8 @@ pub enum ProtocolCryptographicData {
 
     Sign {
         data: SignData,
-        public_input: <SignParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<SignParty as mpc::Party>::Message>,
+        public_input: SignPublicInputByCurve,
+        advance_request: SignAdvanceRequestByCurve,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
@@ -143,7 +143,24 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Sign {
-                advance_request, ..
+                advance_request: SignAdvanceRequestByCurve::Secp256k1ECDSA(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByCurve::Secp256k1Taproot(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByCurve::Secp256r1(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByCurve::Curve25519(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByCurve::Ristretto(advance_request),
+                ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
                 advance_request, ..
@@ -241,7 +258,24 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Sign {
-                advance_request, ..
+                advance_request: SignAdvanceRequestByCurve::Secp256k1ECDSA(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByCurve::Secp256k1Taproot(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByCurve::Secp256r1(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByCurve::Curve25519(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByCurve::Ristretto(advance_request),
+                ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
                 advance_request, ..
