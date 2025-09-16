@@ -47,7 +47,7 @@ use mpc::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 use twopc_mpc::Protocol;
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
@@ -593,17 +593,20 @@ impl ProtocolCryptographicData {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
                 ..
-            } => Ok(compute_dwallet_dkg::<Secp256K1AsyncDKGProtocol>(
-                party_id,
-                access_structure,
-                session_id,
-                advance_request,
-                public_input.protocol_public_parameters.clone(),
-                public_input,
-                bcs::from_bytes(&data.encryption_key)?,
-                bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
-                &mut rng,
-            )?),
+            } => {
+                info!(encryption_key_length=?data.encryption_key.len(), encrypted_share_length=?data.encrypted_centralized_secret_share_and_proof.len(), "Advancing Secp256k1 DWalletDKG");
+                Ok(compute_dwallet_dkg::<Secp256K1AsyncDKGProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input.protocol_public_parameters.clone(),
+                    public_input,
+                    bcs::from_bytes(&data.encryption_key)?,
+                    bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
+                    &mut rng,
+                )?)
+            }
             ProtocolCryptographicData::DWalletDKG {
                 public_input: DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input),
                 data,
