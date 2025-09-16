@@ -53,6 +53,7 @@ use sui::vec_map::VecMap;
 use sui::dynamic_field;
 use ika_dwallet_2pc_mpc::support_config::GlobalPresignConfig;
 use sui::vec_map;
+use ika_dwallet_2pc_mpc::sessions_manager::RootSessionIdentifier;
 
 // === Constants ===
 
@@ -1838,7 +1839,17 @@ public(package) fun register_session_identifier(
     identifier_preimage: vector<u8>,
     ctx: &mut TxContext,
 ): SessionIdentifier {
-    self.sessions_manager.register_session_identifier(identifier_preimage, ctx)
+    let root_session_identifier = self.extra_fields.borrow(b"root_session_identifier");
+    self.sessions_manager.register_session_identifier(root_session_identifier, identifier_preimage, ctx)
+}
+
+public(package) fun register_session_identifier_from_root(
+    self: &mut DWalletCoordinatorInner,
+    root_session_identifier: &RootSessionIdentifier,
+    identifier_preimage: vector<u8>,
+    ctx: &mut TxContext,
+): SessionIdentifier {
+    self.sessions_manager.register_session_identifier(root_session_identifier, identifier_preimage, ctx)
 }
 
 /// Starts a Distributed Key Generation (DKG) session for the network (threshold) encryption key.
@@ -5081,11 +5092,20 @@ public(package) fun get_network_encryption_key_supported_curves(
     dwallet_network_encryption_key.supported_curves
 }
 
-fun global_presign_config(self: &mut DWalletCoordinatorInner): &GlobalPresignConfig {
+fun global_presign_config(self: &DWalletCoordinatorInner): &GlobalPresignConfig {
+    self.extra_fields.borrow(b"global_presign_config")
+}
+
+public(package) fun migrate(
+    self: &mut DWalletCoordinatorInner,
+    ctx: &mut TxContext,
+) {
     if(!self.extra_fields.contains(b"global_presign_config")) {
         self.extra_fields.add(b"global_presign_config", support_config::create_global_presign_config(vec_map::empty(), vec_map::empty()));
     };
-    self.extra_fields.borrow(b"global_presign_config")
+    if(!self.extra_fields.contains(b"root_session_identifier")) {
+        self.extra_fields.add(b"root_session_identifier", sessions_manager::create_root_session_identifier(ctx));
+    };
 }
 
 /// === Public Functions ===

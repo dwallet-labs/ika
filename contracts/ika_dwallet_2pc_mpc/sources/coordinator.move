@@ -29,6 +29,7 @@ use sui::vec_map::VecMap;
 use ika_common::upgrade_package_approver::UpgradePackageApprover;
 use ika_dwallet_2pc_mpc::coordinator_inner::DWallet;
 use ika_dwallet_2pc_mpc::coordinator_inner::SignDuringDKGRequest;
+use ika_dwallet_2pc_mpc::sessions_manager::RootSessionIdentifier;
 
 // === Errors ===
 
@@ -216,6 +217,15 @@ public fun register_session_identifier(
     ctx: &mut TxContext,
 ): SessionIdentifier {
     self.inner_mut().register_session_identifier(identifier, ctx)
+}
+
+public fun register_session_identifier_from_root(
+    self: &mut DWalletCoordinator,
+    root_session_identifier: &RootSessionIdentifier,
+    identifier: vector<u8>,
+    ctx: &mut TxContext,
+): SessionIdentifier {
+    self.inner_mut().register_session_identifier_from_root(root_session_identifier, identifier, ctx)
 }
 
 public fun get_active_encryption_key(self: &DWalletCoordinator, address: address): ID {
@@ -833,8 +843,8 @@ public fun commit_upgrade(self: &mut DWalletCoordinator, upgrade_package_approve
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
 /// This function can be called immediately after the upgrade is committed.
-public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtocolCap) {
-    self.try_migrate_impl();
+public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtocolCap, ctx: &mut TxContext) {
+    self.try_migrate_impl(ctx);
 }
 
 /// Try to migrate the coordinator object to the new package id.
@@ -842,22 +852,24 @@ public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtoco
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
 /// Call this function after the migration epoch is reached.
-public fun try_migrate(self: &mut DWalletCoordinator) {
+public fun try_migrate(self: &mut DWalletCoordinator, ctx: &mut TxContext) {
     assert!(self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e), EInvalidMigration);
-    self.try_migrate_impl();
+    self.try_migrate_impl(ctx);
 }
 
 /// Migrate the coordinator object to the new package id.
 ///
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
-fun try_migrate_impl(self: &mut DWalletCoordinator) {
+fun try_migrate_impl(self: &mut DWalletCoordinator, ctx: &mut TxContext) {
     assert!(self.version < VERSION, EInvalidMigration);
     assert!(self.new_package_id.is_some(), EInvalidMigration);
     // Move the old coordinator inner to the new version.
     let coordinator_inner: DWalletCoordinatorInner = dynamic_field::remove(&mut self.id, self.version);
     dynamic_field::add(&mut self.id, VERSION, coordinator_inner);
     self.version = VERSION;
+
+    self.inner_mut().migrate(ctx);
 
     self.package_id = self.new_package_id.extract();
     // empty the migration epoch
