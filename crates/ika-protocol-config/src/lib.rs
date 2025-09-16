@@ -80,6 +80,7 @@ impl std::ops::Add<u64> for ProtocolVersion {
 pub enum Chain {
     Mainnet,
     Testnet,
+    Devnet,
     Unknown,
 }
 
@@ -94,6 +95,7 @@ impl Chain {
         match self {
             Chain::Mainnet => "mainnet",
             Chain::Testnet => "testnet",
+            Chain::Devnet => "devnet",
             Chain::Unknown => "unknown",
         }
     }

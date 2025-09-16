@@ -24,6 +24,7 @@ use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SequenceNumber, SuiAddress};
 use sui_types::crypto::SignatureScheme;
 use tokio::time::{Duration, sleep};
+use ika_protocol_config::Chain;
 
 /// CLI for IKA operations on Sui.
 #[derive(Parser)]
@@ -32,6 +33,7 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
+
 
 #[derive(Subcommand)]
 enum Commands {
@@ -46,6 +48,9 @@ enum Commands {
         /// The optional path for network configuration.
         #[clap(long, value_parser = clap::value_parser!(PathBuf))]
         sui_conf_dir: Option<PathBuf>,
+        /// The version of the Move smart contracts to use.
+        #[clap(long, default_value = "contracts")]
+        chain: Chain,
     },
 
     /// Mint IKA tokens.
@@ -133,6 +138,7 @@ async fn main() -> Result<()> {
             sui_rpc_addr,
             sui_faucet_addr,
             sui_conf_dir,
+            chain
         } => {
             println!("Publishing IKA modules on network: {sui_rpc_addr}");
 
@@ -143,7 +149,7 @@ async fn main() -> Result<()> {
             let mut context = WalletContext::new(&sui_config_path)?;
 
             // Setup contract paths.
-            let contract_paths = setup_contract_paths()?;
+            let contract_paths = setup_contract_paths(chain)?;
 
             // Publish the "ika" package.
             let (ika_package_id, treasury_cap_id, ika_package_upgrade_cap_id) =
