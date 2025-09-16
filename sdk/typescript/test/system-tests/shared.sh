@@ -43,7 +43,7 @@ request_and_generate_yaml() {
     if [[ "$response" == "201" || "$response" == "200" ]]; then
         echo "[Faucet] ✅ Success for '$VALIDATOR_NAME'"
         jq . "$VALIDATOR_DIR/faucet_response.json"
-        break
+        return 0
       else
         echo "[Faucet] ❌ Attempt $attempt failed with HTTP $response for '$VALIDATOR_NAME'"
         (( attempt++ ))
@@ -74,6 +74,7 @@ process_validator() {
     # Set up clean local SUI config dir
     rm -rf "$LOCAL_SUI_CONFIG_DIR"
     mkdir -p "$LOCAL_SUI_CONFIG_DIR"
+    sleep 1
     cp -r "$VALIDATOR_DIR/$SUI_BACKUP_DIR/sui_config/"* "$LOCAL_SUI_CONFIG_DIR"
     # Update keystore path in client.yaml to the current validator's sui.keystore
     yq e ".keystore.File = \"$LOCAL_SUI_CONFIG_DIR/sui.keystore\"" -i "$LOCAL_SUI_CONFIG_DIR/client.yaml"

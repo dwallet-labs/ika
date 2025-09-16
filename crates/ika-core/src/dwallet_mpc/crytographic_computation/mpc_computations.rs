@@ -49,7 +49,10 @@ use mpc::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{error, info};
-use twopc_mpc::class_groups::DKGDecentralizedPartyVersionedOutput;
+use twopc_mpc::Protocol;
+use twopc_mpc::class_groups::{
+    DKGCentralizedPartyVersionedOutput, DKGDecentralizedPartyVersionedOutput,
+};
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
 use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
 use twopc_mpc::sign::EncodableSignature;
