@@ -48,7 +48,7 @@ enum Commands {
         #[clap(long, value_parser = clap::value_parser!(PathBuf))]
         sui_conf_dir: Option<PathBuf>,
         /// The version of the Move smart contracts to use.
-        #[clap(long, default_value = "contracts")]
+        #[clap(long, value_parser = clap::value_parser!(PathBuf), default_value = "devnet")]
         chain: Chain,
     },
 

@@ -84,6 +84,18 @@ pub enum Chain {
     Unknown,
 }
 
+impl From<String> for Chain {
+    fn from(s: String) -> Self {
+        match s.to_lowercase().as_str() {
+            "devnet" => Chain::Devnet,
+            "testnet" => Chain::Testnet,
+            "mainnet" => Chain::Mainnet,
+            _ => Chain::Unknown,
+        }
+    }
+}
+
+
 impl Default for Chain {
     fn default() -> Self {
         Self::Unknown
