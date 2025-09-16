@@ -482,8 +482,10 @@ pub async fn ika_system_initialize(
         .get_object_ref(ika_dwallet_2pc_mpc_init_id)
         .await?;
 
-    let zero_key = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![0u32])?))?;
-    let zero_and_one_value = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![vec![0u32, 1u32]])?))?;
+    let supported_curves = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![0u32])?))?;
+    let supported_hashes = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![vec![
+        0u32, 1u32, 2u32, 3u32, 4u32,
+    ]])?))?;
     let zero = ptb.input(CallArg::Pure(bcs::to_bytes(&0u32)?))?;
     let zero_option = ptb.input(CallArg::Pure(bcs::to_bytes(&Some(0u32))?))?;
     let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
@@ -694,7 +696,7 @@ pub async fn ika_system_initialize(
         ident_str!("vec_map").into(),
         ident_str!("from_keys_values").into(),
         vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
-        vec![zero_key, zero_and_one_value],
+        vec![supported_curves, supported_hashes],
     );
 
     let supported_signature_algorithms_to_hash_schemes_vec = ptb.programmable_move_call(
@@ -723,7 +725,10 @@ pub async fn ika_system_initialize(
                 type_params: vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
             })),
         ],
-        vec![zero_key, supported_signature_algorithms_to_hash_schemes_vec],
+        vec![
+            supported_curves,
+            supported_signature_algorithms_to_hash_schemes_vec,
+        ],
     );
 
     let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
