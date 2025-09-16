@@ -349,11 +349,7 @@ pub fn bitcoin_address_from_dwallet_output_inner(
                 &AffinePoint::from(public_key).to_bytes(),
             )
             .expect("creation of public key from affine failed");
-            let addr = Address::p2pkh(
-                &CompressedPublicKey::from_slice(&pk.serialize())?,
-                Network::Regtest,
-            );
-            Ok(addr.to_string())
+            Ok(pk.to_string())
         }
     }
 }
