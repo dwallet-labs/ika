@@ -203,7 +203,7 @@ pub async fn init_ika_on_sui(
                 Err(e)
             }
         })?;
-    let contract_paths = setup_contract_paths()?;
+    let contract_paths = setup_contract_paths(Chain::Devnet)?;
 
     let (ika_package_id, treasury_cap_id, ika_package_upgrade_cap_id) =
         publish_ika_package_to_sui(&mut context, contract_paths.ika_contract_path).await?;
