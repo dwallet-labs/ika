@@ -2762,7 +2762,7 @@ public(package) fun request_dwallet_dkg_with_public_user_secret_key_share(
         public_user_secret_key_share,
     };
 
-    self.request_dwallet_dkg_impl(
+    let (dwallet_cap, sign_id) = self.request_dwallet_dkg_impl(
         dwallet_network_encryption_key_id,
         curve,
         centralized_public_key_share_and_proof,
@@ -2773,7 +2773,13 @@ public(package) fun request_dwallet_dkg_with_public_user_secret_key_share(
         payment_ika,
         payment_sui,
         ctx,
-    )
+    );
+
+    let dwallet = self.get_dwallet_mut(dwallet_cap.dwallet_id);
+
+    dwallet.public_user_secret_key_share = option::some(public_user_secret_key_share);
+
+    (dwallet_cap, sign_id)
 }
 
 public fun request_dwallet_dkg_impl(
