@@ -50,6 +50,9 @@ use sui::sui::SUI;
 use sui::table::Table;
 use sui::table_vec::{Self, TableVec};
 use sui::vec_map::VecMap;
+use sui::dynamic_field;
+use ika_dwallet_2pc_mpc::support_config::GlobalPresignConfig;
+use sui::vec_map;
 
 // === Constants ===
 
@@ -81,6 +84,8 @@ const FUTURE_SIGN_PROTOCOL_FLAG: u32 = 7;
 const SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG: u32 = 8;
 /// DKG protocol identifier
 const DWALLET_DKG_PROTOCOL_FLAG: u32 = 9;
+/// DKG with sign protocol identifier
+const DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG: u32 = 10;
 
 // Message data type constants corresponding to MessageKind enum variants (in ika-types/src/message.rs)
 #[deprecated, allow(unused)]
@@ -162,6 +167,10 @@ const EAlreadyInitiatedMidEpochReconfiguration: u64 = 28;
 const EHaveNotInitiatedMidEpochReconfiguration: u64 = 29;
 /// Not all network encryption keys reconfiguration have been completed
 const ENotAllNetworkEncryptionKeysReconfigurationCompleted: u64 = 30;
+/// Only global presign is allowed
+const EOnlyGlobalPresignAllowed: u64 = 31;
+/// Global presign is not allowed
+const EGlobalPresignNotAllowed: u64 = 32;
 
 // === Structs ===
 
@@ -807,6 +816,16 @@ public struct ImportedKeyMessageApproval has drop, store {
     message: vector<u8>,
 }
 
+public struct SignDuringDKGRequest {
+    presign_id: ID,
+    presign: vector<u8>,
+    curve: u32,
+    signature_algorithm: u32,
+    hash_scheme: u32,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+}
+
 // === Events ===
 
 // === Network Encryption Key DKG Events ===
@@ -1018,6 +1037,36 @@ public struct RejectedDWalletDKGSecondRoundEvent has copy, drop, store {
 
 // === DWallet DKG Events ===
 
+public struct SignDuringDKGRequestEvent has copy, drop, store {
+    sign_id: ID,
+    presign_id: ID,
+    presign: vector<u8>,
+    signature_algorithm: u32,
+    hash_scheme: u32,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+}
+
+public enum UserSecretKeySharEvent has copy, drop, store {
+    Encrypted {
+        /// ID of the encrypted user secret key share being created
+        encrypted_user_secret_key_share_id: ID,
+        /// User's encrypted secret key share with zero-knowledge proof
+        encrypted_centralized_secret_share_and_proof: vector<u8>,
+        /// Serialized encryption key used to encrypt the user's secret share
+        encryption_key: vector<u8>,
+        /// ID of the encryption key object
+        encryption_key_id: ID,
+        /// Address of the encryption key owner
+        encryption_key_address: address,
+        /// Ed25519 public key for verifying the user's signature
+        signer_public_key: vector<u8>,
+    },
+    Public {
+        public_user_secret_key_share: vector<u8>,
+    },
+}
+
 /// Event requesting the second round of DKG from the validator network.
 ///
 /// This event initiates the final phase of distributed key generation where
@@ -1035,30 +1084,22 @@ public struct RejectedDWalletDKGSecondRoundEvent has copy, drop, store {
 /// - Network validation prevents malicious key generation
 /// - Encrypted shares ensure proper key distribution
 public struct DWalletDKGRequestEvent has copy, drop, store {
-    /// ID of the encrypted user secret key share being created
-    encrypted_user_secret_key_share_id: ID,
     /// ID of the dWallet being created through DKG
     dwallet_id: ID,
     /// User's public key share with cryptographic proof of correctness
     centralized_public_key_share_and_proof: vector<u8>,
-    /// ID of the dWallet capability that authorizes this operation
-    dwallet_cap_id: ID,
-    /// User's encrypted secret key share with zero-knowledge proof
-    encrypted_centralized_secret_share_and_proof: vector<u8>,
-    /// Serialized encryption key used to encrypt the user's secret share
-    encryption_key: vector<u8>,
-    /// ID of the encryption key object
-    encryption_key_id: ID,
-    /// Address of the encryption key owner
-    encryption_key_address: address,
     /// User's contribution to the DKG public output
     user_public_output: vector<u8>,
-    /// Ed25519 public key for verifying the user's signature
-    signer_public_key: vector<u8>,
+    /// ID of the dWallet capability that authorizes this operation
+    dwallet_cap_id: ID,
     /// ID of the network encryption key for securing network shares
     dwallet_network_encryption_key_id: ID,
     /// Elliptic curve for the dWallet's cryptographic operations
     curve: u32,
+    /// User's secret key share
+    user_secret_key_share: UserSecretKeySharEvent,
+    /// Sign during DKG request
+    sign_during_dkg_request: Option<SignDuringDKGRequestEvent>,
 }
 
 /// Event emitted when DKG second round completes successfully.
@@ -2527,6 +2568,74 @@ fun validate_approve_message(
     dwallet.is_imported_key_dwallet
 }
 
+public(package) fun sign_during_dkg_request(
+    self: &mut DWalletCoordinatorInner,
+    presign_cap: VerifiedPresignCap,
+    hash_scheme: u32,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+): SignDuringDKGRequest {
+    assert!(self.presign_sessions.contains(presign_cap.presign_id), EPresignNotExist);
+    let presign = self.presign_sessions.remove(presign_cap.presign_id);
+
+    let VerifiedPresignCap {
+        id,
+        dwallet_id: presign_cap_dwallet_id,
+        presign_id: presign_cap_presign_id,
+    } = presign_cap;
+
+    assert!(presign_cap_dwallet_id.is_none(), EOnlyGlobalPresignAllowed);
+
+    let presign_cap_id = id.to_inner();
+    id.delete();
+
+    let PresignSession {
+        mut id,
+        created_at_epoch: _,
+        dwallet_id: presign_dwallet_id,
+        cap_id,
+        state,
+        curve,
+        signature_algorithm,
+    } = presign;
+
+    let presign = match (state) {
+        PresignState::Completed { presign } => {
+            presign
+        },
+        _ => abort EInvalidPresign,
+    };
+
+    let presign_id = id.to_inner();
+
+    let dwallet_network_encryption_key_id = dynamic_field::remove(&mut id, b"dwallet_network_encryption_key_id");
+    id.delete();
+
+    // Sanity checks: check that the IDs of the capability and presign match, and that they point to this dWallet.
+    assert!(presign_cap_id == cap_id, EPresignNotExist);
+    assert!(presign_id == presign_cap_presign_id, EPresignNotExist);
+    assert!(presign_cap_dwallet_id == presign_dwallet_id, EPresignNotExist);
+
+    self
+        .support_config
+        .validate_curve_and_signature_algorithm_and_hash_scheme(
+            curve,
+            signature_algorithm,
+            hash_scheme,
+        );
+    self.validate_network_encryption_key_supports_curve(dwallet_network_encryption_key_id, curve);
+
+    SignDuringDKGRequest {
+        presign_id,
+        presign,
+        curve,
+        signature_algorithm,
+        hash_scheme,
+        message,
+        message_centralized_signature,
+    }
+}
+
 /// Initiates the second round of Distributed Key Generation (DKG) with encrypted user shares.
 ///
 /// This function represents the user's contribution to the DKG second round, where they
@@ -2576,22 +2685,129 @@ public(package) fun request_dwallet_dkg(
     encryption_key_address: address,
     user_public_output: vector<u8>,
     signer_public_key: vector<u8>,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
     session_identifier: SessionIdentifier,
     payment_ika: &mut Coin<IKA>,
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
-): DWalletCap {
+): (DWalletCap, Option<ID>) {
+    let encryption_key = self.encryption_keys.borrow(encryption_key_address);
+    let encryption_key_curve = encryption_key.curve;
+    let encryption_key_id = encryption_key.id.to_inner();
+    let encryption_key = encryption_key.encryption_key;
+    let created_at_epoch: u64 = self.current_epoch;
+
+    assert!(encryption_key_curve == curve, EMismatchCurve);
     self.support_config.validate_curve(curve);
 
-    let pricing_value = self
-        .pricing_and_fee_manager
-        .get_pricing_value_for_protocol(curve, option::none(), DWALLET_DKG_PROTOCOL_FLAG);
+    let id = object::new(ctx);
+    let encrypted_user_secret_key_share_id = id.to_inner();
+
+    let user_secret_key_share = UserSecretKeySharEvent::Encrypted {
+        encrypted_user_secret_key_share_id,
+        encrypted_centralized_secret_share_and_proof,
+        encryption_key,
+        encryption_key_id,
+        encryption_key_address,
+        signer_public_key,
+    };
+
+    let (dwallet_cap, sign_id) = self.request_dwallet_dkg_impl(
+        dwallet_network_encryption_key_id,
+        curve,
+        centralized_public_key_share_and_proof,
+        user_public_output,
+        user_secret_key_share,
+        sign_during_dkg_request,
+        session_identifier,
+        payment_ika,
+        payment_sui,
+        ctx,
+    );
+
+    let encrypted_user_share = EncryptedUserSecretKeyShare {
+        id,
+        created_at_epoch,
+        dwallet_id: dwallet_cap.dwallet_id,
+        encrypted_centralized_secret_share_and_proof,
+        encryption_key_id,
+        encryption_key_address,
+        source_encrypted_user_secret_key_share_id: option::none(),
+        state: EncryptedUserSecretKeyShareState::AwaitingNetworkVerification,
+    };
+
+    let dwallet = self.get_dwallet_mut(dwallet_cap.dwallet_id);
+
+    dwallet
+        .encrypted_user_secret_key_shares
+        .add(encrypted_user_secret_key_share_id, encrypted_user_share);
+    
+    (dwallet_cap, sign_id)
+}
+
+public(package) fun request_dwallet_dkg_with_public_user_secret_key_share(
+    self: &mut DWalletCoordinatorInner,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    centralized_public_key_share_and_proof: vector<u8>,
+    user_public_output: vector<u8>,
+    public_user_secret_key_share: vector<u8>,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): (DWalletCap, Option<ID>) {
+    let user_secret_key_share = UserSecretKeySharEvent::Public {
+        public_user_secret_key_share,
+    };
+
+    self.request_dwallet_dkg_impl(
+        dwallet_network_encryption_key_id,
+        curve,
+        centralized_public_key_share_and_proof,
+        user_public_output,
+        user_secret_key_share,
+        sign_during_dkg_request,
+        session_identifier,
+        payment_ika,
+        payment_sui,
+        ctx,
+    )
+}
+
+public fun request_dwallet_dkg_impl(
+    self: &mut DWalletCoordinatorInner,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    centralized_public_key_share_and_proof: vector<u8>,
+    user_public_output: vector<u8>,
+    user_secret_key_share: UserSecretKeySharEvent,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): (DWalletCap, Option<ID>) {
+    self.support_config.validate_curve(curve);
+
+    let pricing_value = if (sign_during_dkg_request.is_some()) {
+        self
+            .pricing_and_fee_manager
+            .get_pricing_value_for_protocol(curve, option::some(sign_during_dkg_request.borrow().signature_algorithm), DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG)
+    } else {
+        self
+            .pricing_and_fee_manager
+            .get_pricing_value_for_protocol(curve, option::none(), DWALLET_DKG_PROTOCOL_FLAG)
+    };
 
     assert!(
         self.dwallet_network_encryption_keys.contains(dwallet_network_encryption_key_id),
         EDWalletNetworkEncryptionKeyNotExist,
     );
     self.validate_network_encryption_key_supports_curve(dwallet_network_encryption_key_id, curve);
+
+    let created_at_epoch: u64 = self.current_epoch;
 
     // Create a new `DWalletCap` object.
     let id = object::new(ctx);
@@ -2602,10 +2818,10 @@ public(package) fun request_dwallet_dkg(
     };
     let dwallet_cap_id = object::id(&dwallet_cap);
 
-        // Create a new `DWallet` object,
+    // Create a new `DWallet` object,
     let mut dwallet = DWallet {
         id,
-        created_at_epoch: self.current_epoch,
+        created_at_epoch,
         curve,
         public_user_secret_key_share: option::none(),
         dwallet_cap_id,
@@ -2616,30 +2832,48 @@ public(package) fun request_dwallet_dkg(
         state: DWalletState::AwaitingNetworkDKGVerification,
     };
 
+    let sign_during_dkg_request = sign_during_dkg_request.map!(|sign_during_dkg_request| {
 
-    let encryption_key = self.encryption_keys.borrow(encryption_key_address);
-    let encryption_key_curve = encryption_key.curve;
-    let encryption_key_id = encryption_key.id.to_inner();
-    let encryption_key = encryption_key.encryption_key;
-    let created_at_epoch: u64 = self.current_epoch;
+        let id = object::new(ctx);
+        let sign_id = id.to_inner();
+        dwallet
+            .sign_sessions
+            .add(
+                sign_id,
+                SignSession {
+                    id,
+                    created_at_epoch,
+                    dwallet_id,
+                    state: SignState::Requested,
+                },
+            );
+        let SignDuringDKGRequest {
+            presign_id,
+            presign,
+            curve: curve_sign,
+            signature_algorithm,
+            hash_scheme,
+            message,
+            message_centralized_signature,
+        } = sign_during_dkg_request;
 
-    assert!(encryption_key_curve == curve, EMismatchCurve);
-    self.support_config.validate_curve(curve);
+        // check that the curve matches
+        assert!(curve == curve_sign, EMismatchCurve);
 
-    let encrypted_user_share = EncryptedUserSecretKeyShare {
-        id: object::new(ctx),
-        created_at_epoch,
-        dwallet_id,
-        encrypted_centralized_secret_share_and_proof,
-        encryption_key_id,
-        encryption_key_address,
-        source_encrypted_user_secret_key_share_id: option::none(),
-        state: EncryptedUserSecretKeyShareState::AwaitingNetworkVerification,
-    };
-    let encrypted_user_secret_key_share_id = object::id(&encrypted_user_share);
-    dwallet
-        .encrypted_user_secret_key_shares
-        .add(encrypted_user_secret_key_share_id, encrypted_user_share);
+        SignDuringDKGRequestEvent {
+            sign_id,
+            presign_id,
+            presign,
+            signature_algorithm,
+            hash_scheme,
+            message,
+            message_centralized_signature,
+        }
+    });
+
+    let sign_id = sign_during_dkg_request.map_ref!(|sign_during_dkg_request| {
+        sign_during_dkg_request.sign_id
+    });
 
     self
         .dwallets
@@ -2658,18 +2892,14 @@ public(package) fun request_dwallet_dkg(
             payment_ika,
             payment_sui,
             DWalletDKGRequestEvent {
-                encrypted_user_secret_key_share_id,
                 dwallet_id,
                 centralized_public_key_share_and_proof,
-                dwallet_cap_id,
-                encrypted_centralized_secret_share_and_proof,
-                encryption_key,
-                encryption_key_id,
-                encryption_key_address,
                 user_public_output,
-                signer_public_key,
+                dwallet_cap_id,
                 dwallet_network_encryption_key_id,
                 curve,
+                user_secret_key_share,
+                sign_during_dkg_request,
             },
             ctx,
         );
@@ -2679,7 +2909,7 @@ public(package) fun request_dwallet_dkg(
             gas_fee_reimbursement_sui_for_system_calls,
         );
     
-    dwallet_cap
+    (dwallet_cap, sign_id)
 }
 
 /// This function is called by the Ika network to respond to the dWallet DKG second round request made by the user.
@@ -2693,8 +2923,10 @@ public(package) fun request_dwallet_dkg(
 public(package) fun respond_dwallet_dkg(
     self: &mut DWalletCoordinatorInner,
     dwallet_id: ID,
-    public_output: vector<u8>,
     encrypted_user_secret_key_share_id: ID,
+    public_output: vector<u8>,
+    sign_id: Option<ID>,
+    signature: vector<u8>,
     rejected: bool,
     session_sequence_number: u64,
 ): Balance<SUI> {
@@ -2740,6 +2972,24 @@ public(package) fun respond_dwallet_dkg(
             },
             _ => abort EWrongState,
         };
+
+    if(sign_id.is_some()) {
+        let sign_id = *sign_id.borrow();
+        let sign = dwallet.sign_sessions.borrow_mut(sign_id);
+
+        sign.state =
+            match (sign.state) {
+                SignState::Requested => {
+                    if (rejected) {
+                        SignState::NetworkRejected
+                    } else {
+                        SignState::Completed { signature }
+                    }
+                },
+                _ => abort ESignWrongState,
+            };
+    };
+
     gas_fee_reimbursement_sui
 }
 
@@ -3285,11 +3535,19 @@ public(package) fun request_presign(
         dwallet.dwallet_network_encryption_key_id,
         curve,
     );
-    self
-        .support_config
-        .validate_signature_algorithm_not_allowed_global_presign(signature_algorithm);
 
     let dwallet_network_encryption_key_id = dwallet.dwallet_network_encryption_key_id;
+
+    let is_imported_key_dwallet = dwallet.is_imported_key_dwallet;
+
+    let global_presign_config = self.global_presign_config();
+
+    let is_global_presign = if(is_imported_key_dwallet) {
+        global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm)
+    } else {
+        global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm)
+    };
+    assert!(is_global_presign, EOnlyGlobalPresignAllowed);
 
     let id = object::new(ctx);
     let presign_id = id.to_inner();
@@ -3399,9 +3657,13 @@ public(package) fun request_global_presign(
 
     self.support_config.validate_curve_and_signature_algorithm(curve, signature_algorithm);
     self.validate_network_encryption_key_supports_curve(dwallet_network_encryption_key_id, curve);
-    self.support_config.validate_signature_algorithm_allowed_global_presign(signature_algorithm);
+    let global_presign_config = self.global_presign_config();
+    let is_global_presign = global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm);
+    assert!(!is_global_presign, EGlobalPresignNotAllowed);
 
-    let id = object::new(ctx);
+    let mut id = object::new(ctx);
+    dynamic_field::add(&mut id, b"dwallet_network_encryption_key_id", dwallet_network_encryption_key_id);
+
     let presign_id = id.to_inner();
     let cap = UnverifiedPresignCap {
         id: object::new(ctx),
@@ -3647,7 +3909,7 @@ fun validate_and_initiate_sign(
     id.delete();
 
     let PresignSession {
-        id,
+        mut id,
         created_at_epoch: _,
         dwallet_id: presign_dwallet_id,
         cap_id,
@@ -3663,14 +3925,12 @@ fun validate_and_initiate_sign(
         _ => abort EInvalidPresign,
     };
 
+    if(presign_dwallet_id.is_none()) {
+        let dwallet_network_encryption_key_id = dynamic_field::remove(&mut id, b"dwallet_network_encryption_key_id");
+        assert!(dwallet_network_encryption_key_id == dwallet.dwallet_network_encryption_key_id, EInvalidPresign);
+    };
     let presign_id = id.to_inner();
     id.delete();
-
-    // Check that the presign is global, or that it belongs to this dWallet.
-    assert!(
-        presign_dwallet_id.is_none() || presign_dwallet_id.is_some_and!(|id| id == dwallet_id),
-        EMessageApprovalMismatch,
-    );
 
     // Sanity checks: check that the IDs of the capability and presign match, and that they point to this dWallet.
     assert!(presign_cap_id == cap_id, EPresignNotExist);
@@ -3685,6 +3945,22 @@ fun validate_and_initiate_sign(
     let id = object::new(ctx);
     let sign_id = id.to_inner();
     let dwallet_network_encryption_key_id = dwallet.dwallet_network_encryption_key_id;
+
+    let is_imported_key_dwallet = dwallet.is_imported_key_dwallet;
+    let global_presign_config = self.global_presign_config();
+    let is_global_presign = if(is_imported_key_dwallet) {
+        global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm)
+    } else {
+        global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm)
+    };
+
+    // Check that the presign is global, or that it belongs to this dWallet.
+    if(is_global_presign) {
+        assert!(presign_dwallet_id.is_none(), EOnlyGlobalPresignAllowed);
+    } else {
+        assert!(presign_dwallet_id.is_some_and!(|id| id == dwallet_id), EGlobalPresignNotAllowed);
+    };
+
     let gas_fee_reimbursement_sui_for_system_calls = self
         .sessions_manager
         .initiate_user_session(
@@ -3863,22 +4139,23 @@ public(package) fun request_future_sign(
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
 ): UnverifiedPartialUserSignatureCap {
-    // Check that the presign is global, or that it belongs to this dWallet.
-    assert!(
-        presign_cap.dwallet_id.is_none() || presign_cap.dwallet_id.is_some_and!(|id| id == dwallet_id),
-        EMessageApprovalMismatch,
-    );
-
     let (dwallet, dwallet_public_output) = self.get_active_dwallet_and_public_output_mut(
         dwallet_id,
     );
+
     let dwallet_network_encryption_key_id = dwallet.dwallet_network_encryption_key_id;
     let curve = dwallet.curve;
+    let is_imported_key_dwallet = dwallet.is_imported_key_dwallet;
 
     assert!(self.presign_sessions.contains(presign_cap.presign_id), EPresignNotExist);
 
     let presign_obj = self.presign_sessions.borrow(presign_cap.presign_id);
     assert!(presign_obj.curve == curve, EDWalletMismatch);
+
+    if(presign_obj.dwallet_id.is_none()) {
+        let presign_dwallet_network_encryption_key_id = *dynamic_field::borrow(&presign_obj.id, b"dwallet_network_encryption_key_id");
+        assert!(dwallet_network_encryption_key_id == presign_dwallet_network_encryption_key_id, EInvalidPresign);
+    };
 
     let presign = match (presign_obj.state) {
         PresignState::Completed { presign } => {
@@ -3895,6 +4172,21 @@ public(package) fun request_future_sign(
     };
 
     let signature_algorithm = presign_obj.signature_algorithm;
+
+    
+    let global_presign_config = self.global_presign_config();
+    let is_global_presign = if(is_imported_key_dwallet) {
+        global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm)
+    } else {
+        global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm)
+    };
+
+    // Check that the presign is global, or that it belongs to this dWallet.
+    if(is_global_presign) {
+        assert!(presign_cap.dwallet_id.is_none(), EOnlyGlobalPresignAllowed);
+    } else {
+        assert!(presign_cap.dwallet_id.is_some_and!(|id| id == dwallet_id), EGlobalPresignNotAllowed);
+    };
 
     self
         .support_config
@@ -3998,12 +4290,6 @@ public(package) fun respond_future_sign(
     let partial_centralized_signed_message = self
         .partial_centralized_signed_messages
         .borrow_mut(partial_centralized_signed_message_id);
-
-    // Check that the presign is global, or that it belongs to this dWallet.
-    assert!(
-        partial_centralized_signed_message.presign_cap.dwallet_id.is_none() || partial_centralized_signed_message.presign_cap.dwallet_id.is_some_and!(|id| id == dwallet_id),
-        EDWalletMismatch,
-    );
 
     partial_centralized_signed_message.state =
         match (partial_centralized_signed_message.state) {
@@ -4390,12 +4676,18 @@ fun process_checkpoint_message(
                 let dwallet_id = object::id_from_bytes(bcs_body.peel_vec_u8());
                 let encrypted_user_secret_key_share_id = object::id_from_bytes(bcs_body.peel_vec_u8());
                 let public_output = bcs_body.peel_vec_u8();
+                let sign_id = bcs_body.peel_option!(
+                    |bcs_option| object::id_from_bytes(bcs_option.peel_vec_u8()),
+                );
+                let signature = bcs_body.peel_vec_u8();
                 let rejected = bcs_body.peel_bool();
                 let session_sequence_number = bcs_body.peel_u64();
                 let gas_fee_reimbursement_sui = self.respond_dwallet_dkg(
                     dwallet_id,
-                    public_output,
                     encrypted_user_secret_key_share_id,
+                    public_output,
+                    sign_id,
+                    signature,
                     rejected,
                     session_sequence_number,
                 );
@@ -4666,6 +4958,8 @@ fun verify_pricing_exists_for_all_protocols(
         // Add here pricing validation for new protocols per curve.
         signature_algorithms.do_ref!(|signature_algorithm| {
             is_missing_pricing =
+                is_missing_pricing || default_pricing.try_get_pricing_value(*curve, option::some(*signature_algorithm), DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG).is_none();
+            is_missing_pricing =
                 is_missing_pricing || default_pricing.try_get_pricing_value(*curve, option::some(*signature_algorithm), PRESIGN_PROTOCOL_FLAG).is_none();
             is_missing_pricing =
                 is_missing_pricing || default_pricing.try_get_pricing_value(*curve, option::some(*signature_algorithm), SIGN_PROTOCOL_FLAG).is_none();
@@ -4695,6 +4989,26 @@ public(package) fun set_paused_curves_and_signature_algorithms(
     _: &VerifiedProtocolCap,
 ) {
     self.support_config.set_paused(paused_curves, paused_signature_algorithms, paused_hash_schemes);
+}
+
+/// Sets the global presign config.
+///
+/// ### Parameters
+/// - **`curve_to_signature_algorithms_for_dkg`**: Map of curves to signature algorithms for dWallets that are created via DKG.
+/// - **`curve_to_signature_algorithms_for_imported_key`**: Map of curves to signature algorithms for dWallets that are created via imported key.
+public(package) fun set_global_presign_config(
+    self: &mut DWalletCoordinatorInner,
+    curve_to_signature_algorithms_for_dkg: VecMap<u32, vector<u32>>,
+    curve_to_signature_algorithms_for_imported_key: VecMap<u32, vector<u32>>,
+    _: &VerifiedProtocolCap,
+) {
+    if(self.extra_fields.contains(b"global_presign_config")) {
+        let global_presign_config: &mut GlobalPresignConfig = self.extra_fields.borrow_mut(b"global_presign_config");
+        global_presign_config.set_global_presign_config(curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key);
+    } else {
+        let global_presign_config = support_config::create_global_presign_config(curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key);
+        self.extra_fields.add(b"global_presign_config", global_presign_config);
+    };
 }
 
 /// Sets the pricing vote for a validator.
@@ -4759,6 +5073,13 @@ public(package) fun get_network_encryption_key_supported_curves(
         .dwallet_network_encryption_keys
         .borrow(dwallet_network_encryption_key_id);
     dwallet_network_encryption_key.supported_curves
+}
+
+fun global_presign_config(self: &mut DWalletCoordinatorInner): &GlobalPresignConfig {
+    if(!self.extra_fields.contains(b"global_presign_config")) {
+        self.extra_fields.add(b"global_presign_config", support_config::create_global_presign_config(vec_map::empty(), vec_map::empty()));
+    };
+    self.extra_fields.borrow(b"global_presign_config")
 }
 
 /// === Public Functions ===

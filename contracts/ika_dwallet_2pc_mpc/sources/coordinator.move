@@ -28,6 +28,7 @@ use sui::sui::SUI;
 use sui::vec_map::VecMap;
 use ika_common::upgrade_package_approver::UpgradePackageApprover;
 use ika_dwallet_2pc_mpc::coordinator_inner::DWallet;
+use ika_dwallet_2pc_mpc::coordinator_inner::SignDuringDKGRequest;
 
 // === Errors ===
 
@@ -181,6 +182,19 @@ public fun set_paused_curves_and_signature_algorithms(
         );
 }
 
+public fun set_global_presign_config(
+    self: &mut DWalletCoordinator,
+    curve_to_signature_algorithms_for_dkg: VecMap<u32, vector<u32>>,
+    curve_to_signature_algorithms_for_imported_key: VecMap<u32, vector<u32>>,
+    cap: &VerifiedProtocolCap,
+) {
+    self.inner_mut().set_global_presign_config(
+        curve_to_signature_algorithms_for_dkg,
+        curve_to_signature_algorithms_for_imported_key,
+        cap,
+    );
+}
+
 public fun request_lock_epoch_sessions(
     self: &mut DWalletCoordinator,
     system_current_status_info: &SystemCurrentStatusInfo,
@@ -291,6 +305,23 @@ public fun request_dwallet_dkg_second_round(
     abort EDeprecatedFunction
 }
 
+public fun sign_during_dkg_request(
+    self: &mut DWalletCoordinator,
+    presign_cap: VerifiedPresignCap,
+    hash_scheme: u32,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+): SignDuringDKGRequest {
+    self
+        .inner_mut()
+        .sign_during_dkg_request(
+            presign_cap,
+            hash_scheme, 
+            message,
+            message_centralized_signature,
+        )
+}
+
 public fun request_dwallet_dkg(
     self: &mut DWalletCoordinator,
     dwallet_network_encryption_key_id: ID,
@@ -300,11 +331,12 @@ public fun request_dwallet_dkg(
     encryption_key_address: address,
     user_public_output: vector<u8>,
     singer_public_key: vector<u8>,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
     session_identifier: SessionIdentifier,
     payment_ika: &mut Coin<IKA>,
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
-): DWalletCap {
+): (DWalletCap, Option<ID>) {
     self
         .inner_mut()
         .request_dwallet_dkg(
@@ -315,6 +347,36 @@ public fun request_dwallet_dkg(
             encryption_key_address,
             user_public_output,
             singer_public_key,
+            sign_during_dkg_request,
+            session_identifier,
+            payment_ika,
+            payment_sui,
+            ctx,
+        )
+}
+
+public fun request_dwallet_dkg_with_public_user_secret_key_share(
+    self: &mut DWalletCoordinator,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    centralized_public_key_share_and_proof: vector<u8>,
+    user_public_output: vector<u8>,
+    public_user_secret_key_share: vector<u8>,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): (DWalletCap, Option<ID>) {
+    self
+        .inner_mut()
+        .request_dwallet_dkg_with_public_user_secret_key_share(
+            dwallet_network_encryption_key_id,
+            curve,
+            centralized_public_key_share_and_proof,
+            user_public_output,
+            public_user_secret_key_share,
+            sign_during_dkg_request,
             session_identifier,
             payment_ika,
             payment_sui,
