@@ -7,7 +7,12 @@
 
 use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare, VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof};
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
+    VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    VersionedEncryptedUserShare, VersionedNetworkEncryptionKeyPublicData,
+    VersionedPublicKeyShareAndProof,
+};
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
@@ -385,9 +390,8 @@ pub fn compute_dwallet_dkg<P: Protocol>(
     encrypted_secret_key_share_message: &[u8],
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    let encrypted_secret_key_share_message: VersionedEncryptedUserShare = bcs::from_bytes(
-        encrypted_secret_key_share_message,
-    ).map_err(DwalletMPCError::BcsError)?;
+    let encrypted_secret_key_share_message: VersionedEncryptedUserShare =
+        bcs::from_bytes(encrypted_secret_key_share_message).map_err(DwalletMPCError::BcsError)?;
     let encrypted_secret_key_share_message = match encrypted_secret_key_share_message {
         VersionedEncryptedUserShare::V1(message) => message,
     };

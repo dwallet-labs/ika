@@ -593,19 +593,17 @@ impl ProtocolCryptographicData {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
                 ..
-            } => {
-                Ok(compute_dwallet_dkg::<Secp256K1AsyncDKGProtocol>(
-                    party_id,
-                    access_structure,
-                    session_id,
-                    advance_request,
-                    public_input.protocol_public_parameters.clone(),
-                    public_input,
-                    bcs::from_bytes(&data.encryption_key)?,
-                    &data.encrypted_centralized_secret_share_and_proof,
-                    &mut rng,
-                )?)
-            }
+            } => Ok(compute_dwallet_dkg::<Secp256K1AsyncDKGProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input.protocol_public_parameters.clone(),
+                public_input,
+                bcs::from_bytes(&data.encryption_key)?,
+                &data.encrypted_centralized_secret_share_and_proof,
+                &mut rng,
+            )?),
             ProtocolCryptographicData::DWalletDKG {
                 public_input: DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input),
                 data,
