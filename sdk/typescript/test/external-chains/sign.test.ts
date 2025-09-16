@@ -1,4 +1,3 @@
-;
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 import { bitcoin_address_from_dwallet_output } from '@ika.xyz/ika-wasm';
@@ -8,10 +7,12 @@ import * as bitcoin from 'bitcoinjs-lib';
 import { networks, payments, Psbt } from 'bitcoinjs-lib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-
-
 import { Hash, SignatureAlgorithm } from '../../src/client/types';
-import { createCompleteDWallet, createCompleteDWalletV2, testPresign } from '../helpers/dwallet-test-helpers';
+import {
+	createCompleteDWallet,
+	createCompleteDWalletV2,
+	testPresign,
+} from '../helpers/dwallet-test-helpers';
 import { createIndividualTestSetup, getSharedTestSetup } from '../helpers/shared-test-setup';
 import {
 	createEmptyTestIkaToken,
@@ -21,7 +22,6 @@ import {
 	executeTestTransaction,
 	retryUntil,
 } from '../helpers/test-utils';
-
 
 // Setup shared resources before all tests
 beforeAll(async () => {
