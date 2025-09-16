@@ -134,7 +134,10 @@ describe('DWallet Signing', () => {
 			signerAddress,
 		} = await createCompleteDWalletV2(ikaClient, suiClient, testName);
 
-
+		const dwalletBitcoinAddress = bitcoin_address_from_dwallet_output(
+			Uint8Array.from(activeDWallet.state.Active.public_output),
+		);
+		console.log("DWallet's Bitcoin address:", dwalletBitcoinAddress);
 
 		// log all the dwallet components as base 64
 		console.log(
