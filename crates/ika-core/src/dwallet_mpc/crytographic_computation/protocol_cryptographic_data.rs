@@ -123,7 +123,11 @@ impl ProtocolCryptographicData {
                 advance_request, ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Secp256k1(advance_request),
+                advance_request: PresignAdvanceRequestByCurve::Secp256k1ECDSA(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::Presign {
+                advance_request: PresignAdvanceRequestByCurve::Secp256k1Taproot(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
@@ -217,7 +221,11 @@ impl ProtocolCryptographicData {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Secp256k1(advance_request),
+                advance_request: PresignAdvanceRequestByCurve::Secp256k1ECDSA(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Presign {
+                advance_request: PresignAdvanceRequestByCurve::Secp256k1Taproot(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {

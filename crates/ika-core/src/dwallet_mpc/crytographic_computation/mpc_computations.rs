@@ -38,8 +38,8 @@ use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
-    RistrettoSchnorrkelSubstrateProtocol, Secp256K1AsyncDKGProtocol, Secp256R1AsyncDKGProtocol,
-    Secp256R1ECDSAProtocol,
+    RistrettoSchnorrkelSubstrateProtocol, Secp256K1AsyncDKGProtocol, Secp256K1TaprootProtocol,
+    Secp256R1AsyncDKGProtocol, Secp256R1ECDSAProtocol,
 };
 use ika_types::messages_dwallet_mpc::{Secp256K1ECDSAProtocol, SessionIdentifier};
 use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResult};
@@ -183,6 +183,7 @@ impl ProtocolCryptographicData {
 
                 let advance_request_result = presign::PresignAdvanceRequestByCurve::try_new(
                     &data.curve,
+                    &data.signature_algorithm,
                     party_id,
                     access_structure,
                     consensus_round,
@@ -661,10 +662,22 @@ impl ProtocolCryptographicData {
                 advance_request.to_string(),
             )),
             ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByCurve::Secp256k1(public_input),
-                advance_request: PresignAdvanceRequestByCurve::Secp256k1(advance_request),
+                public_input: PresignPublicInputByCurve::Secp256k1ECDSA(public_input),
+                advance_request: PresignAdvanceRequestByCurve::Secp256k1ECDSA(advance_request),
                 ..
             } => Ok(compute_presign::<Secp256K1ECDSAProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::Presign {
+                public_input: PresignPublicInputByCurve::Secp256k1Taproot(public_input),
+                advance_request: PresignAdvanceRequestByCurve::Secp256k1Taproot(advance_request),
+                ..
+            } => Ok(compute_presign::<Secp256K1TaprootProtocol>(
                 party_id,
                 access_structure,
                 session_id,
