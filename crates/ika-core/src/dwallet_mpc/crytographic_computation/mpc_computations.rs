@@ -594,7 +594,6 @@ impl ProtocolCryptographicData {
                     DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
                 ..
             } => {
-                info!(encryption_key_length=?data.encryption_key.len(), encrypted_share_length=?data.encrypted_centralized_secret_share_and_proof.len(), "Advancing Secp256k1 DWalletDKG");
                 Ok(compute_dwallet_dkg::<Secp256K1AsyncDKGProtocol>(
                     party_id,
                     access_structure,
