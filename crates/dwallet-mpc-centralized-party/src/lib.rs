@@ -7,6 +7,7 @@
 #![allow(unused_qualifications)]
 
 use anyhow::{Context, anyhow};
+use bitcoin::{Address, CompressedPublicKey, Network};
 use class_groups::dkg::Secp256k1Party;
 use class_groups::setup::get_setup_parameters_secp256k1;
 use class_groups::{
@@ -36,6 +37,8 @@ use twopc_mpc::secp256k1::SCALAR_LIMBS;
 
 use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
+use k256::elliptic_curve::group::GroupEncoding;
+use k256::{AffinePoint, PublicKey};
 use twopc_mpc::class_groups::{
     DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput,
     DKGDecentralizedPartyVersionedOutput,
@@ -44,6 +47,7 @@ use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::VerifyingKey;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use web_sys::js_sys::Atomics::add;
 
 type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
@@ -305,6 +309,47 @@ pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::
                 >::TargetedPublicDKGOutput(output) => output.public_key,
             };
             Ok(bcs::to_bytes(&public_key)?)
+        }
+    }
+}
+
+pub fn bitcoin_address_from_dwallet_output_inner(
+    dwallet_output: Vec<u8>,
+) -> anyhow::Result<String> {
+    let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput = bcs::from_bytes(&dwallet_output)?;
+    match dkg_output {
+        VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
+            let output: DKGDecentralizedPartyOutputSecp256k1 = bcs::from_bytes(&dkg_output)?;
+            let pk = bitcoin::secp256k1::PublicKey::from_slice(
+                &AffinePoint::from(output.public_key).to_bytes(),
+            )
+            .expect("creation of public key from affine failed");
+            Ok(pk.to_string())
+        }
+        VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) => {
+            let dkg_output: DKGDecentralizedOutput = bcs::from_bytes(&dkg_output)?;
+            let public_key = match dkg_output {
+                DKGDecentralizedPartyVersionedOutput::<
+                    { group::secp256k1::SCALAR_LIMBS },
+                    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                    group::secp256k1::GroupElement,
+                >::UniversalPublicDKGOutput {
+                    output: dkg_output,
+                    ..
+                } => dkg_output.public_key,
+                DKGDecentralizedPartyVersionedOutput::<
+                    { group::secp256k1::SCALAR_LIMBS },
+                    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+                    group::secp256k1::GroupElement,
+                >::TargetedPublicDKGOutput(output) => output.public_key,
+            };
+            let pk = bitcoin::secp256k1::PublicKey::from_slice(
+                &AffinePoint::from(public_key).to_bytes(),
+            )
+            .expect("creation of public key from affine failed");
+            Ok(pk.to_string())
         }
     }
 }

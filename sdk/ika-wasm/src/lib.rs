@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use dwallet_mpc_centralized_party::{
-    advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
-    create_dkg_output_by_curve_v2, create_dkg_output_v1,
-    create_imported_dwallet_centralized_step_inner, decrypt_user_share_inner,
+    advance_centralized_sign_party, bitcoin_address_from_dwallet_output_inner,
+    centralized_and_decentralized_parties_dkg_output_match_inner, create_dkg_output_by_curve_v2,
+    create_dkg_output_v1, create_imported_dwallet_centralized_step_inner, decrypt_user_share_inner,
     encrypt_secret_key_share_and_prove, generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, public_key_from_dwallet_output_inner,
     sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share,
@@ -26,6 +26,13 @@ pub fn create_dkg_centralized_output_v1(
         dkg_centralized_result.centralized_secret_output.clone(),
     ))
     .map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn bitcoin_address_from_dwallet_output(dwallet_output: Vec<u8>) -> Result<JsValue, JsError> {
+    let public_key = &bitcoin_address_from_dwallet_output_inner(dwallet_output)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    serde_wasm_bindgen::to_value(&public_key).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
