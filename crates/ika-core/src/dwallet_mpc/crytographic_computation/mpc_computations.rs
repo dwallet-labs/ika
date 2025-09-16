@@ -48,7 +48,7 @@ use mpc::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 use twopc_mpc::class_groups::DKGDecentralizedPartyVersionedOutput;
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
 use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
@@ -599,7 +599,7 @@ impl ProtocolCryptographicData {
                 public_input.protocol_public_parameters.clone(),
                 public_input,
                 bcs::from_bytes(&data.encryption_key)?,
-                bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
+                &data.encrypted_centralized_secret_share_and_proof,
                 &mut rng,
             )?),
             ProtocolCryptographicData::DWalletDKG {
@@ -616,7 +616,7 @@ impl ProtocolCryptographicData {
                 public_input.protocol_public_parameters.clone(),
                 public_input,
                 bcs::from_bytes(&data.encryption_key)?,
-                bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
+                &data.encrypted_centralized_secret_share_and_proof,
                 &mut rng,
             )?),
             ProtocolCryptographicData::DWalletDKG {
@@ -633,7 +633,7 @@ impl ProtocolCryptographicData {
                 public_input.protocol_public_parameters.clone(),
                 public_input,
                 bcs::from_bytes(&data.encryption_key)?,
-                bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
+                &data.encrypted_centralized_secret_share_and_proof,
                 &mut rng,
             )?),
             ProtocolCryptographicData::DWalletDKG {
@@ -650,7 +650,7 @@ impl ProtocolCryptographicData {
                 public_input.protocol_public_parameters.clone(),
                 public_input,
                 bcs::from_bytes(&data.encryption_key)?,
-                bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)?,
+                &data.encrypted_centralized_secret_share_and_proof,
                 &mut rng,
             )?),
             ProtocolCryptographicData::DWalletDKG {
