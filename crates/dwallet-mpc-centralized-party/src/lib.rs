@@ -53,11 +53,11 @@ type Curve25519DKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
 type RistrettoDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
 
 type DKGCentralizedParty =
-    <Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
+    <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
 type SignCentralizedParty =
-    <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
+    <Secp256K1DKGProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 type DKGDecentralizedOutput =
-    <Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
+    <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 
 type SignedMessage = Vec<u8>;
 
@@ -69,7 +69,7 @@ type Secp256k1EncryptionKey = EncryptionKey<
 >;
 
 type ImportSecretKeyFirstStep =
-    <Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::TrustedDealerDKGCentralizedPartyRound;
+    <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::TrustedDealerDKGCentralizedPartyRound;
 
 pub struct CentralizedDKGWasmResult {
     pub public_key_share_and_proof: Vec<u8>,
@@ -596,7 +596,7 @@ pub fn encrypt_secret_key_share_and_prove(
         VersionedDwalletUserSecretShare::V1(secret_key_share) => {
             let encryption_key = bcs::from_bytes(&encryption_key)?;
             let secret_key_share = bcs::from_bytes(&secret_key_share)?;
-            let result = <Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::encrypt_and_prove_centralized_party_share(&protocol_public_params, encryption_key, secret_key_share, &mut OsCsRng)?;
+            let result = <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::encrypt_and_prove_centralized_party_share(&protocol_public_params, encryption_key, secret_key_share, &mut OsCsRng)?;
             Ok(bcs::to_bytes(&VersionedEncryptedUserShare::V1(
                 bcs::to_bytes(&result)?,
             ))?)
@@ -654,15 +654,15 @@ pub fn decrypt_user_share_inner(
         }
     };
 
-    let (_, encryption_of_discrete_log): <Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::EncryptedSecretKeyShareMessage = bcs::from_bytes(&encrypted_user_share_and_proof)?;
-    <twopc_mpc::secp256k1::class_groups::ECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
+    let (_, encryption_of_discrete_log): <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::EncryptedSecretKeyShareMessage = bcs::from_bytes(&encrypted_user_share_and_proof)?;
+    <Secp256K1DKGProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_params,
         dwallet_dkg_output,
         bcs::from_bytes(&encryption_key)?,
         bcs::from_bytes(&encrypted_user_share_and_proof)?,
         &mut OsCsRng,
     )
-        .map_err(Into::<anyhow::Error>::into)?;
+    .map_err(Into::<anyhow::Error>::into)?;
     let decryption_key = bcs::from_bytes(&decryption_key)?;
     let public_parameters = homomorphic_encryption::PublicParameters::<
         SCALAR_LIMBS,
