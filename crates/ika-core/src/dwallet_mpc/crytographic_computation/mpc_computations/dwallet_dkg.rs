@@ -7,11 +7,7 @@
 
 use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
-    VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
-    VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
-};
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare, VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof};
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
@@ -386,9 +382,15 @@ pub fn compute_dwallet_dkg<P: Protocol>(
     protocol_public_parameters: P::ProtocolPublicParameters,
     public_input: <P::DKGDecentralizedParty as Party>::PublicInput,
     encryption_key: P::EncryptionKey,
-    encrypted_secret_key_share_message: P::EncryptedSecretKeyShareMessage,
+    encrypted_secret_key_share_message: &[u8],
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+    let encrypted_secret_key_share_message: VersionedEncryptedUserShare = bcs::from_bytes(
+        encrypted_secret_key_share_message,
+    ).map_err(DwalletMPCError::BcsError)?;
+    let encrypted_secret_key_share_message = match encrypted_secret_key_share_message {
+        VersionedEncryptedUserShare::V1(message) => message,
+    };
     let result = mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::advance_with_guaranteed_output(
         session_id,
         party_id,
@@ -414,7 +416,7 @@ pub fn compute_dwallet_dkg<P: Protocol>(
                 &protocol_public_parameters,
                 decentralized_output.clone(),
                 encryption_key,
-                encrypted_secret_key_share_message,
+                bcs::from_bytes(&encrypted_secret_key_share_message)?,
                 &mut group::OsCsRng,
             )
             .map_err(|e| {
