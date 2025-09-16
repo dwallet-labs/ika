@@ -95,7 +95,6 @@ impl From<String> for Chain {
     }
 }
 
-
 impl Default for Chain {
     fn default() -> Self {
         Self::Unknown
