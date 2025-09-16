@@ -109,6 +109,18 @@ async function getUTXO(
 	return { utxo: utxo, txid: txid, vout: vout, satoshis: satoshis };
 }
 
+function toBase64<T>(data: T): string {
+	if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
+		return Buffer.from(data as Uint8Array).toString("base64");
+	}
+	return Buffer.from(JSON.stringify(data)).toString("base64");
+}
+
+function fromBase64<T>(encoded: string): T {
+	const json = Buffer.from(encoded, "base64").toString("utf8");
+	return JSON.parse(json) as T;
+}
+
 describe('DWallet Signing', () => {
 	it('should create a DWallet and print its address', async () => {
 		const testName = 'dwallet-sign-test';
@@ -122,10 +134,18 @@ describe('DWallet Signing', () => {
 			signerAddress,
 		} = await createCompleteDWalletV2(ikaClient, suiClient, testName);
 
-		const dwalletBitcoinAddress = bitcoin_address_from_dwallet_output(
-			Uint8Array.from(activeDWallet.state.Active.public_output),
-		);
-		console.log("DWallet's Bitcoin address:", dwalletBitcoinAddress);
+
+
+		// log all the dwallet components as base 64
+		console.log(
+			'DWallet Components:',
+			{
+				activeDWallet: toBase64(activeDWallet),
+				encryptedUserSecretKeyShare: toBase64(encryptedUserSecretKeyShare),
+				userShareEncryptionKeys: toBase64(userShareEncryptionKeys),
+			}
+		)
+
 		return;
 	});
 
