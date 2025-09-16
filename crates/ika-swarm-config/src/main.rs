@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use fastcrypto::traits::EncodeDecodeBase64;
 use ika_config::initiation::InitiationParameters;
+use ika_protocol_config::Chain;
 use ika_swarm_config::sui_client::{
     ika_system_add_upgrade_cap_by_cap, ika_system_initialize,
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap,
@@ -24,7 +25,6 @@ use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SequenceNumber, SuiAddress};
 use sui_types::crypto::SignatureScheme;
 use tokio::time::{Duration, sleep};
-use ika_protocol_config::Chain;
 
 /// CLI for IKA operations on Sui.
 #[derive(Parser)]
@@ -33,7 +33,6 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
-
 
 #[derive(Subcommand)]
 enum Commands {
@@ -138,7 +137,7 @@ async fn main() -> Result<()> {
             sui_rpc_addr,
             sui_faucet_addr,
             sui_conf_dir,
-            chain
+            chain,
         } => {
             println!("Publishing IKA modules on network: {sui_rpc_addr}");
 
