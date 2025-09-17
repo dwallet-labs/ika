@@ -543,6 +543,7 @@ export async function waitForEpochSwitch(ikaClient: IkaClient) {
 	const startEpoch = await ikaClient.getEpoch();
 	let epochSwitched = false;
 	while (!epochSwitched) {
+		ikaClient.invalidateCache();
 		if ((await ikaClient.getEpoch()) > startEpoch) {
 			epochSwitched = true;
 		} else {
