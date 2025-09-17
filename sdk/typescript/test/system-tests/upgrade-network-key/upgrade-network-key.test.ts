@@ -39,7 +39,7 @@ async function waitForV2NetworkKey(ikaClient: IkaClient, suiClient: SuiClient) {
 describe('system tests', () => {
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
 		const v2NetworkKeyDockerTag =
-			'us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key';
+			'itaylevy134/ika-node:v2key';
 
 		const testName = 'upgrade-network-key';
 		// Generate deterministic keypair for this test
