@@ -1,0 +1,33 @@
+name: pull docker image from repo a and push to repo b
+
+on:
+  push:
+
+jobs:
+  pull-and-push:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Set up Docker auth for GAR
+        run: |
+          cat > key.json <<EOF
+          ${{ secrets.GAR_KEY }}
+          EOF
+          gcloud auth activate-service-account --key-file=key.json
+          gcloud auth configure-docker us-docker.pkg.dev --quiet
+        env:
+          CLOUDSDK_CORE_PROJECT: common-449616
+
+      - name: Pull the docker image and retag it
+        run: |
+            docker pull us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key
+            docker tag us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key itaylevy134/ika-node:latest
+
+      - name: Push the docker image to Docker Hub
+        run: |
+          echo ${{ secrets.DOCKER_TOKEN }} | docker login -u itaylevy134 --password-stdin
+          docker push itaylevy134/ika-node:v2key
