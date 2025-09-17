@@ -204,7 +204,7 @@ export async function createPods(kc: KubeConfig, namespaceName: string, numOfVal
 					],
 					command: ['/opt/ika/bin/ika-node', '--config-path', '/opt/ika/config/fullnode.yaml'],
 					name: 'ika-node',
-					image: process.env.DOCKER_TAG,
+					image: process.env.NOTIFIER_DOCKER_TAG,
 					// Uncomment when running the test in a dynamically scaled environment
 					// resources: {
 					// 	requests: {
