@@ -7,26 +7,25 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { execa } from 'execa';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+
+
 import { IkaClient } from '../../../src';
 import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
 	delay,
+	generateTestKeypair, requestTestFaucetFunds,
 	runSignFullFlowWithDWallet,
 	runSignFullFlowWithV1Dwallet,
 	runSignFullFlowWithV2Dwallet,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
 import { runSignFullFlowTestWithImportedDwallet } from '../../imported-dwallet/imported-dwallet-sign.test';
-import {
-	deployUpgradedPackage,
-	getProtocolCapID,
-	getPublisherKeypair,
-	migrateCoordinator,
-} from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
+import { deployUpgradedPackage, getProtocolCapID, getPublisherKeypair, migrateCoordinator } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { deployIkaNetwork, NAMESPACE_NAME, TEST_ROOT_DIR } from '../globals';
 import { createValidatorPod, killValidatorPod } from '../pods';
+
 
 async function waitForV2NetworkKey(ikaClient: IkaClient, suiClient: SuiClient) {
 	let networkKeyVersion = 1;
@@ -42,6 +41,13 @@ describe('system tests', () => {
 		const v2NetworkKeyDockerTag =
 			'us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key';
 
+		const testName = 'upgrade-network-key';
+		// Generate deterministic keypair for this test
+		const { userShareEncryptionKeys, signerPublicKey, signerAddress } =
+			await generateTestKeypair(testName);
+
+		// Request faucet funds for the test address
+		await requestTestFaucetFunds(signerAddress);
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		// ------------ Create Ika Genesis ------------
 		const createIkaGenesisPath = `${TEST_ROOT_DIR}/create-ika-genesis-mac.sh`;
@@ -68,13 +74,13 @@ describe('system tests', () => {
 		const networkKeyVersion = network_key_version(networkKeyBytes);
 		expect(networkKeyVersion).toBe(1);
 		console.log('Network key version is V1, creating a dWallet with it');
-		const dwallet = await createCompleteDWallet(ikaClient, suiClient, 'create-complete-dwallet');
+		const dwallet = await createCompleteDWallet(ikaClient, suiClient, testName);
 		console.log('DWallet created successfully, running a full sign flow with it');
 		await runSignFullFlowWithDWallet(
 			ikaClient,
 			suiClient,
 			dwallet,
-			`pre-upgrade-v1-dwallet-sign-full-flow-test`,
+			testName,
 		);
 		console.log('V1 dWallet full flow works, upgrading the validators docker image');
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
@@ -93,7 +99,7 @@ describe('system tests', () => {
 			ikaClient,
 			suiClient,
 			dwallet,
-			`v1-dwallet-sign-full-flow-test`,
+			testName,
 		);
 		console.log(
 			'Signing with the old v1 dWallet works, waiting for the network key to upgrade to V2',
@@ -104,7 +110,7 @@ describe('system tests', () => {
 			ikaClient,
 			suiClient,
 			dwallet,
-			`v1-dwallet-sign-full-flow-test`,
+			testName,
 		);
 		console.log('V1 dWallet full flow works, waiting for two epoch switches');
 
@@ -120,7 +126,7 @@ describe('system tests', () => {
 			ikaClient,
 			suiClient,
 			dwallet,
-			`post-2epoch-switch-v1-dwallet-sign-full-flow-test`,
+			testName,
 		);
 		console.log(
 			'signing with the old v1 dWallet works, creating a new v1 dWallet and verifying it works',
@@ -152,7 +158,7 @@ describe('system tests', () => {
 			'Move contracts upgraded to V2, creating an imported dWallet and verifying it works',
 		);
 		await runSignFullFlowTestWithImportedDwallet(
-			`imported-dwallet-sign-full-flow-test`,
+			testName,
 			ikaClient,
 			suiClient,
 		);
@@ -160,7 +166,7 @@ describe('system tests', () => {
 			'Imported dWallet full flow works, creating a new v2 dWallet and verifying it works',
 		);
 		// TODO (#1530): Verify sign works with all supported curves in the network key update system test
-		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, `v2-dwallet-sign-full-flow-test`);
+		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, testName);
 		console.log('V2 dWallet full flow works, test completed successfully');
 	}, 3_600_000);
 });
