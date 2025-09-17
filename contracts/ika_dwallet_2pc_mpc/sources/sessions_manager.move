@@ -103,11 +103,6 @@ public enum SessionType has copy, drop, store {
     System,
 }
 
-/// A root used to create the session identifier preimage.
-public struct RootSessionIdentifier has key, store {
-    id: UID,
-}
-
 /// The preimage is used to create the session identifier.
 public struct SessionIdentifier has key, store {
     id: UID,
@@ -242,7 +237,6 @@ public(package) fun lock_last_user_initiated_session_to_complete_in_current_epoc
 /// - `ctx`: Transaction context for object creation.
 public(package) fun register_session_identifier(
     self: &mut SessionsManager,
-    root_identifier_preimage: &RootSessionIdentifier,
     identifier_preimage: vector<u8>,
     ctx: &mut TxContext,
 ): SessionIdentifier {
@@ -250,7 +244,7 @@ public(package) fun register_session_identifier(
         identifier_preimage.length() == SESSION_IDENTIFIER_LENGTH,
         ESessionIdentifierInvalidLength,
     );
-    let mut hasher = root_identifier_preimage.id.to_bytes();
+    let mut hasher = ctx.sender().to_bytes();
     hasher.append(identifier_preimage);
     let identifier_preimage = sui::hash::keccak256(&hasher);
 
@@ -268,12 +262,6 @@ public(package) fun register_session_identifier(
         id,
         identifier_preimage,
     }
-}
-
-public fun create_root_session_identifier(
-    ctx: &mut TxContext,
-): RootSessionIdentifier {
-    RootSessionIdentifier { id: object::new(ctx) }
 }
 
 /// Advances the epoch by ensuring all current epoch sessions are completed.

@@ -53,7 +53,6 @@ use sui::vec_map::VecMap;
 use sui::dynamic_field;
 use ika_dwallet_2pc_mpc::support_config::GlobalPresignConfig;
 use sui::vec_map;
-use ika_dwallet_2pc_mpc::sessions_manager::RootSessionIdentifier;
 
 // === Constants ===
 
@@ -1825,31 +1824,23 @@ public(package) fun request_lock_epoch_sessions(
 
 /// Registers a new session identifier.
 ///
-/// This function is used to register a new session identifier.
+/// This function is used to register a new session identifier, the bytes length must be 32 bytes.
+/// SessionIdentifier's `identifier_preimage` is an keccak256 hash of the bytes and the sender address,
+/// this can be calculated on the client side before even calling this function onchain.
 ///
 /// ### Parameters
 /// - `self`: Mutable reference to the coordinator.
-/// - `identifier_preimage`: The preimage bytes for creating the session identifier.
+/// - `bytes`: The bytes for creating the session identifier, length must be 32 bytes.
 /// - `ctx`: Transaction context for object creation.
 ///
 /// ### Returns
 /// A new session identifier object.
 public(package) fun register_session_identifier(
     self: &mut DWalletCoordinatorInner,
-    identifier_preimage: vector<u8>,
+    bytes: vector<u8>,
     ctx: &mut TxContext,
 ): SessionIdentifier {
-    let root_session_identifier = self.extra_fields.borrow(b"root_session_identifier");
-    self.sessions_manager.register_session_identifier(root_session_identifier, identifier_preimage, ctx)
-}
-
-public(package) fun register_session_identifier_from_root(
-    self: &mut DWalletCoordinatorInner,
-    root_session_identifier: &RootSessionIdentifier,
-    identifier_preimage: vector<u8>,
-    ctx: &mut TxContext,
-): SessionIdentifier {
-    self.sessions_manager.register_session_identifier(root_session_identifier, identifier_preimage, ctx)
+    self.sessions_manager.register_session_identifier(bytes, ctx)
 }
 
 /// Starts a Distributed Key Generation (DKG) session for the network (threshold) encryption key.
@@ -5098,13 +5089,9 @@ fun global_presign_config(self: &DWalletCoordinatorInner): &GlobalPresignConfig 
 
 public(package) fun migrate(
     self: &mut DWalletCoordinatorInner,
-    ctx: &mut TxContext,
 ) {
     if(!self.extra_fields.contains(b"global_presign_config")) {
         self.extra_fields.add(b"global_presign_config", support_config::create_global_presign_config(vec_map::empty(), vec_map::empty()));
-    };
-    if(!self.extra_fields.contains(b"root_session_identifier")) {
-        self.extra_fields.add(b"root_session_identifier", sessions_manager::create_root_session_identifier(ctx));
     };
 }
 

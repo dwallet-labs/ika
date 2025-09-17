@@ -29,7 +29,6 @@ use sui::vec_map::VecMap;
 use ika_common::upgrade_package_approver::UpgradePackageApprover;
 use ika_dwallet_2pc_mpc::coordinator_inner::DWallet;
 use ika_dwallet_2pc_mpc::coordinator_inner::SignDuringDKGRequest;
-use ika_dwallet_2pc_mpc::sessions_manager::RootSessionIdentifier;
 
 // === Errors ===
 
@@ -213,19 +212,10 @@ public fun set_pricing_vote(
 
 public fun register_session_identifier(
     self: &mut DWalletCoordinator,
-    identifier: vector<u8>,
+    bytes: vector<u8>,
     ctx: &mut TxContext,
 ): SessionIdentifier {
-    self.inner_mut().register_session_identifier(identifier, ctx)
-}
-
-public fun register_session_identifier_from_root(
-    self: &mut DWalletCoordinator,
-    root_session_identifier: &RootSessionIdentifier,
-    identifier: vector<u8>,
-    ctx: &mut TxContext,
-): SessionIdentifier {
-    self.inner_mut().register_session_identifier_from_root(root_session_identifier, identifier, ctx)
+    self.inner_mut().register_session_identifier(bytes, ctx)
 }
 
 public fun get_active_encryption_key(self: &DWalletCoordinator, address: address): ID {
@@ -861,7 +851,7 @@ public fun try_migrate(self: &mut DWalletCoordinator, ctx: &mut TxContext) {
 ///
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
-fun try_migrate_impl(self: &mut DWalletCoordinator, ctx: &mut TxContext) {
+fun try_migrate_impl(self: &mut DWalletCoordinator, _ctx: &mut TxContext) {
     assert!(self.version < VERSION, EInvalidMigration);
     assert!(self.new_package_id.is_some(), EInvalidMigration);
     // Move the old coordinator inner to the new version.
@@ -869,7 +859,7 @@ fun try_migrate_impl(self: &mut DWalletCoordinator, ctx: &mut TxContext) {
     dynamic_field::add(&mut self.id, VERSION, coordinator_inner);
     self.version = VERSION;
 
-    self.inner_mut().migrate(ctx);
+    self.inner_mut().migrate();
 
     self.package_id = self.new_package_id.extract();
     // empty the migration epoch
