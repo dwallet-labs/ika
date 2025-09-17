@@ -51,37 +51,37 @@ describe('system tests', () => {
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		// ------------ Create Ika Genesis ------------
 		const createIkaGenesisPath = `${TEST_ROOT_DIR}/create-ika-genesis-mac.sh`;
-		// await execa({
-		// 	stdout: ['pipe', 'inherit'],
-		// 	stderr: ['pipe', 'inherit'],
-		// 	cwd: TEST_ROOT_DIR,
-		// })`${createIkaGenesisPath}`;
-		//
-		// await fs.copyFile(
-		// 	`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/ika_config.json`,
-		// 	path.resolve(process.cwd(), '../../ika_config.json'),
-		// );
-		// console.log(`Ika genesis created, deploying ika network`);
-		// await deployIkaNetwork();
-		// console.log('Ika network deployed, waiting for epoch switch');
+		await execa({
+			stdout: ['pipe', 'inherit'],
+			stderr: ['pipe', 'inherit'],
+			cwd: TEST_ROOT_DIR,
+		})`${createIkaGenesisPath}`;
+
+		await fs.copyFile(
+			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/ika_config.json`,
+			path.resolve(process.cwd(), '../../ika_config.json'),
+		);
+		console.log(`Ika genesis created, deploying ika network`);
+		await deployIkaNetwork();
+		console.log('Ika network deployed, waiting for epoch switch');
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
-		// await waitForEpochSwitch(ikaClient);
-		// console.log('Epoch switched, verifying the network key version is V1');
+		await waitForEpochSwitch(ikaClient);
+		console.log('Epoch switched, verifying the network key version is V1');
 		const networkKey = await ikaClient.getConfiguredNetworkEncryptionKey();
 		let networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.publicOutputID);
 		const networkKeyVersion = network_key_version(networkKeyBytes);
-		// expect(networkKeyVersion).toBe(1);
-		// console.log('Network key version is V1, creating a dWallet with it');
+		expect(networkKeyVersion).toBe(1);
+		console.log('Network key version is V1, creating a dWallet with it');
 		const dwallet = await createCompleteDWallet(ikaClient, suiClient, testName);
-		// console.log('DWallet created successfully, running a full sign flow with it');
-		// await runSignFullFlowWithDWallet(
-		// 	ikaClient,
-		// 	suiClient,
-		// 	dwallet,
-		// 	testName,
-		// );
+		console.log('DWallet created successfully, running a full sign flow with it');
+		await runSignFullFlowWithDWallet(
+			ikaClient,
+			suiClient,
+			dwallet,
+			testName,
+		);
 		console.log('V1 dWallet full flow works, upgrading the validators docker image');
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		const kc = new KubeConfig();
