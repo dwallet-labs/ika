@@ -22,7 +22,7 @@ jobs:
         env:
           CLOUDSDK_CORE_PROJECT: common-449616
 
-      - name: Pull the docker image and retag it
+      - name: Pull the docker image and retag
         run: |
             docker pull us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key
             docker tag us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key itaylevy134/ika-node:latest
