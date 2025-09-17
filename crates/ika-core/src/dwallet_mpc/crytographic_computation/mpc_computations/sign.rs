@@ -202,14 +202,12 @@ impl SignPublicInputByCurve {
         hash_scheme: HashType,
         access_structure: &WeightedThresholdAccessStructure,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
-        curve: DWalletCurve,
         protocol: DWalletSignatureScheme,
     ) -> DwalletMPCResult<Self> {
         let expected_decrypters =
             generate_expected_decrypters(access_structure, session_identifier)?;
 
-        match curve {
-            DWalletCurve::Secp256k1 => match protocol {
+        match protocol {
                 DWalletSignatureScheme::ECDSASecp256k1 => {
                     let decryption_pp = versioned_network_encryption_key_public_data
                         .secp256k1_decryption_key_share_public_parameters();
@@ -248,14 +246,7 @@ impl SignPublicInputByCurve {
 
                     Ok(SignPublicInputByCurve::Secp256k1Taproot(public_input))
                 }
-                _ => {
-                    return Err(DwalletMPCError::CurveToProtocolMismatch {
-                        curve: curve.clone(),
-                        protocol: protocol.clone(),
-                    });
-                }
-            },
-            DWalletCurve::Ristretto => {
+            DWalletSignatureScheme::SchnorrkelSubstrate => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .ristretto_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -275,7 +266,7 @@ impl SignPublicInputByCurve {
 
                 Ok(SignPublicInputByCurve::Ristretto(public_input))
             }
-            DWalletCurve::Curve25519 => {
+            DWalletSignatureScheme::EdDSA => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .curve25519_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -294,7 +285,7 @@ impl SignPublicInputByCurve {
 
                 Ok(SignPublicInputByCurve::Curve25519(public_input))
             }
-            DWalletCurve::Secp256r1 => {
+            DWalletSignatureScheme::ECDSASecp256r1 => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .secp256r1_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
