@@ -35,6 +35,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use dwallet_rng::RootSeed;
 use group::PartyID;
+use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,

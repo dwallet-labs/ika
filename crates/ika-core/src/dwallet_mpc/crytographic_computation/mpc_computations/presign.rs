@@ -8,11 +8,12 @@
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureScheme, SerializedWrappedMPCPublicOutput,
+    DWalletSignatureScheme, SerializedWrappedMPCPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput, VersionedNetworkEncryptionKeyPublicData,
 };
 use dwallet_mpc_types::dwallet_mpc::{NetworkEncryptionKeyPublicDataTrait, VersionedPresignOutput};
 use group::{CsRng, PartyID};
+use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
@@ -24,6 +25,7 @@ use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
+use twopc_mpc::presign;
 use twopc_mpc::presign::Protocol;
 
 pub(crate) type PresignParty<P: Protocol> = <P as Protocol>::PresignParty;
@@ -137,12 +139,70 @@ impl PresignAdvanceRequestByProtocol {
 impl PresignPublicInputByProtocol {
     pub(crate) fn try_new(
         session_identifier: SessionIdentifier,
-        curve: DWalletCurve,
+        protocol: DWalletSignatureScheme,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
+        protocol_version: ProtocolVersion,
     ) -> DwalletMPCResult<Self> {
-        let input = match curve {
-            DWalletCurve::Secp256k1 => {
+        let dkg_output = dwallet_public_output
+            .clone()
+            .ok_or(DwalletMPCError::MPCSessionError {
+                session_identifier,
+                error: "presign public input cannot be None as we only support ECDSA".to_string(),
+            })?;
+
+        match protocol_version.as_u64() {
+            1 => Self::try_new_v1(
+                session_identifier,
+                versioned_network_encryption_key_public_data,
+                dkg_output,
+            ),
+            _ => Self::try_new_v2(
+                session_identifier,
+                protocol,
+                versioned_network_encryption_key_public_data,
+                dkg_output,
+            ),
+        }
+    }
+    pub(crate) fn try_new_v1(
+        session_identifier: SessionIdentifier,
+        versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        dwallet_public_output: SerializedWrappedMPCPublicOutput,
+    ) -> DwalletMPCResult<Self> {
+        let VersionedDwalletDKGSecondRoundPublicOutput::V1(decentralized_dkg_output) =
+            bcs::from_bytes(dwallet_public_output.as_slice())?
+        else {
+            return Err(DwalletMPCError::MPCSessionError {
+                    session_identifier,
+                    error: "presign public input v1 only supports VersionedDwalletDKGSecondRoundPublicOutput::V1".to_string(),
+                });
+        };
+
+        let decentralized_party_targeted_dkg_output =
+            bcs::from_bytes::<Secp256K1ECDSAProtocol::DecentralizedPartyTargetedDKGOutput>(
+                decentralized_dkg_output.as_slice(),
+            )?
+            .into();
+        let protocol_public_parameters =
+            versioned_network_encryption_key_public_data.secp256k1_protocol_public_parameters();
+
+        let public_input: <PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput = (
+            protocol_public_parameters,
+            decentralized_party_targeted_dkg_output,
+        )
+            .into();
+        Ok(PresignPublicInputByProtocol::Secp256k1ECDSA(public_input))
+    }
+
+    pub(crate) fn try_new_v2(
+        session_identifier: SessionIdentifier,
+        protocol: DWalletSignatureScheme,
+        versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        dwallet_public_output: SerializedWrappedMPCPublicOutput,
+    ) -> DwalletMPCResult<Self> {
+        let input = match protocol {
+            DWalletSignatureScheme::ECDSASecp256k1 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
                 PresignPublicInputByProtocol::Secp256k1ECDSA(generate_presign_public_input::<
@@ -153,7 +213,7 @@ impl PresignPublicInputByProtocol {
                     dwallet_public_output,
                 )?)
             }
-            DWalletCurve::Ristretto => {
+            DWalletSignatureScheme::SchnorrkelSubstrate => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .ristretto_protocol_public_parameters()?;
                 PresignPublicInputByProtocol::SchnorrkelSubstrate(generate_presign_public_input::<
@@ -164,7 +224,7 @@ impl PresignPublicInputByProtocol {
                     dwallet_public_output,
                 )?)
             }
-            DWalletCurve::Curve25519 => {
+            DWalletSignatureScheme::EdDSA => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .curve25519_protocol_public_parameters()?;
                 PresignPublicInputByProtocol::EdDSA(generate_presign_public_input::<
@@ -175,11 +235,22 @@ impl PresignPublicInputByProtocol {
                     dwallet_public_output,
                 )?)
             }
-            DWalletCurve::Secp256r1 => {
+            DWalletSignatureScheme::ECDSASecp256r1 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256r1_protocol_public_parameters()?;
                 PresignPublicInputByProtocol::Secp256r1ECDSA(generate_presign_public_input::<
                     Secp256R1ECDSAProtocol,
+                >(
+                    session_identifier,
+                    protocol_public_parameters,
+                    dwallet_public_output,
+                )?)
+            }
+            DWalletSignatureScheme::Taproot => {
+                let protocol_public_parameters = versioned_network_encryption_key_public_data
+                    .secp256k1_protocol_public_parameters();
+                PresignPublicInputByProtocol::Taproot(generate_presign_public_input::<
+                    Secp256K1TaprootProtocol,
                 >(
                     session_identifier,
                     protocol_public_parameters,
@@ -195,25 +266,19 @@ impl PresignPublicInputByProtocol {
 fn generate_presign_public_input<P: Protocol>(
     session_identifier: SessionIdentifier,
     protocol_public_parameters: P::ProtocolPublicParameters,
-    dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
+    dwallet_public_output: SerializedWrappedMPCPublicOutput,
 ) -> DwalletMPCResult<<PresignParty<P> as mpc::Party>::PublicInput> {
-    let dkg_output = dwallet_public_output
-        .clone()
-        .ok_or(DwalletMPCError::MPCSessionError {
-            session_identifier,
-            error: "presign public input cannot be None as we only support ECDSA".to_string(),
-        })?;
-    let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
-        bcs::from_bytes(dkg_output.as_slice())?;
-
-    let decentralized_dkg_output = match dkg_output {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-            bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
-        }
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
-        }
+    let VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) =
+        bcs::from_bytes(dwallet_public_output.as_slice())?
+    else {
+        return Err(DwalletMPCError::MPCSessionError {
+                session_identifier,
+                error: "presign public input v2 only supports VersionedDwalletDKGSecondRoundPublicOutput::V2".to_string(),
+            });
     };
+    let decentralized_dkg_output =
+        bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?;
+
     let pub_input: <PresignParty<P> as mpc::Party>::PublicInput =
         (protocol_public_parameters, decentralized_dkg_output).into();
 
@@ -251,7 +316,7 @@ pub fn compute_presign<P: Protocol>(
         } => {
             // Wrap the public output with its version.
             let public_output_value =
-                bcs::to_bytes(&VersionedPresignOutput::V2(public_output_value))?;
+                bcs::to_bytes(&VersionedPresignOutput::V1(public_output_value))?;
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
                 malicious_parties,
