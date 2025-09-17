@@ -91,7 +91,7 @@ describe('system tests', () => {
 			try {
 				await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
 			} catch (e) {}
-			await delay(5);
+			await delay(15);
 			await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
 		}
 		console.log(
