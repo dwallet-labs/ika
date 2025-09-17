@@ -45,11 +45,11 @@ describe('system tests', () => {
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		// ------------ Create Ika Genesis ------------
 		const createIkaGenesisPath = `${TEST_ROOT_DIR}/create-ika-genesis-mac.sh`;
-		await execa({
-			stdout: ['pipe', 'inherit'],
-			stderr: ['pipe', 'inherit'],
-			cwd: TEST_ROOT_DIR,
-		})`${createIkaGenesisPath}`;
+		// await execa({
+		// 	stdout: ['pipe', 'inherit'],
+		// 	stderr: ['pipe', 'inherit'],
+		// 	cwd: TEST_ROOT_DIR,
+		// })`${createIkaGenesisPath}`;
 
 		await fs.copyFile(
 			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/ika_config.json`,
