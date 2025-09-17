@@ -187,7 +187,6 @@ export async function createPods(kc: KubeConfig, namespaceName: string, numOfVal
 			namespace: namespaceName,
 		},
 		spec: {
-			hostNetwork: true,
 			hostname: 'fullnode',
 			subdomain: NETWORK_SERVICE_NAME,
 			containers: [
