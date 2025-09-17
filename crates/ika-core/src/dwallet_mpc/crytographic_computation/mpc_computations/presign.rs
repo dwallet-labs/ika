@@ -291,6 +291,7 @@ pub fn compute_presign<P: Protocol>(
     session_id: CommitmentSizedNumber,
     advance_request: AdvanceRequest<<P::PresignParty as mpc::Party>::Message>,
     public_input: <P::PresignParty as mpc::Party>::PublicInput,
+    protocol_version: ProtocolVersion,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let result =
@@ -315,8 +316,10 @@ pub fn compute_presign<P: Protocol>(
             private_output,
         } => {
             // Wrap the public output with its version.
-            let public_output_value =
-                bcs::to_bytes(&VersionedPresignOutput::V1(public_output_value))?;
+            let public_output_value = match protocol_version.as_u64() {
+                1 => bcs::to_bytes(&VersionedPresignOutput::V1(public_output_value))?,
+                _ => bcs::to_bytes(&VersionedPresignOutput::V2(public_output_value))?,
+            };
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
                 malicious_parties,

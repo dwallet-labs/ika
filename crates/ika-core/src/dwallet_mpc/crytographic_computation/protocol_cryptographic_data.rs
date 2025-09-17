@@ -20,6 +20,7 @@ use class_groups::SecretKeyShareSizedInteger;
 use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use group::PartyID;
+use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
@@ -59,6 +60,7 @@ pub enum ProtocolCryptographicData {
         data: PresignData,
         public_input: PresignPublicInputByProtocol,
         advance_request: PresignAdvanceRequestByProtocol,
+        protocol_version: ProtocolVersion,
     },
 
     Sign {
@@ -280,6 +282,7 @@ impl DWalletMPCManager {
         protocol_data: &ProtocolData,
         consensus_round: u64,
         public_input: PublicInput,
+        protocol_version: &ProtocolVersion,
     ) -> Result<Option<ProtocolCryptographicData>, DwalletMPCError> {
         match session_type {
             SessionComputationType::Native => {
@@ -302,6 +305,7 @@ impl DWalletMPCManager {
                     .class_groups_decryption_key
                     .clone(),
                 &self.network_keys,
+                protocol_version,
             ),
         }
     }

@@ -75,6 +75,7 @@ impl ProtocolCryptographicData {
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
+        protocol_version: &ProtocolVersion,
         decryption_key_shares: &Box<DwalletMPCNetworkKeys>,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
@@ -201,6 +202,7 @@ impl ProtocolCryptographicData {
                     data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
+                    protocol_version: *protocol_version,
                 }
             }
             ProtocolData::Sign {
