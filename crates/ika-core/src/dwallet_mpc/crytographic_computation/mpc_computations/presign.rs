@@ -25,8 +25,8 @@ use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
-use twopc_mpc::presign;
 use twopc_mpc::presign::Protocol;
+use twopc_mpc::{dkg, presign};
 
 pub(crate) type PresignParty<P: Protocol> = <P as Protocol>::PresignParty;
 
@@ -180,9 +180,9 @@ impl PresignPublicInputByProtocol {
         };
 
         let decentralized_party_targeted_dkg_output =
-            bcs::from_bytes::<Secp256K1ECDSAProtocol::DecentralizedPartyTargetedDKGOutput>(
-                decentralized_dkg_output.as_slice(),
-            )?
+            bcs::from_bytes::<
+                <Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
+            >(decentralized_dkg_output.as_slice())?
             .into();
         let protocol_public_parameters =
             versioned_network_encryption_key_public_data.secp256k1_protocol_public_parameters();

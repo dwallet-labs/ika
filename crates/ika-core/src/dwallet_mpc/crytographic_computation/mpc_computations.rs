@@ -75,8 +75,8 @@ impl ProtocolCryptographicData {
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
-        protocol_version: &ProtocolVersion,
         decryption_key_shares: &Box<DwalletMPCNetworkKeys>,
+        protocol_version: &ProtocolVersion,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
             ProtocolData::ImportedKeyVerification { data, .. } => {
@@ -669,6 +669,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::Presign {
                 public_input: PresignPublicInputByProtocol::Secp256k1ECDSA(public_input),
                 advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                protocol_version,
                 ..
             } => Ok(compute_presign::<Secp256K1ECDSAProtocol>(
                 party_id,
@@ -676,11 +677,13 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                protocol_version,
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
                 public_input: PresignPublicInputByProtocol::Taproot(public_input),
                 advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
+                protocol_version,
                 ..
             } => Ok(compute_presign::<Secp256K1TaprootProtocol>(
                 party_id,
@@ -688,11 +691,13 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                protocol_version,
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
                 public_input: PresignPublicInputByProtocol::Secp256r1ECDSA(public_input),
                 advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
+                protocol_version,
                 ..
             } => Ok(compute_presign::<Secp256R1ECDSAProtocol>(
                 party_id,
@@ -700,11 +705,13 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                protocol_version,
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
                 public_input: PresignPublicInputByProtocol::EdDSA(public_input),
                 advance_request: PresignAdvanceRequestByProtocol::EdDSA(advance_request),
+                protocol_version,
                 ..
             } => Ok(compute_presign::<Curve25519EdDSAProtocol>(
                 party_id,
@@ -712,12 +719,14 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                protocol_version,
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
                 public_input: PresignPublicInputByProtocol::SchnorrkelSubstrate(public_input),
                 advance_request:
                     PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                protocol_version,
                 ..
             } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateProtocol>(
                 party_id,
@@ -725,6 +734,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                protocol_version,
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
