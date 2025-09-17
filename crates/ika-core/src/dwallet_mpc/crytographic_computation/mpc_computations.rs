@@ -13,7 +13,7 @@ use crate::dwallet_mpc::network_dkg::{
     DwalletMPCNetworkKeys, advance_network_dkg_v1, advance_network_dkg_v2,
 };
 use crate::dwallet_mpc::presign::{
-    PresignAdvanceRequestByCurve, PresignPublicInputByCurve, compute_presign,
+    PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol, compute_presign,
 };
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::{
@@ -184,8 +184,7 @@ impl ProtocolCryptographicData {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result = presign::PresignAdvanceRequestByCurve::try_new(
-                    &data.curve,
+                let advance_request_result = presign::PresignAdvanceRequestByProtocol::try_new(
                     &data.signature_algorithm,
                     party_id,
                     access_structure,
@@ -665,8 +664,8 @@ impl ProtocolCryptographicData {
                 advance_request.to_string(),
             )),
             ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByCurve::Secp256k1ECDSA(public_input),
-                advance_request: PresignAdvanceRequestByCurve::Secp256k1ECDSA(advance_request),
+                public_input: PresignPublicInputByProtocol::Secp256k1ECDSA(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
             } => Ok(compute_presign::<Secp256K1ECDSAProtocol>(
                 party_id,
@@ -677,8 +676,8 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByCurve::Secp256k1Taproot(public_input),
-                advance_request: PresignAdvanceRequestByCurve::Secp256k1Taproot(advance_request),
+                public_input: PresignPublicInputByProtocol::Taproot(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
                 ..
             } => Ok(compute_presign::<Secp256K1TaprootProtocol>(
                 party_id,
@@ -689,8 +688,8 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByCurve::Secp256r1(public_input),
-                advance_request: PresignAdvanceRequestByCurve::Secp256r1(advance_request),
+                public_input: PresignPublicInputByProtocol::Secp256r1ECDSA(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
                 ..
             } => Ok(compute_presign::<Secp256R1ECDSAProtocol>(
                 party_id,
@@ -701,8 +700,8 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByCurve::Curve25519(public_input),
-                advance_request: PresignAdvanceRequestByCurve::Curve25519(advance_request),
+                public_input: PresignPublicInputByProtocol::EdDSA(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::EdDSA(advance_request),
                 ..
             } => Ok(compute_presign::<Curve25519EdDSAProtocol>(
                 party_id,
@@ -713,8 +712,9 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByCurve::Ristretto(public_input),
-                advance_request: PresignAdvanceRequestByCurve::Ristretto(advance_request),
+                public_input: PresignPublicInputByProtocol::SchnorrkelSubstrate(public_input),
+                advance_request:
+                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
                 ..
             } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateProtocol>(
                 party_id,
