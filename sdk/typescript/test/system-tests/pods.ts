@@ -146,7 +146,7 @@ export async function createPVCs(kc: KubeConfig, namespaceName: string, numOfVal
 				accessModes: ['ReadWriteOnce'],
 				resources: {
 					requests: {
-						storage: '5Gi',
+						storage: '20Gi',
 					},
 				},
 			},
