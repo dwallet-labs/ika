@@ -1,4 +1,4 @@
-import fs from 'fs';
+import { promises as fs } from 'fs';
 import path from 'path';
 import { network_key_version } from '@ika.xyz/ika-wasm';
 import { KubeConfig } from '@kubernetes/client-node';
