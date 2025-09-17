@@ -58,6 +58,9 @@ use sui::vec_map;
 
 /// Intent bytes for checkpoint message verification to prevent replay attacks
 const CHECKPOINT_MESSAGE_INTENT: vector<u8> = vector[1, 0, 0];
+/// Name of the global presign config in the extra fields
+const GLOBAL_PRESIGN_CONFIG_NAME_STR: vector<u8> = b"global_presign_config";
+
 
 // Protocol flags for different MPC operations
 // Used for pricing configuration and protocol identification
@@ -5014,12 +5017,12 @@ public(package) fun set_global_presign_config(
     curve_to_signature_algorithms_for_imported_key: VecMap<u32, vector<u32>>,
     _: &VerifiedProtocolCap,
 ) {
-    if(self.extra_fields.contains(b"global_presign_config")) {
-        let global_presign_config: &mut GlobalPresignConfig = self.extra_fields.borrow_mut(b"global_presign_config");
+    if(self.extra_fields.contains(GLOBAL_PRESIGN_CONFIG_NAME_STR)) {
+        let global_presign_config: &mut GlobalPresignConfig = self.extra_fields.borrow_mut(GLOBAL_PRESIGN_CONFIG_NAME_STR);
         global_presign_config.set_global_presign_config(curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key);
     } else {
         let global_presign_config = support_config::create_global_presign_config(curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key);
-        self.extra_fields.add(b"global_presign_config", global_presign_config);
+        self.extra_fields.add(GLOBAL_PRESIGN_CONFIG_NAME_STR, global_presign_config);
     };
 }
 
@@ -5088,14 +5091,14 @@ public(package) fun get_network_encryption_key_supported_curves(
 }
 
 fun global_presign_config(self: &DWalletCoordinatorInner): &GlobalPresignConfig {
-    self.extra_fields.borrow(b"global_presign_config")
+    self.extra_fields.borrow(GLOBAL_PRESIGN_CONFIG_NAME_STR)
 }
 
 public(package) fun migrate(
     self: &mut DWalletCoordinatorInner,
 ) {
-    if(!self.extra_fields.contains(b"global_presign_config")) {
-        self.extra_fields.add(b"global_presign_config", support_config::create_global_presign_config(vec_map::empty(), vec_map::empty()));
+    if(!self.extra_fields.contains(GLOBAL_PRESIGN_CONFIG_NAME_STR)) {
+        self.extra_fields.add(GLOBAL_PRESIGN_CONFIG_NAME_STR, support_config::create_global_presign_config(vec_map::empty(), vec_map::empty()));
     };
 }
 
