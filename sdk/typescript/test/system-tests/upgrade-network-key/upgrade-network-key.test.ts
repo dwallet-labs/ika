@@ -88,7 +88,9 @@ describe('system tests', () => {
 		kc.loadFromDefault();
 		// Restart each validator pod one by one to pick up the docker tag change
 		for (let i = 0; i < Number(process.env.VALIDATOR_NUM); i++) {
-			await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
+			try {
+				await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
+			} catch (e) {}
 			await delay(5);
 			await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
 		}
