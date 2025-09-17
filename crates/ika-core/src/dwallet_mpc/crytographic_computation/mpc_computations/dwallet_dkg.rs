@@ -11,7 +11,8 @@ use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
-    VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
+    VersionedEncryptedUserShare, VersionedNetworkEncryptionKeyPublicData,
+    VersionedPublicKeyShareAndProof,
 };
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -19,12 +20,11 @@ use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
     Secp256R1AsyncDKGProtocol,
 };
-use mpc::guaranteed_output_delivery::AdvanceRequest;
+use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, Party,
     WeightedThresholdAccessStructure,
 };
-use mpc_computations::try_ready_to_advance;
 use std::collections::HashMap;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
@@ -65,7 +65,7 @@ impl DWalletDKGAdvanceRequestByCurve {
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match curve {
             DWalletCurve::Secp256k1 => {
-                let advance_request = try_ready_to_advance::<Secp256K1DWalletDKGParty>(
+                let advance_request = try_ready_to_advance::<Secp256K1AsyncDKGProtocol>(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -74,7 +74,7 @@ impl DWalletDKGAdvanceRequestByCurve {
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG)
             }
             DWalletCurve::Secp256r1 => {
-                let advance_request = try_ready_to_advance::<Secp256R1DWalletDKGParty>(
+                let advance_request = try_ready_to_advance::<Secp256R1AsyncDKGProtocol>(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -83,7 +83,7 @@ impl DWalletDKGAdvanceRequestByCurve {
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG)
             }
             DWalletCurve::Curve25519 => {
-                let advance_request = try_ready_to_advance::<Curve25519DWalletDKGParty>(
+                let advance_request = try_ready_to_advance::<Curve25519AsyncDKGProtocol>(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -92,7 +92,7 @@ impl DWalletDKGAdvanceRequestByCurve {
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG)
             }
             DWalletCurve::Ristretto => {
-                let advance_request = try_ready_to_advance::<RistrettoDWalletDKGParty>(
+                let advance_request = try_ready_to_advance::<RistrettoAsyncDKGProtocol>(
                     party_id,
                     access_structure,
                     consensus_round,
@@ -326,6 +326,28 @@ impl DWalletDKGSecondPartyPublicInputGenerator for Secp256K1DWalletDKGParty {
     }
 }
 
+fn try_ready_to_advance<P: Protocol>(
+    party_id: PartyID,
+    access_structure: &WeightedThresholdAccessStructure,
+    consensus_round: u64,
+    serialized_messages_by_consensus_round: &HashMap<u64, HashMap<PartyID, Vec<u8>>>,
+) -> DwalletMPCResult<Option<AdvanceRequest<<P::DKGDecentralizedParty as Party>::Message>>> {
+    let advance_request_result =
+        mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::ready_to_advance(
+            party_id,
+            access_structure,
+            consensus_round,
+            HashMap::new(),
+            serialized_messages_by_consensus_round,
+        )
+        .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
+
+    match advance_request_result {
+        ReadyToAdvanceResult::ReadyToAdvance(advance_request) => Ok(Some(advance_request)),
+        _ => Ok(None),
+    }
+}
+
 pub fn compute_dwallet_dkg<P: Protocol>(
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
@@ -334,9 +356,14 @@ pub fn compute_dwallet_dkg<P: Protocol>(
     protocol_public_parameters: P::ProtocolPublicParameters,
     public_input: <P::DKGDecentralizedParty as Party>::PublicInput,
     encryption_key: P::EncryptionKey,
-    encrypted_secret_key_share_message: P::EncryptedSecretKeyShareMessage,
+    encrypted_secret_key_share_message: &[u8],
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+    let encrypted_secret_key_share_message: VersionedEncryptedUserShare =
+        bcs::from_bytes(encrypted_secret_key_share_message).map_err(DwalletMPCError::BcsError)?;
+    let encrypted_secret_key_share_message = match encrypted_secret_key_share_message {
+        VersionedEncryptedUserShare::V1(message) => message,
+    };
     let result = mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::advance_with_guaranteed_output(
         session_id,
         party_id,
@@ -362,7 +389,7 @@ pub fn compute_dwallet_dkg<P: Protocol>(
                 &protocol_public_parameters,
                 decentralized_output.clone(),
                 encryption_key,
-                encrypted_secret_key_share_message,
+                bcs::from_bytes(&encrypted_secret_key_share_message)?,
                 &mut group::OsCsRng,
             )
             .map_err(|e| {

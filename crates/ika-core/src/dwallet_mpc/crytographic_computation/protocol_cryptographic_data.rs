@@ -4,7 +4,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
-use crate::dwallet_mpc::presign::{PresignAdvanceRequestByCurve, PresignPublicInputByCurve};
+use crate::dwallet_mpc::presign::{PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol};
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationParty, ReconfigurationV1toV2Party, ReconfigurationV2Party,
 };
@@ -57,8 +57,8 @@ pub enum ProtocolCryptographicData {
 
     Presign {
         data: PresignData,
-        public_input: PresignPublicInputByCurve,
-        advance_request: PresignAdvanceRequestByCurve,
+        public_input: PresignPublicInputByProtocol,
+        advance_request: PresignAdvanceRequestByProtocol,
     },
 
     Sign {
@@ -123,23 +123,24 @@ impl ProtocolCryptographicData {
                 advance_request, ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Secp256k1ECDSA(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Secp256k1Taproot(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Secp256r1(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Curve25519(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::EdDSA(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Ristretto(advance_request),
+                advance_request:
+                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Sign {
@@ -238,23 +239,24 @@ impl ProtocolCryptographicData {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Secp256k1ECDSA(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Secp256k1Taproot(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Secp256r1(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Curve25519(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::EdDSA(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByCurve::Ristretto(advance_request),
+                advance_request:
+                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Sign {
