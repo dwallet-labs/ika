@@ -1047,7 +1047,7 @@ public struct SignDuringDKGRequestEvent has copy, drop, store {
     message_centralized_signature: vector<u8>,
 }
 
-public enum UserSecretKeySharEvent has copy, drop, store {
+public enum UserSecretKeyShareEvent has copy, drop, store {
     Encrypted {
         /// ID of the encrypted user secret key share being created
         encrypted_user_secret_key_share_id: ID,
@@ -1097,7 +1097,7 @@ public struct DWalletDKGRequestEvent has copy, drop, store {
     /// Elliptic curve for the dWallet's cryptographic operations
     curve: u32,
     /// User's secret key share
-    user_secret_key_share: UserSecretKeySharEvent,
+    user_secret_key_share: UserSecretKeyShareEvent,
     /// Sign during DKG request
     sign_during_dkg_request: Option<SignDuringDKGRequestEvent>,
 }
@@ -2705,7 +2705,7 @@ public(package) fun request_dwallet_dkg(
     let id = object::new(ctx);
     let encrypted_user_secret_key_share_id = id.to_inner();
 
-    let user_secret_key_share = UserSecretKeySharEvent::Encrypted {
+    let user_secret_key_share = UserSecretKeyShareEvent::Encrypted {
         encrypted_user_secret_key_share_id,
         encrypted_centralized_secret_share_and_proof,
         encryption_key,
@@ -2760,7 +2760,7 @@ public(package) fun request_dwallet_dkg_with_public_user_secret_key_share(
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
 ): (DWalletCap, Option<ID>) {
-    let user_secret_key_share = UserSecretKeySharEvent::Public {
+    let user_secret_key_share = UserSecretKeyShareEvent::Public {
         public_user_secret_key_share,
     };
 
@@ -2790,7 +2790,7 @@ public fun request_dwallet_dkg_impl(
     curve: u32,
     centralized_public_key_share_and_proof: vector<u8>,
     user_public_output: vector<u8>,
-    user_secret_key_share: UserSecretKeySharEvent,
+    user_secret_key_share: UserSecretKeyShareEvent,
     sign_during_dkg_request: Option<SignDuringDKGRequest>,
     session_identifier: SessionIdentifier,
     payment_ika: &mut Coin<IKA>,
@@ -2966,6 +2966,10 @@ public(package) fun respond_dwallet_dkg(
             DWalletState::AwaitingNetworkDKGVerification => {
                 if (rejected) {
                     DWalletState::NetworkRejectedDKGVerification
+                } else if(dwallet.public_user_secret_key_share.is_some()) {
+                    DWalletState::Active {
+                        public_output,
+                    }
                 } else {
                     let encrypted_user_share = dwallet
                         .encrypted_user_secret_key_shares
