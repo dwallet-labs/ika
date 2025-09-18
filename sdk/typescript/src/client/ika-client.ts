@@ -906,9 +906,13 @@ export class IkaClient {
 					objResToBcs(keyObject),
 				);
 
+
+
 				let reconfigOutputsDFs = await this.client.getDynamicFields({
 					parentId: keyParsed.reconfiguration_public_outputs.id.id,
 				});
+
+				let reconfigOutputs = reconfigOutputsDFs.map((df) => df.name.value as string);
 
 				for (const reconfigDF of reconfigOutputsDFs.data) {
 					const reconfigName = reconfigDF.name.value as string;
