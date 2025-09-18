@@ -13,7 +13,7 @@ import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
 import { networkDkgPublicOutputToProtocolPublicParameters } from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
-import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './types.js';
+import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
 	CoordinatorInner,
 	DWallet,
@@ -921,7 +921,7 @@ export class IkaClient {
 								options: { showBcs: true },
 							});
 
-							const parsedValue = TableVec.fromBase64(objResToBcs(reconfigObject));
+							const parsedValue = DynamicField(TableVec).fromBase64(objResToBcs(reconfigObject));
 
 							return {
 								name,
@@ -937,7 +937,7 @@ export class IkaClient {
 					id: keyName,
 					epoch: Number(keyParsed.dkg_at_epoch),
 					publicOutputID:
-						lastReconfigOutput?.parsedValue.contents.id.id ||
+						lastReconfigOutput?.parsedValue.value.contents.id.id ||
 						keyParsed.network_dkg_public_output.contents.id.id,
 				};
 
