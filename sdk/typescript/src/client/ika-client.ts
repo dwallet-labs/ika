@@ -1,4 +1,3 @@
-;
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
@@ -6,19 +5,39 @@ import type { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { toHex } from '@mysten/sui/utils';
 
-
-
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator.js';
 import { TableVec } from '../generated/ika_system/deps/sui/table_vec.js';
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
-import { networkDkgPublicOutputToProtocolPublicParameters, reconfigurationPublicOutputToProtocolPublicParameters } from './cryptography.js';
+import {
+	networkDkgPublicOutputToProtocolPublicParameters,
+	reconfigurationPublicOutputToProtocolPublicParameters,
+} from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
 import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
-import type { CoordinatorInner, DWallet, DWalletCap, DWalletInternal, DWalletKind, DWalletState, EncryptedUserSecretKeyShare, EncryptedUserSecretKeyShareState, EncryptionKey, EncryptionKeyOptions, IkaClientOptions, IkaConfig, NetworkEncryptionKey, PartialUserSignature, PartialUserSignatureState, Presign, PresignState, SharedObjectOwner, SystemInner } from './types.js';
+import type {
+	CoordinatorInner,
+	DWallet,
+	DWalletCap,
+	DWalletInternal,
+	DWalletKind,
+	DWalletState,
+	EncryptedUserSecretKeyShare,
+	EncryptedUserSecretKeyShareState,
+	EncryptionKey,
+	EncryptionKeyOptions,
+	IkaClientOptions,
+	IkaConfig,
+	NetworkEncryptionKey,
+	PartialUserSignature,
+	PartialUserSignatureState,
+	Presign,
+	PresignState,
+	SharedObjectOwner,
+	SystemInner,
+} from './types.js';
 import { fetchAllDynamicFields, objResToBcs } from './utils.js';
-
 
 /**
  * IkaClient provides a high-level interface for interacting with the Ika network.
