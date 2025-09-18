@@ -17,20 +17,22 @@ use class_groups::{
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
-    DWalletCurve, SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
+    DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataV1,
+    NetworkEncryptionKeyPublicDataV2, SerializedWrappedMPCPublicOutput,
+    VersionedCentralizedDKGPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
     VersionedImportedDWalletPublicOutput, VersionedImportedDwalletOutgoingMessage,
-    VersionedNetworkDkgOutput, VersionedPresignOutput, VersionedPublicKeyShareAndProof,
-    VersionedSignOutput, VersionedUserSignedMessage,
+    VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput,
+    VersionedPublicKeyShareAndProof, VersionedSignOutput, VersionedUserSignedMessage,
 };
-use group::{CyclicGroupElement, GroupElement, HashType, OsCsRng, Samplable, secp256k1};
+use group::{CyclicGroupElement, GroupElement, HashType, OsCsRng, PartyID, Samplable, secp256k1};
 use homomorphic_encryption::{
     AdditivelyHomomorphicDecryptionKey, AdditivelyHomomorphicEncryptionKey,
     GroupsPublicParametersAccessors,
 };
-use mpc::Party;
 use mpc::two_party::Round;
+use mpc::{Party, Weight, WeightedThresholdAccessStructure};
 use rand_core::SeedableRng;
 use twopc_mpc::secp256k1::SCALAR_LIMBS;
 
@@ -43,7 +45,9 @@ use twopc_mpc::class_groups::{
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::VerifyingKey;
-use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use twopc_mpc::secp256k1::class_groups::{
+    FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, ProtocolPublicParameters,
+};
 
 type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
@@ -81,6 +85,19 @@ pub fn network_dkg_public_output_to_protocol_pp_inner(
     network_dkg_public_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
     let public_parameters = protocol_public_parameters(network_dkg_public_output)?;
+    Ok(bcs::to_bytes(&public_parameters)?)
+}
+
+pub fn reconfiguration_public_output_to_protocol_pp_inner(
+    reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
+    committee_size: usize,
+    quorum_threshold: usize,
+) -> anyhow::Result<Vec<u8>> {
+    let public_parameters = protocol_public_parameters_from_reconfiguration_output(
+        reconfiguration_dkg_public_output,
+        committee_size,
+        quorum_threshold,
+    )?;
     Ok(bcs::to_bytes(&public_parameters)?)
 }
 
@@ -578,6 +595,76 @@ fn protocol_public_parameters(
             let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
             Ok(network_dkg_public_output.secp256k1_protocol_public_parameters()?)
+        }
+    }
+}
+
+fn protocol_public_parameters_from_reconfiguration_output(
+    reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
+    committee_size: usize,
+    quorum_threshold: usize,
+) -> anyhow::Result<ProtocolPublicParameters> {
+    let reconfiguration_dkg_public_output: VersionedDecryptionKeyReconfigurationOutput =
+        bcs::from_bytes(&reconfiguration_dkg_public_output)?;
+
+    // Every member has a voting power of 1 in the current Move code.
+    let access_structure = WeightedThresholdAccessStructure::new(
+        quorum_threshold as Weight,
+        (1..=committee_size).map(|i| (i as PartyID, 1)).collect(),
+    )?;
+
+    match &reconfiguration_dkg_public_output {
+        VersionedDecryptionKeyReconfigurationOutput::V1(public_output_bytes) => {
+            let public_output: <class_groups::reconfiguration::Secp256k1Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+
+            let decryption_key_share_public_parameters = public_output
+                .default_decryption_key_share_public_parameters::<secp256k1::GroupElement>(
+                    &access_structure,
+                )?;
+            let encryption_scheme_public_parameters = decryption_key_share_public_parameters
+                .encryption_scheme_public_parameters
+                .clone();
+
+            let neutral_group_value =
+                group::secp256k1::GroupElement::neutral_from_public_parameters(
+                    &group::secp256k1::group_element::PublicParameters::default(),
+                )
+                .map_err(twopc_mpc::Error::from)?
+                .value();
+            let neutral_ciphertext_value =
+                ::class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
+                    encryption_scheme_public_parameters.ciphertext_space_public_parameters(),
+                )
+                .map_err(twopc_mpc::Error::from)?
+                .value();
+
+            let protocol_public_parameters = twopc_mpc::ProtocolPublicParameters::new::<
+                { secp256k1::SCALAR_LIMBS },
+                { FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                secp256k1::GroupElement,
+            >(
+                neutral_group_value,
+                neutral_group_value,
+                neutral_ciphertext_value,
+                neutral_ciphertext_value,
+                decryption_key_share_public_parameters
+                    .encryption_scheme_public_parameters
+                    .clone(),
+            );
+
+            Ok(protocol_public_parameters)
+        }
+        VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
+            let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+            let secp256k1_protocol_public_parameters =
+                twopc_mpc::decentralized_party::reconfiguration::PublicOutput::secp256k1_protocol_public_parameters(
+                    &public_output,
+                )?;
+
+            Ok(secp256k1_protocol_public_parameters)
         }
     }
 }

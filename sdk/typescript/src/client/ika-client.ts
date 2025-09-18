@@ -7,11 +7,15 @@ import { toHex } from '@mysten/sui/utils';
 
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator.js';
+import { TableVec } from '../generated/ika_system/deps/sui/table_vec.js';
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
-import { networkDkgPublicOutputToProtocolPublicParameters } from './cryptography.js';
+import {
+	networkDkgPublicOutputToProtocolPublicParameters,
+	reconfigurationPublicOutputToProtocolPublicParameters,
+} from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
-import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './types.js';
+import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
 	CoordinatorInner,
 	DWallet,
@@ -33,7 +37,7 @@ import type {
 	SharedObjectOwner,
 	SystemInner,
 } from './types.js';
-import { objResToBcs } from './utils.js';
+import { fetchAllDynamicFields, objResToBcs } from './utils.js';
 import { Table } from '../generated/ika_dwallet_2pc_mpc/deps/sui/table';
 
 /**
@@ -652,7 +656,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 */
 	async getProtocolPublicParameters(dWallet?: DWallet): Promise<Uint8Array> {
-		await this.ensureInitialized();
+		const objects = await this.ensureInitialized();
 
 		let networkEncryptionKey: NetworkEncryptionKey;
 
@@ -678,9 +682,16 @@ export class IkaClient {
 			}
 		}
 
-		const protocolPublicParameters = await networkDkgPublicOutputToProtocolPublicParameters(
-			await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
-		);
+		const protocolPublicParameters =
+			networkEncryptionKey.epoch === Number(objects.coordinatorInner.current_epoch)
+				? await networkDkgPublicOutputToProtocolPublicParameters(
+						await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+					)
+				: await reconfigurationPublicOutputToProtocolPublicParameters(
+						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+						objects.systemInner.validator_set.active_committee.members.length,
+						Number(objects.systemInner.validator_set.active_committee.quorum_threshold),
+					);
 
 		// Cache the parameters by encryption key ID
 		this.cachedProtocolPublicParameters.set(encryptionKeyID, {
@@ -909,22 +920,39 @@ export class IkaClient {
 					parentId: keyParsed.reconfiguration_public_outputs.id.id,
 				});
 
-				for (const reconfigDF of reconfigOutputsDF.data) {
-					const keyName = reconfigDF.name.value as string;
-					const keyObject = await this.client.getObject({
-						id: reconfigDF.objectId,
-						options: { showBcs: true },
-					});
+				const reconfigOutputsDFs = await fetchAllDynamicFields(
+					this.client,
+					keyParsed.reconfiguration_public_outputs.id.id,
+				);
 
-					const keyParsed = Table.fromBase64(
-						objResToBcs(keyObject),
-					);
-				}
+				const lastReconfigOutput = (
+					await Promise.all(
+						reconfigOutputsDFs.map(async (df) => {
+							const name = df.name.value as string;
+							const reconfigObject = await this.client.getObject({
+								id: df.objectId,
+								options: { showBcs: true },
+							});
+
+							const parsedValue = DynamicField(TableVec).fromBase64(objResToBcs(reconfigObject));
+
+							return {
+								name,
+								parsedValue,
+							};
+						}),
+					)
+				).find(
+					(reconfigOutput) =>
+						Number(reconfigOutput.name) === Number(objects.coordinatorInner.current_epoch) - 1,
+				);
+
 				const encryptionKey: NetworkEncryptionKey = {
 					id: keyName,
 					epoch: Number(keyParsed.dkg_at_epoch),
-					publicOutputID: keyParsed.network_dkg_public_output.contents.id.id,
-					lastReconfigurationPublicOutputID: keyParsed.reconfiguration_public_outputs
+					publicOutputID:
+						lastReconfigOutput?.parsedValue.value.contents.id.id ||
+						keyParsed.network_dkg_public_output.contents.id.id,
 				};
 
 				encryptionKeys.push(encryptionKey);
