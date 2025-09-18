@@ -38,6 +38,7 @@ import type {
 	SystemInner,
 } from './types.js';
 import { fetchAllDynamicFields, objResToBcs } from './utils.js';
+import { Table } from '../generated/ika_dwallet_2pc_mpc/deps/sui/table';
 
 /**
  * IkaClient provides a high-level interface for interacting with the Ika network.
@@ -684,7 +685,7 @@ export class IkaClient {
 		const protocolPublicParameters =
 			networkEncryptionKey.epoch === Number(objects.coordinatorInner.current_epoch)
 				? await networkDkgPublicOutputToProtocolPublicParameters(
-						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+						await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 					)
 				: await reconfigurationPublicOutputToProtocolPublicParameters(
 						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
@@ -915,6 +916,9 @@ export class IkaClient {
 				const keyParsed = CoordinatorInnerModule.DWalletNetworkEncryptionKey.fromBase64(
 					objResToBcs(keyObject),
 				);
+				const reconfigOutputsDF = await this.client.getDynamicFields({
+					parentId: keyParsed.reconfiguration_public_outputs.id.id,
+				});
 
 				const reconfigOutputsDFs = await fetchAllDynamicFields(
 					this.client,
@@ -979,7 +983,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If network requests fail
 	 * @private
 	 */
-	async #readTableVecAsRawBytes(tableID: string): Promise<Uint8Array> {
+	async readTableVecAsRawBytes(tableID: string): Promise<Uint8Array> {
 		try {
 			let cursor: string | null = null;
 			const allTableRows: { objectId: string }[] = [];

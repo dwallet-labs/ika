@@ -5,7 +5,7 @@ import { testCreateNetworkKey } from '../helpers/network-dkg-test-helpers';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
-	runSignFullFlow,
+	runSignFullFlowWithV1Dwallet,
 	waitForEpochSwitch,
 } from '../helpers/test-utils';
 
@@ -43,7 +43,7 @@ describe('Network keys creation tests', () => {
 		);
 
 		ikaClient.encryptionKeyOptions.encryptionKeyID = keyID;
-		await runSignFullFlow(ikaClient, suiClient, 'network-key-full-flow');
+		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, 'network-key-full-flow');
 	});
 
 	it(
@@ -94,5 +94,5 @@ export async function runFullFlowTestWithNetworkKey(networkKeyID: string, nameSu
 	const ikaClient = createTestIkaClient(suiClient);
 	await ikaClient.initialize();
 	ikaClient.encryptionKeyOptions.encryptionKeyID = networkKeyID;
-	await runSignFullFlow(ikaClient, suiClient, `network-key-full-flow-${nameSuffix}`);
+	await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, `network-key-full-flow-${nameSuffix}`);
 }

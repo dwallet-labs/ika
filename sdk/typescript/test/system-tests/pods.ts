@@ -51,13 +51,17 @@ export async function createValidatorPod(
 					command: ['/opt/ika/bin/ika-node', '--config-path', '/opt/ika/config/validator.yaml'],
 					name: 'ika-node',
 					image: process.env.DOCKER_TAG,
-					resources: {
-						requests: {
-							cpu: '16',
-							memory: '10Gi',
-						},
-					},
+					// resources: {
+					// 	requests: {
+					// 		cpu: '16',
+					// 		memory: '10Gi',
+					// 	},
+					// },
 					volumeMounts: [
+						{
+							name: 'db-vol',
+							mountPath: '/opt/ika/db',
+						},
 						{
 							name: 'config-vol',
 							mountPath: '/opt/ika/key-pairs/root-seed.key',
@@ -87,6 +91,12 @@ export async function createValidatorPod(
 				},
 			],
 			volumes: [
+				{
+					name: 'db-vol',
+					persistentVolumeClaim: {
+						claimName: `ika-val-${validatorID}-pvc`,
+					},
+				},
 				{
 					name: 'config-vol',
 					configMap: {
@@ -124,6 +134,48 @@ export async function createValidatorPod(
 	});
 }
 
+export async function createPVCs(kc: KubeConfig, namespaceName: string, numOfValidators: number) {
+	const k8sApi = kc.makeApiClient(CoreV1Api);
+	for (let i = 0; i < numOfValidators; i++) {
+		const pvc = {
+			metadata: {
+				name: `ika-val-${i + 1}-pvc`,
+				namespace: namespaceName,
+			},
+			spec: {
+				accessModes: ['ReadWriteOnce'],
+				resources: {
+					requests: {
+						storage: '20Gi',
+					},
+				},
+			},
+		};
+		await k8sApi.createNamespacedPersistentVolumeClaim({
+			namespace: namespaceName,
+			body: pvc,
+		});
+	}
+	const fullnodePVC = {
+		metadata: {
+			name: `ika-fullnode-pvc`,
+			namespace: namespaceName,
+		},
+		spec: {
+			accessModes: ['ReadWriteOnce'],
+			resources: {
+				requests: {
+					storage: '5Gi',
+				},
+			},
+		},
+	};
+	await k8sApi.createNamespacedPersistentVolumeClaim({
+		namespace: namespaceName,
+		body: fullnodePVC,
+	});
+}
+
 export async function createPods(kc: KubeConfig, namespaceName: string, numOfValidators: number) {
 	const k8sApi = kc.makeApiClient(CoreV1Api);
 	for (let i = 0; i < numOfValidators; i++) {
@@ -151,13 +203,14 @@ export async function createPods(kc: KubeConfig, namespaceName: string, numOfVal
 					],
 					command: ['/opt/ika/bin/ika-node', '--config-path', '/opt/ika/config/fullnode.yaml'],
 					name: 'ika-node',
-					image: process.env.DOCKER_TAG,
-					resources: {
-						requests: {
-							cpu: '16',
-							memory: '10Gi',
-						},
-					},
+					image: process.env.NOTIFIER_DOCKER_TAG,
+					// Uncomment when running the test in a dynamically scaled environment
+					// resources: {
+					// 	requests: {
+							// cpu: '16',
+							// memory: '10Gi',
+						// },
+					// },
 					volumeMounts: [
 						{
 							name: 'config-vol',

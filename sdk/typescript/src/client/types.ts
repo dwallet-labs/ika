@@ -43,6 +43,8 @@ export interface NetworkEncryptionKey {
 	epoch: number;
 	/** The public output ID for this encryption key */
 	publicOutputID: string;
+	/** The last reconfiguration public output ID for this encryption key */
+	lastReconfigurationPublicOutputID: string;
 }
 
 /**
