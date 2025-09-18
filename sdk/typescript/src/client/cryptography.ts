@@ -365,19 +365,21 @@ export async function networkDkgPublicOutputToProtocolPublicParameters(
 }
 
 /**
- * Convert a network DKG public output to the protocol public parameters.
+ * Convert a reconfiguration DKG public output to the protocol public parameters.
  *
- * @param network_dkg_public_output - The network DKG public output
+ * @param reconfiguration_dkg_public_output - The reconfiguration DKG public output
+ * @param committee_size - The size of the committee
+ * @param threshold - The threshold value
  * @returns The protocol public parameters
  */
 export async function reconfigurationPublicOutputToProtocolPublicParameters(
-	network_dkg_public_output: Uint8Array,
+	reconfiguration_dkg_public_output: Uint8Array,
 	committee_size: number,
 	threshold: number,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
 		await reconfiguration_public_output_to_protocol_pp(
-			network_dkg_public_output,
+			reconfiguration_dkg_public_output,
 			committee_size,
 			threshold,
 		),
