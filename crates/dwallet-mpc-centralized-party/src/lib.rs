@@ -583,6 +583,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
     let reconfiguration_dkg_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(&reconfiguration_dkg_public_output)?;
 
+    // Every member has a voting power of 1 in the current Move code.
     let access_structure = WeightedThresholdAccessStructure::new(
         quorum_threshold as Weight,
         (1..=committee_size).map(|i| (i as PartyID, 1)).collect(),
