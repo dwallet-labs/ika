@@ -1161,9 +1161,7 @@ impl IkaNode {
                     cur_epoch_store.get_chain_identifier().chain(),
                     self.config
                         .supported_protocol_versions
-                        .expect("Supported versions should be populated")
-                        // no need to send digests of versions less than the current version
-                        .truncate_below(config.version),
+                        .expect("Supported versions should be populated"),
                     vec![],
                     // Note: this is a temp fix, we will handle package upgrades later.
                     // sui_client
