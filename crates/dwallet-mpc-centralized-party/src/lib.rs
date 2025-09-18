@@ -93,7 +93,7 @@ pub fn reconfiguration_public_output_to_protocol_pp_inner(
     committee_size: usize,
     quorum_threshold: usize,
 ) -> anyhow::Result<Vec<u8>> {
-    let public_parameters = protocol_public_parameters_from_reconfiguration(
+    let public_parameters = protocol_public_parameters_from_reconfiguration_output(
         reconfiguration_dkg_public_output,
         committee_size,
         quorum_threshold,
@@ -575,7 +575,7 @@ fn protocol_public_parameters(
     }
 }
 
-fn protocol_public_parameters_from_reconfiguration(
+fn protocol_public_parameters_from_reconfiguration_output(
     reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
     committee_size: usize,
     quorum_threshold: usize,
