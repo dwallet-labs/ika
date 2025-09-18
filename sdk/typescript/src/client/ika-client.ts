@@ -929,9 +929,10 @@ export class IkaClient {
 							};
 						}),
 					)
-				)
-					.sort((a, b) => (a.name > b.name ? 1 : -1))
-					.at(-1);
+				).find(
+					(reconfigOutput) =>
+						Number(reconfigOutput.name) === Number(objects.coordinatorInner.current_epoch) - 1,
+				);
 
 				const encryptionKey: NetworkEncryptionKey = {
 					id: keyName,
