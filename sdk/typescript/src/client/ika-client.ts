@@ -687,7 +687,7 @@ export class IkaClient {
 				? await networkDkgPublicOutputToProtocolPublicParameters(
 						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 					)
-				: reconfigurationPublicOutputToProtocolPublicParameters(
+				: await reconfigurationPublicOutputToProtocolPublicParameters(
 						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 						objects.systemInner.validator_set.active_committee.members.length,
 						Number(objects.systemInner.validator_set.active_committee.quorum_threshold),
