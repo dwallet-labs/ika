@@ -34,6 +34,7 @@ import type {
 	SystemInner,
 } from './types.js';
 import { objResToBcs } from './utils.js';
+import { Table } from '../generated/ika_system/deps/sui/table';
 
 /**
  * IkaClient provides a high-level interface for interacting with the Ika network.
@@ -904,6 +905,22 @@ export class IkaClient {
 				const keyParsed = CoordinatorInnerModule.DWalletNetworkEncryptionKey.fromBase64(
 					objResToBcs(keyObject),
 				);
+
+				let reconfigOutputsDFs = await this.client.getDynamicFields({
+					parentId: keyParsed.reconfiguration_public_outputs.id.id,
+				});
+
+				for (const reconfigDF of reconfigOutputsDFs.data) {
+					const reconfigName = reconfigDF.name.value as string;
+					const reconfigObject = await this.client.getObject({
+						id: reconfigDF.objectId,
+						options: { showBcs: true },
+					});
+
+					const reconfigTableParsed = Table.fromBase64(
+						objResToBcs(reconfigObject),
+					);
+				}
 
 				const encryptionKey: NetworkEncryptionKey = {
 					id: keyName,
