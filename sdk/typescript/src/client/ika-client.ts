@@ -921,13 +921,11 @@ export class IkaClient {
 								options: { showBcs: true },
 							});
 
-							const parsedValue = Table.fromBase64(objResToBcs(reconfigObject));
-							const tableVec = await this.client.getObject({ id: parsedValue.id.id });
-							const parsedVec = TableVec.fromBase64(objResToBcs(tableVec));
+							const parsedValue = TableVec.fromBase64(objResToBcs(reconfigObject));
 
 							return {
 								name,
-								parsedVec,
+								parsedValue,
 							};
 						}),
 					)
@@ -939,7 +937,7 @@ export class IkaClient {
 					id: keyName,
 					epoch: Number(keyParsed.dkg_at_epoch),
 					publicOutputID:
-						lastReconfigOutput?.parsedVec.contents.id.id ||
+						lastReconfigOutput?.parsedValue.contents.id.id ||
 						keyParsed.network_dkg_public_output.contents.id.id,
 				};
 
