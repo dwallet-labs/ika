@@ -11,7 +11,10 @@ import { TableVec } from '../generated/ika_system/deps/sui/table_vec';
 import { Table } from '../generated/ika_system/deps/sui/table.js';
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
-import { networkDkgPublicOutputToProtocolPublicParameters } from './cryptography.js';
+import {
+	networkDkgPublicOutputToProtocolPublicParameters,
+	reconfigurationPublicOutputToProtocolPublicParameters,
+} from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
 import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
@@ -653,7 +656,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 */
 	async getProtocolPublicParameters(dWallet?: DWallet): Promise<Uint8Array> {
-		await this.ensureInitialized();
+		const objects = await this.ensureInitialized();
 
 		let networkEncryptionKey: NetworkEncryptionKey;
 
@@ -679,9 +682,16 @@ export class IkaClient {
 			}
 		}
 
-		const protocolPublicParameters = await networkDkgPublicOutputToProtocolPublicParameters(
-			await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
-		);
+		const protocolPublicParameters =
+			networkEncryptionKey.epoch === Number(objects.coordinatorInner.current_epoch)
+				? await networkDkgPublicOutputToProtocolPublicParameters(
+						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+					)
+				: reconfigurationPublicOutputToProtocolPublicParameters(
+						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+						objects.systemInner.validator_set.active_committee.members.length,
+						Number(objects.systemInner.validator_set.active_committee.quorum_threshold),
+					);
 
 		// Cache the parameters by encryption key ID
 		this.cachedProtocolPublicParameters.set(encryptionKeyID, {

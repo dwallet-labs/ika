@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { reconfiguration_public_output_to_protocol_pp } from '@ika.xyz/ika-wasm';
 import { bcs } from '@mysten/sui/bcs';
 import { decodeSuiPrivateKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
 import type { Keypair, PublicKey } from '@mysten/sui/cryptography';
@@ -361,6 +362,26 @@ export async function networkDkgPublicOutputToProtocolPublicParameters(
 	network_dkg_public_output: Uint8Array,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(await network_dkg_public_output_to_protocol_pp(network_dkg_public_output));
+}
+
+/**
+ * Convert a network DKG public output to the protocol public parameters.
+ *
+ * @param network_dkg_public_output - The network DKG public output
+ * @returns The protocol public parameters
+ */
+export async function reconfigurationPublicOutputToProtocolPublicParameters(
+	network_dkg_public_output: Uint8Array,
+	committee_size: number,
+	threshold: number,
+): Promise<Uint8Array> {
+	return Uint8Array.from(
+		await reconfiguration_public_output_to_protocol_pp(
+			network_dkg_public_output,
+			committee_size,
+			threshold,
+		),
+	);
 }
 
 /**
