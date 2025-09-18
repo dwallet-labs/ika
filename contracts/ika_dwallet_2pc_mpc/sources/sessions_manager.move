@@ -8,7 +8,7 @@ use ika_dwallet_2pc_mpc::pricing::PricingInfoValue;
 use sui::bag::{Self, Bag};
 use sui::balance::{Self, Balance};
 use sui::coin::Coin;
-use sui::event;
+use ika_dwallet_2pc_mpc::event_wrapper;
 use sui::object_table::{Self, ObjectTable};
 use sui::sui::SUI;
 use sui::table::{Self, Table};
@@ -250,7 +250,7 @@ public(package) fun register_session_identifier(
     );
     let id = object::new(ctx);
     self.registered_user_session_identifiers.add(identifier_preimage, id.to_inner());
-    event::emit(UserSessionIdentifierRegisteredEvent {
+    event_wrapper::emit_event(UserSessionIdentifierRegisteredEvent {
         session_object_id: id.to_inner(),
         session_identifier_preimage: identifier_preimage,
     });
@@ -526,7 +526,7 @@ fun initiate_session<E: copy + drop + store>(
     self.next_session_sequence_number = session_sequence_number + 1;
     self.started_sessions_count = self.started_sessions_count + 1;
 
-    event::emit(event);
+    event_wrapper::emit_event(event);
 }
 
 /// Completes a session.
@@ -582,7 +582,7 @@ fun complete_session<
 
     id.delete();
 
-    event::emit(DWalletSessionResultEvent {
+    event_wrapper::emit_event(DWalletSessionResultEvent {
         epoch,
         event_initiated_at_epoch,
         session_object_id,
