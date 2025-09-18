@@ -1,0 +1,69 @@
+class-groups-key-pair-and-proof:
+  path: /opt/ika/key-pairs/class-groups.key
+protocol-key-pair:
+  path: /opt/ika/key-pairs/protocol.key
+consensus-key-pair:
+  path: /opt/ika/key-pairs/consensus.key
+network-key-pair:
+  path: /opt/ika/key-pairs/network.key
+db-path: /opt/ika/db/authorities_db
+network-address: /ip4/0.0.0.0/tcp/8080/http
+sui-connector-config:
+  sui-rpc-url: SUI_RPC_URL
+  sui-chain-identifier: SUI_CHAIN_IDENTITY
+  ika-package-id: IKA_PACKAGE_ID
+  ika-system-package-id: IKA_SYSTEM_PACKAGE_ID
+  ika-system-object-id: IKA_SYSTEM_OBJECT_ID
+metrics-address: 0.0.0.0:9184
+admin-interface-port: 1337
+consensus-config:
+  db-path: /opt/ika/db/consensus_db
+  #db-retention-epochs: ~
+  #db-pruner-period-secs: ~
+  #max-pending-transactions: ~
+  #max-submit-position: ~
+  #submit-delay-step-override-millis: ~
+  #parameters: ~
+p2p-config:
+  listen-address: 0.0.0.0:8084
+  external-address: /dns/$HOSTNAME/udp/8084 # UPDATE THIS
+  anemo-config:
+    max-concurrent-connections: 100
+  state-sync:
+    checkpoint-content-timeout-ms: 10000
+#end-of-epoch-broadcast-channel-capacity: 128
+state-archive-write-config:
+  concurrency: 0
+  use-for-pruning-watermark: false
+state-archive-read-config: [ ]
+#authority-overload-config:
+#  max-txn-age-in-queue:
+#    secs: 0
+#    nanos: 500000000
+#  overload-monitor-interval:
+#    secs: 10
+#    nanos: 0
+#  execution-queue-latency-soft-limit:
+#    secs: 1
+#    nanos: 0
+#  execution-queue-latency-hard-limit:
+#    secs: 10
+#    nanos: 0
+#  max-load-shedding-percentage: 95
+#  min-load-shedding-percentage-above-hard-limit: 50
+#  safe-transaction-ready-rate: 100
+#  check-system-overload-at-signing: true
+#  max-transaction-manager-queue-length: 100000
+#  max-transaction-manager-per-object-queue-length: 20
+#authority-store-pruning-config:
+#  num-epochs-to-retain: 0
+#  num-epochs-to-retain-for-checkpoints: 2
+#checkpoint-executor-config:
+#  checkpoint-execution-max-concurrency: 200
+#  local-execution-timeout-sec: 10
+#db-checkpoint-config:
+#  perform-db-checkpoints-at-epoch-end: false
+#indirect-objects-threshold: 18446744073709551615
+metrics:
+  push-interval-seconds: 60
+  # push-url: https://metrics-proxy.mainnet.sui.io:8443/publish/metrics

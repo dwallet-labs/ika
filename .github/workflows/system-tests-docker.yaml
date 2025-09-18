@@ -1,4 +1,4 @@
-name: Build & Upload Docker Image
+name: Build & Upload System Tests Docker Image
 
 on:
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
       - name: Build and push Docker image
         working-directory: sdk/typescript/test/system-test
         env:
-          DOCKER_TAG: "us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:${{ github.event.inputs.imageTag }}"
+          DOCKER_TAG: "us-docker.pkg.dev/common-449616/ika-common-containers/ika-node-st:${{ github.event.inputs.imageTag }}"
         run: |
           touch .env
           ./build.sh ${{ github.event.inputs.cargo_build_flags }}

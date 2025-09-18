@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'self'
+    static_configs:
+      - targets: ['localhost:9090']  # scrape itself as a demo
+
+remote_write:
+  - url: "http://your-remote-endpoint:port/api/v1/write"
+    # optional if basic auth is required:
+    # basic_auth:
+    #   username: "your-username"
+    #   password: "your-password"
+    # or use bearer_token / headers
