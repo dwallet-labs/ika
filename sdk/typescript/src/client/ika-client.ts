@@ -7,6 +7,7 @@ import { toHex } from '@mysten/sui/utils';
 
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator.js';
+import { Table } from '../generated/ika_system/deps/sui/table';
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
 import { networkDkgPublicOutputToProtocolPublicParameters } from './cryptography.js';
@@ -33,8 +34,7 @@ import type {
 	SharedObjectOwner,
 	SystemInner,
 } from './types.js';
-import { objResToBcs } from './utils.js';
-import { Table } from '../generated/ika_system/deps/sui/table';
+import { fetchAllDynamicFields, objResToBcs } from './utils.js';
 
 /**
  * IkaClient provides a high-level interface for interacting with the Ika network.
@@ -906,30 +906,37 @@ export class IkaClient {
 					objResToBcs(keyObject),
 				);
 
+				const reconfigOutputsDFs = await fetchAllDynamicFields(
+					this.client,
+					keyParsed.reconfiguration_public_outputs.id.id,
+				);
 
+				const lastReconfigOutput = (
+					await Promise.all(
+						reconfigOutputsDFs.map(async (df) => {
+							const name = df.name.value as string;
+							const reconfigObject = await this.client.getObject({
+								id: df.objectId,
+								options: { showBcs: true },
+							});
 
-				let reconfigOutputsDFs = await this.client.getDynamicFields({
-					parentId: keyParsed.reconfiguration_public_outputs.id.id,
-				});
-
-				let reconfigOutputs = reconfigOutputsDFs.map((df) => df.name.value as string);
-
-				for (const reconfigDF of reconfigOutputsDFs.data) {
-					const reconfigName = reconfigDF.name.value as string;
-					const reconfigObject = await this.client.getObject({
-						id: reconfigDF.objectId,
-						options: { showBcs: true },
-					});
-
-					const reconfigTableParsed = Table.fromBase64(
-						objResToBcs(reconfigObject),
-					);
-				}
+							const parsedValue = Table.fromBase64(objResToBcs(reconfigObject));
+							return {
+								name,
+								parsedValue,
+							};
+						}),
+					)
+				)
+					.sort((a, b) => (a.name > b.name ? 1 : -1))
+					.at(-1);
 
 				const encryptionKey: NetworkEncryptionKey = {
 					id: keyName,
 					epoch: Number(keyParsed.dkg_at_epoch),
-					publicOutputID: keyParsed.network_dkg_public_output.contents.id.id,
+					publicOutputID:
+						lastReconfigOutput?.parsedValue.id.id ||
+						keyParsed.network_dkg_public_output.contents.id.id,
 				};
 
 				encryptionKeys.push(encryptionKey);
