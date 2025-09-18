@@ -181,9 +181,9 @@ export class IkaClient {
 	 * @throws {NetworkError} If the encryption keys cannot be fetched
 	 */
 	async getAllNetworkEncryptionKeys(): Promise<NetworkEncryptionKey[]> {
-		if (!this.cache) {
+		// if (!this.cache) {
 			return this.#fetchEncryptionKeys();
-		}
+		// }
 
 		if (this.cachedEncryptionKeys.size > 0) {
 			return Array.from(this.cachedEncryptionKeys.values());
