@@ -7,7 +7,7 @@ import { toHex } from '@mysten/sui/utils';
 
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator.js';
-import { Table } from '../generated/ika_system/deps/sui/table';
+import { Table } from '../generated/ika_system/deps/sui/table.js';
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
 import { networkDkgPublicOutputToProtocolPublicParameters } from './cryptography.js';
