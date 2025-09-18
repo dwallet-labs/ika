@@ -1,12 +1,12 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use class_groups::reconfiguration::Secp256k1Party;
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use twopc_mpc::class_groups::{DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput};
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
-use class_groups::reconfiguration::Secp256k1Party;
 
 /// Alias for an MPC message.
 pub type MPCMessage = Vec<u8>;

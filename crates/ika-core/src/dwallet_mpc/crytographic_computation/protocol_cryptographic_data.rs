@@ -17,11 +17,11 @@ use crate::request_protocol_data::{
 use class_groups::SecretKeyShareSizedInteger;
 use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
+use dwallet_mpc_types::dwallet_mpc::{ReconfigurationParty, ReconfigurationV2Party};
 use group::PartyID;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
-use dwallet_mpc_types::dwallet_mpc::{ReconfigurationParty, ReconfigurationV2Party};
 
 pub enum ProtocolCryptographicData {
     ImportedKeyVerification {

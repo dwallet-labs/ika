@@ -10,13 +10,18 @@ use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::dkg::{Secp256k1Party, Secp256k1PublicInput};
 use class_groups::{
-    Secp256k1DecryptionKeySharePublicParameters, SecretKeyShareSizedInteger,
-    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
+    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
+    SecretKeyShareSizedInteger,
 };
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataTrait, NetworkEncryptionKeyPublicDataV1, NetworkEncryptionKeyPublicDataV2, ReconfigurationParty, SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData};
-use group::{secp256k1, GroupElement, OsCsRng, PartyID};
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataTrait,
+    NetworkEncryptionKeyPublicDataV1, NetworkEncryptionKeyPublicDataV2, ReconfigurationParty,
+    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
+    VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData,
+};
+use group::{GroupElement, OsCsRng, PartyID, secp256k1};
 use homomorphic_encryption::GroupsPublicParametersAccessors;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
