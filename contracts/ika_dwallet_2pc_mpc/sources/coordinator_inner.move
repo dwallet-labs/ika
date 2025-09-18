@@ -29,27 +29,33 @@
 module ika_dwallet_2pc_mpc::coordinator_inner;
 
 use ika::ika::IKA;
-use ika_common::address;
-use ika_common::advance_epoch_approver::AdvanceEpochApprover;
-use ika_common::bls_committee::{Self, BlsCommittee};
-use ika_common::protocol_cap::VerifiedProtocolCap;
-use ika_common::system_current_status_info::SystemCurrentStatusInfo;
-use ika_common::validator_cap::VerifiedValidatorOperationCap;
-use ika_dwallet_2pc_mpc::pricing::{PricingInfo, PricingInfoValue};
-use ika_dwallet_2pc_mpc::pricing_and_fee_manager::{Self, PricingAndFeeManager};
-use ika_dwallet_2pc_mpc::sessions_manager::{Self, SessionsManager, SessionIdentifier};
-use ika_dwallet_2pc_mpc::support_config::{Self, SupportConfig};
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::bcs;
-use sui::coin::Coin;
-use sui::ed25519::ed25519_verify;
-use sui::event;
-use sui::object_table::{Self, ObjectTable};
-use sui::sui::SUI;
-use sui::table::Table;
-use sui::table_vec::{Self, TableVec};
-use sui::vec_map::VecMap;
+use ika_common::{
+    address,
+    advance_epoch_approver::AdvanceEpochApprover,
+    bls_committee::{Self, BlsCommittee},
+    protocol_cap::VerifiedProtocolCap,
+    system_current_status_info::SystemCurrentStatusInfo,
+    validator_cap::VerifiedValidatorOperationCap
+};
+use ika_dwallet_2pc_mpc::{
+    pricing::{PricingInfo, PricingInfoValue},
+    pricing_and_fee_manager::{Self, PricingAndFeeManager},
+    sessions_manager::{Self, SessionsManager, SessionIdentifier},
+    support_config::{Self, SupportConfig}
+};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    bcs,
+    coin::Coin,
+    ed25519::ed25519_verify,
+    event,
+    object_table::{Self, ObjectTable},
+    sui::SUI,
+    table::Table,
+    table_vec::{Self, TableVec},
+    vec_map::VecMap
+};
 
 // === Constants ===
 
@@ -1013,8 +1019,6 @@ public struct RejectedDWalletDKGSecondRoundEvent has copy, drop, store {
     /// Public output that was being processed when rejection occurred
     public_output: vector<u8>,
 }
-
-
 
 // === DWallet DKG Events ===
 
@@ -2197,10 +2201,7 @@ public(package) fun advance_epoch(
     advance_epoch_approver.approve_advance_epoch_by_witness(dwallet_coordinator_witness(), balance);
 }
 
-public(package) fun has_dwallet(
-    self: &DWalletCoordinatorInner,
-    dwallet_id: ID,
-): bool {
+public(package) fun has_dwallet(self: &DWalletCoordinatorInner, dwallet_id: ID): bool {
     self.dwallets.contains(dwallet_id)
 }
 
@@ -2602,7 +2603,7 @@ public(package) fun request_dwallet_dkg(
     };
     let dwallet_cap_id = object::id(&dwallet_cap);
 
-        // Create a new `DWallet` object,
+    // Create a new `DWallet` object,
     let mut dwallet = DWallet {
         id,
         created_at_epoch: self.current_epoch,
@@ -2615,7 +2616,6 @@ public(package) fun request_dwallet_dkg(
         sign_sessions: object_table::new(ctx),
         state: DWalletState::AwaitingNetworkDKGVerification,
     };
-
 
     let encryption_key = self.encryption_keys.borrow(encryption_key_address);
     let encryption_key_curve = encryption_key.curve;
@@ -2678,7 +2678,7 @@ public(package) fun request_dwallet_dkg(
         .join_gas_fee_reimbursement_sui_system_call_balance(
             gas_fee_reimbursement_sui_for_system_calls,
         );
-    
+
     dwallet_cap
 }
 
@@ -2823,8 +2823,6 @@ public(package) fun request_re_encrypt_user_share_for(
             },
             ctx,
         );
-
-
 
     self
         .pricing_and_fee_manager
@@ -4573,7 +4571,6 @@ fun set_gas_fee_reimbursement_sui_system_call_value(
     });
 }
 
-
 /// This function is used to process a checkpoint message by cap.
 ///
 /// ### Parameters
@@ -4600,7 +4597,9 @@ public(package) fun set_gas_fee_reimbursement_sui_system_call_value_by_cap(
     gas_fee_reimbursement_sui_system_call_value: u64,
     _: &VerifiedProtocolCap,
 ) {
-    self.set_gas_fee_reimbursement_sui_system_call_value(gas_fee_reimbursement_sui_system_call_value);
+    self.set_gas_fee_reimbursement_sui_system_call_value(
+        gas_fee_reimbursement_sui_system_call_value,
+    );
 }
 
 /// Sets the supported curves, signature algorithms and hash schemes, and the default pricing.
@@ -4879,10 +4878,7 @@ public fun validate_active_and_get_public_output(self: &DWallet): &vector<u8> {
 ///
 /// ### Returns
 /// True if the `SignSession` object exists, false otherwise
-public fun has_sign_session(
-    self: &DWallet,
-    sign_id: ID,
-): bool {
+public fun has_sign_session(self: &DWallet, sign_id: ID): bool {
     self.sign_sessions.contains(sign_id)
 }
 
@@ -4894,10 +4890,7 @@ public fun has_sign_session(
 ///
 /// ### Returns
 /// Reference to the `SignSession` object
-public fun get_sign_session(
-    self: &DWallet,
-    sign_id: ID,
-): &SignSession {
+public fun get_sign_session(self: &DWallet, sign_id: ID): &SignSession {
     self.sign_sessions.borrow(sign_id)
 }
 
@@ -4908,9 +4901,7 @@ public fun get_sign_session(
 ///
 /// ### Returns
 /// Option of the signature of the `SignSession` object
-public fun get_sign_signature(
-    self: &SignSession,
-): Option<vector<u8>> {
+public fun get_sign_signature(self: &SignSession): Option<vector<u8>> {
     match (&self.state) {
         SignState::Completed {
             signature,

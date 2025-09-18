@@ -4,8 +4,7 @@
 module ika_common::upgrade_package_approver;
 
 use ika_common::system_object_cap::SystemObjectCap;
-use std::string::String;
-use std::type_name;
+use std::{string::String, type_name};
 use sui::package::UpgradeReceipt;
 
 // === Structs ===
@@ -68,7 +67,11 @@ public fun destroy(self: UpgradePackageApprover, _: &SystemObjectCap) {
     let UpgradePackageApprover { .. } = self;
 }
 
-public fun commit(self: &mut UpgradePackageApprover, receipt: &UpgradeReceipt, _: &SystemObjectCap) {
+public fun commit(
+    self: &mut UpgradePackageApprover,
+    receipt: &UpgradeReceipt,
+    _: &SystemObjectCap,
+) {
     assert!(self.upgrade_cap_id == receipt.cap(), EUpgradeCapMismatch);
     self.new_package_id = option::some(receipt.package());
 }

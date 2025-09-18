@@ -3,8 +3,7 @@
 
 module ika_common::address;
 
-use sui::address;
-use sui::hash;
+use sui::{address, hash};
 
 // === Public Functions ===
 

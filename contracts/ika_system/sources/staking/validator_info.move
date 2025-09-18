@@ -3,14 +3,15 @@
 
 module ika_system::validator_info;
 
-use ika_common::extended_field::{Self, ExtendedField};
-use ika_common::multiaddr;
+use ika_common::{extended_field::{Self, ExtendedField}, multiaddr};
 use ika_system::validator_metadata::ValidatorMetadata;
 use std::string::String;
-use sui::bcs;
-use sui::bls12381::{UncompressedG1, g1_from_bytes, g1_to_uncompressed_g1, bls12381_min_pk_verify};
-use sui::group_ops::Element;
-use sui::table_vec::TableVec;
+use sui::{
+    bcs,
+    bls12381::{UncompressedG1, g1_from_bytes, g1_to_uncompressed_g1, bls12381_min_pk_verify},
+    group_ops::Element,
+    table_vec::TableVec
+};
 
 // === Constants ===
 
@@ -77,7 +78,7 @@ public struct ValidatorInfo has store {
     consensus_pubkey_bytes: vector<u8>,
     /// The validator's MPC public data.
     /// This key is used for the network DKG process and for resharing the network MPC key
-    /// Must always contain value 
+    /// Must always contain value
     mpc_data_bytes: Option<TableVec<vector<u8>>>,
     /// Next epoch configurations - only take effect in the next epoch
     /// If none, current value will stay unchanged.
@@ -88,7 +89,6 @@ public struct ValidatorInfo has store {
     next_epoch_network_address: Option<String>,
     next_epoch_p2p_address: Option<String>,
     next_epoch_consensus_address: Option<String>,
-
     previous_mpc_data_bytes: Option<TableVec<vector<u8>>>,
     /// Extended metadata field for additional validator information
     metadata: ExtendedField<ValidatorMetadata>,
@@ -230,29 +230,27 @@ public(package) fun set_next_epoch_consensus_pubkey_bytes(
 }
 
 /// Sets the MPC public data for the next epoch.
-/// 
-/// - If `next_epoch_mpc_data_bytes` is already set, 
+///
+/// - If `next_epoch_mpc_data_bytes` is already set,
 ///   this function returns its stored value and replaces it with the new value.
-/// - If it is not set, but `previous_mpc_data_bytes` is set, 
+/// - If it is not set, but `previous_mpc_data_bytes` is set,
 ///   this function returns the value from the previous field and replaces it with the new value.
 /// - If neither is set, the new value is simply stored, and the function returns `None`.
-/// 
+///
 /// The validator must drop the returned value if it is not `None`.
-/// 
+///
 /// Using `Option` for the MPC data helps avoid latency issues due to large data sizes.
 public(package) fun set_next_epoch_mpc_data_bytes(
     self: &mut ValidatorInfo,
     mpc_data: TableVec<vector<u8>>,
 ): Option<TableVec<vector<u8>>> {
     if (self.next_epoch_mpc_data_bytes.is_some()) {
-        let next_epoch_mpc_data_bytes =
-            self.next_epoch_mpc_data_bytes.extract();
+        let next_epoch_mpc_data_bytes = self.next_epoch_mpc_data_bytes.extract();
         self.next_epoch_mpc_data_bytes.fill(mpc_data);
         self.validate();
         option::some(next_epoch_mpc_data_bytes)
     } else if (self.previous_mpc_data_bytes.is_some()) {
-        let previous_mpc_data_bytes =
-            self.previous_mpc_data_bytes.extract();
+        let previous_mpc_data_bytes = self.previous_mpc_data_bytes.extract();
         self.next_epoch_mpc_data_bytes.fill(mpc_data);
         self.validate();
         option::some(previous_mpc_data_bytes)
@@ -301,17 +299,18 @@ public(package) fun rotate_next_epoch_info(self: &mut ValidatorInfo) {
     // `previous_mpc_data_bytes` cannot be set if `next_epoch_mpc_data_bytes` is already set.
     // This situation should never occur. If it does, it is considered an error,
     // so we ignore `next_epoch_mpc_data_bytes` and retain the current one.
-    if (self.next_epoch_mpc_data_bytes.is_some() 
+    if (
+        self.next_epoch_mpc_data_bytes.is_some() 
         && self.previous_mpc_data_bytes.is_none()
     ) {
-        let next_epoch_mpc_data_bytes =
-            self.next_epoch_mpc_data_bytes.extract();
+        let next_epoch_mpc_data_bytes = self.next_epoch_mpc_data_bytes.extract();
 
         // At this point, we can assume that the current MPC public data bytes
         // are set set, so we can safely swap them.
-        let previous_mpc_data_bytes = self.mpc_data_bytes
+        let previous_mpc_data_bytes = self
+            .mpc_data_bytes
             .swap(
-                next_epoch_mpc_data_bytes
+                next_epoch_mpc_data_bytes,
             );
 
         // At this point, we can assume that the previous MPC public data bytes
@@ -439,7 +438,7 @@ public(package) fun destroy(self: ValidatorInfo) {
         ..,
     } = self;
     metadata.destroy();
-        mpc_data_bytes.destroy!(|mut mpc_data_bytes| {
+    mpc_data_bytes.destroy!(|mut mpc_data_bytes| {
         while (mpc_data_bytes.length() != 0) {
             mpc_data_bytes.pop_back();
         };
@@ -579,17 +578,12 @@ public fun next_epoch_consensus_pubkey_bytes(self: &ValidatorInfo): &Option<vect
 }
 
 /// Returns the next epoch MPC public data
-public fun next_epoch_mpc_data_bytes(
-    self: &ValidatorInfo,
-): &Option<TableVec<vector<u8>>> {
+public fun next_epoch_mpc_data_bytes(self: &ValidatorInfo): &Option<TableVec<vector<u8>>> {
     &self.next_epoch_mpc_data_bytes
 }
 
-
 /// Returns the previous MPC public data
-public fun previous_mpc_data_bytes(
-    self: &ValidatorInfo,
-): &Option<TableVec<vector<u8>>> {
+public fun previous_mpc_data_bytes(self: &ValidatorInfo): &Option<TableVec<vector<u8>>> {
     &self.previous_mpc_data_bytes
 }
 

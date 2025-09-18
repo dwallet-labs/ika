@@ -3,16 +3,15 @@
 
 module ika_system::test_validator;
 
-use std::{string::String};
-use sui::address;
 use ika_system::{
+    staked_ika::StakedIka,
     test_utils,
     validator_cap::{ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap},
-    validator_metadata::{Self, ValidatorMetadata},
     validator_info,
-    staked_ika::StakedIka,
+    validator_metadata::{Self, ValidatorMetadata}
 };
-use sui::table_vec::{Self, TableVec};
+use std::string::String;
+use sui::{address, table_vec::{Self, TableVec}};
 
 const DEFAULT_MIN_VALIDATOR_JOINING_STAKE: u64 = 30_000_000 * 1_000_000_000; // 30 million IKA (value is in INKU)
 
@@ -57,7 +56,11 @@ public fun mpc_data(_self: &TestValidator, ctx: &mut TxContext): TableVec<vector
 
 public fun create_proof_of_possession(self: &TestValidator): vector<u8> {
     test_utils::bls_min_pk_sign(
-        &validator_info::proof_of_possession_intent_bytes(0, self.sui_address, self.protocol_pubkey_bytes()),
+        &validator_info::proof_of_possession_intent_bytes(
+            0,
+            self.sui_address,
+            self.protocol_pubkey_bytes(),
+        ),
         &self.protocol_key_bytes,
     )
 }
@@ -161,7 +164,13 @@ public fun staked_ika(self: &mut TestValidator): &mut vector<StakedIka> {
 }
 
 public fun destroy(self: TestValidator) {
-    let TestValidator { validator_cap, validator_operation_cap, validator_commission_cap, staked_ika,.. } = self;
+    let TestValidator {
+        validator_cap,
+        validator_operation_cap,
+        validator_commission_cap,
+        staked_ika,
+        ..,
+    } = self;
     validator_cap.destroy!(|cap| cap.destroy_validator_cap_for_testing());
     validator_operation_cap.destroy!(|cap| cap.destroy_validator_operation_cap_for_testing());
     validator_commission_cap.destroy!(|cap| cap.destroy_validator_commission_cap_for_testing());
@@ -223,4 +232,3 @@ public fun sign(validators: &vector<TestValidator>, message: vector<u8>): (vecto
 
     (signature, members_bitmap)
 }
-

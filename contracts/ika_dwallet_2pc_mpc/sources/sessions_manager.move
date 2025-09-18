@@ -5,13 +5,15 @@ module ika_dwallet_2pc_mpc::sessions_manager;
 
 use ika::ika::IKA;
 use ika_dwallet_2pc_mpc::pricing::PricingInfoValue;
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::coin::Coin;
-use sui::event;
-use sui::object_table::{Self, ObjectTable};
-use sui::sui::SUI;
-use sui::table::{Self, Table};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    coin::Coin,
+    event,
+    object_table::{Self, ObjectTable},
+    sui::SUI,
+    table::{Self, Table}
+};
 
 // === Constants ===
 

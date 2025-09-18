@@ -26,6 +26,9 @@ importers:
       '@manypkg/cli':
         specifier: ^0.24.0
         version: 0.24.0
+      '@mysten/prettier-plugin-move':
+        specifier: 0.3.0
+        version: 0.3.0
       '@tanstack/eslint-plugin-query':
         specifier: ^5.50.1
         version: 5.78.0(eslint@8.57.1)(typescript@5.8.3)
@@ -1435,6 +1438,10 @@ packages:
 
   '@mysten/codegen@0.3.0':
     resolution: {integrity: sha512-e+EqUM/ELp4vsEQaM3X30t705MLyT129AUKHNhggH034yE2MsUwcr8z0CSx7K1ZsnbJJIalzd4moDOL2oUFkUw==}
+    hasBin: true
+
+  '@mysten/prettier-plugin-move@0.3.0':
+    resolution: {integrity: sha512-bzo+oSVFgc9jif427qqNQaZMa++Q9l93R3rP3cLPiPaMO5asO55YfyzkW2VhysKpfx3lmIVhtQnybdIOl36U0A==}
     hasBin: true
 
   '@mysten/sui@1.37.1':
@@ -4363,6 +4370,9 @@ packages:
       jsdom:
         optional: true
 
+  web-tree-sitter@0.20.8:
+    resolution: {integrity: sha512-weOVgZ3aAARgdnb220GqYuh7+rZU0Ka9k9yfKtGAzEYMa6GgiCzW9JjQRJyCJakvibQW+dfjJdihjInKuuCAUQ==}
+
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
@@ -6114,6 +6124,11 @@ snapshots:
     transitivePeerDependencies:
       - '@gql.tada/svelte-support'
       - '@gql.tada/vue-support'
+
+  '@mysten/prettier-plugin-move@0.3.0':
+    dependencies:
+      prettier: 3.6.2
+      web-tree-sitter: 0.20.8
 
   '@mysten/sui@1.37.1(typescript@5.8.3)':
     dependencies:
@@ -9265,6 +9280,8 @@ snapshots:
       - terser
       - tsx
       - yaml
+
+  web-tree-sitter@0.20.8: {}
 
   webidl-conversions@3.0.1: {}
 

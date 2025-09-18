@@ -16,11 +16,8 @@
 module ika_system::display;
 
 use ika_system::staked_ika::StakedIka;
-use std::string::String;
-use std::type_name;
-use sui::display::{Self, Display};
-use sui::object_bag::{Self, ObjectBag};
-use sui::package::Publisher;
+use std::{string::String, type_name};
+use sui::{display::{Self, Display}, object_bag::{Self, ObjectBag}, package::Publisher};
 
 // === Structs ===
 
