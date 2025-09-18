@@ -7,6 +7,7 @@ import { toHex } from '@mysten/sui/utils';
 
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator.js';
+import { TableVec } from '../generated/ika_system/deps/sui/table_vec';
 import { Table } from '../generated/ika_system/deps/sui/table.js';
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
@@ -921,9 +922,12 @@ export class IkaClient {
 							});
 
 							const parsedValue = Table.fromBase64(objResToBcs(reconfigObject));
+							const tableVec = await this.client.getObject({ id: parsedValue.id.id });
+							const parsedVec = TableVec.fromBase64(objResToBcs(tableVec));
+
 							return {
 								name,
-								parsedValue,
+								parsedVec,
 							};
 						}),
 					)
@@ -935,7 +939,7 @@ export class IkaClient {
 					id: keyName,
 					epoch: Number(keyParsed.dkg_at_epoch),
 					publicOutputID:
-						lastReconfigOutput?.parsedValue.id.id ||
+						lastReconfigOutput?.parsedVec.contents.id.id ||
 						keyParsed.network_dkg_public_output.contents.id.id,
 				};
 
