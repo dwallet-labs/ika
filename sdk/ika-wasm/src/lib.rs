@@ -7,8 +7,8 @@ use dwallet_mpc_centralized_party::{
     create_imported_dwallet_centralized_step_inner, decrypt_user_share_inner,
     encrypt_secret_key_share_and_prove, generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, public_key_from_dwallet_output_inner,
-    sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share,
-    reconfiguration_public_output_to_protocol_pp_inner
+    reconfiguration_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
+    verify_secp_signature_inner, verify_secret_share,
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
@@ -86,8 +86,12 @@ pub fn reconfiguration_public_output_to_protocol_pp(
     committee_size: usize,
     quorum_threshold: usize,
 ) -> Result<JsValue, JsError> {
-    let protocol_pp = reconfiguration_public_output_to_protocol_pp_inner(network_dkg_public_output, committee_size, quorum_threshold)
-        .map_err(to_js_err)?;
+    let protocol_pp = reconfiguration_public_output_to_protocol_pp_inner(
+        network_dkg_public_output,
+        committee_size,
+        quorum_threshold,
+    )
+    .map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&protocol_pp)?)
 }
 

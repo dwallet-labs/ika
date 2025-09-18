@@ -18,7 +18,7 @@ use class_groups::{
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
     DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataV1,
-    NetworkEncryptionKeyPublicDataV2, ReconfigurationParty, SerializedWrappedMPCPublicOutput,
+    NetworkEncryptionKeyPublicDataV2, SerializedWrappedMPCPublicOutput,
     VersionedCentralizedDKGPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
@@ -590,7 +590,7 @@ fn protocol_public_parameters_from_reconfiguration(
 
     match &reconfiguration_dkg_public_output {
         VersionedDecryptionKeyReconfigurationOutput::V1(public_output_bytes) => {
-            let public_output: <ReconfigurationParty as mpc::Party>::PublicOutput =
+            let public_output: <class_groups::reconfiguration::Secp256k1Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
 
             let decryption_key_share_public_parameters = public_output
