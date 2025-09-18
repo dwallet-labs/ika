@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use twopc_mpc::class_groups::{DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput};
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use class_groups::reconfiguration::Secp256k1Party;
 
 /// Alias for an MPC message.
 pub type MPCMessage = Vec<u8>;
@@ -518,3 +519,6 @@ impl NetworkEncryptionKeyPublicDataTrait for NetworkEncryptionKeyPublicDataV2 {
             .clone())
     }
 }
+
+pub type ReconfigurationParty = Secp256k1Party;
+pub type ReconfigurationV2Party = twopc_mpc::decentralized_party::reconfiguration::Party;

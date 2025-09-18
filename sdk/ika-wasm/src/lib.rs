@@ -80,6 +80,15 @@ pub fn network_dkg_public_output_to_protocol_pp(
 }
 
 #[wasm_bindgen]
+pub fn reconfiguration_public_output_to_protocol_pp(
+    network_dkg_public_output: Vec<u8>,
+) -> Result<JsValue, JsError> {
+    let protocol_pp = reconfiguration_public_output_to_protocol_pp_inner(network_dkg_public_output)
+        .map_err(to_js_err)?;
+    Ok(serde_wasm_bindgen::to_value(&protocol_pp)?)
+}
+
+#[wasm_bindgen]
 pub fn centralized_and_decentralized_parties_dkg_output_match(
     centralized_dkg_output: Vec<u8>,
     decentralized_dkg_output: Vec<u8>,

@@ -5,9 +5,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
 use crate::dwallet_mpc::presign::PresignParty;
-use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationParty, ReconfigurationV1toV2Party, ReconfigurationV2Party,
-};
+use crate::dwallet_mpc::reconfiguration::ReconfigurationV1toV2Party;
 use crate::dwallet_mpc::sign::SignParty;
 use crate::request_protocol_data::{
     DKGFirstData, DKGSecondData, DWalletDKGData, EncryptedShareVerificationData,
@@ -23,6 +21,7 @@ use group::PartyID;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
+use dwallet_mpc_types::dwallet_mpc::{ReconfigurationParty, ReconfigurationV2Party};
 
 pub enum ProtocolCryptographicData {
     ImportedKeyVerification {
