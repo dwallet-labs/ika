@@ -45,9 +45,9 @@ pub(crate) type RistrettoDWalletDKGParty =
 
 #[derive(strum_macros::Display)]
 pub(crate) enum DWalletDKGAdvanceRequestByCurve {
-    #[strum(to_string = "dWallet DKG Advance Request for curve Secp256K1")]
+    #[strum(to_string = "dWallet DKG Advance Request for curve Secp256k1")]
     Secp256K1DWalletDKG(AdvanceRequest<<Secp256K1DWalletDKGParty as mpc::Party>::Message>),
-    #[strum(to_string = "dWallet DKG Advance Request for curve Secp256R1")]
+    #[strum(to_string = "dWallet DKG Advance Request for curve Secp256r1")]
     Secp256R1DWalletDKG(AdvanceRequest<<Secp256R1DWalletDKGParty as mpc::Party>::Message>),
     #[strum(to_string = "dWallet DKG Advance Request for curve Curve25519")]
     Curve25519DWalletDKG(AdvanceRequest<<Curve25519DWalletDKGParty as mpc::Party>::Message>),
@@ -108,9 +108,9 @@ impl DWalletDKGAdvanceRequestByCurve {
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub enum DWalletDKGPublicInputByCurve {
-    #[strum(to_string = "dWallet DKG Public Input for curve Secp256K1")]
+    #[strum(to_string = "dWallet DKG Public Input for curve Secp256k1")]
     Secp256K1DWalletDKG(<Secp256K1DWalletDKGParty as Party>::PublicInput),
-    #[strum(to_string = "dWallet DKG Public Input for curve Secp256R1")]
+    #[strum(to_string = "dWallet DKG Public Input for curve Secp256r1")]
     Secp256R1DWalletDKG(<Secp256R1DWalletDKGParty as Party>::PublicInput),
     #[strum(to_string = "dWallet DKG Public Input for curve Curve25519")]
     Curve25519DWalletDKG(<Curve25519DWalletDKGParty as Party>::PublicInput),
