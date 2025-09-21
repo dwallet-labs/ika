@@ -409,22 +409,3 @@ pub fn compute_dwallet_dkg<P: Protocol>(
         }
     }
 }
-
-// pub fn
-// let dkg_output = dwallet_public_output
-// .clone()
-// .ok_or(DwalletMPCError::MPCSessionError {
-// session_identifier,
-// error: "presign public input cannot be None as we only support ECDSA".to_string(),
-// })?;
-// let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
-// bcs::from_bytes(dkg_output.as_slice())?;
-//
-// let decentralized_dkg_output = match dkg_output {
-// VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-// bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
-// }
-// VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-// bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
-// }
-// };

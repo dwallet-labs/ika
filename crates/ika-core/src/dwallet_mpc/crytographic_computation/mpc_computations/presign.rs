@@ -151,6 +151,7 @@ impl PresignPublicInputByProtocol {
             return Self::try_new_v2(protocol, versioned_network_encryption_key_public_data, None);
         }
 
+        // Safe to unwrap as we checked for None above
         match bcs::from_bytes(&dwallet_public_output.unwrap())? {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
                 Self::try_new_v1(versioned_network_encryption_key_public_data, dkg_output)
