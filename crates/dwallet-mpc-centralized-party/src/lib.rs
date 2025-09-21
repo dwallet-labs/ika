@@ -621,6 +621,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
+            // TODO (#1530): Add support for all the curves the network supports.
             let secp256k1_protocol_public_parameters =
                 twopc_mpc::decentralized_party::reconfiguration::PublicOutput::secp256k1_protocol_public_parameters(
                     &public_output,
