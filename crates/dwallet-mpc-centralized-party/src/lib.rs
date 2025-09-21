@@ -583,40 +583,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
     match &reconfiguration_dkg_public_output {
         // TODO (#1487): Remove temporary support for V1 reconfiguration keys.
         VersionedDecryptionKeyReconfigurationOutput::V1(public_output_bytes) => {
-            let network_dkg_pp = protocol_public_parameters(versioned_network_dkg_output)?;
-            let public_output: <class_groups::reconfiguration::Secp256k1Party as mpc::Party>::PublicOutput =
-                bcs::from_bytes(public_output_bytes)?;
-
-            let encryption_scheme_public_parameters =
-                network_dkg_pp.encryption_scheme_public_parameters;
-
-            let neutral_group_value =
-                group::secp256k1::GroupElement::neutral_from_public_parameters(
-                    &group::secp256k1::group_element::PublicParameters::default(),
-                )
-                .map_err(twopc_mpc::Error::from)?
-                .value();
-            let neutral_ciphertext_value =
-                ::class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
-                    encryption_scheme_public_parameters.ciphertext_space_public_parameters(),
-                )
-                .map_err(twopc_mpc::Error::from)?
-                .value();
-
-            let protocol_public_parameters = twopc_mpc::ProtocolPublicParameters::new::<
-                { secp256k1::SCALAR_LIMBS },
-                { FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                secp256k1::GroupElement,
-            >(
-                neutral_group_value,
-                neutral_group_value,
-                neutral_ciphertext_value,
-                neutral_ciphertext_value,
-                encryption_scheme_public_parameters,
-            );
-
-            Ok(protocol_public_parameters)
+            protocol_public_parameters(versioned_network_dkg_output)
         }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
