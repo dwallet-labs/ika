@@ -6,12 +6,15 @@ use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::dwallet_mpc::make_dwallet_user_secret_key_shares_public::verify_secret_share;
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
-use crate::dwallet_mpc::sign::verify_partial_signature;
+use crate::dwallet_mpc::sign::{ProtocolPublicParametersByProtocol, verify_partial_signature};
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::ProtocolData;
 use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::SessionIdentifier;
+use ika_types::messages_dwallet_mpc::{
+    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256K1ECDSAProtocol,
+    Secp256K1TaprootProtocol, Secp256R1ECDSAProtocol, SessionIdentifier,
+};
 use mpc::GuaranteedOutputDeliveryRoundResult;
 use std::sync::Arc;
 use tracing::error;
@@ -89,10 +92,79 @@ impl ProtocolCryptographicData {
             }
             ProtocolCryptographicData::PartialSignatureVerification {
                 data,
-                protocol_public_parameters,
+                protocol_public_parameters:
+                    ProtocolPublicParametersByProtocol::Secp256k1ECDSA(protocol_public_parameters),
                 ..
             } => {
-                verify_partial_signature(
+                verify_partial_signature::<Secp256K1ECDSAProtocol>(
+                    &data.message,
+                    &HashType::try_from(data.hash_type.clone() as u32)
+                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.dwallet_decentralized_output,
+                    &data.presign,
+                    &data.partially_signed_message,
+                    &protocol_public_parameters,
+                )?;
+                Vec::new()
+            }
+            ProtocolCryptographicData::PartialSignatureVerification {
+                data,
+                protocol_public_parameters:
+                    ProtocolPublicParametersByProtocol::Secp256r1(protocol_public_parameters),
+                ..
+            } => {
+                verify_partial_signature::<Secp256R1ECDSAProtocol>(
+                    &data.message,
+                    &HashType::try_from(data.hash_type.clone() as u32)
+                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.dwallet_decentralized_output,
+                    &data.presign,
+                    &data.partially_signed_message,
+                    &protocol_public_parameters,
+                )?;
+                Vec::new()
+            }
+            ProtocolCryptographicData::PartialSignatureVerification {
+                data,
+                protocol_public_parameters:
+                    ProtocolPublicParametersByProtocol::Curve25519(protocol_public_parameters),
+                ..
+            } => {
+                verify_partial_signature::<Curve25519EdDSAProtocol>(
+                    &data.message,
+                    &HashType::try_from(data.hash_type.clone() as u32)
+                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.dwallet_decentralized_output,
+                    &data.presign,
+                    &data.partially_signed_message,
+                    &protocol_public_parameters,
+                )?;
+                Vec::new()
+            }
+            ProtocolCryptographicData::PartialSignatureVerification {
+                data,
+                protocol_public_parameters:
+                    ProtocolPublicParametersByProtocol::Taproot(protocol_public_parameters),
+                ..
+            } => {
+                verify_partial_signature::<Secp256K1TaprootProtocol>(
+                    &data.message,
+                    &HashType::try_from(data.hash_type.clone() as u32)
+                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.dwallet_decentralized_output,
+                    &data.presign,
+                    &data.partially_signed_message,
+                    &protocol_public_parameters,
+                )?;
+                Vec::new()
+            }
+            ProtocolCryptographicData::PartialSignatureVerification {
+                data,
+                protocol_public_parameters:
+                    ProtocolPublicParametersByProtocol::Ristretto(protocol_public_parameters),
+                ..
+            } => {
+                verify_partial_signature::<RistrettoSchnorrkelSubstrateProtocol>(
                     &data.message,
                     &HashType::try_from(data.hash_type.clone() as u32)
                         .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,

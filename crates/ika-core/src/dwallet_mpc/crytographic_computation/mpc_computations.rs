@@ -19,7 +19,9 @@ use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationParty, ReconfigurationV1toV2Party, ReconfigurationV2Party,
 };
-use crate::dwallet_mpc::sign::{SignAdvanceRequestByCurve, SignPublicInputByCurve, compute_sign};
+use crate::dwallet_mpc::sign::{
+    SignAdvanceRequestByProtocol, SignPublicInputByProtocol, compute_sign,
+};
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
     NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
@@ -214,7 +216,7 @@ impl ProtocolCryptographicData {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result = SignAdvanceRequestByCurve::try_new(
+                let advance_request_result = SignAdvanceRequestByProtocol::try_new(
                     &data.curve,
                     &data.signature_algorithm,
                     party_id,
@@ -746,8 +748,8 @@ impl ProtocolCryptographicData {
                 advance_request.to_string(),
             )),
             ProtocolCryptographicData::Sign {
-                public_input: SignPublicInputByCurve::Secp256k1ECDSA(public_input),
-                advance_request: SignAdvanceRequestByCurve::Secp256k1ECDSA(advance_request),
+                public_input: SignPublicInputByProtocol::Secp256k1ECDSA(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -797,8 +799,8 @@ impl ProtocolCryptographicData {
                 }
             }
             ProtocolCryptographicData::Sign {
-                public_input: SignPublicInputByCurve::Secp256k1Taproot(public_input),
-                advance_request: SignAdvanceRequestByCurve::Secp256k1Taproot(advance_request),
+                public_input: SignPublicInputByProtocol::Secp256k1Taproot(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -848,8 +850,8 @@ impl ProtocolCryptographicData {
                 }
             }
             ProtocolCryptographicData::Sign {
-                public_input: SignPublicInputByCurve::Secp256r1(public_input),
-                advance_request: SignAdvanceRequestByCurve::Secp256r1(advance_request),
+                public_input: SignPublicInputByProtocol::Secp256r1(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Secp256r1(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -899,8 +901,8 @@ impl ProtocolCryptographicData {
                 }
             }
             ProtocolCryptographicData::Sign {
-                public_input: SignPublicInputByCurve::Curve25519(public_input),
-                advance_request: SignAdvanceRequestByCurve::Curve25519(advance_request),
+                public_input: SignPublicInputByProtocol::Curve25519(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Curve25519(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -950,8 +952,8 @@ impl ProtocolCryptographicData {
                 }
             }
             ProtocolCryptographicData::Sign {
-                public_input: SignPublicInputByCurve::Ristretto(public_input),
-                advance_request: SignAdvanceRequestByCurve::Ristretto(advance_request),
+                public_input: SignPublicInputByProtocol::Ristretto(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 decryption_key_shares,
                 data,
                 ..
