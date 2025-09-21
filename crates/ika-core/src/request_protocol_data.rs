@@ -2,6 +2,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureScheme, SerializedWrappedMPCPublicOutput,
 };
 use group::HashType;
+use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,
@@ -11,6 +12,7 @@ use ika_types::messages_dwallet_mpc::{
     SignRequestEvent,
 };
 use sui_types::base_types::ObjectID;
+
 // Common structs for shared data between ProtocolSpecificData and AdvanceSpecificData
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Imported Key Verification")]
