@@ -10,16 +10,18 @@ use crate::dwallet_mpc::network_dkg::{
 };
 use crate::dwallet_mpc::presign::{PresignParty, presign_public_input};
 use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationParty, ReconfigurationPartyPublicInputGenerator,
-    ReconfigurationV1ToV2PartyPublicInputGenerator, ReconfigurationV1toV2Party,
-    ReconfigurationV2Party, ReconfigurationV2PartyPublicInputGenerator,
+    ReconfigurationPartyPublicInputGenerator, ReconfigurationV1ToV2PartyPublicInputGenerator,
+    ReconfigurationV1toV2Party, ReconfigurationV2PartyPublicInputGenerator,
 };
 use crate::dwallet_mpc::sign::{SignParty, sign_session_public_input};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::ProtocolData;
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, VersionedImportedDWalletPublicOutput};
+use dwallet_mpc_types::dwallet_mpc::{
+    MPCPrivateInput, ReconfigurationParty, ReconfigurationV2Party,
+    VersionedImportedDWalletPublicOutput,
+};
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};

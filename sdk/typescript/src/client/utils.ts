@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { SuiObjectResponse } from '@mysten/sui/client';
+import type { DynamicFieldInfo, SuiClient, SuiObjectResponse } from '@mysten/sui/client';
 
 import { InvalidObjectError } from './errors.js';
 
@@ -21,6 +21,29 @@ export function objResToBcs(resp: SuiObjectResponse): string {
 	}
 
 	return resp.data.bcs.bcsBytes;
+}
+
+export async function fetchAllDynamicFields(
+	suiClient: SuiClient,
+	parentId: string,
+): Promise<DynamicFieldInfo[]> {
+	const allFields: any[] = [];
+	let cursor: string | null = null;
+
+	// eslint-disable-next-line no-constant-condition
+	while (true) {
+		const response = await suiClient.getDynamicFields({
+			parentId,
+			cursor,
+		});
+		allFields.push(...response.data);
+		if (response.nextCursor === cursor) {
+			break;
+		}
+		cursor = response.nextCursor;
+	}
+
+	return allFields;
 }
 
 /**
