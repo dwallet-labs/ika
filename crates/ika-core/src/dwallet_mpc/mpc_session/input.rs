@@ -275,11 +275,9 @@ pub(crate) fn session_input_from_request(
 
             Ok((
                 PublicInput::Presign(PresignPublicInputByProtocol::try_new(
-                    request.session_identifier,
                     signature_algorithm.clone(),
                     encryption_key_public_data,
                     dwallet_public_output.clone(),
-                    protocol_config.version,
                 )?),
                 None,
             ))

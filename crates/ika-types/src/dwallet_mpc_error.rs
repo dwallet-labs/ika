@@ -203,6 +203,8 @@ pub enum DwalletMPCError {
         curve: DWalletCurve,
         protocol: DWalletSignatureScheme,
     },
+    #[error("unsupported protocol version: {0}")]
+    UnsupportedProtocolVersion(u64),
 }
 
 /// A wrapper type for the result of a runtime operation.
