@@ -90,13 +90,11 @@ pub fn network_dkg_public_output_to_protocol_pp_inner(
 
 pub fn reconfiguration_public_output_to_protocol_pp_inner(
     reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
-    committee_size: usize,
-    quorum_threshold: usize,
+    versioned_network_dkg_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
     let public_parameters = protocol_public_parameters_from_reconfiguration_output(
         reconfiguration_dkg_public_output,
-        committee_size,
-        quorum_threshold,
+        versioned_network_dkg_output,
     )?;
     Ok(bcs::to_bytes(&public_parameters)?)
 }
@@ -577,30 +575,19 @@ fn protocol_public_parameters(
 
 fn protocol_public_parameters_from_reconfiguration_output(
     reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
-    committee_size: usize,
-    quorum_threshold: usize,
+    versioned_network_dkg_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<ProtocolPublicParameters> {
     let reconfiguration_dkg_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(&reconfiguration_dkg_public_output)?;
 
-    // Every member has a voting power of 1 in the current Move code.
-    let access_structure = WeightedThresholdAccessStructure::new(
-        quorum_threshold as Weight,
-        (1..=committee_size).map(|i| (i as PartyID, 1)).collect(),
-    )?;
-
     match &reconfiguration_dkg_public_output {
         VersionedDecryptionKeyReconfigurationOutput::V1(public_output_bytes) => {
+            let network_dkg_pp = protocol_public_parameters(versioned_network_dkg_output)?;
             let public_output: <class_groups::reconfiguration::Secp256k1Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
 
-            let decryption_key_share_public_parameters = public_output
-                .default_decryption_key_share_public_parameters::<secp256k1::GroupElement>(
-                    &access_structure,
-                )?;
-            let encryption_scheme_public_parameters = decryption_key_share_public_parameters
-                .encryption_scheme_public_parameters
-                .clone();
+            let encryption_scheme_public_parameters =
+                network_dkg_pp.encryption_scheme_public_parameters;
 
             let neutral_group_value =
                 group::secp256k1::GroupElement::neutral_from_public_parameters(
@@ -625,9 +612,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
                 neutral_group_value,
                 neutral_ciphertext_value,
                 neutral_ciphertext_value,
-                decryption_key_share_public_parameters
-                    .encryption_scheme_public_parameters
-                    .clone(),
+                encryption_scheme_public_parameters,
             );
 
             Ok(protocol_public_parameters)
