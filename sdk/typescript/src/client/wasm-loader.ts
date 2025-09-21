@@ -126,15 +126,13 @@ export async function public_key_from_dwallet_output(
 }
 
 export async function reconfiguration_public_output_to_protocol_pp(
+	reconfig_public_output: Uint8Array,
 	network_dkg_public_output: Uint8Array,
-	committee_size: number,
-	quorum_threshold: number,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
 	return wasm.reconfiguration_public_output_to_protocol_pp(
+		reconfig_public_output,
 		network_dkg_public_output,
-		committee_size,
-		quorum_threshold,
 	);
 }
 

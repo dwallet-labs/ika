@@ -42,7 +42,9 @@ export interface NetworkEncryptionKey {
 	/** The epoch when this encryption key was created */
 	epoch: number;
 	/** The public output ID for this encryption key */
-	publicOutputID: string;
+	networkDKGOutputID: string;
+	/** The reconfiguration output ID associated with this encryption key */
+	reconfigurationOutputID: string | undefined;
 }
 
 /**

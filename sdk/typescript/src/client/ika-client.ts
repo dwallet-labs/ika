@@ -595,7 +595,7 @@ export class IkaClient {
 
 		// Check if the cached parameters match the current key state
 		if (
-			cachedParams.networkEncryptionKeyPublicOutputID === currentKey.publicOutputID &&
+			cachedParams.networkEncryptionKeyPublicOutputID === currentKey.networkDKGOutputID &&
 			cachedParams.epoch === currentKey.epoch
 		) {
 			return cachedParams.protocolPublicParameters;
@@ -667,7 +667,7 @@ export class IkaClient {
 		}
 
 		const encryptionKeyID = networkEncryptionKey.id;
-		const networkEncryptionKeyPublicOutputID = networkEncryptionKey.publicOutputID;
+		const networkEncryptionKeyPublicOutputID = networkEncryptionKey.networkDKGOutputID;
 		const epoch = networkEncryptionKey.epoch;
 
 		// Check if we have cached parameters for this specific encryption key
@@ -687,9 +687,8 @@ export class IkaClient {
 						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 					)
 				: await reconfigurationPublicOutputToProtocolPublicParameters(
+						await this.#readTableVecAsRawBytes(networkEncryptionKey.reconfigurationOutputID!),
 						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
-						objects.systemInner.validator_set.active_committee.members.length,
-						Number(objects.systemInner.validator_set.active_committee.quorum_threshold),
 					);
 
 		// Cache the parameters by encryption key ID
@@ -946,9 +945,8 @@ export class IkaClient {
 				const encryptionKey: NetworkEncryptionKey = {
 					id: keyName,
 					epoch: Number(keyParsed.dkg_at_epoch),
-					publicOutputID:
-						lastReconfigOutput?.parsedValue.value.contents.id.id ||
-						keyParsed.network_dkg_public_output.contents.id.id,
+					networkDKGOutputID: keyParsed.network_dkg_public_output.contents.id.id,
+					reconfigurationOutputID: lastReconfigOutput?.parsedValue.value.contents.id.id,
 				};
 
 				encryptionKeys.push(encryptionKey);
