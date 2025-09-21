@@ -581,6 +581,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
         bcs::from_bytes(&reconfiguration_dkg_public_output)?;
 
     match &reconfiguration_dkg_public_output {
+        // TODO (#1487): Remove temporary support for V1 reconfiguration keys.
         VersionedDecryptionKeyReconfigurationOutput::V1(public_output_bytes) => {
             let network_dkg_pp = protocol_public_parameters(versioned_network_dkg_output)?;
             let public_output: <class_groups::reconfiguration::Secp256k1Party as mpc::Party>::PublicOutput =
