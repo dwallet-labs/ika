@@ -26,7 +26,7 @@ use mpc::{GuaranteedOutputDeliveryRoundResult, Party, Weight, WeightedThresholdA
 use rand_core::SeedableRng;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use twopc_mpc::{Protocol, ProtocolPublicParameters, sign};
+use twopc_mpc::{Protocol, sign};
 
 pub(crate) type SignParty<P: twopc_mpc::sign::Protocol> =
     <P as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
@@ -77,22 +77,6 @@ pub(crate) enum SignAdvanceRequestByProtocol {
             <SignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::Message,
         >,
     ),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
-pub(crate) enum ProtocolPublicParametersByProtocol {
-    #[strum(to_string = "Protocol Public Parameters - curve: Secp256k1, protocol: ECDSA")]
-    Secp256k1ECDSA(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
-    #[strum(to_string = "Protocol Public Parameters - curve: Secp256k1, protocol: Taproot")]
-    Taproot(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
-    #[strum(to_string = "Protocol Public Parameters - curve: Secp256r1, protocol: ECDSA")]
-    Secp256r1(twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters),
-    #[strum(to_string = "Protocol Public Parameters - curve: Curve25519, protocol: EdDSA")]
-    Curve25519(twopc_mpc::curve25519::class_groups::ProtocolPublicParameters),
-    #[strum(
-        to_string = "Protocol Public Parameters - curve: Ristretto, protocol: SchnorrkelSubstrate"
-    )]
-    Ristretto(twopc_mpc::ristretto::class_groups::ProtocolPublicParameters),
 }
 
 /// Deterministically determine the set of expected decrypters for an optimization of the

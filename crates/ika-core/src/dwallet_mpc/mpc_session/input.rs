@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGFirstParty, DWalletDKGPublicInputByCurve, DWalletImportedKeyVerificationParty,
     Secp256K1DWalletDKGParty, dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
@@ -14,9 +15,7 @@ use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationV1ToV2PartyPublicInputGenerator, ReconfigurationV1toV2Party,
     ReconfigurationV2Party, ReconfigurationV2PartyPublicInputGenerator,
 };
-use crate::dwallet_mpc::sign::{
-    ProtocolPublicParametersByProtocol, SignParty, SignPublicInputByProtocol,
-};
+use crate::dwallet_mpc::sign::SignPublicInputByProtocol;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{PartialSignatureVerificationData, PresignData, ProtocolData};
 use class_groups::dkg;
@@ -49,7 +48,7 @@ pub enum PublicInput {
         <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
     ),
     EncryptedShareVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
-    PartialSignatureVerification(ProtocolPublicParametersByProtocol),
+    PartialSignatureVerification(ProtocolPublicParametersByCurve),
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyReconfigurationV1(<ReconfigurationParty as mpc::Party>::PublicInput),
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
