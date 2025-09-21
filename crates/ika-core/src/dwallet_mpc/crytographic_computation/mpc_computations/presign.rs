@@ -42,7 +42,9 @@ pub(crate) enum PresignPublicInputByProtocol {
     Secp256r1ECDSA(<PresignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Presign Public Input - curve: Curve25519, protocol: EdDSA")]
     EdDSA(<PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Presign Public Input - curve: Ristretto, protocol: Schnorrkel (Substrate)")]
+    #[strum(
+        to_string = "Presign Public Input - curve: Ristretto, protocol: Schnorrkel (Substrate)"
+    )]
     SchnorrkelSubstrate(
         <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput,
     ),
