@@ -1,3 +1,4 @@
+use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty,
@@ -8,9 +9,7 @@ use crate::dwallet_mpc::presign::{PresignAdvanceRequestByProtocol, PresignPublic
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationParty, ReconfigurationV1toV2Party, ReconfigurationV2Party,
 };
-use crate::dwallet_mpc::sign::{
-    ProtocolPublicParametersByProtocol, SignAdvanceRequestByProtocol, SignPublicInputByProtocol,
-};
+use crate::dwallet_mpc::sign::{SignAdvanceRequestByProtocol, SignPublicInputByProtocol};
 use crate::request_protocol_data::{
     DKGFirstData, DKGSecondData, DWalletDKGData, EncryptedShareVerificationData,
     ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData,
@@ -113,7 +112,7 @@ pub enum ProtocolCryptographicData {
 
     PartialSignatureVerification {
         data: PartialSignatureVerificationData,
-        protocol_public_parameters: ProtocolPublicParametersByProtocol,
+        protocol_public_parameters: ProtocolPublicParametersByCurve,
     },
 }
 

@@ -6,11 +6,11 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
+use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationParty,
     instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output,
 };
-use crate::dwallet_mpc::sign::ProtocolPublicParametersByProtocol;
 use class_groups::dkg::{Secp256k1Party, Secp256k1PublicInput};
 use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
@@ -281,7 +281,7 @@ impl DwalletMPCNetworkKeys {
         &self,
         signature_algorithm: &DWalletSignatureScheme,
         key_id: &ObjectID,
-    ) -> DwalletMPCResult<ProtocolPublicParametersByProtocol> {
+    ) -> DwalletMPCResult<ProtocolPublicParametersByCurve> {
         let Some(result) = self.network_encryption_keys.get(key_id) else {
             error!(
                 ?key_id,
@@ -292,21 +292,19 @@ impl DwalletMPCNetworkKeys {
 
         let protocol_public_parameters = match signature_algorithm {
             DWalletSignatureScheme::ECDSASecp256k1 | DWalletSignatureScheme::Taproot => {
-                ProtocolPublicParametersByProtocol::Secp256k1ECDSA(
+                ProtocolPublicParametersByCurve::Secp256k1ECDSA(
                     result.secp256k1_protocol_public_parameters().clone(),
                 )
             }
-            DWalletSignatureScheme::ECDSASecp256r1 => {
-                ProtocolPublicParametersByProtocol::Secp256r1(
-                    result.secp256r1_protocol_public_parameters()?.clone(),
-                )
-            }
+            DWalletSignatureScheme::ECDSASecp256r1 => ProtocolPublicParametersByCurve::Secp256r1(
+                result.secp256r1_protocol_public_parameters()?.clone(),
+            ),
             DWalletSignatureScheme::SchnorrkelSubstrate => {
-                ProtocolPublicParametersByProtocol::Ristretto(
+                ProtocolPublicParametersByCurve::Ristretto(
                     result.ristretto_protocol_public_parameters()?.clone(),
                 )
             }
-            DWalletSignatureScheme::EdDSA => ProtocolPublicParametersByProtocol::Curve25519(
+            DWalletSignatureScheme::EdDSA => ProtocolPublicParametersByCurve::Curve25519(
                 result.curve25519_protocol_public_parameters()?.clone(),
             ),
         };

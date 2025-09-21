@@ -1,12 +1,13 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::dwallet_mpc::make_dwallet_user_secret_key_shares_public::verify_secret_share;
 use crate::dwallet_mpc::mpc_session::PublicInput;
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
-use crate::dwallet_mpc::sign::{ProtocolPublicParametersByProtocol, verify_partial_signature};
+use crate::dwallet_mpc::sign::verify_partial_signature;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::ProtocolData;
 use group::HashType;
@@ -93,7 +94,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::PartialSignatureVerification {
                 data,
                 protocol_public_parameters:
-                    ProtocolPublicParametersByProtocol::Secp256k1ECDSA(protocol_public_parameters),
+                    ProtocolPublicParametersByCurve::Secp256k1ECDSA(protocol_public_parameters),
                 ..
             } => {
                 verify_partial_signature::<Secp256K1ECDSAProtocol>(
@@ -110,7 +111,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::PartialSignatureVerification {
                 data,
                 protocol_public_parameters:
-                    ProtocolPublicParametersByProtocol::Secp256r1(protocol_public_parameters),
+                    ProtocolPublicParametersByCurve::Secp256r1(protocol_public_parameters),
                 ..
             } => {
                 verify_partial_signature::<Secp256R1ECDSAProtocol>(
@@ -127,7 +128,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::PartialSignatureVerification {
                 data,
                 protocol_public_parameters:
-                    ProtocolPublicParametersByProtocol::Curve25519(protocol_public_parameters),
+                    ProtocolPublicParametersByCurve::Curve25519(protocol_public_parameters),
                 ..
             } => {
                 verify_partial_signature::<Curve25519EdDSAProtocol>(
@@ -144,7 +145,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::PartialSignatureVerification {
                 data,
                 protocol_public_parameters:
-                    ProtocolPublicParametersByProtocol::Taproot(protocol_public_parameters),
+                    ProtocolPublicParametersByCurve::Taproot(protocol_public_parameters),
                 ..
             } => {
                 verify_partial_signature::<Secp256K1TaprootProtocol>(
@@ -161,7 +162,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::PartialSignatureVerification {
                 data,
                 protocol_public_parameters:
-                    ProtocolPublicParametersByProtocol::Ristretto(protocol_public_parameters),
+                    ProtocolPublicParametersByCurve::Ristretto(protocol_public_parameters),
                 ..
             } => {
                 verify_partial_signature::<RistrettoSchnorrkelSubstrateProtocol>(
