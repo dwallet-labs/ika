@@ -35,7 +35,7 @@ pub enum ProtocolCryptographicData {
 
     MakeDWalletUserSecretKeySharesPublic {
         data: MakeDWalletUserSecretKeySharesPublicData,
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+        protocol_public_parameters: ProtocolPublicParametersByCurve,
     },
 
     DKGFirst {
@@ -107,7 +107,7 @@ pub enum ProtocolCryptographicData {
 
     EncryptedShareVerification {
         data: EncryptedShareVerificationData,
-        protocol_public_parameters: twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+        protocol_public_parameters: ProtocolPublicParametersByCurve,
     },
 
     PartialSignatureVerification {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
+use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty, compute_dwallet_dkg,
@@ -442,7 +443,10 @@ impl ProtocolCryptographicData {
                                 public_output_value.clone(),
                             ))?,
                             &data.encryption_key,
-                            public_input.protocol_public_parameters.clone(),
+                            // Todo (Yael): add support for v2 of encrypted user share
+                            ProtocolPublicParametersByCurve::Secp256k1(
+                                public_input.protocol_public_parameters.clone(),
+                            ),
                         )?;
 
                         // Wrap the public output with its version.
@@ -558,7 +562,10 @@ impl ProtocolCryptographicData {
                             bcs::to_bytes(&decentralized_output)?,
                         ))?,
                         &data.encryption_key,
-                        public_input.protocol_public_parameters.clone(),
+                        // DKG second is supported only for secp256k1.
+                        ProtocolPublicParametersByCurve::Secp256k1(
+                            public_input.protocol_public_parameters.clone(),
+                        ),
                     )?;
                 }
 

@@ -17,7 +17,10 @@ use crate::dwallet_mpc::reconfiguration::{
 };
 use crate::dwallet_mpc::sign::SignPublicInputByProtocol;
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{PartialSignatureVerificationData, PresignData, ProtocolData};
+use crate::request_protocol_data::{
+    EncryptedShareVerificationData, MakeDWalletUserSecretKeySharesPublicData,
+    PartialSignatureVerificationData, PresignData, ProtocolData,
+};
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -47,7 +50,7 @@ pub enum PublicInput {
     NetworkEncryptionKeyDkgV2(
         <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
     ),
-    EncryptedShareVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
+    EncryptedShareVerification(ProtocolPublicParametersByCurve),
     PartialSignatureVerification(ProtocolPublicParametersByCurve),
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyReconfigurationV1(<ReconfigurationParty as mpc::Party>::PublicInput),
@@ -56,9 +59,7 @@ pub enum PublicInput {
         <ReconfigurationV1toV2Party as mpc::Party>::PublicInput,
     ),
     NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Party as mpc::Party>::PublicInput),
-    MakeDWalletUserSecretKeySharesPublic(
-        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    ),
+    MakeDWalletUserSecretKeySharesPublic(ProtocolPublicParametersByCurve),
 }
 
 // TODO (#542): move this logic to run before writing the event to the DB, maybe include within the session info
@@ -129,12 +130,12 @@ pub(crate) fn session_input_from_request(
             ))
         }
         ProtocolData::MakeDWalletUserSecretKeySharesPublic {
+            data: MakeDWalletUserSecretKeySharesPublicData { curve, .. },
             dwallet_network_encryption_key_id,
             ..
         } => {
             let protocol_public_parameters = network_keys
-                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?
-                .secp256k1_protocol_public_parameters()
+                .get_protocol_public_parameters(curve, dwallet_network_encryption_key_id)?
                 .clone();
 
             Ok((
@@ -312,18 +313,13 @@ pub(crate) fn session_input_from_request(
             None,
         )),
         ProtocolData::EncryptedShareVerification {
+            data: EncryptedShareVerificationData { curve, .. },
             dwallet_network_encryption_key_id,
             ..
         } => {
             let protocol_public_parameters = network_keys
-                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?
-                .secp256k1_protocol_public_parameters()
+                .get_protocol_public_parameters(curve, dwallet_network_encryption_key_id)?
                 .clone();
-            // let protocol_public_parameters = network_keys.get_protocol_public_parameters(
-            //     // The event is assign with a Secp256k1 dwallet.
-            //     // Todo (#473): Support generic network key scheme
-            //     dwallet_network_encryption_key_id,
-            // )?;
 
             Ok((
                 PublicInput::EncryptedShareVerification(protocol_public_parameters),
@@ -331,18 +327,12 @@ pub(crate) fn session_input_from_request(
             ))
         }
         ProtocolData::PartialSignatureVerification {
-            data:
-                PartialSignatureVerificationData {
-                    signature_algorithm,
-                    ..
-                },
+            data: PartialSignatureVerificationData { curve, .. },
             dwallet_network_encryption_key_id,
             ..
         } => {
-            let protocol_public_parameters = network_keys.get_protocol_public_parameters(
-                signature_algorithm,
-                dwallet_network_encryption_key_id,
-            )?;
+            let protocol_public_parameters = network_keys
+                .get_protocol_public_parameters(curve, dwallet_network_encryption_key_id)?;
 
             Ok((
                 PublicInput::PartialSignatureVerification(protocol_public_parameters),

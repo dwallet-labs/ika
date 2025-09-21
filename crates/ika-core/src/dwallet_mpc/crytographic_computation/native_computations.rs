@@ -94,7 +94,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::PartialSignatureVerification {
                 data,
                 protocol_public_parameters:
-                    ProtocolPublicParametersByCurve::Secp256k1ECDSA(protocol_public_parameters),
+                    ProtocolPublicParametersByCurve::Secp256k1(protocol_public_parameters),
                 ..
             } => {
                 verify_partial_signature::<Secp256K1ECDSAProtocol>(
@@ -145,23 +145,6 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::PartialSignatureVerification {
                 data,
                 protocol_public_parameters:
-                    ProtocolPublicParametersByCurve::Taproot(protocol_public_parameters),
-                ..
-            } => {
-                verify_partial_signature::<Secp256K1TaprootProtocol>(
-                    &data.message,
-                    &HashType::try_from(data.hash_type.clone() as u32)
-                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
-                    &data.dwallet_decentralized_output,
-                    &data.presign,
-                    &data.partially_signed_message,
-                    &protocol_public_parameters,
-                )?;
-                Vec::new()
-            }
-            ProtocolCryptographicData::PartialSignatureVerification {
-                data,
-                protocol_public_parameters:
                     ProtocolPublicParametersByCurve::Ristretto(protocol_public_parameters),
                 ..
             } => {
@@ -182,9 +165,9 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 match verify_secret_share(
-                    protocol_public_parameters.clone(),
                     data.public_user_secret_key_shares.clone(),
                     data.dwallet_decentralized_output.clone(),
+                    protocol_public_parameters.clone(),
                 ) {
                     Ok(..) => data.public_user_secret_key_shares.clone(),
                     Err(err) => {
