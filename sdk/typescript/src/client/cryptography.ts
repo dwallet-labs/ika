@@ -1,7 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { reconfiguration_public_output_to_protocol_pp } from '@ika.xyz/ika-wasm';
 import { bcs } from '@mysten/sui/bcs';
 import { decodeSuiPrivateKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
 import type { Keypair, PublicKey } from '@mysten/sui/cryptography';
@@ -23,6 +22,7 @@ import {
 	generate_secp_cg_keypair_from_seed,
 	network_dkg_public_output_to_protocol_pp,
 	public_key_from_dwallet_output,
+	reconfiguration_public_output_to_protocol_pp,
 	verify_secp_signature,
 	verify_user_share,
 } from './wasm-loader.js';
