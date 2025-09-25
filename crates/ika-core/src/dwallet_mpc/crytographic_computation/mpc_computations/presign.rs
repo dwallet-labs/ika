@@ -308,7 +308,7 @@ impl PresignPublicInputByProtocol {
     }
 }
 
-pub fn compute_presign<P: Protocol>(
+pub fn compute_presign<P: presign::Protocol>(
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
     session_id: CommitmentSizedNumber,
@@ -340,7 +340,13 @@ pub fn compute_presign<P: Protocol>(
         } => {
             // Wrap the public output with its version.
             let public_output_value = match protocol_version.as_u64() {
-                1 => bcs::to_bytes(&VersionedPresignOutput::V1(public_output_value))?,
+                1 => {
+                    let public_output_value: <Secp256K1ECDSAProtocol as Protocol>::Presign =
+                        bcs::from_bytes(&public_output_value.clone())?;
+                    bcs::to_bytes(&VersionedPresignOutput::V1(bcs::to_bytes(
+                        &public_output_value,
+                    )?))?
+                }
                 2 => bcs::to_bytes(&VersionedPresignOutput::V2(public_output_value))?,
                 _ => {
                     return Err(DwalletMPCError::UnsupportedProtocolVersion(
