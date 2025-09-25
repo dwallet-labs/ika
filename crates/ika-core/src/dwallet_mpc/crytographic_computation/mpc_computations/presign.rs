@@ -27,7 +27,7 @@ use mpc::{
     WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
-use tracing::warn;
+use tracing::{error, warn};
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
 
@@ -177,14 +177,16 @@ impl PresignPublicInputByProtocol {
     ) -> DwalletMPCResult<Self> {
         let decentralized_party_dkg_output = bcs::from_bytes::<
             <Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
-        >(&dwallet_public_output)?
-        .into();
+        >(&dwallet_public_output)?;
 
         let protocol_public_parameters =
             versioned_network_encryption_key_public_data.secp256k1_protocol_public_parameters();
 
-        let public_input: <PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput =
-            (protocol_public_parameters, decentralized_party_dkg_output).into();
+        let public_input: <PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput = (
+            protocol_public_parameters,
+            Some(decentralized_party_dkg_output),
+        )
+            .into();
         Ok(PresignPublicInputByProtocol::Secp256k1ECDSA(public_input))
     }
 
@@ -200,15 +202,18 @@ impl PresignPublicInputByProtocol {
                     .secp256k1_protocol_public_parameters();
 
                 let deserialized_dwallet_public_output =
-                    dwallet_public_output.and_then(|bytes| {
-                        match bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(&bytes) {
-                            Ok(output) => Some(output.into()),
-                            Err(_) => {
-                                warn!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
-                                None
-                            },
+                    match dwallet_public_output {
+                        None => None,
+                        Some(bytes) => {
+                            match bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(&bytes) {
+                                Ok(output) => Some(output.into()),
+                                Err(e) => {
+                                    error!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
+                                    return Err(DwalletMPCError::BcsError(e));
+                                },
+                            }
                         }
-            });
+                    };
                 let pub_input =
                     <PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
@@ -221,15 +226,18 @@ impl PresignPublicInputByProtocol {
                     .ristretto_protocol_public_parameters()?;
 
                 let deserialized_dwallet_public_output: Option<<RistrettoAsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput> =
-                    dwallet_public_output.and_then(|bytes| {
-                        match bcs::from_bytes::<<RistrettoAsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(&bytes) {
-                            Ok(output) => Some(output.into()),
-                            Err(_) => {
-                                warn!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
-                                None
-                            },
+                    match dwallet_public_output {
+                        None => None,
+                        Some(bytes) => {
+                            match bcs::from_bytes::<<RistrettoAsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(&bytes) {
+                                Ok(output) => Some(output.into()),
+                                Err(e) => {
+                                    error!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
+                                    return Err(DwalletMPCError::BcsError(e));
+                                },
+                            }
                         }
-                    });
+                    };
 
                 let pub_input =
                     <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput::from((protocol_public_parameters, deserialized_dwallet_public_output));
@@ -241,15 +249,18 @@ impl PresignPublicInputByProtocol {
                     .curve25519_protocol_public_parameters()?;
 
                 let deserialized_dwallet_public_output: Option<<Curve25519AsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput> =
-                    dwallet_public_output.and_then(|bytes| {
-                        match bcs::from_bytes::<<Curve25519AsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(&bytes) {
-                            Ok(output) => Some(output.into()),
-                            Err(_) => {
-                                warn!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
-                                None
-                            },
+                    match dwallet_public_output {
+                        None => None,
+                        Some(bytes) => {
+                            match bcs::from_bytes::<<Curve25519AsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(&bytes) {
+                                Ok(output) => Some(output.into()),
+                                Err(e) => {
+                                    error!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
+                                    return Err(DwalletMPCError::BcsError(e));
+                                },
+                            }
                         }
-                    });
+                    };
                 let pub_input =
                     <PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
@@ -262,16 +273,23 @@ impl PresignPublicInputByProtocol {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256r1_protocol_public_parameters()?;
 
-                let deserialized_dwallet_public_output: Option<<Secp256R1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput> =
-                    dwallet_public_output.and_then(|bytes| {
-                        match bcs::from_bytes::<<Secp256R1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(&bytes) {
+                let deserialized_dwallet_public_output: Option<
+                    <Secp256R1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
+                > = match dwallet_public_output {
+                    None => None,
+                    Some(bytes) => {
+                        match bcs::from_bytes::<
+                            <Secp256R1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                        >(&bytes)
+                        {
                             Ok(output) => Some(output.into()),
-                            Err(_) => {
-                                warn!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
-                                None
-                            },
+                            Err(e) => {
+                                error!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
+                                return Err(DwalletMPCError::BcsError(e));
+                            }
                         }
-                    });
+                    }
+                };
                 let pub_input =
                     <PresignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
@@ -285,15 +303,18 @@ impl PresignPublicInputByProtocol {
                     .secp256k1_protocol_public_parameters();
 
                 let deserialized_dwallet_public_output: Option<<Secp256K1TaprootProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput> =
-                    dwallet_public_output.and_then(|bytes| {
-                        match bcs::from_bytes::<<Secp256K1AsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(&bytes) {
-                            Ok(output) => Some(output.into()),
-                            Err(_) => {
-                                warn!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
-                                None
-                            },
+                    match dwallet_public_output {
+                        None => None,
+                        Some(bytes) => {
+                            match bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(&bytes) {
+                                Ok(output) => Some(output.into()),
+                                Err(e) => {
+                                    error!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
+                                    return Err(DwalletMPCError::BcsError(e));
+                                },
+                            }
                         }
-                    });
+                    };
                 let pub_input =
                     <PresignParty<Secp256K1TaprootProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
