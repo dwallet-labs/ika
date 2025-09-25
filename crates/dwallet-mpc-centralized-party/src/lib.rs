@@ -124,11 +124,11 @@ pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOf
 /// Return an error if decoding or advancing the protocol fails.
 /// This is okay since a malicious blockchain can always block a client.
 pub fn create_dkg_output_by_curve_v2(
-    dwallet_curve: u32,
+    dwallet_curve: DWalletCurve,
     protocol_pp: Vec<u8>,
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    match DWalletCurve::try_from(dwallet_curve)? {
+    match dwallet_curve {
         DWalletCurve::Secp256k1 => {
             centralized_dkg_output_v2::<Secp256K1DKGProtocol>(protocol_pp, session_id)
         }
@@ -382,7 +382,9 @@ pub fn advance_centralized_sign_party(
         }
     };
     let presign = bcs::from_bytes(&presign)?;
-    let VersionedPresignOutput::V1(presign) = presign;
+    let VersionedPresignOutput::V1(presign) = presign else {
+        todo!("#1536 support with sign versions")
+    };
     let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
         bcs::from_bytes(&centralized_party_secret_key_share)?;
     let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
