@@ -492,7 +492,7 @@ impl DWalletMPCManager {
             return None;
         }
 
-        if let Some(session) = self.mpc_sessions.get(&session_identifier) {
+        if let Some(session) = self.sessions.get(&session_identifier) {
             if !matches!(session.status, SessionStatus::WaitingForSessionRequest) {
                 // The corresponding session already has its data set, nothing to do.
                 return None;
@@ -524,7 +524,7 @@ impl DWalletMPCManager {
 
         let new_type = SessionComputationType::from(&request.protocol_data);
 
-        if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
+        if let Some(session) = self.sessions.get_mut(&session_identifier) {
             session.status = status.clone();
 
             // We only trust the session type that we deduce ourselves from the session request.
