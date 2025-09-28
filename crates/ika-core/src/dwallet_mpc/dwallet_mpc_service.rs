@@ -339,8 +339,12 @@ impl DWalletMPCService {
             }
         }
 
-        self.dwallet_mpc_manager
+        let rejected_requests = self
+            .dwallet_mpc_manager
             .handle_mpc_request_batch(requests)
+            .await;
+
+        self.handle_rejected_requests_and_submit_to_consensus(rejected_requests)
             .await;
         Ok(())
     }
@@ -715,6 +719,46 @@ impl DWalletMPCService {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    async fn handle_rejected_requests_and_submit_to_consensus(
+        &mut self,
+        rejected_sessions: Vec<DWalletSessionRequest>,
+    ) {
+        let validator_name = &self.name;
+        let party_id = self.dwallet_mpc_manager.party_id;
+
+        for (request) in rejected_sessions {
+            let session_identifier = request.session_identifier;
+
+            error!(
+                ?session_identifier,
+                validator=?validator_name,
+                session_type =?request.session_type,
+                protocol_data=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+                party_id,
+                "failed to create session, rejecting."
+            );
+
+            let consensus_adapter = self.dwallet_submit_to_consensus.clone();
+
+            let rejected = true;
+
+            let consensus_message =
+                self.new_dwallet_mpc_output(session_identifier, &request, vec![], vec![], rejected);
+
+            if let Err(err) = consensus_adapter
+                .submit_to_consensus(&[consensus_message])
+                .await
+            {
+                error!(
+                    ?session_identifier,
+                    validator=?validator_name,
+                    error=?err,
+                    "failed to submit an MPC SessionFailed message to consensus"
+                );
             }
         }
     }
