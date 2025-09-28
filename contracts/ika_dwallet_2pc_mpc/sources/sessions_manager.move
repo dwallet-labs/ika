@@ -248,9 +248,9 @@ public(package) fun register_session_identifier(
         bytes.length() == SESSION_IDENTIFIER_LENGTH,
         ESessionIdentifierInvalidLength,
     );
-    let mut hasher = ctx.sender().to_bytes();
-    hasher.append(bytes);
-    let identifier_preimage = sui::hash::keccak256(&hasher);
+    let mut bytes_to_hash = ctx.sender().to_bytes();
+    bytes_to_hash.append(bytes);
+    let identifier_preimage = sui::hash::keccak256(&bytes_to_hash);
 
     assert!(
         !self.registered_user_session_identifiers.contains(identifier_preimage),

@@ -174,6 +174,8 @@ const ENotAllNetworkEncryptionKeysReconfigurationCompleted: u64 = 30;
 const EOnlyGlobalPresignAllowed: u64 = 31;
 /// Global presign is not allowed
 const EGlobalPresignNotAllowed: u64 = 32;
+/// Presign mismatch
+const EPresignMismatch: u64 = 33;
 
 // === Structs ===
 
@@ -1050,7 +1052,7 @@ public struct SignDuringDKGRequestEvent has copy, drop, store {
     message_centralized_signature: vector<u8>,
 }
 
-public enum UserSecretKeyShareEvent has copy, drop, store {
+public enum UserSecretKeyShareEventType has copy, drop, store {
     Encrypted {
         /// ID of the encrypted user secret key share being created
         encrypted_user_secret_key_share_id: ID,
@@ -1100,7 +1102,7 @@ public struct DWalletDKGRequestEvent has copy, drop, store {
     /// Elliptic curve for the dWallet's cryptographic operations
     curve: u32,
     /// User's secret key share
-    user_secret_key_share: UserSecretKeyShareEvent,
+    user_secret_key_share: UserSecretKeyShareEventType,
     /// Sign during DKG request
     sign_during_dkg_request: Option<SignDuringDKGRequestEvent>,
 }
@@ -2617,9 +2619,9 @@ public(package) fun sign_during_dkg_request(
     id.delete();
 
     // Sanity checks: check that the IDs of the capability and presign match, and that they point to this dWallet.
-    assert!(presign_cap_id == cap_id, EPresignNotExist);
-    assert!(presign_id == presign_cap_presign_id, EPresignNotExist);
-    assert!(presign_cap_dwallet_id == presign_dwallet_id, EPresignNotExist);
+    assert!(presign_cap_id == cap_id, EPresignMismatch);
+    assert!(presign_id == presign_cap_presign_id, EPresignMismatch);
+    assert!(presign_cap_dwallet_id == presign_dwallet_id, EPresignMismatch);
 
     self
         .support_config
@@ -2708,7 +2710,7 @@ public(package) fun request_dwallet_dkg(
     let id = object::new(ctx);
     let encrypted_user_secret_key_share_id = id.to_inner();
 
-    let user_secret_key_share = UserSecretKeyShareEvent::Encrypted {
+    let user_secret_key_share = UserSecretKeyShareEventType::Encrypted {
         encrypted_user_secret_key_share_id,
         encrypted_centralized_secret_share_and_proof,
         encryption_key,
@@ -2763,7 +2765,7 @@ public(package) fun request_dwallet_dkg_with_public_user_secret_key_share(
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
 ): (DWalletCap, Option<ID>) {
-    let user_secret_key_share = UserSecretKeyShareEvent::Public {
+    let user_secret_key_share = UserSecretKeyShareEventType::Public {
         public_user_secret_key_share,
     };
 
@@ -2793,7 +2795,7 @@ public fun request_dwallet_dkg_impl(
     curve: u32,
     centralized_public_key_share_and_proof: vector<u8>,
     user_public_output: vector<u8>,
-    user_secret_key_share: UserSecretKeyShareEvent,
+    user_secret_key_share: UserSecretKeyShareEventType,
     sign_during_dkg_request: Option<SignDuringDKGRequest>,
     session_identifier: SessionIdentifier,
     payment_ika: &mut Coin<IKA>,
@@ -3673,7 +3675,7 @@ public(package) fun request_global_presign(
     self.support_config.validate_curve_and_signature_algorithm(curve, signature_algorithm);
     self.validate_network_encryption_key_supports_curve(dwallet_network_encryption_key_id, curve);
     let global_presign_config = self.global_presign_config();
-    let is_global_presign = global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm);
+    let is_global_presign = global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm) || global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm);
     assert!(!is_global_presign, EGlobalPresignNotAllowed);
 
     let mut id = object::new(ctx);
@@ -3948,9 +3950,9 @@ fun validate_and_initiate_sign(
     id.delete();
 
     // Sanity checks: check that the IDs of the capability and presign match, and that they point to this dWallet.
-    assert!(presign_cap_id == cap_id, EPresignNotExist);
-    assert!(presign_id == presign_cap_presign_id, EPresignNotExist);
-    assert!(presign_cap_dwallet_id == presign_dwallet_id, EPresignNotExist);
+    assert!(presign_cap_id == cap_id, EPresignMismatch);
+    assert!(presign_id == presign_cap_presign_id, EPresignMismatch);
+    assert!(presign_cap_dwallet_id == presign_dwallet_id, EPresignMismatch);
 
     // Check that the curve of the dWallet matches that of the presign, and that the signature algorithm matches.
     assert!(dwallet.curve == curve, EDWalletMismatch);

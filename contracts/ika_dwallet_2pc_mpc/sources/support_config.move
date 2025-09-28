@@ -160,11 +160,7 @@ public(package) fun is_global_presign_for_dkg(
     curve: u32,
     signature_algorithm: u32,
 ): bool {
-    assert!(
-        self.curve_to_signature_algorithms_for_dkg.contains(&curve),
-        EInvalidCurve,
-    );
-    self.curve_to_signature_algorithms_for_dkg[&curve].contains(&signature_algorithm)
+    self.curve_to_signature_algorithms_for_dkg.contains(&curve) && self.curve_to_signature_algorithms_for_dkg[&curve].contains(&signature_algorithm)
 }
 
 /// Checks if only global presign is allowed for a dWallet that is created via imported key.
@@ -180,11 +176,7 @@ public(package) fun is_global_presign_for_imported_key(
     curve: u32,
     signature_algorithm: u32,
 ): bool {
-    assert!(
-        self.curve_to_signature_algorithms_for_imported_key.contains(&curve),
-        EInvalidCurve,
-    );
-    self.curve_to_signature_algorithms_for_imported_key[&curve].contains(&signature_algorithm)
+    self.curve_to_signature_algorithms_for_imported_key.contains(&curve) && self.curve_to_signature_algorithms_for_imported_key[&curve].contains(&signature_algorithm)
 }
 
 public(package) fun set_supported_curves_to_signature_algorithms_to_hash_schemes(
