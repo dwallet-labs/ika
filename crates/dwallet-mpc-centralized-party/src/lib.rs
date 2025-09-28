@@ -381,8 +381,9 @@ pub fn advance_centralized_sign_party(
             bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
         }
     };
-    let presign = bcs::from_bytes(&presign)?;
-    let VersionedPresignOutput::V1(presign) = presign;
+    let VersionedPresignOutput::V1(presign) = bcs::from_bytes(&presign)? else {
+        todo!("#1536 support with sign versions")
+    };
     let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
         bcs::from_bytes(&centralized_party_secret_key_share)?;
     let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
