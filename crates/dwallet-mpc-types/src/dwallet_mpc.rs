@@ -263,7 +263,6 @@ pub enum VersionedDwalletDKGSecondRoundPublicOutput {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedPresignOutput {
     V1(MPCPublicOutput),
-    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

@@ -412,7 +412,6 @@ impl DWalletMPCManager {
                     &request.protocol_data,
                     last_read_consensus_round,
                     public_input.clone(),
-                    &self.protocol_config.version,
                 )
                 .ok()?
                 .map(|advance_specific_data| {

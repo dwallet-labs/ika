@@ -232,7 +232,6 @@ impl Ord for SessionIdentifier {
 }
 
 pub type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
-pub type Secp256K1TaprootProtocol = twopc_mpc::secp256k1::class_groups::TaprootProtocol;
 pub type Secp256R1ECDSAProtocol = twopc_mpc::secp256r1::class_groups::ECDSAProtocol;
 pub type Curve25519EdDSAProtocol = twopc_mpc::curve25519::class_groups::EdDSAProtocol;
 pub type RistrettoSchnorrkelSubstrateProtocol =

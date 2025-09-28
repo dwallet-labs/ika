@@ -4,7 +4,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
-use crate::dwallet_mpc::presign::{PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol};
+use crate::dwallet_mpc::presign::PresignParty;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationV1toV2Party;
 use crate::dwallet_mpc::sign::SignParty;
 use crate::request_protocol_data::{
@@ -19,7 +19,6 @@ use class_groups::dkg::Secp256k1Party;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{ReconfigurationParty, ReconfigurationV2Party};
 use group::PartyID;
-use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
@@ -57,9 +56,8 @@ pub enum ProtocolCryptographicData {
 
     Presign {
         data: PresignData,
-        public_input: PresignPublicInputByProtocol,
-        advance_request: PresignAdvanceRequestByProtocol,
-        protocol_version: ProtocolVersion,
+        public_input: <PresignParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<PresignParty as mpc::Party>::Message>,
     },
 
     Sign {
@@ -124,25 +122,7 @@ impl ProtocolCryptographicData {
                 advance_request, ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
-                ..
-            } => advance_request.attempt_number,
-            ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
-                ..
-            } => advance_request.attempt_number,
-            ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
-                ..
-            } => advance_request.attempt_number,
-            ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByProtocol::EdDSA(advance_request),
-                ..
-            } => advance_request.attempt_number,
-            ProtocolCryptographicData::Presign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
-                ..
+                advance_request, ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Sign {
                 advance_request, ..
@@ -223,25 +203,7 @@ impl ProtocolCryptographicData {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
-                ..
-            } => Some(advance_request.mpc_round_number),
-            ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
-                ..
-            } => Some(advance_request.mpc_round_number),
-            ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
-                ..
-            } => Some(advance_request.mpc_round_number),
-            ProtocolCryptographicData::Presign {
-                advance_request: PresignAdvanceRequestByProtocol::EdDSA(advance_request),
-                ..
-            } => Some(advance_request.mpc_round_number),
-            ProtocolCryptographicData::Presign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
-                ..
+                advance_request, ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Sign {
                 advance_request, ..
@@ -281,7 +243,6 @@ impl DWalletMPCManager {
         protocol_data: &ProtocolData,
         consensus_round: u64,
         public_input: PublicInput,
-        protocol_version: &ProtocolVersion,
     ) -> Result<Option<ProtocolCryptographicData>, DwalletMPCError> {
         match session_type {
             SessionComputationType::Native => {
@@ -304,7 +265,6 @@ impl DWalletMPCManager {
                     .class_groups_decryption_key
                     .clone(),
                 &self.network_keys,
-                protocol_version,
             ),
         }
     }
