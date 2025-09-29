@@ -158,8 +158,9 @@ impl SignPartyPublicInputGenerator for SignParty {
             }
         };
 
-        let VersionedPresignOutput::V1(presign) = presign else {
-            todo!("#1536 support with sign versions")
+        let presign = match presign {
+            VersionedPresignOutput::V1(presign) => presign,
+            VersionedPresignOutput::V2(presign) => presign,
         };
         let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
 
@@ -208,8 +209,10 @@ pub(crate) fn verify_partial_signature(
     let presign: VersionedPresignOutput = bcs::from_bytes(presign)?;
     let partially_signed_message: VersionedUserSignedMessage =
         bcs::from_bytes(partially_signed_message)?;
-    let VersionedPresignOutput::V1(presign) = presign else {
-        todo!("#1536 support with sign versions")
+
+    let presign = match presign {
+        VersionedPresignOutput::V1(presign) => presign,
+        VersionedPresignOutput::V2(presign) => presign,
     };
     let VersionedUserSignedMessage::V1(partially_signed_message) = partially_signed_message;
     let presign: <Secp256K1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =

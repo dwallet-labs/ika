@@ -428,7 +428,7 @@ pub fn advance_centralized_sign_party(
                 &centralized_party_public_input,
                 &mut OsCsRng,
             )
-                .context("advance() failed on the SignCentralizedParty")?;
+            .context("advance() failed on the SignCentralizedParty")?;
 
             let signed_message =
                 VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
@@ -480,7 +480,7 @@ pub fn advance_centralized_sign_party(
                 &centralized_party_public_input,
                 &mut OsCsRng,
             )
-                .context("advance() failed on the SignCentralizedParty")?;
+            .context("advance() failed on the SignCentralizedParty")?;
 
             let signed_message =
                 VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);

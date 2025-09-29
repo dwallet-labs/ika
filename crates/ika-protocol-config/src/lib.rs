@@ -479,7 +479,7 @@ impl ProtocolConfig {
                 1 => unreachable!(),
                 2 => {
                     cfg.network_encryption_key_version = Some(2);
-                },
+                }
                 // Use this template when making changes:
                 //
                 //     // modify an existing constant.
