@@ -483,7 +483,7 @@ pub fn advance_centralized_sign_party(
             let round_result = round_result.unwrap();
 
             let signed_message =
-                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+                VersionedUserSignedMessage::V2(bcs::to_bytes(&round_result.outgoing_message)?);
             let signed_message = bcs::to_bytes(&signed_message)?;
             Ok(signed_message)
         }
