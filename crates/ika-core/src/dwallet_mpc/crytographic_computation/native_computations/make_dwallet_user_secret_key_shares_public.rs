@@ -44,24 +44,6 @@ pub fn verify_secret_share(
             protocol_public_parameters,
         )
         .map_err(|e| DwalletMPCError::SecretShareVerificationFailed(e.to_string())),
-        (
-            VersionedImportedSecretShare::V2(secret_share),
-            VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output),
-        ) => verify_centralized_party_secret_key_share_v2(
-            secret_share,
-            dkg_output,
-            protocol_public_parameters,
-        )
-        .map_err(|e| DwalletMPCError::SecretShareVerificationFailed(e.to_string())),
-        (
-            VersionedImportedSecretShare::V2(secret_share),
-            VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output),
-        ) => verify_centralized_party_secret_key_share_v2(
-            secret_share,
-            dkg_output,
-            protocol_public_parameters,
-        )
-        .map_err(|e| DwalletMPCError::SecretShareVerificationFailed(e.to_string())),
     }
 }
 
