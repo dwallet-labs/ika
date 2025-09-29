@@ -681,15 +681,14 @@ export class IkaClient {
 			}
 		}
 
-		const protocolPublicParameters =
-			networkEncryptionKey.epoch === Number(objects.coordinatorInner.current_epoch)
-				? await networkDkgPublicOutputToProtocolPublicParameters(
-						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
-					)
-				: await reconfigurationPublicOutputToProtocolPublicParameters(
-						await this.#readTableVecAsRawBytes(networkEncryptionKey.reconfigurationOutputID!),
-						await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
-					);
+		const protocolPublicParameters = !networkEncryptionKey.reconfigurationOutputID
+			? await networkDkgPublicOutputToProtocolPublicParameters(
+					await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+				)
+			: await reconfigurationPublicOutputToProtocolPublicParameters(
+					await this.#readTableVecAsRawBytes(networkEncryptionKey.reconfigurationOutputID),
+					await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+				);
 
 		// Cache the parameters by encryption key ID
 		this.cachedProtocolPublicParameters.set(encryptionKeyID, {
