@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use class_groups::reconfiguration::Secp256k1Party;
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -521,3 +522,6 @@ impl NetworkEncryptionKeyPublicDataTrait for NetworkEncryptionKeyPublicDataV2 {
             .clone())
     }
 }
+
+pub type ReconfigurationParty = Secp256k1Party;
+pub type ReconfigurationV2Party = twopc_mpc::decentralized_party::reconfiguration::Party;

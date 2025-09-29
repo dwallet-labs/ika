@@ -22,6 +22,7 @@ import {
 	generate_secp_cg_keypair_from_seed,
 	network_dkg_public_output_to_protocol_pp,
 	public_key_from_dwallet_output,
+	reconfiguration_public_output_to_protocol_pp,
 	verify_secp_signature,
 	verify_user_share,
 } from './wasm-loader.js';
@@ -361,6 +362,25 @@ export async function networkDkgPublicOutputToProtocolPublicParameters(
 	network_dkg_public_output: Uint8Array,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(await network_dkg_public_output_to_protocol_pp(network_dkg_public_output));
+}
+
+/**
+ * Convert a reconfiguration DKG public output to the protocol public parameters.
+ *
+ * @returns The protocol public parameters
+ * @param reconfiguration_public_output
+ * @param network_dkg_public_output
+ */
+export async function reconfigurationPublicOutputToProtocolPublicParameters(
+	reconfiguration_public_output: Uint8Array,
+	network_dkg_public_output: Uint8Array,
+): Promise<Uint8Array> {
+	return Uint8Array.from(
+		await reconfiguration_public_output_to_protocol_pp(
+			reconfiguration_public_output,
+			network_dkg_public_output,
+		),
+	);
 }
 
 /**

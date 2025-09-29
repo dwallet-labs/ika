@@ -11,9 +11,8 @@ use crate::dwallet_mpc::network_dkg::{
 };
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationParty, ReconfigurationPartyPublicInputGenerator,
-    ReconfigurationV1ToV2PartyPublicInputGenerator, ReconfigurationV1toV2Party,
-    ReconfigurationV2Party, ReconfigurationV2PartyPublicInputGenerator,
+    ReconfigurationPartyPublicInputGenerator, ReconfigurationV1ToV2PartyPublicInputGenerator,
+    ReconfigurationV1toV2Party, ReconfigurationV2PartyPublicInputGenerator,
 };
 use crate::dwallet_mpc::sign::SignPublicInputByProtocol;
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -282,6 +281,8 @@ pub(crate) fn session_input_from_request(
 
             Ok((
                 PublicInput::Presign(PresignPublicInputByProtocol::try_new(
+                    signature_algorithm.clone(),
+                    encryption_key_public_data,
                     signature_algorithm.clone(),
                     encryption_key_public_data,
                     dwallet_public_output.clone(),

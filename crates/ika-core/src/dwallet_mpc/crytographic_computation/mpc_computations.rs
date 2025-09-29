@@ -17,9 +17,7 @@ use crate::dwallet_mpc::presign::{
     PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol, compute_presign,
 };
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
-use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationParty, ReconfigurationV1toV2Party, ReconfigurationV2Party,
-};
+use crate::dwallet_mpc::reconfiguration::ReconfigurationV1toV2Party;
 use crate::dwallet_mpc::sign::{
     SignAdvanceRequestByProtocol, SignPublicInputByProtocol, compute_sign,
 };
@@ -32,9 +30,10 @@ use class_groups::dkg::Secp256k1Party;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletSignatureScheme,
-    VersionedDWalletImportedKeyVerificationOutput, VersionedDecryptionKeyReconfigurationOutput,
-    VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletSignatureScheme, ReconfigurationParty,
+    ReconfigurationV2Party, VersionedDWalletImportedKeyVerificationOutput,
+    VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
+    VersionedDwalletDKGSecondRoundPublicOutput,
 };
 use dwallet_rng::RootSeed;
 use group::PartyID;
@@ -747,8 +746,37 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
-                public_input,
+                public_input: PresignPublicInputByProtocol::Secp256k1ECDSA(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                protocol_version,
+                ..
+            } => Ok(compute_presign::<Secp256K1ECDSAProtocol>(
+                party_id,
+                access_structure,
+                session_id,
                 advance_request,
+                public_input,
+                protocol_version,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::Presign {
+                public_input: PresignPublicInputByProtocol::Taproot(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
+                protocol_version,
+                ..
+            } => Ok(compute_presign::<Secp256K1TaprootProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                protocol_version,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::Presign {
+                public_input: PresignPublicInputByProtocol::Secp256r1ECDSA(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
+                protocol_version,
                 ..
             } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
                 public_input.to_string(),

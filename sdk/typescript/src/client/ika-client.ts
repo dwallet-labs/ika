@@ -7,11 +7,15 @@ import { toHex } from '@mysten/sui/utils';
 
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator.js';
+import { TableVec } from '../generated/ika_system/deps/sui/table_vec.js';
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
-import { networkDkgPublicOutputToProtocolPublicParameters } from './cryptography.js';
+import {
+	networkDkgPublicOutputToProtocolPublicParameters,
+	reconfigurationPublicOutputToProtocolPublicParameters,
+} from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
-import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './types.js';
+import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
 	CoordinatorInner,
 	DWallet,
@@ -33,7 +37,7 @@ import type {
 	SharedObjectOwner,
 	SystemInner,
 } from './types.js';
-import { objResToBcs } from './utils.js';
+import { fetchAllDynamicFields, objResToBcs } from './utils.js';
 
 /**
  * IkaClient provides a high-level interface for interacting with the Ika network.
@@ -591,7 +595,7 @@ export class IkaClient {
 
 		// Check if the cached parameters match the current key state
 		if (
-			cachedParams.networkEncryptionKeyPublicOutputID === currentKey.publicOutputID &&
+			cachedParams.networkEncryptionKeyPublicOutputID === currentKey.networkDKGOutputID &&
 			cachedParams.epoch === currentKey.epoch
 		) {
 			return cachedParams.protocolPublicParameters;
@@ -651,7 +655,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 */
 	async getProtocolPublicParameters(dWallet?: DWallet): Promise<Uint8Array> {
-		await this.ensureInitialized();
+		const objects = await this.ensureInitialized();
 
 		let networkEncryptionKey: NetworkEncryptionKey;
 
@@ -663,7 +667,7 @@ export class IkaClient {
 		}
 
 		const encryptionKeyID = networkEncryptionKey.id;
-		const networkEncryptionKeyPublicOutputID = networkEncryptionKey.publicOutputID;
+		const networkEncryptionKeyPublicOutputID = networkEncryptionKey.networkDKGOutputID;
 		const epoch = networkEncryptionKey.epoch;
 
 		// Check if we have cached parameters for this specific encryption key
@@ -677,9 +681,14 @@ export class IkaClient {
 			}
 		}
 
-		const protocolPublicParameters = await networkDkgPublicOutputToProtocolPublicParameters(
-			await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
-		);
+		const protocolPublicParameters = !networkEncryptionKey.reconfigurationOutputID
+			? await networkDkgPublicOutputToProtocolPublicParameters(
+					await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+				)
+			: await reconfigurationPublicOutputToProtocolPublicParameters(
+					await this.#readTableVecAsRawBytes(networkEncryptionKey.reconfigurationOutputID),
+					await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+				);
 
 		// Cache the parameters by encryption key ID
 		this.cachedProtocolPublicParameters.set(encryptionKeyID, {
@@ -905,10 +914,38 @@ export class IkaClient {
 					objResToBcs(keyObject),
 				);
 
+				const reconfigOutputsDFs = await fetchAllDynamicFields(
+					this.client,
+					keyParsed.reconfiguration_public_outputs.id.id,
+				);
+
+				const lastReconfigOutput = (
+					await Promise.all(
+						reconfigOutputsDFs.map(async (df) => {
+							const name = df.name.value as string;
+							const reconfigObject = await this.client.getObject({
+								id: df.objectId,
+								options: { showBcs: true },
+							});
+
+							const parsedValue = DynamicField(TableVec).fromBase64(objResToBcs(reconfigObject));
+
+							return {
+								name,
+								parsedValue,
+							};
+						}),
+					)
+				)
+					.sort((a, b) => Number(a.name) - Number(b.name))
+					// The last reconfiguration has not necessarily been completed, so we take the second to last
+					.at(-2);
+
 				const encryptionKey: NetworkEncryptionKey = {
 					id: keyName,
 					epoch: Number(keyParsed.dkg_at_epoch),
-					publicOutputID: keyParsed.network_dkg_public_output.contents.id.id,
+					networkDKGOutputID: keyParsed.network_dkg_public_output.contents.id.id,
+					reconfigurationOutputID: lastReconfigOutput?.parsedValue.value.contents.id.id,
 				};
 
 				encryptionKeys.push(encryptionKey);

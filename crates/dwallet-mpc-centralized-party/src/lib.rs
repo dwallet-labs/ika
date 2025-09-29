@@ -17,20 +17,22 @@ use class_groups::{
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
-    DWalletCurve, SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
+    DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataV1,
+    NetworkEncryptionKeyPublicDataV2, SerializedWrappedMPCPublicOutput,
+    VersionedCentralizedDKGPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
     VersionedImportedDWalletPublicOutput, VersionedImportedDwalletOutgoingMessage,
-    VersionedNetworkDkgOutput, VersionedPresignOutput, VersionedPublicKeyShareAndProof,
-    VersionedSignOutput, VersionedUserSignedMessage,
+    VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput,
+    VersionedPublicKeyShareAndProof, VersionedSignOutput, VersionedUserSignedMessage,
 };
-use group::{CyclicGroupElement, GroupElement, HashType, OsCsRng, Samplable, secp256k1};
+use group::{CyclicGroupElement, GroupElement, HashType, OsCsRng, PartyID, Samplable, secp256k1};
 use homomorphic_encryption::{
     AdditivelyHomomorphicDecryptionKey, AdditivelyHomomorphicEncryptionKey,
     GroupsPublicParametersAccessors,
 };
-use mpc::Party;
 use mpc::two_party::Round;
+use mpc::{Party, Weight, WeightedThresholdAccessStructure};
 use rand_core::SeedableRng;
 use twopc_mpc::secp256k1::SCALAR_LIMBS;
 
@@ -43,7 +45,9 @@ use twopc_mpc::class_groups::{
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::VerifyingKey;
-use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use twopc_mpc::secp256k1::class_groups::{
+    FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, ProtocolPublicParameters,
+};
 
 type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
@@ -84,6 +88,17 @@ pub fn network_dkg_public_output_to_protocol_pp_inner(
     Ok(bcs::to_bytes(&public_parameters)?)
 }
 
+pub fn reconfiguration_public_output_to_protocol_pp_inner(
+    reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
+    versioned_network_dkg_output: SerializedWrappedMPCPublicOutput,
+) -> anyhow::Result<Vec<u8>> {
+    let public_parameters = protocol_public_parameters_from_reconfiguration_output(
+        reconfiguration_dkg_public_output,
+        versioned_network_dkg_output,
+    )?;
+    Ok(bcs::to_bytes(&public_parameters)?)
+}
+
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
 
 /// Executes the second phase of the DKG protocol, part of a three-phase DKG flow.
@@ -113,7 +128,7 @@ pub fn create_dkg_output_by_curve_v2(
     protocol_pp: Vec<u8>,
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    match dwallet_curve {
+    match dwallet_curve.try_into()? {
         DWalletCurve::Secp256k1 => {
             centralized_dkg_output_v2::<Secp256K1DKGProtocol>(protocol_pp, session_id)
         }
@@ -367,7 +382,9 @@ pub fn advance_centralized_sign_party(
         }
     };
     let presign = bcs::from_bytes(&presign)?;
-    let VersionedPresignOutput::V1(presign) = presign;
+    let VersionedPresignOutput::V1(presign) = presign else {
+        todo!("#1536 support with sign versions")
+    };
     let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
         bcs::from_bytes(&centralized_party_secret_key_share)?;
     let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
@@ -554,6 +571,32 @@ fn protocol_public_parameters(
             let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
             Ok(network_dkg_public_output.secp256k1_protocol_public_parameters()?)
+        }
+    }
+}
+
+fn protocol_public_parameters_from_reconfiguration_output(
+    reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
+    versioned_network_dkg_output: SerializedWrappedMPCPublicOutput,
+) -> anyhow::Result<ProtocolPublicParameters> {
+    let reconfiguration_dkg_public_output: VersionedDecryptionKeyReconfigurationOutput =
+        bcs::from_bytes(&reconfiguration_dkg_public_output)?;
+
+    match &reconfiguration_dkg_public_output {
+        // TODO (#1487): Remove temporary support for V1 reconfiguration keys.
+        VersionedDecryptionKeyReconfigurationOutput::V1(public_output_bytes) => {
+            protocol_public_parameters(versioned_network_dkg_output)
+        }
+        VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
+            let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+            // TODO (#1530): Add support for all the curves the network supports.
+            let secp256k1_protocol_public_parameters =
+                twopc_mpc::decentralized_party::reconfiguration::PublicOutput::secp256k1_protocol_public_parameters(
+                    &public_output,
+                )?;
+
+            Ok(secp256k1_protocol_public_parameters)
         }
     }
 }
