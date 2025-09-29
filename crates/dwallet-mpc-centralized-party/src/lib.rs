@@ -57,11 +57,11 @@ type Curve25519DKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
 type RistrettoDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
 
 type DKGCentralizedParty =
-<Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
+    <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
 type SignCentralizedParty =
-<Secp256K1DKGProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
+    <Secp256K1DKGProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 type DKGDecentralizedOutput =
-<Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
+    <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 
 type SignedMessage = Vec<u8>;
 
@@ -73,7 +73,7 @@ type Secp256k1EncryptionKey = EncryptionKey<
 >;
 
 type ImportSecretKeyFirstStep =
-<Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::TrustedDealerDKGCentralizedPartyRound;
+    <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::TrustedDealerDKGCentralizedPartyRound;
 
 pub struct CentralizedDKGWasmResult {
     pub public_key_share_and_proof: Vec<u8>,
@@ -156,7 +156,7 @@ fn centralized_dkg_output_v2<P: twopc_mpc::dkg::Protocol>(
         &(protocol_public_parameters, session_identifier).into(),
         &mut OsCsRng,
     )
-        .map_err(|e| anyhow!("advance() failed on the DKGCentralizedParty: {}", e.into()))?;
+    .map_err(|e| anyhow!("advance() failed on the DKGCentralizedParty: {}", e.into()))?;
 
     // Centralized Public Key Share and Proof.
     let public_key_share_and_proof =
@@ -248,7 +248,7 @@ pub fn create_dkg_output_v1(
                     .into(),
                 &mut OsCsRng,
             )
-                .context("advance() failed on the DKGCentralizedParty")?;
+            .context("advance() failed on the DKGCentralizedParty")?;
 
             // Centralized Public Key Share and Proof.
             let public_key_share_and_proof =
@@ -337,7 +337,7 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
         VersionedCentralizedDKGPublicOutput::V1(output) => bcs::from_bytes::<
             DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
         >(output.as_slice())?
-            .into(),
+        .into(),
         VersionedCentralizedDKGPublicOutput::V2(output) => bcs::from_bytes::<
             DKGCentralizedPartyVersionedOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
         >(output.as_slice())?,
@@ -428,7 +428,7 @@ pub fn advance_centralized_sign_party(
                 &centralized_party_public_input,
                 &mut OsCsRng,
             )
-                .context("advance() failed on the SignCentralizedParty")?;
+            .context("advance() failed on the SignCentralizedParty")?;
 
             let signed_message =
                 VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
@@ -447,9 +447,7 @@ pub fn advance_centralized_sign_party(
                     SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
                     SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
                     group::secp256k1::GroupElement,
-                >::UniversalPublicDKGOutput {
-                    ..
-                }
+                >::UniversalPublicDKGOutput { .. }
             ) {
                 return Err(anyhow!(
                 "Expected UniversalPublicDKGOutput in DKGDecentralizedPartyVersionedOutput for SignCentralizedPartyV2"
@@ -493,7 +491,7 @@ pub fn advance_centralized_sign_party(
 }
 
 pub(crate) type SignCentralizedPartyV2<P: twopc_mpc::sign::Protocol> =
-<P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
+    <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
 pub fn sample_dwallet_keypair_inner(protocol_pp: Vec<u8>) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let protocol_public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
@@ -586,7 +584,8 @@ fn protocol_public_parameters(
             let network_dkg_public_output: <Secp256k1Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
             let encryption_scheme_public_parameters = network_dkg_public_output
-                .default_encryption_scheme_public_parameters::<secp256k1::GroupElement>()?;
+                .default_encryption_scheme_public_parameters::<secp256k1::GroupElement>(
+            )?;
 
             let setup_parameters = class_groups::setup::SetupParameters::<
                 SECP256K1_SCALAR_LIMBS,
@@ -602,13 +601,13 @@ fn protocol_public_parameters(
                 group::secp256k1::GroupElement::neutral_from_public_parameters(
                     &group::secp256k1::group_element::PublicParameters::default(),
                 )
-                    .map_err(twopc_mpc::Error::from)?
-                    .value();
+                .map_err(twopc_mpc::Error::from)?
+                .value();
             let neutral_ciphertext_value =
                 ::class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
                     &setup_parameters.ciphertext_space_public_parameters(),
                 )?
-                    .value();
+                .value();
 
             let protocol_public_parameters = ProtocolPublicParameters::new::<
                 { secp256k1::SCALAR_LIMBS },
@@ -762,7 +761,7 @@ pub fn decrypt_user_share_inner(
         bcs::from_bytes(&encrypted_user_share_and_proof)?,
         &mut OsCsRng,
     )
-        .map_err(Into::<anyhow::Error>::into)?;
+    .map_err(Into::<anyhow::Error>::into)?;
     let decryption_key = bcs::from_bytes(&decryption_key)?;
     let public_parameters = homomorphic_encryption::PublicParameters::<
         SCALAR_LIMBS,
