@@ -8,8 +8,9 @@
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletSignatureScheme, MPCPublicOutput, SerializedWrappedMPCPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedNetworkEncryptionKeyPublicData,
+    DKGDecentralizedPartyOutputSecp256k1, DWalletSignatureScheme, MPCPublicOutput,
+    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    VersionedNetworkEncryptionKeyPublicData,
 };
 use dwallet_mpc_types::dwallet_mpc::{NetworkEncryptionKeyPublicDataTrait, VersionedPresignOutput};
 use group::{CsRng, PartyID};
@@ -167,10 +168,8 @@ impl PresignPublicInputByProtocol {
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         dwallet_public_output: MPCPublicOutput,
     ) -> DwalletMPCResult<Self> {
-        let decentralized_party_dkg_output = bcs::from_bytes::<
-            <Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
-        >(&dwallet_public_output)?
-        .into();
+        let decentralized_party_dkg_output =
+            bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(&dwallet_public_output)?.into();
 
         let protocol_public_parameters =
             versioned_network_encryption_key_public_data.secp256k1_protocol_public_parameters();
