@@ -128,7 +128,7 @@ pub fn create_dkg_output_by_curve_v2(
     protocol_pp: Vec<u8>,
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    match DWalletCurve::try_from(dwallet_curve)? {
+    match dwallet_curve.try_into()? {
         DWalletCurve::Secp256k1 => {
             centralized_dkg_output_v2::<Secp256K1DKGProtocol>(protocol_pp, session_id)
         }
@@ -381,7 +381,8 @@ pub fn advance_centralized_sign_party(
             bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
         }
     };
-    let VersionedPresignOutput::V1(presign) = bcs::from_bytes(&presign)? else {
+    let presign = bcs::from_bytes(&presign)?;
+    let VersionedPresignOutput::V1(presign) = presign else {
         todo!("#1536 support with sign versions")
     };
     let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
