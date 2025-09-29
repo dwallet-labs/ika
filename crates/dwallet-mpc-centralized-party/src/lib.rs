@@ -440,7 +440,7 @@ pub fn advance_centralized_sign_party(
                 bcs::from_bytes(&centralized_party_secret_key_share)?;
             let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
                 centralized_party_secret_key_share;
-            let centralized_public_output = match decentralized_dkg_output {
+            let dkg_output = match decentralized_dkg_output {
                 DKGDecentralizedPartyVersionedOutput::<
                     { group::secp256k1::SCALAR_LIMBS },
                     SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -469,7 +469,7 @@ pub fn advance_centralized_sign_party(
                 <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
                     message,
                     HashType::try_from(hash_type)?,
-                    centralized_public_output.clone().into(),
+                    dkg_output.clone().into(),
                     presign,
                     bcs::from_bytes(&protocol_pp)?,
                 ));
