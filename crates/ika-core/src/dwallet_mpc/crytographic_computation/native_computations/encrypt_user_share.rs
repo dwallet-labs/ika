@@ -26,9 +26,15 @@ pub(crate) fn verify_encrypted_share(
     protocol_public_parameters: ProtocolPublicParametersByCurve,
 ) -> DwalletMPCResult<()> {
     let encrypted_centralized_secret_share_and_proof: VersionedEncryptedUserShare =
-        bcs::from_bytes(encrypted_centralized_secret_share_and_proof)?;
+        bcs::from_bytes(encrypted_centralized_secret_share_and_proof).map_err(|e| {
+            DwalletMPCError::BcsError(bcs::Error::Custom("Invalid encrypted user share".into()))
+        })?;
     let decentralized_public_output: VersionedDwalletDKGSecondRoundPublicOutput =
-        bcs::from_bytes(decentralized_public_output)?;
+        bcs::from_bytes(decentralized_public_output).map_err(|e| {
+            DwalletMPCError::BcsError(bcs::Error::Custom(
+                "Invalid decentralized public dkg output".into(),
+            ))
+        })?;
 
     match (
         encrypted_centralized_secret_share_and_proof,
@@ -76,9 +82,15 @@ fn verify_centralized_secret_key_share_proof_v1(
 
     <ECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_parameters,
-        bcs::from_bytes(&dkg_public_output)?,
-        bcs::from_bytes(encryption_key)?,
-        bcs::from_bytes(&encrypted_centralized_secret_share_and_proof)?,
+        bcs::from_bytes(&dkg_public_output).map_err(
+            |e| anyhow::anyhow!("Failed to deserialize dkg public output: {}", e),
+        )?,
+        bcs::from_bytes(encryption_key).map_err(
+            |e| anyhow::anyhow!("Failed to deserialize encryption key: {}", e),
+        )?,
+        bcs::from_bytes(&encrypted_centralized_secret_share_and_proof).map_err(
+            |e| anyhow::anyhow!("Failed to deserialize encrypted centralized secret share: {}", e),
+        )?,
         &mut OsCsRng,
     )
     .map_err(Into::<anyhow::Error>::into)?;
