@@ -745,43 +745,6 @@ impl ProtocolCryptographicData {
                 protocol_version,
                 &mut rng,
             )?),
-            ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByProtocol::Secp256k1ECDSA(public_input),
-                advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
-                protocol_version,
-                ..
-            } => Ok(compute_presign::<Secp256K1ECDSAProtocol>(
-                party_id,
-                access_structure,
-                session_id,
-                advance_request,
-                public_input,
-                protocol_version,
-                &mut rng,
-            )?),
-            ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByProtocol::Taproot(public_input),
-                advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
-                protocol_version,
-                ..
-            } => Ok(compute_presign::<Secp256K1TaprootProtocol>(
-                party_id,
-                access_structure,
-                session_id,
-                advance_request,
-                public_input,
-                protocol_version,
-                &mut rng,
-            )?),
-            ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByProtocol::Secp256r1ECDSA(public_input),
-                advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
-                protocol_version,
-                ..
-            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
-                public_input.to_string(),
-                advance_request.to_string(),
-            )),
             ProtocolCryptographicData::Sign {
                 public_input: SignPublicInputByProtocol::Secp256k1ECDSA(public_input),
                 advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
