@@ -22,7 +22,10 @@ use crate::request_protocol_data::{
 };
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty, ReconfigurationV2Party, VersionedImportedDWalletPublicOutput};
+use dwallet_mpc_types::dwallet_mpc::{
+    MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty,
+    ReconfigurationV2Party, VersionedImportedDWalletPublicOutput,
+};
 use group::PartyID;
 use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
@@ -279,8 +282,6 @@ pub(crate) fn session_input_from_request(
 
             Ok((
                 PublicInput::Presign(PresignPublicInputByProtocol::try_new(
-                    signature_algorithm.clone(),
-                    encryption_key_public_data,
                     signature_algorithm.clone(),
                     encryption_key_public_data,
                     dwallet_public_output.clone(),
