@@ -60,8 +60,6 @@ type DKGCentralizedParty =
     <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
 type SignCentralizedParty =
     <Secp256K1DKGProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
-type SignCentralizedPartyV2 =
-    <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 type DKGDecentralizedOutput =
     <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 
@@ -384,7 +382,7 @@ pub fn advance_centralized_sign_party(
         }
     };
     let presign = bcs::from_bytes(&presign)?;
-   return  match presign {
+    return match presign {
         VersionedPresignOutput::V1(presign) => {
             let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
                 bcs::from_bytes(&centralized_party_secret_key_share)?;
@@ -430,13 +428,13 @@ pub fn advance_centralized_sign_party(
                 &centralized_party_public_input,
                 &mut OsCsRng,
             )
-                .context("advance() failed on the SignCentralizedParty")?;
+            .context("advance() failed on the SignCentralizedParty")?;
 
             let signed_message =
                 VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
             let signed_message = bcs::to_bytes(&signed_message)?;
             Ok(signed_message)
-        },
+        }
         VersionedPresignOutput::V2(presign) => {
             let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
                 bcs::from_bytes(&centralized_party_secret_key_share)?;
@@ -476,21 +474,31 @@ pub fn advance_centralized_sign_party(
                     bcs::from_bytes(&protocol_pp)?,
                 ));
 
-            let round_result = SignCentralizedPartyV2::advance(
+            let round_result = SignCentralizedPartyV2::<Secp256K1ECDSAProtocol>::advance(
                 (),
                 &bcs::from_bytes(&centralized_party_secret_key_share)?,
                 &centralized_party_public_input,
                 &mut OsCsRng,
-            )
-                .context("advance() failed on the SignCentralizedParty")?;
+            );
+            if round_result.is_err() {
+                let err_str = format!(
+                    "advance() failed on the SignCentralizedPartyV2: {}",
+                    round_result.err().unwrap()
+                );
+                return Err(anyhow!(err_str.clone()).context(err_str));
+            }
+            let round_result = round_result.unwrap();
 
             let signed_message =
                 VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
             let signed_message = bcs::to_bytes(&signed_message)?;
             Ok(signed_message)
-        },
+        }
     };
 }
+
+pub(crate) type SignCentralizedPartyV2<P: twopc_mpc::sign::Protocol> =
+    <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
 pub fn sample_dwallet_keypair_inner(protocol_pp: Vec<u8>) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let protocol_public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
