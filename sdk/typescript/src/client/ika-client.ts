@@ -936,10 +936,10 @@ export class IkaClient {
 							};
 						}),
 					)
-				).find(
-					(reconfigOutput) =>
-						Number(reconfigOutput.name) === Number(objects.coordinatorInner.current_epoch) - 1,
-				);
+				)
+					.sort((a, b) => Number(a.name) - Number(b.name))
+					// The last reconfiguration has not necessarily been completed, so we take the second to last
+					.at(-2);
 
 				const encryptionKey: NetworkEncryptionKey = {
 					id: keyName,
