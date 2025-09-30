@@ -240,11 +240,9 @@ pub fn dwallet_dkg_with_encrypted_secret_share_protocol_data(
         ..
     } = request_event_data.user_secret_key_share.clone()
     else {
-        return Err(
-            DwalletMPCError::InternalError(
-                "Expected an encrypted user secret key share".to_string(),
-            ),
-        );
+        return Err(DwalletMPCError::InternalError(
+            "Expected an encrypted user secret key share".to_string(),
+        ));
     };
 
     Ok(ProtocolData::DWalletDKGWithEncryptedUserShare {
