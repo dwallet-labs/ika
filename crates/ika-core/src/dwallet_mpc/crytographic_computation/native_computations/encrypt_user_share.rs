@@ -51,7 +51,6 @@ pub(crate) fn verify_encrypted_share(
         )
         .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string())),
         (
-            // Todo (Yael): add support for v2 of encrypted user share
             VersionedEncryptedUserShare::V1(encrypted_centralized_secret_share_and_proof),
             VersionedDwalletDKGSecondRoundPublicOutput::V2(decentralized_public_output),
         ) => verify_centralized_secret_key_share_proof_v2(
