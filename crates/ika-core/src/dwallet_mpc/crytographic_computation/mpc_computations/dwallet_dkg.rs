@@ -31,10 +31,8 @@ use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
-
 pub(crate) type DWalletImportedKeyVerificationParty =
     <Secp256K1AsyncDKGProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
-
 /// This struct represents the final round of the DKG protocol.
 pub(crate) type Secp256K1DWalletDKGParty =
     <Secp256K1AsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
