@@ -531,28 +531,6 @@ impl ProtocolCryptographicData {
                     ..
                 } = &result
                 {
-                    // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
-                    let decentralized_output = match bcs::from_bytes(&public_output_value)? {
-                        DKGDecentralizedPartyVersionedOutput::<
-                            { group::secp256k1::SCALAR_LIMBS },
-                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                            {
-                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
-                            },
-                            group::secp256k1::GroupElement,
-                        >::UniversalPublicDKGOutput {
-                            output: dkg_output,
-                            ..
-                        } => dkg_output,
-                        DKGDecentralizedPartyVersionedOutput::<
-                            { group::secp256k1::SCALAR_LIMBS },
-                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                            {
-                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
-                            },
-                            group::secp256k1::GroupElement,
-                        >::TargetedPublicDKGOutput(output) => output,
-                    };
                     verify_encrypted_share(
                         &data.encrypted_centralized_secret_share_and_proof,
                         // TODO (#1482): Check the protocol config and use this hack only for V1
