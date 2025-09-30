@@ -241,7 +241,7 @@ pub fn dwallet_dkg_with_encrypted_secret_share_protocol_data(
     } = request_event_data.user_secret_key_share.clone()
     else {
         return Err(
-            ika_types::dwallet_mpc_error::DwalletMPCError::InternalError(
+            DwalletMPCError::InternalError(
                 "Expected an encrypted user secret key share".to_string(),
             ),
         );
