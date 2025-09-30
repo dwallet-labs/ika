@@ -8,7 +8,7 @@ use class_groups::reconfiguration::PublicInput;
 use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
 };
-pub(crate) use dwallet_mpc_types::dwallet_mpc::{
+use dwallet_mpc_types::dwallet_mpc::{
     NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataV1,
     NetworkEncryptionKeyPublicDataV2, ReconfigurationParty, ReconfigurationV2Party,
     SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
