@@ -8,8 +8,9 @@
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletSignatureScheme, MPCPublicOutput, SerializedWrappedMPCPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedNetworkEncryptionKeyPublicData,
+    DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletSignatureScheme, MPCPublicOutput,
+    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    VersionedNetworkEncryptionKeyPublicData,
 };
 use dwallet_mpc_types::dwallet_mpc::{NetworkEncryptionKeyPublicDataTrait, VersionedPresignOutput};
 use group::{CsRng, PartyID};
@@ -201,19 +202,20 @@ impl PresignPublicInputByProtocol {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
 
-                let deserialized_dwallet_public_output =
-                    match dwallet_public_output {
-                        None => None,
-                        Some(bytes) => {
-                            match bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(&bytes) {
-                                Ok(output) => Some(output.into()),
-                                Err(e) => {
-                                    error!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
-                                    return Err(DwalletMPCError::BcsError(e));
-                                },
+                let deserialized_dwallet_public_output = match dwallet_public_output {
+                    None => None,
+                    Some(bytes) => {
+                        match bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(
+                            &bytes,
+                        ) {
+                            Ok(output) => Some(output.into()),
+                            Err(e) => {
+                                error!(session_identifier=?session_identifier, "Failed to deserialize dwallet public output for session.");
+                                return Err(DwalletMPCError::BcsError(e));
                             }
                         }
-                    };
+                    }
+                };
                 let pub_input =
                     <PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
