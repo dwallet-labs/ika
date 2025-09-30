@@ -9,9 +9,10 @@ use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureScheme, NetworkEncryptionKeyPublicDataTrait,
-    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
-    VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput, VersionedUserSignedMessage,
+    DKGDecentralizedPartyOutputSecp256k1, DWalletCurve, DWalletSignatureScheme,
+    NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
+    VersionedDwalletDKGSecondRoundPublicOutput, VersionedNetworkEncryptionKeyPublicData,
+    VersionedPresignOutput, VersionedUserSignedMessage,
 };
 use group::CsRng;
 use group::{HashType, OsCsRng, PartyID};
@@ -388,7 +389,7 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
         let decentralized_dkg_output = match dkg_output {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-                bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
+                bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice())?.into()
             }
             VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
                 bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
