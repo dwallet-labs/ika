@@ -5,7 +5,7 @@ use fastcrypto::traits::ToFromBytes;
 use ika_config::Config;
 use ika_config::initiation::{InitiationParameters, MIN_VALIDATOR_JOINING_STAKE_INKU};
 use ika_config::validator_info::ValidatorInfo;
-use ika_move_contracts::{save_contracts_to_temp_dir, save_mainnet_contracts_to_temp_dir};
+use ika_move_contracts::save_contracts_to_temp_dir;
 use ika_types::ika_coin::IKACoin;
 use ika_types::messages_dwallet_mpc::{
     DKG_FIRST_ROUND_PROTOCOL_FLAG, DKG_SECOND_ROUND_PROTOCOL_FLAG, DWALLET_DKG_PROTOCOL_FLAG,
@@ -81,7 +81,7 @@ pub struct ContractPaths {
 
 pub fn setup_contract_paths() -> Result<ContractPaths, anyhow::Error> {
     let current_working_dir = std::env::current_dir()?;
-    let contracts_dir = save_mainnet_contracts_to_temp_dir()?;
+    let contracts_dir = save_contracts_to_temp_dir()?;
     let contracts_path = contracts_dir.path();
     let ika_contract_path = contracts_path.join("ika");
     let ika_common_contract_path = contracts_path.join("ika_common");
