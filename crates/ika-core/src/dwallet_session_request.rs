@@ -78,12 +78,14 @@ impl DWalletSessionRequestMetricData {
 impl From<&ProtocolData> for DWalletSessionRequestMetricData {
     fn from(protocol_specific_data: &ProtocolData) -> Self {
         match protocol_specific_data {
-            ProtocolData::DWalletDKGWithEncryptedUserShare { data, .. } => DWalletSessionRequestMetricData {
-                name: data.to_string(),
-                curve: Some(data.curve.clone()),
-                hash_scheme: None,
-                signature_algorithm: None,
-            },
+            ProtocolData::DWalletDKGWithEncryptedUserShare { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve.clone()),
+                    hash_scheme: None,
+                    signature_algorithm: None,
+                }
+            }
             ProtocolData::ImportedKeyVerification { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve.clone()),

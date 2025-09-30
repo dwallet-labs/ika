@@ -9,11 +9,12 @@ use crate::dwallet_mpc::presign::{PresignAdvanceRequestByProtocol, PresignPublic
 use crate::dwallet_mpc::reconfiguration::ReconfigurationV1toV2Party;
 use crate::dwallet_mpc::sign::{SignAdvanceRequestByProtocol, SignPublicInputByProtocol};
 use crate::request_protocol_data::{
-    DKGFirstData, DKGSecondData, DWalletDKGWithEncryptedUserShareData, EncryptedShareVerificationData,
-    ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData,
-    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData,
-    NetworkEncryptionKeyV1ToV2ReconfigurationData, NetworkEncryptionKeyV2ReconfigurationData,
-    PartialSignatureVerificationData, PresignData, ProtocolData, SignData,
+    DKGFirstData, DKGSecondData, DWalletDKGWithEncryptedUserShareData,
+    EncryptedShareVerificationData, ImportedKeyVerificationData,
+    MakeDWalletUserSecretKeySharesPublicData, NetworkEncryptionKeyDkgData,
+    NetworkEncryptionKeyReconfigurationData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
+    NetworkEncryptionKeyV2ReconfigurationData, PartialSignatureVerificationData, PresignData,
+    ProtocolData, SignData,
 };
 use class_groups::SecretKeyShareSizedInteger;
 use class_groups::dkg::Secp256k1Party;
