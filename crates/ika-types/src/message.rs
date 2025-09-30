@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
+use sui_types::base_types::ObjectID;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct DKGFirstRoundOutput {
@@ -19,6 +20,17 @@ pub struct DKGFirstRoundOutput {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct DWalletDKGOutput {
+    pub dwallet_id: Vec<u8>,
+    pub encrypted_secret_share_id: Vec<u8>,
+    pub output: Vec<u8>,
+    pub sign_id: Option<ObjectID>,
+    pub signature: Vec<u8>,
+    pub rejected: bool,
+    pub session_sequence_number: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct DWalletDKGSecondRoundOutput {
     pub dwallet_id: Vec<u8>,
     pub encrypted_secret_share_id: Vec<u8>,
     pub output: Vec<u8>,
@@ -103,7 +115,7 @@ pub struct DWalletImportedKeyVerificationOutput {
 #[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum DWalletCheckpointMessageKind {
     RespondDWalletDKGFirstRoundOutput(DKGFirstRoundOutput),
-    RespondDWalletDKGSecondRoundOutput(DWalletDKGOutput),
+    RespondDWalletDKGSecondRoundOutput(DWalletDKGSecondRoundOutput),
     RespondDWalletEncryptedUserShare(EncryptedUserShareOutput),
     RespondMakeDWalletUserSecretKeySharesPublic(MakeDWalletUserSecretKeySharesPublicOutput),
     RespondDWalletImportedKeyVerificationOutput(DWalletImportedKeyVerificationOutput),

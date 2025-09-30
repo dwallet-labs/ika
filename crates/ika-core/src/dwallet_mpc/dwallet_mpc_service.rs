@@ -37,9 +37,10 @@ use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::{
     DKGFirstRoundOutput, DWalletCheckpointMessageKind, DWalletDKGOutput,
-    DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput, MPCNetworkDKGOutput,
-    MPCNetworkReconfigurationOutput, MakeDWalletUserSecretKeySharesPublicOutput,
-    PartialSignatureVerificationOutput, PresignOutput, SignOutput,
+    DWalletDKGSecondRoundOutput, DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput,
+    MPCNetworkDKGOutput, MPCNetworkReconfigurationOutput,
+    MakeDWalletUserSecretKeySharesPublicOutput, PartialSignatureVerificationOutput, PresignOutput,
+    SignOutput,
 };
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
@@ -773,10 +774,12 @@ impl DWalletMPCService {
             } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
                     output,
+                    sign_id: None,
                     dwallet_id: dwallet_id.to_vec(),
                     encrypted_secret_share_id: encrypted_secret_share_id.to_vec(),
                     rejected,
                     session_sequence_number: session_request.session_sequence_number,
+                    signature: vec![],
                 });
                 vec![tx]
             }
@@ -797,7 +800,7 @@ impl DWalletMPCService {
                 ..
             } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(
-                    DWalletDKGOutput {
+                    DWalletDKGSecondRoundOutput {
                         output,
                         dwallet_id: dwallet_id.to_vec(),
                         encrypted_secret_share_id: encrypted_secret_share_id.to_vec(),
