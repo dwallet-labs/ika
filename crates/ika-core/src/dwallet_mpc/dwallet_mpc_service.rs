@@ -339,12 +339,12 @@ impl DWalletMPCService {
             }
         }
 
-        let rejected_requests = self
-            .dwallet_mpc_manager
+        self.dwallet_mpc_manager
             .handle_mpc_request_batch(requests)
             .await;
 
-        self.handle_rejected_requests_and_submit_to_consensus(rejected_requests)
+        let rejected_sessions = self.dwallet_mpc_manager.drain_rejected_sessions();
+        self.handle_failed_requests_and_submit_reject_to_consensus(rejected_sessions)
             .await;
         Ok(())
     }
@@ -723,7 +723,7 @@ impl DWalletMPCService {
         }
     }
 
-    async fn handle_rejected_requests_and_submit_to_consensus(
+    async fn handle_failed_requests_and_submit_reject_to_consensus(
         &mut self,
         rejected_sessions: Vec<DWalletSessionRequest>,
     ) {

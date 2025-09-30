@@ -78,6 +78,7 @@ pub(crate) struct DWalletMPCManager {
     /// Once we get the network key, these events will be executed.
     pub(crate) requests_pending_for_network_key: HashMap<ObjectID, Vec<DWalletSessionRequest>>,
     pub(crate) requests_pending_for_next_active_committee: Vec<DWalletSessionRequest>,
+    pub(crate) failed_sessions_waiting_to_send_reject: Vec<DWalletSessionRequest>,
     pub(crate) next_active_committee: Option<Committee>,
     pub(crate) dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 
@@ -169,7 +170,14 @@ impl DWalletMPCManager {
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             protocol_config,
+            failed_sessions_waiting_to_send_reject: vec![],
         })
+    }
+
+    pub(crate) fn drain_rejected_sessions(&mut self) -> Vec<DWalletSessionRequest> {
+        self.failed_sessions_waiting_to_send_reject
+            .drain(..)
+            .collect::<Vec<_>>()
     }
 
     pub(crate) fn sync_last_session_to_complete_in_current_epoch(

@@ -332,11 +332,7 @@ impl DWalletMPCManager {
     ///
     /// If there is no `session_request`, and we've got it in this call,
     /// we update that field in the open session.
-    pub(crate) async fn handle_mpc_request_batch(
-        &mut self,
-        requests: Vec<DWalletSessionRequest>,
-    ) -> Vec<DWalletSessionRequest> {
-        let mut failed_requests = vec![];
+    pub(crate) async fn handle_mpc_request_batch(&mut self, requests: Vec<DWalletSessionRequest>) {
         // We only update `next_active_committee` in this block. Once it's set,
         // there will no longer be any pending events targeting it for this epoch.
         if self.next_active_committee.is_none() {
@@ -346,9 +342,7 @@ impl DWalletMPCManager {
                     mem::take(&mut self.requests_pending_for_next_active_committee);
 
                 for request in events_pending_for_next_active_committee {
-                    if let Err(_) = self.handle_mpc_request(request.clone()) {
-                        failed_requests.push(request);
-                    };
+                    self.handle_mpc_request(request);
                     tokio::task::yield_now().await;
                 }
             }
@@ -371,20 +365,16 @@ impl DWalletMPCManager {
                 // We know this won't fail on a missing network key,
                 // but it could be waiting for the next committee,
                 // in which case it would be added to that queue.
-                if let Err(_) = self.handle_mpc_request(request.clone()) {
-                    failed_requests.push(request);
-                };
+                // in which case it would be added to that queue.
+                self.handle_mpc_request(request);
             }
             tokio::task::yield_now().await;
         }
 
         for request in requests {
-            if let Err(_) = self.handle_mpc_request(request.clone()) {
-                failed_requests.push(request);
-            };
+            self.handle_mpc_request(request);
             tokio::task::yield_now().await;
         }
-        failed_requests
     }
 
     /// Handle an MPC request.
@@ -399,7 +389,7 @@ impl DWalletMPCManager {
     ///
     /// If there is no `session_request`, and we've got it in this call,
     /// we update that field in the open session.
-    fn handle_mpc_request(&mut self, request: DWalletSessionRequest) -> DwalletMPCResult<()> {
+    fn handle_mpc_request(&mut self, request: DWalletSessionRequest) {
         let session_identifier = request.session_identifier;
 
         // Avoid instantiation of completed events by checking they belong to the current epoch.
@@ -414,7 +404,7 @@ impl DWalletMPCManager {
                 "received an event for a different epoch, skipping"
             );
 
-            return Ok(());
+            return;
         }
 
         if request.requires_network_key_data {
@@ -447,7 +437,7 @@ impl DWalletMPCManager {
                         request_pending_for_this_network_key.push(request);
                     }
 
-                    return Ok(());
+                    return;
                 }
             }
         }
@@ -471,17 +461,17 @@ impl DWalletMPCManager {
                     .push(request);
             }
 
-            return Ok(());
+            return;
         }
 
         if let Some(session) = self.mpc_sessions.get(&session_identifier) {
             if !matches!(session.status, SessionStatus::WaitingForSessionRequest) {
                 // The corresponding session already has its data set, nothing to do.
-                return Ok(());
+                return;
             }
         }
 
-        let (public_input, private_input) = match session_input_from_request(
+        let status = match session_input_from_request(
             &request,
             &self.access_structure,
             &self.committee,
@@ -490,17 +480,17 @@ impl DWalletMPCManager {
             self.validators_class_groups_public_keys_and_proofs.clone(),
             &self.protocol_config,
         ) {
-            Ok((public_input, private_input)) => (public_input, private_input),
+            Ok((public_input, private_input)) => SessionStatus::Active {
+                public_input,
+                private_input,
+                request: request.clone(),
+            },
             Err(e) => {
                 error!(should_never_happen=true, error=?e, ?request, "create session input from dWallet request with error");
-                return Err(e);
+                self.failed_sessions_waiting_to_send_reject
+                    .push(request.clone());
+                SessionStatus::Failed
             }
-        };
-
-        let status = SessionStatus::Active {
-            public_input,
-            private_input,
-            request: request.clone(),
         };
 
         self.dwallet_mpc_metrics
@@ -520,7 +510,6 @@ impl DWalletMPCManager {
         } else {
             self.new_session(&session_identifier, status, new_type);
         }
-        return Ok(());
     }
 }
 
