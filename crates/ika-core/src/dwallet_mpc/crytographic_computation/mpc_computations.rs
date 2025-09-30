@@ -442,7 +442,6 @@ impl ProtocolCryptographicData {
                                 public_output_value.clone(),
                             ))?,
                             &data.encryption_key,
-                            // Todo (Yael): add support for v2 of encrypted user share
                             ProtocolPublicParametersByCurve::Secp256k1(
                                 public_input.protocol_public_parameters.clone(),
                             ),
