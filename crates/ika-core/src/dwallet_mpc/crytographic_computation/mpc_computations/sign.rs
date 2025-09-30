@@ -389,7 +389,7 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
         let decentralized_dkg_output = match dkg_output {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-                bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice())?.into()
+                bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
             }
             VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
                 bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
