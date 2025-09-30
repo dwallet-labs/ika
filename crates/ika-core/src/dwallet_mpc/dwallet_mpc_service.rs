@@ -766,7 +766,7 @@ impl DWalletMPCService {
             "Creating session output message for checkpoint"
         );
         match &session_request.protocol_data {
-            ProtocolData::DWalletDKG {
+            ProtocolData::DWalletDKGWithEncryptedUserShare {
                 dwallet_id,
                 encrypted_secret_share_id,
                 ..

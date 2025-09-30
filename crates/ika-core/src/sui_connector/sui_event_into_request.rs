@@ -1,6 +1,6 @@
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
-    dwallet_dkg_first_protocol_data, dwallet_dkg_protocol_data, dwallet_dkg_second_protocol_data,
+    dwallet_dkg_first_protocol_data, dwallet_dkg_with_encrypted_secret_share_protocol_data, dwallet_dkg_second_protocol_data,
     encrypted_share_verification_protocol_data, imported_key_verification_protocol_data,
     make_dwallet_user_secret_key_shares_public_protocol_data,
     network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data,
@@ -14,6 +14,7 @@ use ika_types::messages_dwallet_mpc::{
     DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent,
     FutureSignRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent,
     PresignRequestEvent, SESSIONS_MANAGER_MODULE_NAME, SignRequestEvent,
+    UserSecretKeyShareEventType,
 };
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;
@@ -92,10 +93,15 @@ pub fn sui_event_into_session_request(
             .name
             .to_string(),
     ) {
-        dwallet_dkg_session_request(
-            deserialize_event_contents::<DWalletDKGRequestEvent>(&contents, pulled)?,
-            pulled,
-        )?
+        let parsed_event = deserialize_event_contents::<DWalletDKGRequestEvent>(&contents, pulled)?;
+        match &parsed_event.event_data.user_secret_key_share {
+            UserSecretKeyShareEventType::Encrypted { .. } => {
+                dwallet_dkg_with_encrypted_secret_share_session_request(parsed_event, pulled)?
+            }
+            UserSecretKeyShareEventType::Public { .. } => {
+                todo!()
+            }
+        }
     } else if event_type.to_string().contains(
         &DWalletDKGSecondRoundRequestEvent::type_(packages_config)
             .name
@@ -204,7 +210,7 @@ fn dwallet_imported_key_verification_request_event_session_request(
     })
 }
 
-fn dwallet_dkg_session_request(
+fn dwallet_dkg_with_encrypted_secret_share_session_request(
     deserialized_event: DWalletSessionEvent<DWalletDKGRequestEvent>,
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
@@ -212,7 +218,7 @@ fn dwallet_dkg_session_request(
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: dwallet_dkg_protocol_data(deserialized_event.event_data.clone())?,
+        protocol_data: dwallet_dkg_with_encrypted_secret_share_protocol_data(deserialized_event.event_data.clone())?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,

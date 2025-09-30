@@ -107,7 +107,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                 }
             }
-            ProtocolData::DWalletDKG { data, .. } => {
+            ProtocolData::DWalletDKGWithEncryptedUserShare { data, .. } => {
                 let PublicInput::DWalletDKG(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
