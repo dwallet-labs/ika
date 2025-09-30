@@ -5,7 +5,11 @@ use fastcrypto::traits::ToFromBytes;
 use ika_config::Config;
 use ika_config::initiation::{InitiationParameters, MIN_VALIDATOR_JOINING_STAKE_INKU};
 use ika_config::validator_info::ValidatorInfo;
-use ika_move_contracts::save_contracts_to_temp_dir;
+use ika_move_contracts::{
+    save_contracts_to_temp_dir, save_mainnet_contracts_to_temp_dir,
+    save_testnet_contracts_to_temp_dir,
+};
+use ika_protocol_config::Chain;
 use ika_types::ika_coin::IKACoin;
 use ika_types::messages_dwallet_mpc::{
     DKG_FIRST_ROUND_PROTOCOL_FLAG, DKG_SECOND_ROUND_PROTOCOL_FLAG, DWALLET_DKG_PROTOCOL_FLAG,
@@ -79,9 +83,15 @@ pub struct ContractPaths {
     pub ika_dwallet_2pc_mpc_contract_path: PathBuf,
 }
 
-pub fn setup_contract_paths() -> Result<ContractPaths, anyhow::Error> {
+pub fn setup_contract_paths(chain: Chain) -> Result<ContractPaths, anyhow::Error> {
     let current_working_dir = std::env::current_dir()?;
-    let contracts_dir = save_contracts_to_temp_dir()?;
+
+    let contracts_dir = match chain {
+        Chain::Mainnet => save_mainnet_contracts_to_temp_dir()?,
+        Chain::Testnet => save_testnet_contracts_to_temp_dir()?,
+        Chain::Devnet => save_contracts_to_temp_dir()?,
+        Chain::Unknown => panic!("Unknown chain"),
+    };
     let contracts_path = contracts_dir.path();
     let ika_contract_path = contracts_path.join("ika");
     let ika_common_contract_path = contracts_path.join("ika_common");
@@ -193,7 +203,7 @@ pub async fn init_ika_on_sui(
                 Err(e)
             }
         })?;
-    let contract_paths = setup_contract_paths()?;
+    let contract_paths = setup_contract_paths(Chain::Mainnet)?;
 
     let (ika_package_id, treasury_cap_id, ika_package_upgrade_cap_id) =
         publish_ika_package_to_sui(&mut context, contract_paths.ika_contract_path).await?;
@@ -379,6 +389,7 @@ pub async fn init_ika_on_sui(
             ika_package_id,
             ika_common_package_id,
             ika_dwallet_2pc_mpc_package_id,
+            ika_dwallet_2pc_mpc_package_id_v2: None,
             ika_system_package_id,
         },
     };

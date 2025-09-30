@@ -155,7 +155,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If initialization fails
 	 * @private
 	 */
-	private async ensureInitialized(): Promise<{
+	async ensureInitialized(): Promise<{
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
 	}> {
@@ -655,6 +655,8 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 */
 	async getProtocolPublicParameters(dWallet?: DWallet): Promise<Uint8Array> {
+		await this.#fetchEncryptionKeysFromNetwork();
+
 		let networkEncryptionKey: NetworkEncryptionKey;
 
 		if (dWallet) {
@@ -681,11 +683,11 @@ export class IkaClient {
 
 		const protocolPublicParameters = !networkEncryptionKey.reconfigurationOutputID
 			? await networkDkgPublicOutputToProtocolPublicParameters(
-					await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+					await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 				)
 			: await reconfigurationPublicOutputToProtocolPublicParameters(
-					await this.#readTableVecAsRawBytes(networkEncryptionKey.reconfigurationOutputID),
-					await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+					await this.readTableVecAsRawBytes(networkEncryptionKey.reconfigurationOutputID),
+					await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 				);
 
 		// Cache the parameters by encryption key ID
@@ -974,7 +976,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If network requests fail
 	 * @private
 	 */
-	async #readTableVecAsRawBytes(tableID: string): Promise<Uint8Array> {
+	async readTableVecAsRawBytes(tableID: string): Promise<Uint8Array> {
 		try {
 			let cursor: string | null = null;
 			const allTableRows: { objectId: string }[] = [];

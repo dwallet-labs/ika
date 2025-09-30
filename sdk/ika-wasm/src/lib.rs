@@ -5,10 +5,11 @@ use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
     create_dkg_output_by_curve_v2, create_dkg_output_v1,
     create_imported_dwallet_centralized_step_inner, decrypt_user_share_inner,
-    encrypt_secret_key_share_and_prove, generate_secp256k1_cg_keypair_from_seed_internal,
-    network_dkg_public_output_to_protocol_pp_inner, public_key_from_dwallet_output_inner,
-    reconfiguration_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
-    verify_secp_signature_inner, verify_secret_share,
+    dwallet_version_inner, encrypt_secret_key_share_and_prove,
+    generate_secp256k1_cg_keypair_from_seed_internal,
+    network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
+    public_key_from_dwallet_output_inner, reconfiguration_public_output_to_protocol_pp_inner,
+    sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share,
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
@@ -49,6 +50,22 @@ pub fn public_key_from_dwallet_output(dwallet_output: Vec<u8>) -> Result<JsValue
     serde_wasm_bindgen::to_value(
         &public_key_from_dwallet_output_inner(dwallet_output)
             .map_err(|e| JsError::new(&e.to_string()))?,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn network_key_version(network_key_bytes: Vec<u8>) -> Result<JsValue, JsError> {
+    serde_wasm_bindgen::to_value(
+        &network_key_version_inner(network_key_bytes).map_err(|e| JsError::new(&e.to_string()))?,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn dwallet_version(dwallet_output_bytes: Vec<u8>) -> Result<JsValue, JsError> {
+    serde_wasm_bindgen::to_value(
+        &dwallet_version_inner(dwallet_output_bytes).map_err(|e| JsError::new(&e.to_string()))?,
     )
     .map_err(|e| JsError::new(&e.to_string()))
 }
