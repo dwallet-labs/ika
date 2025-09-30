@@ -558,7 +558,7 @@ impl ProtocolCryptographicData {
                         // TODO (#1482): Check the protocol config and use this hack only for V1
                         // DWallets.
                         &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
-                            bcs::to_bytes(&decentralized_output)?,
+                            public_output_value.clone(),
                         ))?,
                         &data.encryption_key,
                         // DKG second is supported only for secp256k1.
