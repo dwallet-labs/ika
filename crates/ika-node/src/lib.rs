@@ -42,7 +42,9 @@ use ika_config::object_storage_config::{ObjectStoreConfig, ObjectStoreType};
 use ika_config::{ConsensusConfig, NodeConfig};
 use ika_core::authority::AuthorityState;
 use ika_core::authority::authority_per_epoch_store::AuthorityPerEpochStore;
-use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
+use ika_core::authority::epoch_start_configuration::{
+    EpochStartConfigTrait, EpochStartConfiguration,
+};
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
 };
@@ -272,6 +274,9 @@ impl IkaNode {
                 ika_dwallet_2pc_mpc_package_id: config
                     .sui_connector_config
                     .ika_dwallet_2pc_mpc_package_id,
+                ika_dwallet_2pc_mpc_package_id_v2: config
+                    .sui_connector_config
+                    .ika_dwallet_2pc_mpc_package_id_v2,
                 ika_system_package_id: config.sui_connector_config.ika_system_package_id,
             },
             objects: IkaObjectsConfig {
@@ -333,6 +338,9 @@ impl IkaNode {
             config.sui_connector_config.ika_package_id,
             config.sui_connector_config.ika_common_package_id,
             config.sui_connector_config.ika_dwallet_2pc_mpc_package_id,
+            config
+                .sui_connector_config
+                .ika_dwallet_2pc_mpc_package_id_v2,
             config.sui_connector_config.ika_system_package_id,
             config.sui_connector_config.ika_system_object_id,
             config

@@ -66,6 +66,7 @@
 		"vitest": "3.2.4"
 	},
 	"dependencies": {
+		"@iarna/toml": "^2.2.5",
 		"@ika.xyz/ika-wasm": "workspace:*",
 		"@mysten/bcs": "^1.7.0",
 		"@mysten/sui": "^1.37.1",

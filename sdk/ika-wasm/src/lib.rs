@@ -5,8 +5,10 @@ use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
     create_dkg_output_by_curve_v2, create_dkg_output_v1,
     create_imported_dwallet_centralized_step_inner, decrypt_user_share_inner,
-    encrypt_secret_key_share_and_prove, generate_secp256k1_cg_keypair_from_seed_internal,
-    network_dkg_public_output_to_protocol_pp_inner, public_key_from_dwallet_output_inner,
+    dwallet_version_inner, encrypt_secret_key_share_and_prove,
+    generate_secp256k1_cg_keypair_from_seed_internal,
+    network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
+    public_key_from_dwallet_output_inner, reconfiguration_public_output_to_protocol_pp_inner,
     sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share,
 };
 use wasm_bindgen::JsValue;
@@ -52,6 +54,22 @@ pub fn public_key_from_dwallet_output(dwallet_output: Vec<u8>) -> Result<JsValue
     .map_err(|e| JsError::new(&e.to_string()))
 }
 
+#[wasm_bindgen]
+pub fn network_key_version(network_key_bytes: Vec<u8>) -> Result<JsValue, JsError> {
+    serde_wasm_bindgen::to_value(
+        &network_key_version_inner(network_key_bytes).map_err(|e| JsError::new(&e.to_string()))?,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn dwallet_version(dwallet_output_bytes: Vec<u8>) -> Result<JsValue, JsError> {
+    serde_wasm_bindgen::to_value(
+        &dwallet_version_inner(dwallet_output_bytes).map_err(|e| JsError::new(&e.to_string()))?,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Derives a Secp256k1 class groups keypair from a given seed.
 ///
 /// The class groups public encryption key being used to encrypt a Secp256k1 keypair will be
@@ -76,6 +94,19 @@ pub fn network_dkg_public_output_to_protocol_pp(
 ) -> Result<JsValue, JsError> {
     let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_dkg_public_output)
         .map_err(to_js_err)?;
+    Ok(serde_wasm_bindgen::to_value(&protocol_pp)?)
+}
+
+#[wasm_bindgen]
+pub fn reconfiguration_public_output_to_protocol_pp(
+    reconfig_public_output: Vec<u8>,
+    network_dkg_public_output: Vec<u8>,
+) -> Result<JsValue, JsError> {
+    let protocol_pp = reconfiguration_public_output_to_protocol_pp_inner(
+        reconfig_public_output,
+        network_dkg_public_output,
+    )
+    .map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&protocol_pp)?)
 }
 
