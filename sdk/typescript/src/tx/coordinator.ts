@@ -9,6 +9,7 @@ import type {
 } from '@mysten/sui/transactions';
 
 import type { IkaConfig } from '../client/types.js';
+import { SignDuringDKGRequest } from '../generated/ika_dwallet_2pc_mpc/coordinator_inner';
 
 export function registerEncryptionKeyTx(
 	ikaConfig: IkaConfig,
@@ -177,6 +178,7 @@ export function requestDWalletDKG(
 			tx.pure.address(encryptionKeyAddress),
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(signerPublicKey)),
+			tx.pure(bcs.option(SignDuringDKGRequest).serialize(null)),
 			tx.object(sessionIdentifierObjID),
 			ikaCoin,
 			suiCoin,
