@@ -1128,7 +1128,9 @@ public struct CompletedDWalletDKGEvent has copy, drop, store {
     /// Complete public output from the DKG process (public key and metadata)
     public_output: vector<u8>,
     /// ID of the user's encrypted secret key share
-    encrypted_user_secret_key_share_id: ID,
+    encrypted_user_secret_key_share_id: Option<ID>,
+    /// ID of the user's signature during DKG if it was requested
+    sign_id: Option<ID>,
 }
 
 /// Event emitted when DKG second round is rejected by the network.
@@ -2936,8 +2938,8 @@ public fun request_dwallet_dkg_impl(
 public(package) fun respond_dwallet_dkg(
     self: &mut DWalletCoordinatorInner,
     dwallet_id: ID,
-    encrypted_user_secret_key_share_id: ID,
     public_output: vector<u8>,
+    encrypted_user_secret_key_share_id: Option<ID>,
     sign_id: Option<ID>,
     signature: vector<u8>,
     rejected: bool,
@@ -2953,6 +2955,7 @@ public(package) fun respond_dwallet_dkg(
             dwallet_id,
             public_output,
             encrypted_user_secret_key_share_id,
+            sign_id,
         })
     };
     let (fee_charged_ika, gas_fee_reimbursement_sui) = self
@@ -2976,11 +2979,15 @@ public(package) fun respond_dwallet_dkg(
                         public_output,
                     }
                 } else {
-                    let encrypted_user_share = dwallet
-                        .encrypted_user_secret_key_shares
-                        .borrow_mut(encrypted_user_secret_key_share_id);
-                    encrypted_user_share.state =
-                        EncryptedUserSecretKeyShareState::NetworkVerificationCompleted;
+                    if(encrypted_user_secret_key_share_id.is_some()) {
+                        let encrypted_user_share = dwallet
+                            .encrypted_user_secret_key_shares
+                            .borrow_mut(*encrypted_user_secret_key_share_id.borrow());
+                        encrypted_user_share.state =
+                            EncryptedUserSecretKeyShareState::NetworkVerificationCompleted;
+                        
+                    };
+                    
 
                     DWalletState::AwaitingKeyHolderSignature {
                         public_output,
@@ -4691,8 +4698,10 @@ fun process_checkpoint_message(
         match (message_data_enum_tag) {
             RESPOND_DWALLET_DKG_OUTPUT_MESSAGE_TYPE => {
                 let dwallet_id = object::id_from_bytes(bcs_body.peel_vec_u8());
-                let encrypted_user_secret_key_share_id = object::id_from_bytes(bcs_body.peel_vec_u8());
                 let public_output = bcs_body.peel_vec_u8();
+                let encrypted_user_secret_key_share_id = bcs_body.peel_option!(
+                    |bcs_option| object::id_from_bytes(bcs_option.peel_vec_u8()),
+                );
                 let sign_id = bcs_body.peel_option!(
                     |bcs_option| object::id_from_bytes(bcs_option.peel_vec_u8()),
                 );
@@ -4701,8 +4710,8 @@ fun process_checkpoint_message(
                 let session_sequence_number = bcs_body.peel_u64();
                 let gas_fee_reimbursement_sui = self.respond_dwallet_dkg(
                     dwallet_id,
-                    encrypted_user_secret_key_share_id,
                     public_output,
+                    encrypted_user_secret_key_share_id,
                     sign_id,
                     signature,
                     rejected,
