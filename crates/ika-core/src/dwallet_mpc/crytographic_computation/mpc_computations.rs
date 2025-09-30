@@ -111,7 +111,6 @@ impl ProtocolCryptographicData {
                 let PublicInput::DWalletDKG(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
-
                 let advance_request = DWalletDKGAdvanceRequestByCurve::try_new(
                     &data.curve,
                     party_id,
@@ -134,7 +133,6 @@ impl ProtocolCryptographicData {
                 let PublicInput::DKGFirst(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
-
                 let advance_request_result = Party::<DWalletDKGFirstParty>::ready_to_advance(
                     party_id,
                     access_structure,
