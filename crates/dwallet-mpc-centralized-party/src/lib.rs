@@ -388,29 +388,10 @@ pub fn advance_centralized_sign_party(
                 bcs::from_bytes(&centralized_party_secret_key_share)?;
             let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
                 centralized_party_secret_key_share;
-            let centralized_public_output = match decentralized_dkg_output {
-                DKGDecentralizedPartyVersionedOutput::<
-                    { group::secp256k1::SCALAR_LIMBS },
-                    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    group::secp256k1::GroupElement,
-                >::UniversalPublicDKGOutput {
-                    output: dkg_output,
-                    ..
-                } => DKGCentralizedPartyOutput::<
-                    { group::secp256k1::SCALAR_LIMBS },
-                    group::secp256k1::GroupElement,
-                >::from(dkg_output),
-                DKGDecentralizedPartyVersionedOutput::<
-                    { group::secp256k1::SCALAR_LIMBS },
-                    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    group::secp256k1::GroupElement,
-                >::TargetedPublicDKGOutput(output) => DKGCentralizedPartyOutput::<
-                    { group::secp256k1::SCALAR_LIMBS },
-                    group::secp256k1::GroupElement,
-                >::from(output),
-            };
+            let centralized_public_output = DKGCentralizedPartyVersionedOutput::<
+                { group::secp256k1::SCALAR_LIMBS },
+                group::secp256k1::GroupElement,
+            >::from(decentralized_dkg_output);
             let presign: <Secp256K1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
                 bcs::from_bytes(&presign)?;
             let centralized_party_public_input =
