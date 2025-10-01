@@ -1,6 +1,7 @@
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
+    DWalletImportedKeyVerificationAdvanceRequestByCurve, DWalletImportedKeyVerificationPublicInputByCurve,
     DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
@@ -28,8 +29,8 @@ use std::collections::HashMap;
 pub enum ProtocolCryptographicData {
     ImportedKeyVerification {
         data: ImportedKeyVerificationData,
-        public_input: <DWalletImportedKeyVerificationParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<()>,
+        public_input: DWalletImportedKeyVerificationPublicInputByCurve,
+        advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve,
     },
 
     MakeDWalletUserSecretKeySharesPublic {
