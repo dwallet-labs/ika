@@ -265,7 +265,6 @@ pub(crate) fn session_input_from_request(
                     first_round_output,
                     centralized_public_key_share_and_proof,
                     protocol_public_parameters,
-                    session_id,
                 )?),
                 None,
             ))
