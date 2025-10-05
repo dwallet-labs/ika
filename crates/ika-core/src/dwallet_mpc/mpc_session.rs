@@ -16,6 +16,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::request_protocol_data::ProtocolData;
+use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::error::{IkaError, IkaResult};
 pub(crate) use input::{PublicInput, session_input_from_request};
 use std::fmt::{Debug, Formatter};
@@ -360,18 +361,18 @@ impl DWalletMPCManager {
                 .remove(&key_id)
                 .unwrap_or_default();
 
-            for event in events_pending_for_newly_updated_network_key {
+            for request in events_pending_for_newly_updated_network_key {
                 // We know this won't fail on a missing network key,
                 // but it could be waiting for the next committee,
                 // in which case it would be added to that queue.
                 // in which case it would be added to that queue.
-                self.handle_mpc_request(event);
+                self.handle_mpc_request(request);
             }
             tokio::task::yield_now().await;
         }
 
-        for event in requests {
-            self.handle_mpc_request(event);
+        for request in requests {
+            self.handle_mpc_request(request);
             tokio::task::yield_now().await;
         }
     }
@@ -470,7 +471,7 @@ impl DWalletMPCManager {
             }
         }
 
-        let (public_input, private_input) = match session_input_from_request(
+        let status = match session_input_from_request(
             &request,
             &self.access_structure,
             &self.committee,
@@ -479,17 +480,17 @@ impl DWalletMPCManager {
             self.validators_class_groups_public_keys_and_proofs.clone(),
             &self.protocol_config,
         ) {
-            Ok((public_input, private_input)) => (public_input, private_input),
+            Ok((public_input, private_input)) => SessionStatus::Active {
+                public_input,
+                private_input,
+                request: request.clone(),
+            },
             Err(e) => {
                 error!(should_never_happen=true, error=?e, ?request, "create session input from dWallet request with error");
-                return;
+                self.failed_sessions_waiting_to_send_reject
+                    .push(request.clone());
+                SessionStatus::Failed
             }
-        };
-
-        let status = SessionStatus::Active {
-            public_input,
-            private_input,
-            request: request.clone(),
         };
 
         self.dwallet_mpc_metrics
