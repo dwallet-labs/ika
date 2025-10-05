@@ -1,37 +1,21 @@
+;
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
-import type {
-	Transaction,
-	TransactionObjectArgument,
-	TransactionResult,
-} from '@mysten/sui/transactions';
+import type { Transaction, TransactionObjectArgument, TransactionResult } from '@mysten/sui/transactions';
+
+
 
 import * as coordinatorTx from '../tx/coordinator.js';
 import type { DKGRequestInput, ImportDWalletVerificationRequestInput } from './cryptography.js';
-import {
-	createRandomSessionIdentifier,
-	encryptSecretShare,
-	verifyUserShare,
-} from './cryptography.js';
+import { createRandomSessionIdentifier, encryptSecretShare, verifyUserShare } from './cryptography.js';
 import type { IkaClient } from './ika-client.js';
-import type {
-	Curve,
-	DWallet,
-	EncryptedUserSecretKeyShare,
-	EncryptionKey,
-	Hash,
-	ImportedKeyDWallet,
-	ImportedSharedDWallet,
-	Presign,
-	SharedDWallet,
-	UserSignatureInputs,
-	ZeroTrustDWallet,
-} from './types.js';
+import type { Curve, DWallet, EncryptedUserSecretKeyShare, EncryptionKey, Hash, ImportedKeyDWallet, ImportedSharedDWallet, Presign, SharedDWallet, UserSignatureInputs, ZeroTrustDWallet } from './types.js';
 import { SignatureAlgorithm } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { create_sign_centralized_party_message as create_sign_user_message } from './wasm-loader.js';
+
 
 /**
  * Parameters for creating an IkaTransaction instance
@@ -1175,6 +1159,7 @@ export class IkaTransaction {
 		publicOutput,
 		message,
 		hashScheme,
+		signatureScheme,
 		ikaCoin,
 		suiCoin,
 	}: {
@@ -1186,6 +1171,7 @@ export class IkaTransaction {
 		publicOutput?: Uint8Array;
 		message: Uint8Array;
 		hashScheme: Hash;
+		signatureScheme: SignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<TransactionObjectArgument> {
@@ -1205,6 +1191,7 @@ export class IkaTransaction {
 					encryptedUserSecretKeyShare,
 					message,
 					hash: hashScheme,
+					signatureScheme
 				},
 				ikaCoin,
 				suiCoin,
@@ -1220,6 +1207,7 @@ export class IkaTransaction {
 					publicOutput,
 					message,
 					hash: hashScheme,
+					signatureScheme,
 				},
 				ikaCoin,
 				suiCoin,
@@ -1239,6 +1227,7 @@ export class IkaTransaction {
 					secretShare: Uint8Array.from(dWallet.public_user_secret_key_share),
 					message,
 					hash: hashScheme,
+					signatureScheme,
 				},
 				ikaCoin,
 				suiCoin,
@@ -1273,6 +1262,7 @@ export class IkaTransaction {
 		encryptedUserSecretKeyShare,
 		message,
 		hashScheme,
+		signatureScheme,
 		ikaCoin,
 		suiCoin,
 	}: {
@@ -1282,6 +1272,7 @@ export class IkaTransaction {
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		message: Uint8Array;
 		hashScheme: Hash;
+		signatureScheme: SignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<TransactionObjectArgument>;
@@ -1312,6 +1303,8 @@ export class IkaTransaction {
 		publicOutput,
 		message,
 		hashScheme,
+																					 signatureScheme,
+
 		ikaCoin,
 		suiCoin,
 	}: {
@@ -1322,6 +1315,7 @@ export class IkaTransaction {
 		publicOutput: Uint8Array;
 		message: Uint8Array;
 		hashScheme: Hash;
+		signatureScheme: SignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<TransactionObjectArgument>;
@@ -1407,6 +1401,7 @@ export class IkaTransaction {
 		publicOutput,
 		message,
 		hashScheme,
+		signatureScheme,
 		ikaCoin,
 		suiCoin,
 	}: {
@@ -1418,6 +1413,7 @@ export class IkaTransaction {
 		publicOutput?: Uint8Array;
 		message: Uint8Array;
 		hashScheme: Hash;
+		signatureScheme: SignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<TransactionObjectArgument> {
@@ -1437,6 +1433,7 @@ export class IkaTransaction {
 					encryptedUserSecretKeyShare,
 					message,
 					hash: hashScheme,
+					signatureScheme,
 				},
 				ikaCoin,
 				suiCoin,
@@ -1452,6 +1449,7 @@ export class IkaTransaction {
 					publicOutput,
 					message,
 					hash: hashScheme,
+					signatureScheme,
 				},
 				ikaCoin,
 				suiCoin,
@@ -1467,6 +1465,7 @@ export class IkaTransaction {
 					presign,
 					message,
 					hash: hashScheme,
+					signatureScheme,
 				},
 				ikaCoin,
 				suiCoin,
