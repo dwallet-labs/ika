@@ -8,7 +8,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
     DWalletImportedKeyVerificationAdvanceRequestByCurve, DWalletImportedKeyVerificationPublicInputByCurve,
     Secp256K1DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty, Secp256R1DWalletImportedKeyVerificationParty,
     Curve25519DWalletImportedKeyVerificationParty, RistrettoDWalletImportedKeyVerificationParty,
-    compute_dwallet_dkg,
+    compute_dwallet_dkg, compute_imported_key_verification,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
@@ -405,133 +405,73 @@ impl ProtocolCryptographicData {
 
         match self {
             ProtocolCryptographicData::ImportedKeyVerification {
-                public_input,
+                public_input:DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(public_input),
                 data,
-                advance_request,
+                advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256K1DWalletImportedKeyVerification(advance_request),
                 ..
             } => {
-                let result = match (public_input.clone(), advance_request) {
-                    (
-                        DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(public_input),
-                        DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256K1DWalletImportedKeyVerification(advance_request),
-                    ) => {
-                        Party::<Secp256K1DWalletImportedKeyVerificationParty>::advance_with_guaranteed_output(
-                            session_id,
-                            party_id,
-                            access_structure,
-                            advance_request,
-                            None,
-                            &public_input,
-                            &mut rng,
-                        )
-                    }
-                    (
-                        DWalletImportedKeyVerificationPublicInputByCurve::Secp256R1DWalletImportedKeyVerification(public_input),
-                        DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification(advance_request),
-                    ) => {
-                        Party::<Secp256R1DWalletImportedKeyVerificationParty>::advance_with_guaranteed_output(
-                            session_id,
-                            party_id,
-                            access_structure,
-                            advance_request,
-                            None,
-                            &public_input,
-                            &mut rng,
-                        )
-                    }
-                    (
-                        DWalletImportedKeyVerificationPublicInputByCurve::Curve25519DWalletImportedKeyVerification(public_input),
-                        DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519DWalletImportedKeyVerification(advance_request),
-                    ) => {
-                        Party::<Curve25519DWalletImportedKeyVerificationParty>::advance_with_guaranteed_output(
-                            session_id,
-                            party_id,
-                            access_structure,
-                            advance_request,
-                            None,
-                            &public_input,
-                            &mut rng,
-                        )
-                    }
-                    (
-                        DWalletImportedKeyVerificationPublicInputByCurve::RistrettoDWalletImportedKeyVerification(public_input),
-                        DWalletImportedKeyVerificationAdvanceRequestByCurve::RistrettoDWalletImportedKeyVerification(advance_request),
-                    ) => {
-                        Party::<RistrettoDWalletImportedKeyVerificationParty>::advance_with_guaranteed_output(
-                            session_id,
-                            party_id,
-                            access_structure,
-                            advance_request,
-                            None,
-                            &public_input,
-                            &mut rng,
-                        )
-                    }
-                    _ => {
-                        return Err(DwalletMPCError::InvalidSessionPublicInput);
-                    }
-                }?;
-
-                match result {
-                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-                    }
-                    GuaranteedOutputDeliveryRoundResult::Finalize {
-                        public_output_value,
-                        malicious_parties,
-                        private_output,
-                    } => {
-                        // Verify the encrypted share before finalizing, guaranteeing a two-for-one
-                        // computation of both that the key import was successful, and
-                        // the encrypted user share is valid.
-                        let protocol_public_parameters = match &public_input {
-                            DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(input) => {
-                                ProtocolPublicParametersByCurve::Secp256k1(input.protocol_public_parameters.clone())
-                            }
-                            DWalletImportedKeyVerificationPublicInputByCurve::Secp256R1DWalletImportedKeyVerification(input) => {
-                                ProtocolPublicParametersByCurve::Secp256r1(input.protocol_public_parameters.clone())
-                            }
-                            DWalletImportedKeyVerificationPublicInputByCurve::Curve25519DWalletImportedKeyVerification(input) => {
-                                ProtocolPublicParametersByCurve::Curve25519(input.protocol_public_parameters.clone())
-                            }
-                            DWalletImportedKeyVerificationPublicInputByCurve::RistrettoDWalletImportedKeyVerification(input) => {
-                                ProtocolPublicParametersByCurve::Ristretto(input.protocol_public_parameters.clone())
-                            }
-                        };
-
-                        // Determine the version based on the curve - for now, use V2 for all curves
-                        // This can be made more sophisticated if needed
-                        let versioned_output = match &public_input {
-                            DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(_) => {
-                                // For Secp256k1, we can support both V1 and V2, but let's use V2 for consistency
-                                VersionedDwalletDKGSecondRoundPublicOutput::V2(public_output_value.clone())
-                            }
-                            _ => {
-                                // For other curves, use V2
-                                VersionedDwalletDKGSecondRoundPublicOutput::V2(public_output_value.clone())
-                            }
-                        };
-
-                        verify_encrypted_share(
-                            &data.encrypted_centralized_secret_share_and_proof,
-                            &bcs::to_bytes(&versioned_output)?,
-                            &data.encryption_key,
-                            protocol_public_parameters,
-                        )?;
-
-                        // Wrap the public output with its version.
-                        let public_output_value = bcs::to_bytes(
-                            &VersionedDWalletImportedKeyVerificationOutput::V1(public_output_value),
-                        )?;
-
-                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                            public_output_value,
-                            malicious_parties,
-                            private_output,
-                        })
-                    }
-                }
+                compute_imported_key_verification::<Secp256K1DWalletImportedKeyVerificationParty >(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    &public_input,
+                    &data,
+                    &mut rng,
+                )
             }
+            ProtocolCryptographicData::ImportedKeyVerification {
+                public_input:DWalletImportedKeyVerificationPublicInputByCurve::Secp256R1DWalletImportedKeyVerification(public_input),
+                data,
+                advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification(advance_request),
+                ..
+            } => {
+                compute_imported_key_verification::<Secp256R1DWalletImportedKeyVerificationParty >(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    &public_input,
+                    &data,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::ImportedKeyVerification {
+                public_input:DWalletImportedKeyVerificationPublicInputByCurve::Curve25519DWalletImportedKeyVerification(public_input),
+                data,
+                advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519DWalletImportedKeyVerification(advance_request),
+                ..
+            } => {
+                compute_imported_key_verification::<Curve25519DWalletImportedKeyVerificationParty >(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    &public_input,
+                    &data,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::ImportedKeyVerification {
+                public_input:DWalletImportedKeyVerificationPublicInputByCurve::RistrettoDWalletImportedKeyVerification(public_input),
+                data,
+                advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::RistrettoDWalletImportedKeyVerification(advance_request),
+                ..
+            } => {
+                compute_imported_key_verification::<RistrettoDWalletImportedKeyVerificationParty >(
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    &public_input,
+                    &data,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::ImportedKeyVerification { public_input, advance_request } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                    public_input.to_string(),
+                    advance_request.to_string(),
+                )),
             ProtocolCryptographicData::DKGFirst {
                 public_input,
                 advance_request,

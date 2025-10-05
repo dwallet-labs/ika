@@ -11,7 +11,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedEncryptedUserShare, VersionedImportedDWalletPublicOutput, VersionedNetworkEncryptionKeyPublicData,
-    VersionedPublicKeyShareAndProof,
+    VersionedPublicKeyShareAndProof, VersionedDWalletImportedKeyVerificationOutput,
 };
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -27,6 +27,9 @@ use mpc::{
 use std::collections::HashMap;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
+use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
+use crate::request_protocol_data::ImportedKeyVerificationData;
 
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
@@ -585,6 +588,64 @@ pub fn compute_dwallet_dkg<P: Protocol>(
                 bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
                     bcs::to_bytes(&decentralized_output)?,
                 ))?;
+
+            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                public_output_value,
+                malicious_parties,
+                private_output,
+            })
+        }
+    }
+}
+
+pub fn compute_imported_key_verification<P: Protocol>(
+    session_id: CommitmentSizedNumber,
+    party_id: PartyID,
+    access_structure: &WeightedThresholdAccessStructure,
+    advance_request: AdvanceRequest<<P::TrustedDealerDKGDecentralizedParty as Party>::Message>,
+    public_input: &<P::TrustedDealerDKGDecentralizedParty as Party>::PublicInput,
+    protocol_public_parameters: P::ProtocolPublicParameters,
+    data: &ImportedKeyVerificationData,
+    rng: &mut impl CsRng,
+) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+    let result = mpc::guaranteed_output_delivery::Party::<P::TrustedDealerDKGDecentralizedParty>::advance_with_guaranteed_output(
+        session_id,
+        party_id,
+        access_structure,
+        advance_request,
+        None,
+        public_input,
+        rng,
+    ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
+
+    match result {
+        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+        }
+        GuaranteedOutputDeliveryRoundResult::Finalize {
+            public_output_value,
+            malicious_parties,
+            private_output,
+        } => {
+            // Verify the encrypted share before finalizing, guaranteeing a two-for-one
+            // computation of both that the key import was successful, and
+            // the encrypted user share is valid.
+
+            // Determine the version based on the curve - for now, use V2 for all curves
+            // This can be made more sophisticated if needed
+            let versioned_output = VersionedDwalletDKGSecondRoundPublicOutput::V2(public_output_value.clone());
+
+            verify_encrypted_share(
+                &data.encrypted_centralized_secret_share_and_proof,
+                &bcs::to_bytes(&versioned_output)?,
+                &data.encryption_key,
+                protocol_public_parameters,
+            )?;
+
+            // Wrap the public output with its version.
+            let public_output_value = bcs::to_bytes(
+                &VersionedDWalletImportedKeyVerificationOutput::V1(public_output_value),
+            )?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
