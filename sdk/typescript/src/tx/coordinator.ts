@@ -187,6 +187,37 @@ export function requestDWalletDKG(
 	});
 }
 
+export function requestDWalletDKGWithPublicUserSecretKeyShare(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	dwalletNetworkEncryptionKeyId: string,
+	curve: number,
+	userPublicKeyShareAndProof: Uint8Array,
+	publicUserSecretKeyShare: Uint8Array,
+	userPublicOutput: Uint8Array,
+	sessionIdentifierObjID: string,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
+	tx: Transaction,
+): TransactionResult {
+	return tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg_with_public_user_secret_key_share`,
+		arguments: [
+			coordinatorObjectRef,
+			tx.pure.id(dwalletNetworkEncryptionKeyId),
+			tx.pure.u32(curve),
+			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicKeyShareAndProof)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(publicUserSecretKeyShare)),
+			// TODO (#1546): Add support for signing during DKG request
+			tx.pure(bcs.option(SignDuringDKGRequest).serialize(null)),
+			tx.object(sessionIdentifierObjID),
+			ikaCoin,
+			suiCoin,
+		],
+	});
+}
+
 export function processCheckpointMessageByQuorum(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
