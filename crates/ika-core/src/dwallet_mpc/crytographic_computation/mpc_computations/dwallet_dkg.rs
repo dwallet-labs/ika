@@ -21,7 +21,7 @@ use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
-    Secp256R1AsyncDKGProtocol,
+    Secp256R1AsyncDKGProtocol, SessionIdentifier,
 };
 use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
 use mpc::{
@@ -211,6 +211,7 @@ pub enum DWalletImportedKeyVerificationPublicInputByCurve {
 
 impl DWalletImportedKeyVerificationPublicInputByCurve {
     pub fn try_new(
+        session_identifier: CommitmentSizedNumber,
         curve: &DWalletCurve,
         encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         centralized_party_message: &[u8],
@@ -229,7 +230,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
 
                 let input = (
                     protocol_public_parameters.clone(),
-                    CommitmentSizedNumber::from_le_slice(&[0u8; 32]), // session_id placeholder
+                    session_identifier,
                     centralized_party_message,
                 )
                     .into();
@@ -249,7 +250,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
 
                 let input = (
                     protocol_public_parameters.clone(),
-                    CommitmentSizedNumber::from_le_slice(&[0u8; 32]), // session_id placeholder
+                    session_identifier,
                     centralized_party_message,
                 )
                     .into();
@@ -269,7 +270,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
 
                 let input = (
                     protocol_public_parameters.clone(),
-                    CommitmentSizedNumber::from_le_slice(&[0u8; 32]), // session_id placeholder
+                    session_identifier,
                     centralized_party_message,
                 )
                     .into();
@@ -289,7 +290,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
 
                 let input = (
                     protocol_public_parameters.clone(),
-                    CommitmentSizedNumber::from_le_slice(&[0u8; 32]), // session_id placeholder
+                    session_identifier,
                     centralized_party_message,
                 )
                     .into();

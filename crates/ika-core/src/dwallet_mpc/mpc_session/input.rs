@@ -109,6 +109,7 @@ pub(crate) fn session_input_from_request(
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
             let public_input = DWalletImportedKeyVerificationPublicInputByCurve::try_new(
+                session_id,
                 &data.curve,
                 encryption_key_public_data,
                 &centralized_party_message,

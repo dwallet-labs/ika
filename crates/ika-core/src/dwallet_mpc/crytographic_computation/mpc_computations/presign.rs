@@ -32,7 +32,7 @@ use tracing::{error, warn};
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
 
-pub(crate) type PresignParty<P: presign::Protocol> = <P as Protocol>::PresignParty;
+pub(crate) type PresignParty<P: Protocol> = <P as Protocol>::PresignParty;
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub(crate) enum PresignPublicInputByProtocol {
