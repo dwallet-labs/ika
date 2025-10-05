@@ -10,13 +10,7 @@ use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::request_protocol_data::ImportedKeyVerificationData;
 use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
-    VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare,
-    VersionedImportedDWalletPublicOutput, VersionedNetworkEncryptionKeyPublicData,
-    VersionedPublicKeyShareAndProof,
-};
+use dwallet_mpc_types::dwallet_mpc::{DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput, VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare, VersionedImportedDWalletPublicOutput, VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof};
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
@@ -31,6 +25,7 @@ use mpc::{
 use std::collections::HashMap;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use ika_protocol_config::ProtocolVersion;
 
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
@@ -640,6 +635,7 @@ pub fn compute_imported_key_verification<P: Protocol>(
     public_input: &<P::TrustedDealerDKGDecentralizedParty as Party>::PublicInput,
     protocol_public_parameters: ProtocolPublicParametersByCurve,
     data: &ImportedKeyVerificationData,
+    protocol_version: ProtocolVersion,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let result = mpc::guaranteed_output_delivery::Party::<P::TrustedDealerDKGDecentralizedParty>::advance_with_guaranteed_output(
@@ -661,29 +657,43 @@ pub fn compute_imported_key_verification<P: Protocol>(
             malicious_parties,
             private_output,
         } => {
+
+            // Wrap the public output with its version.
+            let versioned_output = match protocol_version.as_u64() {
+                1 => {
+                    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
+                    let decentralized_output = match decentralized_output {
+                        DKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
+                            output, ..
+                        } => output,
+                        DKGDecentralizedPartyVersionedOutputSecp256k1::TargetedPublicDKGOutput (
+                            output
+                        ) => output,
+                    };
+                        bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V1(
+                            bcs::to_bytes(&decentralized_output).unwrap(),
+                        ))?
+                }
+                2 => bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V2(public_output_value))?,
+                _ => {
+                    return Err(DwalletMPCError::UnsupportedProtocolVersion(
+                        protocol_version.as_u64(),
+                    ));
+                }
+            };
+
             // Verify the encrypted share before finalizing, guaranteeing a two-for-one
             // computation of both that the key import was successful, and
             // the encrypted user share is valid.
-
-            // Determine the version based on the curve - for now, use V2 for all curves
-            // This can be made more sophisticated if needed
-            let versioned_output =
-                VersionedDwalletDKGSecondRoundPublicOutput::V2(public_output_value.clone());
-
             verify_encrypted_share(
                 &data.encrypted_centralized_secret_share_and_proof,
-                &bcs::to_bytes(&versioned_output)?,
+                &versioned_output,
                 &data.encryption_key,
                 protocol_public_parameters,
             )?;
 
-            // Wrap the public output with its version.
-            let public_output_value = bcs::to_bytes(
-                &VersionedDWalletImportedKeyVerificationOutput::V1(public_output_value),
-            )?;
-
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                public_output_value,
+                public_output_value: versioned_output,
                 malicious_parties,
                 private_output,
             })

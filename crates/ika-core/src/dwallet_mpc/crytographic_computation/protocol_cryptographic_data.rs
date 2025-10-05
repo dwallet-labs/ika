@@ -31,6 +31,7 @@ pub enum ProtocolCryptographicData {
         data: ImportedKeyVerificationData,
         public_input: DWalletImportedKeyVerificationPublicInputByCurve,
         advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve,
+        protocol_version: ProtocolVersion,
     },
 
     MakeDWalletUserSecretKeySharesPublic {

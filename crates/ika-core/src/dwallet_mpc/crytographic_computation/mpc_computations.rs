@@ -104,6 +104,7 @@ impl ProtocolCryptographicData {
                     data: data.clone(),
                     public_input,
                     advance_request,
+                    protocol_version: *protocol_version,
                 }
             }
             ProtocolData::DWalletDKG { data, .. } => {
@@ -410,6 +411,7 @@ impl ProtocolCryptographicData {
                 public_input:DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(public_input),
                 data,
                 advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256K1DWalletImportedKeyVerification(advance_request),
+                protocol_version,
                 ..
             } => {
                 compute_imported_key_verification::<Secp256K1AsyncDKGProtocol>(
@@ -420,6 +422,7 @@ impl ProtocolCryptographicData {
                     &public_input.clone(),
                     ProtocolPublicParametersByCurve::Secp256k1(public_input.protocol_public_parameters),
                     &data,
+                    protocol_version,
                     &mut rng,
                 )
             }
@@ -427,6 +430,7 @@ impl ProtocolCryptographicData {
                 public_input:DWalletImportedKeyVerificationPublicInputByCurve::Secp256R1DWalletImportedKeyVerification(public_input),
                 data,
                 advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification(advance_request),
+                protocol_version,
                 ..
             } => {
                 compute_imported_key_verification::<Secp256R1AsyncDKGProtocol >(
@@ -437,6 +441,7 @@ impl ProtocolCryptographicData {
                     &public_input.clone(),
                     ProtocolPublicParametersByCurve::Secp256r1(public_input.protocol_public_parameters),
                     &data,
+                    protocol_version,
                     &mut rng,
                 )
             }
@@ -444,6 +449,7 @@ impl ProtocolCryptographicData {
                 public_input:DWalletImportedKeyVerificationPublicInputByCurve::Curve25519DWalletImportedKeyVerification(public_input),
                 data,
                 advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519DWalletImportedKeyVerification(advance_request),
+                protocol_version,
                 ..
             } => {
                 compute_imported_key_verification::<Curve25519AsyncDKGProtocol >(
@@ -454,6 +460,7 @@ impl ProtocolCryptographicData {
                     &public_input.clone(),
                     ProtocolPublicParametersByCurve::Curve25519(public_input.protocol_public_parameters),
                     &data,
+                    protocol_version,
                     &mut rng,
                 )
             }
@@ -461,6 +468,7 @@ impl ProtocolCryptographicData {
                 public_input:DWalletImportedKeyVerificationPublicInputByCurve::RistrettoDWalletImportedKeyVerification(public_input),
                 data,
                 advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::RistrettoDWalletImportedKeyVerification(advance_request),
+                protocol_version,
                 ..
             } => {
                 compute_imported_key_verification::<RistrettoAsyncDKGProtocol >(
@@ -471,6 +479,7 @@ impl ProtocolCryptographicData {
                     &public_input.clone(),
                     ProtocolPublicParametersByCurve::Ristretto(public_input.protocol_public_parameters),
                     &data,
+                    protocol_version,
                     &mut rng,
                 )
             }
