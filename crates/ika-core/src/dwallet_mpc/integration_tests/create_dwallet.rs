@@ -16,7 +16,7 @@ use dwallet_mpc_centralized_party::{
 };
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
-use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGOutput};
+use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGSecondRoundOutput};
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletImportedKeyVerificationRequestEvent,
@@ -80,7 +80,7 @@ async fn dwallet_dkg_first_round() {
 
 pub(crate) struct DWalletTestResult {
     pub(crate) flow_completion_consensus_round: Round,
-    pub(crate) dkg_second_round_output: DWalletDKGOutput,
+    pub(crate) dkg_second_round_output: DWalletDKGSecondRoundOutput,
     pub(crate) dwallet_secret_key_share: Vec<u8>,
     pub(crate) class_groups_encryption_key: Vec<u8>,
     pub(crate) class_groups_decryption_key: Vec<u8>,

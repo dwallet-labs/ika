@@ -35,12 +35,7 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::message::{
-    DKGFirstRoundOutput, DWalletCheckpointMessageKind, DWalletDKGOutput,
-    DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput, MPCNetworkDKGOutput,
-    MPCNetworkReconfigurationOutput, MakeDWalletUserSecretKeySharesPublicOutput,
-    PartialSignatureVerificationOutput, PresignOutput, SignOutput,
-};
+use ika_types::message::{DKGFirstRoundOutput, DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletDKGSecondRoundOutput, DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput, MPCNetworkDKGOutput, MPCNetworkReconfigurationOutput, MakeDWalletUserSecretKeySharesPublicOutput, PartialSignatureVerificationOutput, PresignOutput, SignOutput};
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
 use ika_types::sui::EpochStartSystem;
@@ -774,7 +769,10 @@ impl DWalletMPCService {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
                     output,
                     dwallet_id: dwallet_id.to_vec(),
-                    encrypted_secret_share_id: encrypted_secret_share_id.to_vec(),
+                    encrypted_secret_share_id: Some(encrypted_secret_share_id.to_vec()),
+                    // TODO (this pr)
+                    sign_id: None,
+                    signature: vec![],
                     rejected,
                     session_sequence_number: session_request.session_sequence_number,
                 });
@@ -797,7 +795,7 @@ impl DWalletMPCService {
                 ..
             } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(
-                    DWalletDKGOutput {
+                    DWalletDKGSecondRoundOutput {
                         output,
                         dwallet_id: dwallet_id.to_vec(),
                         encrypted_secret_share_id: encrypted_secret_share_id.to_vec(),
