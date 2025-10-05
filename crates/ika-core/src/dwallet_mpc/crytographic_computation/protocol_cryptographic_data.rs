@@ -2,7 +2,7 @@ use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::Pr
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationAdvanceRequestByCurve, DWalletImportedKeyVerificationPublicInputByCurve,
-    DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty,
+    Secp256K1DWalletDKGParty,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
@@ -178,7 +178,12 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => 1,
             ProtocolCryptographicData::ImportedKeyVerification {
                 advance_request, ..
-            } => advance_request.attempt_number,
+            } => match advance_request {
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256K1DWalletImportedKeyVerification(req) => req.attempt_number,
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification(req) => req.attempt_number,
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519DWalletImportedKeyVerification(req) => req.attempt_number,
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::RistrettoDWalletImportedKeyVerification(req) => req.attempt_number,
+            },
             ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
                 advance_request,
                 ..
@@ -291,7 +296,12 @@ impl ProtocolCryptographicData {
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::ImportedKeyVerification {
                 advance_request, ..
-            } => Some(advance_request.mpc_round_number),
+            } => match advance_request {
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256K1DWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519DWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::RistrettoDWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
+            },
             ProtocolCryptographicData::EncryptedShareVerification { .. }
             | ProtocolCryptographicData::PartialSignatureVerification { .. }
             | ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => None,

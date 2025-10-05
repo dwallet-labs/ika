@@ -30,7 +30,8 @@ use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
-pub(crate) type DWalletImportedKeyVerificationParty =
+
+pub(crate) type Secp256K1DWalletImportedKeyVerificationParty =
     <Secp256K1AsyncDKGProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
 pub(crate) type Secp256R1DWalletImportedKeyVerificationParty =
     <Secp256R1AsyncDKGProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
@@ -38,6 +39,7 @@ pub(crate) type Curve25519DWalletImportedKeyVerificationParty =
     <Curve25519AsyncDKGProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
 pub(crate) type RistrettoDWalletImportedKeyVerificationParty =
     <RistrettoAsyncDKGProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
+
 /// This struct represents the final round of the DKG protocol.
 pub(crate) type Secp256K1DWalletDKGParty =
     <Secp256K1AsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
@@ -51,7 +53,7 @@ pub(crate) type RistrettoDWalletDKGParty =
 #[derive(strum_macros::Display)]
 pub(crate) enum DWalletImportedKeyVerificationAdvanceRequestByCurve {
     #[strum(to_string = "dWallet Imported Key Verification Advance Request for curve Secp256k1")]
-    Secp256K1DWalletImportedKeyVerification(AdvanceRequest<<DWalletImportedKeyVerificationParty as mpc::Party>::Message>),
+    Secp256K1DWalletImportedKeyVerification(AdvanceRequest<<Secp256K1DWalletImportedKeyVerificationParty as mpc::Party>::Message>),
     #[strum(to_string = "dWallet Imported Key Verification Advance Request for curve Secp256r1")]
     Secp256R1DWalletImportedKeyVerification(AdvanceRequest<<Secp256R1DWalletImportedKeyVerificationParty as mpc::Party>::Message>),
     #[strum(to_string = "dWallet Imported Key Verification Advance Request for curve Curve25519")]
@@ -177,7 +179,7 @@ impl DWalletDKGAdvanceRequestByCurve {
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub enum DWalletImportedKeyVerificationPublicInputByCurve {
     #[strum(to_string = "dWallet Imported Key Verification Public Input for curve Secp256k1")]
-    Secp256K1DWalletImportedKeyVerification(<DWalletImportedKeyVerificationParty as Party>::PublicInput),
+    Secp256K1DWalletImportedKeyVerification(<Secp256K1DWalletImportedKeyVerificationParty as Party>::PublicInput),
     #[strum(to_string = "dWallet Imported Key Verification Public Input for curve Secp256r1")]
     Secp256R1DWalletImportedKeyVerification(<Secp256R1DWalletImportedKeyVerificationParty as Party>::PublicInput),
     #[strum(to_string = "dWallet Imported Key Verification Public Input for curve Curve25519")]

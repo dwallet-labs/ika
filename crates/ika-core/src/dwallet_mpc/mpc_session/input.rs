@@ -3,8 +3,8 @@
 
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGPublicInputByCurve, DWalletImportedKeyVerificationParty,
-    DWalletImportedKeyVerificationPublicInputByCurve, Secp256K1DWalletDKGParty, 
+    DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
+    DWalletImportedKeyVerificationPublicInputByCurve, Secp256K1DWalletDKGParty,
     dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
 };
 use crate::dwallet_mpc::network_dkg::{
@@ -25,10 +25,10 @@ use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty,
-    ReconfigurationV2Party, VersionedImportedDWalletPublicOutput,
+    ReconfigurationV2Party,
 };
 use group::PartyID;
-use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
+use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;

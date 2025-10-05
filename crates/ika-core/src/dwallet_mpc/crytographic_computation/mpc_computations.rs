@@ -6,7 +6,7 @@ use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::Pr
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationAdvanceRequestByCurve, DWalletImportedKeyVerificationPublicInputByCurve,
-    DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty, Secp256R1DWalletImportedKeyVerificationParty,
+    Secp256K1DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty, Secp256R1DWalletImportedKeyVerificationParty,
     Curve25519DWalletImportedKeyVerificationParty, RistrettoDWalletImportedKeyVerificationParty,
     compute_dwallet_dkg,
 };
@@ -86,23 +86,21 @@ impl ProtocolCryptographicData {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result =
-                    Party::<DWalletImportedKeyVerificationParty>::ready_to_advance(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        HashMap::new(),
-                        &serialized_messages_by_consensus_round,
-                    )?;
+                let advance_request = DWalletImportedKeyVerificationAdvanceRequestByCurve::try_new(
+                    &data.curve,
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    serialized_messages_by_consensus_round,
+                )?;
 
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
+                let Some(advance_request) = advance_request else {
                     return Ok(None);
                 };
 
                 ProtocolCryptographicData::ImportedKeyVerification {
                     data: data.clone(),
-                    public_input: public_input.clone(),
+                    public_input,
                     advance_request,
                 }
             }
@@ -412,18 +410,18 @@ impl ProtocolCryptographicData {
                 advance_request,
                 ..
             } => {
-                let result = match (&public_input, &advance_request) {
+                let result = match (public_input.clone(), advance_request) {
                     (
                         DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(public_input),
                         DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256K1DWalletImportedKeyVerification(advance_request),
                     ) => {
-                        Party::<DWalletImportedKeyVerificationParty>::advance_with_guaranteed_output(
+                        Party::<Secp256K1DWalletImportedKeyVerificationParty>::advance_with_guaranteed_output(
                             session_id,
                             party_id,
                             access_structure,
-                            advance_request.clone(),
+                            advance_request,
                             None,
-                            public_input,
+                            &public_input,
                             &mut rng,
                         )
                     }
@@ -435,9 +433,9 @@ impl ProtocolCryptographicData {
                             session_id,
                             party_id,
                             access_structure,
-                            advance_request.clone(),
+                            advance_request,
                             None,
-                            public_input,
+                            &public_input,
                             &mut rng,
                         )
                     }
@@ -449,9 +447,9 @@ impl ProtocolCryptographicData {
                             session_id,
                             party_id,
                             access_structure,
-                            advance_request.clone(),
+                            advance_request,
                             None,
-                            public_input,
+                            &public_input,
                             &mut rng,
                         )
                     }
@@ -463,9 +461,9 @@ impl ProtocolCryptographicData {
                             session_id,
                             party_id,
                             access_structure,
-                            advance_request.clone(),
+                            advance_request,
                             None,
-                            public_input,
+                            &public_input,
                             &mut rng,
                         )
                     }

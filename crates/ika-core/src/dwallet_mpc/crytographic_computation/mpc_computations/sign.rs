@@ -29,8 +29,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use twopc_mpc::{Protocol, sign};
 
-pub(crate) type SignParty<P: twopc_mpc::sign::Protocol> =
-    <P as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
+pub(crate) type SignParty<P: Protocol> =
+    <P as Protocol>::SignDecentralizedParty;
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub(crate) enum SignPublicInputByProtocol {
