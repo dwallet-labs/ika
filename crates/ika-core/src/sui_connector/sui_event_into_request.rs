@@ -14,6 +14,7 @@ use ika_types::messages_dwallet_mpc::{
     DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent,
     FutureSignRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent,
     PresignRequestEvent, SESSIONS_MANAGER_MODULE_NAME, SignRequestEvent,
+    UserSecretKeyShareEventType,
 };
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;
@@ -208,16 +209,31 @@ fn dwallet_dkg_session_request(
     deserialized_event: DWalletSessionEvent<DWalletDKGRequestEvent>,
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: dwallet_dkg_protocol_data(deserialized_event.event_data.clone())?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-        pulled,
-    })
+    if let UserSecretKeyShareEventType::Encrypted {
+        encrypted_user_secret_key_share_id,
+        encrypted_centralized_secret_share_and_proof,
+        encryption_key,
+        ..
+    } = &deserialized_event.event_data.user_secret_key_share
+    {
+        Ok(DWalletSessionRequest {
+            session_type: deserialized_event.session_type,
+            session_identifier: deserialized_event.session_identifier_digest(),
+            session_sequence_number: deserialized_event.session_sequence_number,
+            protocol_data: dwallet_dkg_protocol_data(
+                deserialized_event.event_data.clone(),
+                encrypted_centralized_secret_share_and_proof.clone(),
+                encryption_key.clone(),
+                encrypted_user_secret_key_share_id.clone(),
+            )?,
+            epoch: deserialized_event.epoch,
+            requires_network_key_data: true,
+            requires_next_active_committee: false,
+            pulled,
+        })
+    } else {
+        todo!("itay this pr")
+    }
 }
 
 fn dwallet_dkg_first_party_session_request(

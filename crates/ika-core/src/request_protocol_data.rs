@@ -232,19 +232,21 @@ pub fn dwallet_dkg_first_protocol_data(
 
 pub fn dwallet_dkg_protocol_data(
     request_event_data: DWalletDKGRequestEvent,
+    encrypted_centralized_secret_share_and_proof: Vec<u8>,
+    encryption_key: Vec<u8>,
+    encrypted_secret_share_id: ObjectID,
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::DWalletDKG {
         data: DWalletDKGData {
             curve: request_event_data.curve.try_into()?,
-            encrypted_centralized_secret_share_and_proof: request_event_data
-                .encrypted_centralized_secret_share_and_proof,
-            encryption_key: request_event_data.encryption_key,
+            encrypted_centralized_secret_share_and_proof,
+            encryption_key,
             centralized_public_key_share_and_proof: request_event_data
                 .centralized_public_key_share_and_proof,
         },
         dwallet_id: request_event_data.dwallet_id,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
-        encrypted_secret_share_id: request_event_data.encrypted_user_secret_key_share_id,
+        encrypted_secret_share_id,
     })
 }
 
