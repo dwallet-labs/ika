@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
+import * as TOML from '@iarna/toml';
 import { bcs } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
@@ -15,13 +16,44 @@ describe('Upgrade twopc_mpc Move package', () => {
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
 		await createIkaGenesis();
 		const signer = await getPublisherKeypair();
+		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+
 		const twopc_mpc_contracts_path = path.join(
 			TEST_ROOT_DIR,
 			'../../../../contracts/ika_dwallet_2pc_mpc',
 		);
-		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
-		const ikaClient = createTestIkaClient(suiClient);
-		await ikaClient.initialize();
+		const ika_twopc_move_toml = TOML.parse(
+			await fs.readFile(path.join(twopc_mpc_contracts_path, 'Move.toml'), 'utf8'),
+		);
+		ika_twopc_move_toml.addresses.ika = ikaClient.ikaConfig.packages.ikaPackage;
+		await fs.writeFile(
+			path.join(twopc_mpc_contracts_path, 'Move.toml'),
+			TOML.stringify(ika_twopc_move_toml),
+		);
+		const ikaMoveToml = TOML.parse(
+			await fs.readFile(path.join(TEST_ROOT_DIR, '../../../../contracts/ika/Move.toml'), 'utf8'),
+		);
+		ikaMoveToml.package['published-at'] = ikaClient.ikaConfig.packages.ikaPackage;
+		ikaMoveToml.addresses.ika = ikaClient.ikaConfig.packages.ikaPackage;
+		await fs.writeFile(
+			path.join(TEST_ROOT_DIR, '../../../../contracts/ika/Move.toml'),
+			TOML.stringify(ikaMoveToml),
+		);
+		const ikaCommonToml = TOML.parse(
+			await fs.readFile(
+				path.join(TEST_ROOT_DIR, '../../../../contracts/ika_common/Move.toml'),
+				'utf8',
+			),
+		);
+		ikaCommonToml.package['published-at'] = ikaClient.ikaConfig.packages.ikaCommonPackage;
+		ikaCommonToml.addresses.ika_common = ikaClient.ikaConfig.packages.ikaCommonPackage;
+		await fs.writeFile(
+			path.join(TEST_ROOT_DIR, '../../../../contracts/ika_common/Move.toml'),
+			TOML.stringify(ikaCommonToml),
+		);
+
 		const protocolCapID = await getProtocolCapID(
 			suiClient,
 			signer.getPublicKey().toSuiAddress(),
@@ -40,7 +72,7 @@ describe('Upgrade twopc_mpc Move package', () => {
 	});
 });
 
-async function getPublisherKeypair(): Promise<Ed25519Keypair> {
+export async function getPublisherKeypair(): Promise<Ed25519Keypair> {
 	let publisherMnemonicBytes = await fs.readFile(
 		`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/sui_config/publisher.seed`,
 	);
@@ -48,7 +80,7 @@ async function getPublisherKeypair(): Promise<Ed25519Keypair> {
 	return Ed25519Keypair.deriveKeypair(publisherMnemonic.trimEnd());
 }
 
-async function getProtocolCapID(
+export async function getProtocolCapID(
 	suiClient: SuiClient,
 	publisherAddress: string,
 	ikaClient: IkaClient,
@@ -64,7 +96,7 @@ async function getProtocolCapID(
 	return protocolCapID;
 }
 
-async function deployUpgradedPackage(
+export async function deployUpgradedPackage(
 	suiClient: SuiClient,
 	signer: Ed25519Keypair,
 	packagePath: string,
@@ -136,7 +168,7 @@ async function deployUpgradedPackage(
 	return result.effects.created.at(0).reference.objectId;
 }
 
-async function migrateCoordinator(
+export async function migrateCoordinator(
 	suiClient: SuiClient,
 	signer: Ed25519Keypair,
 	ikaClient: IkaClient,

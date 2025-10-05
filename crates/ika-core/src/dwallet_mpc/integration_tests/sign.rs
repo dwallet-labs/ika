@@ -14,6 +14,7 @@ use dwallet_mpc_centralized_party::{
 };
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureScheme};
 use group::HashType;
+use ika_protocol_config::ProtocolVersion;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
@@ -94,6 +95,7 @@ async fn sign() {
         dwallet_secret_share,
         presign_output.presign.clone(),
         message_to_sign.clone(),
+        0,
         0,
     )
     .unwrap();
@@ -188,6 +190,7 @@ async fn future_sign() {
         dwallet_secret_share,
         presign_output.presign.clone(),
         message_to_sign.clone(),
+        0,
         0,
     )
     .unwrap();

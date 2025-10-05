@@ -42,7 +42,9 @@ export interface NetworkEncryptionKey {
 	/** The epoch when this encryption key was created */
 	epoch: number;
 	/** The public output ID for this encryption key */
-	publicOutputID: string;
+	networkDKGOutputID: string;
+	/** The reconfiguration output ID associated with this encryption key */
+	reconfigurationOutputID: string | undefined;
 }
 
 /**
@@ -134,7 +136,11 @@ export const Curve = {
 export type Curve = (typeof Curve)[keyof typeof Curve];
 
 export const SignatureAlgorithm = {
-	ECDSA: 0,
+	ECDSASecp256k1: 0,
+	Taproot: 1,
+	ECDSASecp256r1: 2,
+	EdDSA: 3,
+	SchnorrkelSubstrate: 4,
 } as const;
 
 export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];
@@ -170,4 +176,5 @@ export type UserSignatureInputs = {
 	presign: Presign;
 	message: Uint8Array;
 	hash: Hash;
+	signatureScheme: SignatureAlgorithm;
 };

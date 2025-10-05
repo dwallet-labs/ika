@@ -210,6 +210,7 @@ where
                 ika_package_id: ObjectID::random(),
                 ika_common_package_id: ObjectID::random(),
                 ika_dwallet_2pc_mpc_package_id: ObjectID::random(),
+                ika_dwallet_2pc_mpc_package_id_v2: None,
                 ika_system_package_id: ObjectID::random(),
             },
             objects: IkaObjectsConfig {
@@ -550,14 +551,12 @@ where
     pub async fn query_events_by_module(
         &self,
         module: Identifier,
+        package_id: ObjectID,
         // cursor is exclusive
         cursor: Option<EventID>,
     ) -> IkaResult<Page<SuiEvent, EventID>> {
         let filter = EventFilter::MoveEventModule {
-            package: self
-                .ika_network_config
-                .packages
-                .ika_dwallet_2pc_mpc_package_id,
+            package: package_id,
             module: module.clone(),
         };
         let events = self
@@ -568,13 +567,7 @@ where
 
         // Safeguard check that all events are emitted from requested package and module
         assert!(events.data.iter().all(|event| {
-            event.type_.address.as_ref()
-                == self
-                    .ika_network_config
-                    .packages
-                    .ika_dwallet_2pc_mpc_package_id
-                    .as_ref()
-                && event.type_.module == module
+            event.type_.address.as_ref() == package_id.as_ref() && event.type_.module == module
         }));
         Ok(events)
     }

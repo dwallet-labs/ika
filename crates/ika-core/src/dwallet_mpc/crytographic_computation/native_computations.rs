@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::dwallet_mpc::make_dwallet_user_secret_key_shares_public::verify_secret_share;
@@ -11,7 +12,10 @@ use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::ProtocolData;
 use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::SessionIdentifier;
+use ika_types::messages_dwallet_mpc::{
+    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256K1ECDSAProtocol,
+    Secp256K1TaprootProtocol, Secp256R1ECDSAProtocol, SessionIdentifier,
+};
 use mpc::GuaranteedOutputDeliveryRoundResult;
 use std::sync::Arc;
 use tracing::error;
@@ -89,10 +93,62 @@ impl ProtocolCryptographicData {
             }
             ProtocolCryptographicData::PartialSignatureVerification {
                 data,
-                protocol_public_parameters,
+                protocol_public_parameters:
+                    ProtocolPublicParametersByCurve::Secp256k1(protocol_public_parameters),
                 ..
             } => {
-                verify_partial_signature(
+                verify_partial_signature::<Secp256K1ECDSAProtocol>(
+                    &data.message,
+                    &HashType::try_from(data.hash_type.clone() as u32)
+                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.dwallet_decentralized_output,
+                    &data.presign,
+                    &data.partially_signed_message,
+                    &protocol_public_parameters,
+                )?;
+                Vec::new()
+            }
+            ProtocolCryptographicData::PartialSignatureVerification {
+                data,
+                protocol_public_parameters:
+                    ProtocolPublicParametersByCurve::Secp256r1(protocol_public_parameters),
+                ..
+            } => {
+                verify_partial_signature::<Secp256R1ECDSAProtocol>(
+                    &data.message,
+                    &HashType::try_from(data.hash_type.clone() as u32)
+                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.dwallet_decentralized_output,
+                    &data.presign,
+                    &data.partially_signed_message,
+                    &protocol_public_parameters,
+                )?;
+                Vec::new()
+            }
+            ProtocolCryptographicData::PartialSignatureVerification {
+                data,
+                protocol_public_parameters:
+                    ProtocolPublicParametersByCurve::Curve25519(protocol_public_parameters),
+                ..
+            } => {
+                verify_partial_signature::<Curve25519EdDSAProtocol>(
+                    &data.message,
+                    &HashType::try_from(data.hash_type.clone() as u32)
+                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.dwallet_decentralized_output,
+                    &data.presign,
+                    &data.partially_signed_message,
+                    &protocol_public_parameters,
+                )?;
+                Vec::new()
+            }
+            ProtocolCryptographicData::PartialSignatureVerification {
+                data,
+                protocol_public_parameters:
+                    ProtocolPublicParametersByCurve::Ristretto(protocol_public_parameters),
+                ..
+            } => {
+                verify_partial_signature::<RistrettoSchnorrkelSubstrateProtocol>(
                     &data.message,
                     &HashType::try_from(data.hash_type.clone() as u32)
                         .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
@@ -109,9 +165,9 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 match verify_secret_share(
-                    protocol_public_parameters.clone(),
                     data.public_user_secret_key_shares.clone(),
                     data.dwallet_decentralized_output.clone(),
+                    protocol_public_parameters.clone(),
                 ) {
                     Ok(..) => data.public_user_secret_key_shares.clone(),
                     Err(err) => {

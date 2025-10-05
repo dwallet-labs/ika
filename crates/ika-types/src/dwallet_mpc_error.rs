@@ -1,5 +1,7 @@
 use crate::messages_dwallet_mpc::SessionIdentifier;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DwalletNetworkMPCError};
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, DWalletSignatureScheme, DwalletNetworkMPCError,
+};
 use group::PartyID;
 use sui_types::base_types::{EpochId, ObjectID};
 
@@ -83,8 +85,11 @@ pub enum DwalletMPCError {
     #[error("failed to lock the mutex")]
     LockError,
 
-    #[error("verification of the encrypted user share failed")]
-    EncryptedUserShareVerificationFailed,
+    #[error("verification of the encrypted user share failed: {0}")]
+    EncryptedUserShareVerificationFailed(String),
+
+    #[error("verification of the secret share failed: {0}")]
+    SecretShareVerificationFailed(String),
 
     #[error("the sent public key does not match the sender's address")]
     EncryptedUserSharePublicKeyDoesNotMatchAddress,
@@ -195,6 +200,14 @@ pub enum DwalletMPCError {
 
     #[error("dWallet DKG parameters missmatch: curve {0}, advance request {1}")]
     MPCParametersMissmatchInputToRequest(String, String),
+
+    #[error("dWallet curve and protocol mismatch: curve {curve:?}, protocol {protocol:?}")]
+    CurveToProtocolMismatch {
+        curve: DWalletCurve,
+        protocol: DWalletSignatureScheme,
+    },
+    #[error("unsupported protocol version: {0}")]
+    UnsupportedProtocolVersion(u64),
 }
 
 /// A wrapper type for the result of a runtime operation.
