@@ -26,7 +26,7 @@ use mpc::{
     WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
-use twopc_mpc::dkg::Protocol;
+use twopc_mpc::dkg::{CentralizedPartyKeyShareVerification, Protocol};
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
 /// This struct represents the initial round of the DKG protocol.
@@ -325,8 +325,8 @@ impl DWalletDKGSecondPartyPublicInputGenerator for Secp256K1DWalletDKGParty {
 
                 let input: Self::PublicInput = (
                     protocol_public_parameters_with_dkg_centralized_output,
-                    session_id,
                     centralized_party_public_key_share,
+                    CentralizedPartyKeyShareVerification::None
                 )
                     .into();
 
