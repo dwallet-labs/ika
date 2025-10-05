@@ -247,7 +247,7 @@ pub type ClassGroupsPublicKeyAndProofBytes = Vec<u8>;
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedDWalletImportedKeyVerificationOutput {
     V1(MPCPublicOutput),
-    V2(Vec<u8>),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

@@ -10,8 +10,16 @@ use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::request_protocol_data::ImportedKeyVerificationData;
 use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput, VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare, VersionedImportedDWalletPublicOutput, VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof};
+use dwallet_mpc_types::dwallet_mpc::{
+    DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletCurve,
+    NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
+    VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
+    VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare,
+    VersionedImportedDWalletPublicOutput, VersionedNetworkEncryptionKeyPublicData,
+    VersionedPublicKeyShareAndProof,
+};
 use group::{CsRng, PartyID};
+use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
@@ -25,7 +33,6 @@ use mpc::{
 use std::collections::HashMap;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
-use ika_protocol_config::ProtocolVersion;
 
 /// This struct represents the initial round of the DKG protocol.
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
@@ -657,7 +664,6 @@ pub fn compute_imported_key_verification<P: Protocol>(
             malicious_parties,
             private_output,
         } => {
-
             // Wrap the public output with its version.
             let versioned_output = match protocol_version.as_u64() {
                 1 => {
@@ -670,11 +676,13 @@ pub fn compute_imported_key_verification<P: Protocol>(
                             output
                         ) => output,
                     };
-                        bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V1(
-                            bcs::to_bytes(&decentralized_output).unwrap(),
-                        ))?
+                    bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V1(
+                        bcs::to_bytes(&decentralized_output).unwrap(),
+                    ))?
                 }
-                2 => bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V2(public_output_value))?,
+                2 => bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V2(
+                    public_output_value,
+                ))?,
                 _ => {
                     return Err(DwalletMPCError::UnsupportedProtocolVersion(
                         protocol_version.as_u64(),
