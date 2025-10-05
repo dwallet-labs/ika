@@ -759,7 +759,7 @@ pub fn verify_secret_share(
 
     let secret_share: VersionedDwalletUserSecretShare = bcs::from_bytes(&secret_share)?;
     Ok(
-        <twopc_mpc::secp256k1::class_groups::ECDSAProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_secret_key_share(
+        <twopc_mpc::secp256k1::class_groups::ECDSAProtocol as twopc_mpc::dkg::Protocol>::verify_centralized_party_public_key_share(
             &protocol_public_params,
             decentralized_dkg_output,
             match secret_share {
