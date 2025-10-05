@@ -129,7 +129,11 @@ describe('Shared DWallet (make shares public)', () => {
 
 		await requestTestFaucetFunds(signerAddress);
 
-		const { dWallet: activeDWallet, encryptedUserSecretKeyShare } = await createCompleteDWalletV2(ikaClient, suiClient, testName);
+		const { dWallet: activeDWallet, encryptedUserSecretKeyShare } = await createCompleteDWalletV2(
+			ikaClient,
+			suiClient,
+			testName,
+		);
 
 		const { secretShare } = await userShareEncryptionKeys.decryptUserShare(
 			activeDWallet,
