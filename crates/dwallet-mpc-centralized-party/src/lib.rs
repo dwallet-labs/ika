@@ -60,7 +60,7 @@ type RistrettoDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
 
 type DKGCentralizedParty =
     <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
-type SignCentralizedParty =
+type SignCentralizedPartyV1 =
     <Secp256K1DKGProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 type DKGDecentralizedOutput =
     <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
@@ -410,7 +410,7 @@ pub fn advance_centralized_sign_party(
                     bcs::from_bytes(&protocol_pp)?,
                 ));
 
-            let round_result = SignCentralizedParty::advance(
+            let round_result = SignCentralizedPartyV1::advance(
                 (),
                 &bcs::from_bytes(&centralized_party_secret_key_share)?,
                 &centralized_party_public_input,
@@ -508,7 +508,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
             bcs::from_bytes(&protocol_pp)?,
         ));
 
-    let round_result = SignCentralizedPartyV2::<P>::advance(
+    let round_result = SignCentralizedParty::<P>::advance(
         (),
         &bcs::from_bytes(&centralized_party_secret_key_share)?,
         &centralized_party_public_input,
@@ -526,7 +526,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     Ok(signed_message)
 }
 
-pub(crate) type SignCentralizedPartyV2<P: twopc_mpc::sign::Protocol> =
+pub(crate) type SignCentralizedParty<P: twopc_mpc::sign::Protocol> =
     <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
 pub fn sample_dwallet_keypair_inner(protocol_pp: Vec<u8>) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
