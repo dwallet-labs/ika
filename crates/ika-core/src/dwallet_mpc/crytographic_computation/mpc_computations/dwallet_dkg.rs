@@ -604,7 +604,7 @@ pub fn compute_imported_key_verification<P: Protocol>(
     access_structure: &WeightedThresholdAccessStructure,
     advance_request: AdvanceRequest<<P::TrustedDealerDKGDecentralizedParty as Party>::Message>,
     public_input: &<P::TrustedDealerDKGDecentralizedParty as Party>::PublicInput,
-    protocol_public_parameters: P::ProtocolPublicParameters,
+    protocol_public_parameters: ProtocolPublicParametersByCurve,
     data: &ImportedKeyVerificationData,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {

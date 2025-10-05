@@ -410,12 +410,13 @@ impl ProtocolCryptographicData {
                 advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256K1DWalletImportedKeyVerification(advance_request),
                 ..
             } => {
-                compute_imported_key_verification::<Secp256K1DWalletImportedKeyVerificationParty >(
+                compute_imported_key_verification::<Secp256K1AsyncDKGProtocol>(
                     session_id,
                     party_id,
                     access_structure,
                     advance_request,
-                    &public_input,
+                    &public_input.clone(),
+                    ProtocolPublicParametersByCurve::Secp256k1(public_input.protocol_public_parameters),
                     &data,
                     &mut rng,
                 )
@@ -426,12 +427,13 @@ impl ProtocolCryptographicData {
                 advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification(advance_request),
                 ..
             } => {
-                compute_imported_key_verification::<Secp256R1DWalletImportedKeyVerificationParty >(
+                compute_imported_key_verification::<Secp256R1AsyncDKGProtocol >(
                     session_id,
                     party_id,
                     access_structure,
                     advance_request,
-                    &public_input,
+                    &public_input.clone(),
+                    ProtocolPublicParametersByCurve::Secp256r1(public_input.protocol_public_parameters),
                     &data,
                     &mut rng,
                 )
@@ -442,12 +444,13 @@ impl ProtocolCryptographicData {
                 advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519DWalletImportedKeyVerification(advance_request),
                 ..
             } => {
-                compute_imported_key_verification::<Curve25519DWalletImportedKeyVerificationParty >(
+                compute_imported_key_verification::<Curve25519AsyncDKGProtocol >(
                     session_id,
                     party_id,
                     access_structure,
                     advance_request,
-                    &public_input,
+                    &public_input.clone(),
+                    ProtocolPublicParametersByCurve::Curve25519(public_input.protocol_public_parameters),
                     &data,
                     &mut rng,
                 )
@@ -458,17 +461,18 @@ impl ProtocolCryptographicData {
                 advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve::RistrettoDWalletImportedKeyVerification(advance_request),
                 ..
             } => {
-                compute_imported_key_verification::<RistrettoDWalletImportedKeyVerificationParty >(
+                compute_imported_key_verification::<RistrettoAsyncDKGProtocol >(
                     session_id,
                     party_id,
                     access_structure,
                     advance_request,
-                    &public_input,
+                    &public_input.clone(),
+                    ProtocolPublicParametersByCurve::Ristretto(public_input.protocol_public_parameters),
                     &data,
                     &mut rng,
                 )
             }
-            ProtocolCryptographicData::ImportedKeyVerification { public_input, advance_request } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+            ProtocolCryptographicData::ImportedKeyVerification { public_input, advance_request, .. } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
                     public_input.to_string(),
                     advance_request.to_string(),
                 )),
