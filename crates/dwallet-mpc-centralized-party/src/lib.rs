@@ -429,7 +429,7 @@ pub fn advance_centralized_sign_party(
                 DWalletSignatureScheme::ECDSASecp256k1 => {
                     advance_sign_by_protocol::<Secp256K1ECDSAProtocol>(
                         &centralized_party_secret_key_share,
-                        &bcs::to_bytes(&VersionedPresignOutput::V2(presign))?,
+                        &presign,
                         message,
                         hash_type,
                         &decentralized_party_dkg_public_output,
