@@ -96,7 +96,7 @@ pub(crate) fn session_input_from_request(
                     &data.curve,
                     encryption_key_public_data,
                     &data.centralized_public_key_share_and_proof,
-                    session_id.clone()
+                    session_id.clone(),
                 )?),
                 None,
             ))
