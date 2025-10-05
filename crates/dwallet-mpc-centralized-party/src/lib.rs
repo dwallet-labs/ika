@@ -487,7 +487,9 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
 ) -> anyhow::Result<Vec<u8>> {
     let decentralized_dkg_output = match bcs::from_bytes(&decentralized_party_dkg_public_output)? {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-            unreachable!()
+            let versioned_output: P::DecentralizedPartyDKGOutput = bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?
+                .into();
+            versioned_output.into()
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
             bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?.into()
