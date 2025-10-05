@@ -547,18 +547,14 @@ pub enum UserSecretKeyShareEventType {
 /// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletDKGFirstRoundRequestEvent`.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
 pub struct DWalletDKGRequestEvent {
-    pub encrypted_user_secret_key_share_id: ObjectID,
     pub dwallet_id: ObjectID,
     pub centralized_public_key_share_and_proof: Vec<u8>,
-    pub dwallet_cap_id: ObjectID,
-    pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
-    pub encryption_key: Vec<u8>,
-    pub encryption_key_id: ObjectID,
-    pub encryption_key_address: SuiAddress,
     pub user_public_output: Vec<u8>,
-    pub signer_public_key: Vec<u8>,
+    pub dwallet_cap_id: ObjectID,
     pub dwallet_network_encryption_key_id: ObjectID,
     pub curve: u32,
+    pub user_secret_key_share: UserSecretKeyShareEventType,
+    pub sign_during_dkg_request: Option<SignDuringDKGRequestEvent>,
 }
 
 impl DWalletSessionEventTrait for DWalletDKGFirstRoundRequestEvent {
