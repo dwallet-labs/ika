@@ -123,7 +123,6 @@ impl DWalletDKGPublicInputByCurve {
         curve: &DWalletCurve,
         encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
-        session_id: CommitmentSizedNumber,
     ) -> DwalletMPCResult<Self> {
         let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
             bcs::from_bytes(centralized_party_public_key_share_buf)
