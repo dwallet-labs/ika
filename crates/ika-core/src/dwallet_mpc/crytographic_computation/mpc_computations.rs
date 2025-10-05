@@ -733,45 +733,16 @@ impl ProtocolCryptographicData {
                     // Todo (#1408): Return update_expected_decrypters_metrics
                 }
 
-                let result = compute_sign::<Secp256K1ECDSAProtocol>(
+                compute_sign::<Secp256K1ECDSAProtocol>(
                     party_id,
                     access_structure,
                     session_id,
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
+                    &data,
                     &mut rng,
-                )?;
-
-                match result {
-                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-                    }
-                    GuaranteedOutputDeliveryRoundResult::Finalize {
-                        public_output_value,
-                        malicious_parties,
-                        private_output,
-                    } => {
-                        let parsed_signature_result: DwalletMPCResult<Vec<u8>> =
-                            parse_signature_from_sign_output(&data, public_output_value);
-                        if parsed_signature_result.is_err() {
-                            error!(
-                                session_identifier=?session_identifier,
-                                ?parsed_signature_result,
-                                ?malicious_parties,
-                                signature_algorithm=?data.signature_algorithm,
-                                should_never_happen = true,
-                                "failed to deserialize sign session result"
-                            );
-                            return Err(parsed_signature_result.err().unwrap());
-                        }
-                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                            public_output_value: parsed_signature_result.unwrap(),
-                            malicious_parties,
-                            private_output,
-                        })
-                    }
-                }
+                )
             }
             ProtocolCryptographicData::Sign {
                 public_input: SignPublicInputByProtocol::Secp256k1Taproot(public_input),
