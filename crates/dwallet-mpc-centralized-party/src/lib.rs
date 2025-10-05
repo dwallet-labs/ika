@@ -438,7 +438,7 @@ pub fn advance_centralized_sign_party(
                 }
                 DWalletSignatureScheme::Taproot => advance_sign_by_protocol::<TaprootProtocol>(
                     &centralized_party_secret_key_share,
-                    &bcs::to_bytes(&VersionedPresignOutput::V2(presign))?,
+                    &presign,
                     message,
                     hash_type,
                     &decentralized_party_dkg_public_output,
@@ -447,7 +447,7 @@ pub fn advance_centralized_sign_party(
                 DWalletSignatureScheme::ECDSASecp256r1 => {
                     advance_sign_by_protocol::<Secp256R1DKGProtocol>(
                         &centralized_party_secret_key_share,
-                        &bcs::to_bytes(&VersionedPresignOutput::V2(presign))?,
+                        &presign,
                         message,
                         hash_type,
                         &decentralized_party_dkg_public_output,
@@ -456,7 +456,7 @@ pub fn advance_centralized_sign_party(
                 }
                 DWalletSignatureScheme::EdDSA => advance_sign_by_protocol::<Curve25519DKGProtocol>(
                     &centralized_party_secret_key_share,
-                    &bcs::to_bytes(&VersionedPresignOutput::V2(presign))?,
+                    &presign,
                     message,
                     hash_type,
                     &decentralized_party_dkg_public_output,
@@ -465,7 +465,7 @@ pub fn advance_centralized_sign_party(
                 DWalletSignatureScheme::SchnorrkelSubstrate => {
                     advance_sign_by_protocol::<RistrettoDKGProtocol>(
                         &centralized_party_secret_key_share,
-                        &bcs::to_bytes(&VersionedPresignOutput::V2(presign))?,
+                        &presign,
                         message,
                         hash_type,
                         &decentralized_party_dkg_public_output,
