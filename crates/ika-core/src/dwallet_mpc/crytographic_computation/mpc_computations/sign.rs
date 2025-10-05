@@ -404,9 +404,6 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
             VersionedUserSignedMessage::V1(centralized_signed_message) => {
                 centralized_signed_message
             }
-            VersionedUserSignedMessage::V2(centralized_signed_message) => {
-                centralized_signed_message
-            }
         };
 
         let public_input = <SignParty<P> as Party>::PublicInput::from((
@@ -458,7 +455,6 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     };
     let partially_signed_message = match partially_signed_message {
         VersionedUserSignedMessage::V1(partially_signed_message) => partially_signed_message,
-        VersionedUserSignedMessage::V2(partially_signed_message) => partially_signed_message,
     };
     let presign: <P as twopc_mpc::presign::Protocol>::Presign = bcs::from_bytes(&presign)?;
     let partial: <P as twopc_mpc::sign::Protocol>::SignMessage =
