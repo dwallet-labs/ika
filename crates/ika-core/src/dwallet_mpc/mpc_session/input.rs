@@ -32,6 +32,7 @@ use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
 use std::collections::HashMap;
+use twopc_mpc::dkg::CentralizedPartyKeyShareVerification;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -121,6 +122,7 @@ pub(crate) fn session_input_from_request(
                 protocol_public_parameters,
                 session_id,
                 bcs::from_bytes(&centralized_party_message)?,
+                CentralizedPartyKeyShareVerification::None,
             )
                 .into();
 
