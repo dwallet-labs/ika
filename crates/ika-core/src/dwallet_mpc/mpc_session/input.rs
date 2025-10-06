@@ -3,8 +3,9 @@
 
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
-    DWalletDKGFirstParty, DWalletDKGPublicInputByCurve, DWalletImportedKeyVerificationParty,
-    Secp256K1DWalletDKGParty, dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
+    BytesCentralizedPartyKeyShareVerification, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
+    DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty, dwallet_dkg_first_public_input,
+    dwallet_dkg_second_public_input,
 };
 use crate::dwallet_mpc::network_dkg::{
     DwalletMPCNetworkKeys, network_dkg_v1_public_input, network_dkg_v2_public_input,
@@ -84,7 +85,7 @@ pub(crate) fn session_input_from_request(
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
     match &request.protocol_data {
-        ProtocolData::DWalletDKG {
+        ProtocolData::DWalletDKGWithEncryptedShare {
             dwallet_network_encryption_key_id,
             data,
             ..
@@ -97,6 +98,34 @@ pub(crate) fn session_input_from_request(
                     &data.curve,
                     encryption_key_public_data,
                     &data.centralized_public_key_share_and_proof,
+                    BytesCentralizedPartyKeyShareVerification::Encrypted {
+                        encryption_key: data.encryption_key.clone(),
+                        encrypted_secret_key_share_message: data
+                            .encrypted_centralized_secret_share_and_proof
+                            .clone(),
+                    },
+                )?),
+                None,
+            ))
+        }
+        ProtocolData::DWalletDKGWithPublicShare {
+            dwallet_network_encryption_key_id,
+            data,
+            ..
+        } => {
+            let encryption_key_public_data = network_keys
+                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
+
+            Ok((
+                PublicInput::DWalletDKG(DWalletDKGPublicInputByCurve::try_new(
+                    &data.curve,
+                    encryption_key_public_data,
+                    &data.centralized_public_key_share_and_proof,
+                    BytesCentralizedPartyKeyShareVerification::Public {
+                        centralized_party_secret_key_share: data
+                            .public_user_secret_key_share
+                            .clone(),
+                    },
                 )?),
                 None,
             ))

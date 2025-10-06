@@ -54,6 +54,15 @@ pub struct DWalletDKGData {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
+#[display("dWallet DKG Second Round")]
+pub struct DWalletDKGWithPublicShareData {
+    pub curve: DWalletCurve,
+    pub public_user_secret_key_share: Vec<u8>,
+    pub dwallet_centralized_public_output: SerializedWrappedMPCPublicOutput,
+    pub centralized_public_key_share_and_proof: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Presign")]
 pub struct PresignData {
     pub curve: DWalletCurve,
@@ -127,11 +136,16 @@ pub enum ProtocolData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
-    DWalletDKG {
+    DWalletDKGWithEncryptedShare {
         data: DWalletDKGData,
         dwallet_id: ObjectID,
         dwallet_network_encryption_key_id: ObjectID,
         encrypted_secret_share_id: ObjectID,
+    },
+    DWalletDKGWithPublicShare {
+        data: DWalletDKGWithPublicShareData,
+        dwallet_id: ObjectID,
+        dwallet_network_encryption_key_id: ObjectID,
     },
 
     DKGSecond {
@@ -236,7 +250,7 @@ pub fn dwallet_dkg_protocol_data(
     encryption_key: Vec<u8>,
     encrypted_secret_share_id: ObjectID,
 ) -> DwalletMPCResult<ProtocolData> {
-    Ok(ProtocolData::DWalletDKG {
+    Ok(ProtocolData::DWalletDKGWithEncryptedShare {
         data: DWalletDKGData {
             curve: request_event_data.curve.try_into()?,
             encrypted_centralized_secret_share_and_proof,
@@ -361,11 +375,14 @@ pub fn partial_signature_verification_protocol_data(
 impl ProtocolData {
     pub fn network_encryption_key_id(&self) -> Option<ObjectID> {
         match self {
-            ProtocolData::DWalletDKG {
+            ProtocolData::DWalletDKGWithEncryptedShare {
                 dwallet_network_encryption_key_id,
                 ..
-            }
-            | ProtocolData::DKGFirst {
+            } |
+            ProtocolData::DWalletDKGWithPublicShare {
+                dwallet_network_encryption_key_id,
+                ..
+            } | ProtocolData::DKGFirst {
                 dwallet_network_encryption_key_id,
                 ..
             }

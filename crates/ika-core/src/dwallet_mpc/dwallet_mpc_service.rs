@@ -767,7 +767,7 @@ impl DWalletMPCService {
             "Creating session output message for checkpoint"
         );
         match &session_request.protocol_data {
-            ProtocolData::DWalletDKG {
+            ProtocolData::DWalletDKGWithEncryptedShare {
                 dwallet_id,
                 encrypted_secret_share_id,
                 ..
@@ -776,7 +776,21 @@ impl DWalletMPCService {
                     output,
                     dwallet_id: dwallet_id.to_vec(),
                     encrypted_secret_share_id: Some(encrypted_secret_share_id.to_vec()),
-                    // TODO (this pr)
+                    sign_id: None,
+                    signature: vec![],
+                    rejected,
+                    session_sequence_number: session_request.session_sequence_number,
+                });
+                vec![tx]
+            }
+            ProtocolData::DWalletDKGWithPublicShare {
+                dwallet_id,
+                ..
+            } => {
+                let tx = DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
+                    output,
+                    dwallet_id: dwallet_id.to_vec(),
+                    encrypted_secret_share_id: None,
                     sign_id: None,
                     signature: vec![],
                     rejected,

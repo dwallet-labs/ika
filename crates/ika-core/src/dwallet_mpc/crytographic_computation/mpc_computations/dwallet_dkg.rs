@@ -26,6 +26,7 @@ use mpc::{
     WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
+use serde::Serialize;
 use twopc_mpc::dkg::{CentralizedPartyKeyShareVerification, Protocol};
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
@@ -118,11 +119,70 @@ pub enum DWalletDKGPublicInputByCurve {
     RistrettoDWalletDKG(<RistrettoDWalletDKGParty as Party>::PublicInput),
 }
 
+/// Defines the verification method to be performed (if any)
+/// on the centralized party's (a.k.a. the "user") key share
+/// by the decentralized party (a.k.a. the "network".)
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum BytesCentralizedPartyKeyShareVerification {
+    /// Used in the "encrypted user-share" feature,
+    /// in which the centralized party (a.k.a. the "user") encrypts its secret key share under its own key,
+    /// which is verified & store it as backup by the decentralized party (a.k.a. the "network".)
+    Encrypted {
+        encryption_key: Vec<u8>,
+        encrypted_secret_key_share_message: Vec<u8>,
+    },
+    /// Used in the "public user-share" feature, in which the centralized party (a.k.a. the "user")
+    /// publishes its secret key share so that anyone can emulate it.
+    Public {
+        centralized_party_secret_key_share: Vec<u8>,
+    },
+    /// No verification: the centralized party (a.k.a. the "user") is
+    /// in sole-responsibility for the self-custody of its share.
+    None,
+}
+
+impl <
+    CentralizedPartySecretKeyShare,
+    EncryptionKey,
+    EncryptedSecretKeyShareMessage,
+> From<BytesCentralizedPartyKeyShareVerification>
+    for CentralizedPartyKeyShareVerification<
+    CentralizedPartySecretKeyShare,
+    EncryptionKey,
+    EncryptedSecretKeyShareMessage,
+> where
+    CentralizedPartySecretKeyShare: serde::de::DeserializeOwned,
+    EncryptionKey: serde::de::DeserializeOwned,
+    EncryptedSecretKeyShareMessage: serde::de::DeserializeOwned,
+{
+    fn from(value: BytesCentralizedPartyKeyShareVerification) -> Self {
+        match value {
+            BytesCentralizedPartyKeyShareVerification::Encrypted {
+                encryption_key,
+                encrypted_secret_key_share_message,
+            } => CentralizedPartyKeyShareVerification::Encrypted {
+                encryption_key: bcs::from_bytes(&encryption_key).unwrap(),
+                encrypted_secret_key_share_message,
+            },
+            BytesCentralizedPartyKeyShareVerification::Public {
+                centralized_party_secret_key_share,
+            } => CentralizedPartyKeyShareVerification::Public {
+                centralized_party_secret_key_share: bcs::from_bytes(
+                    &centralized_party_secret_key_share,
+                )
+                .unwrap(),
+            },
+            BytesCentralizedPartyKeyShareVerification::None => CentralizedPartyKeyShareVerification::None,
+        }
+    }
+}
+
 impl DWalletDKGPublicInputByCurve {
     pub fn try_new(
         curve: &DWalletCurve,
         encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
+        centralized_party_key_share_verification: BytesCentralizedPartyKeyShareVerification,
     ) -> DwalletMPCResult<Self> {
         let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
             bcs::from_bytes(centralized_party_public_key_share_buf)
@@ -139,7 +199,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.secp256k1_protocol_public_parameters(),
                     centralized_party_public_key_share,
-                    CentralizedPartyKeyShareVerification::None,
+                    centralized_party_key_share_verification.into(),
                 )
                     .into();
 
@@ -155,7 +215,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.secp256r1_protocol_public_parameters()?,
                     centralized_party_public_key_share,
-                    CentralizedPartyKeyShareVerification::None,
+                    centralized_party_key_share_verification.into(),
                 )
                     .into();
 
@@ -171,7 +231,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.curve25519_protocol_public_parameters()?,
                     centralized_party_public_key_share,
-                    CentralizedPartyKeyShareVerification::None,
+                    centralized_party_key_share_verification.into(),
                 )
                     .into();
 
@@ -187,7 +247,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.ristretto_protocol_public_parameters()?,
                     centralized_party_public_key_share,
-                    CentralizedPartyKeyShareVerification::None,
+                    centralized_party_key_share_verification.into(),
                 )
                     .into();
 
