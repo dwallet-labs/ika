@@ -205,6 +205,7 @@ pub fn create_sign_centralized_party_message(
     presign: Vec<u8>,
     message: Vec<u8>,
     hash_type: u32,
+    signature_scheme: u32,
 ) -> Result<JsValue, JsError> {
     let signed_message = advance_centralized_sign_party(
         protocol_pp,
@@ -213,6 +214,7 @@ pub fn create_sign_centralized_party_message(
         presign,
         message,
         hash_type,
+        signature_scheme,
     )
     .map_err(|e| JsError::new(&e.to_string()))?;
 

@@ -6,7 +6,9 @@
 //! It integrates the Sign party (representing a round in the protocol).
 
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::parse_signature_from_sign_output;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
+use crate::request_protocol_data::SignData;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DWalletCurve, DWalletSignatureScheme,
@@ -27,6 +29,7 @@ use mpc::{GuaranteedOutputDeliveryRoundResult, Party, Weight, WeightedThresholdA
 use rand_core::SeedableRng;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tracing::error;
 use twopc_mpc::{Protocol, sign};
 
 pub(crate) type SignParty<P: Protocol> = <P as Protocol>::SignDecentralizedParty;
@@ -403,9 +406,6 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
             VersionedUserSignedMessage::V1(centralized_signed_message) => {
                 centralized_signed_message
             }
-            VersionedUserSignedMessage::V2(centralized_signed_message) => {
-                centralized_signed_message
-            }
         };
 
         let public_input = <SignParty<P> as Party>::PublicInput::from((
@@ -457,7 +457,6 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     };
     let partially_signed_message = match partially_signed_message {
         VersionedUserSignedMessage::V1(partially_signed_message) => partially_signed_message,
-        VersionedUserSignedMessage::V2(partially_signed_message) => partially_signed_message,
     };
     let presign: <P as twopc_mpc::presign::Protocol>::Presign = bcs::from_bytes(&presign)?;
     let partial: <P as twopc_mpc::sign::Protocol>::SignMessage =
@@ -482,6 +481,7 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
     advance_request: AdvanceRequest<<SignParty<P> as mpc::Party>::Message>,
     public_input: <SignParty<P> as mpc::Party>::PublicInput,
     decryption_key_shares: Option<<SignParty<P> as AsynchronouslyAdvanceable>::PrivateInput>,
+    sign_data: &SignData,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let result =
@@ -505,10 +505,23 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
             malicious_parties,
             private_output,
         } => {
+            let parsed_signature_result: DwalletMPCResult<Vec<u8>> =
+                parse_signature_from_sign_output(&sign_data, public_output_value);
+            if parsed_signature_result.is_err() {
+                error!(
+                    session_identifier=?session_id,
+                    ?parsed_signature_result,
+                    ?malicious_parties,
+                    signature_algorithm=?sign_data.signature_algorithm,
+                    should_never_happen = true,
+                    "failed to deserialize sign session result"
+                );
+                return Err(parsed_signature_result.err().unwrap());
+            }
             // For Sign protocol, we don't need to wrap the output with version like presign does
             // since the output is already in the correct format
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                public_output_value,
+                public_output_value: parsed_signature_result.unwrap(),
                 malicious_parties,
                 private_output,
             })

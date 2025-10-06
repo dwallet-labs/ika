@@ -56,7 +56,7 @@ fn verify_centralized_party_secret_key_share_v1(
         ProtocolPublicParametersByCurve::Secp256k1(pp) => {
             let decentralized_dkg_output =
                 bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(&dkg_output)?;
-            <ECDSAProtocol as Protocol>::verify_centralized_party_secret_key_share(
+            <ECDSAProtocol as Protocol>::verify_centralized_party_public_key_share(
                 &pp,
                 decentralized_dkg_output.into(),
                 bcs::from_bytes(&secret_share)?,
@@ -117,7 +117,7 @@ fn verify_centralized_party_secret_key_share<P: dkg::Protocol>(
     decentralized_dkg_output: P::DecentralizedPartyDKGOutput,
     protocol_public_parameters: P::ProtocolPublicParameters,
 ) -> anyhow::Result<()> {
-    P::verify_centralized_party_secret_key_share(
+    P::verify_centralized_party_public_key_share(
         &protocol_public_parameters,
         decentralized_dkg_output,
         bcs::from_bytes(secret_share)?,
