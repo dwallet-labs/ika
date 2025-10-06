@@ -9,7 +9,7 @@ import type {
 } from '@mysten/sui/transactions';
 
 import type { IkaConfig } from '../client/types.js';
-import { SignDuringDKGRequest } from '../generated/ika_dwallet_2pc_mpc/coordinator_inner';
+import { SignDuringDKGRequest } from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 
 export function registerEncryptionKeyTx(
 	ikaConfig: IkaConfig,

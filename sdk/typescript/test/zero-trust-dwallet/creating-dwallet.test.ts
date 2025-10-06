@@ -19,6 +19,7 @@ import {
 	requestTestDkg,
 	requestTestDKGFirstRound,
 	requestTestDkgSecondRound,
+	requestTestDkgWithPublicUserShare,
 } from '../helpers/dwallet-test-helpers';
 import {
 	createDeterministicSeed,
@@ -280,6 +281,96 @@ describe('DWallet Creation', () => {
 
 		expect(encryptedUserSecretKeyShare).toBeDefined();
 		expect(encryptedUserSecretKeyShare.dwallet_id).toBe(dwalletID);
+
+		expect(finalDWallet).toBeDefined();
+		expect(finalDWallet.state.$kind).toBe('Active');
+		expect(finalDWallet.id.id).toBe(dwalletID);
+	});
+
+	it('should create a new DWallet with public user share through the v2 one round DKG process', async () => {
+		const testName = 'dwallet-creation-test-v2';
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+
+		// Generate deterministic keypair for this test
+		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName);
+
+		// Request faucet funds for the test address
+		await requestTestFaucetFunds(signerAddress);
+
+		// Step 2: Register encryption key
+		const encryptionKeyEvent = await registerTestEncryptionKey(
+			ikaClient,
+			suiClient,
+			userShareEncryptionKeys,
+			testName,
+		);
+
+		expect(encryptionKeyEvent).toBeDefined();
+		expect(encryptionKeyEvent.encryption_key_id).toBeDefined();
+
+		const createSessionIDTx = new Transaction();
+		const createSessionIDIkaTx = createTestIkaTransaction(
+			ikaClient,
+			createSessionIDTx,
+			userShareEncryptionKeys,
+		);
+		const sessionIdentifier = createSessionIDIkaTx.createSessionIdentifier();
+		createSessionIDTx.transferObjects([sessionIdentifier], signerAddress);
+		// Sleep for a bit to free the signer keypair gas object
+		await delay(5);
+		const registerSessionIDResult = await executeTestTransaction(
+			suiClient,
+			createSessionIDTx,
+			testName,
+		);
+		let registeredSessionIDEvent = registerSessionIDResult.events?.find((event) => {
+			return event.type.includes('UserSessionIdentifierRegisteredEvent');
+		});
+		let parsedEvent = SessionsManagerModule.UserSessionIdentifierRegisteredEvent.fromBase64(
+			registeredSessionIDEvent?.bcs as string,
+		);
+
+		// Step 4: Prepare network DKG input
+		const dkgSecondRoundRequestInput = await prepareDKGAsync(
+			ikaClient,
+			userShareEncryptionKeys,
+			sessionIdentifierDigest(Uint8Array.from(parsedEvent.session_identifier_preimage)),
+		);
+
+		expect(dkgSecondRoundRequestInput).toBeDefined();
+		expect(dkgSecondRoundRequestInput.encryptedUserShareAndProof).toBeInstanceOf(Uint8Array);
+		expect(dkgSecondRoundRequestInput.userDKGMessage).toBeInstanceOf(Uint8Array);
+		expect(dkgSecondRoundRequestInput.userPublicOutput).toBeDefined();
+
+		// Step 5: Request DKG chain round
+		const secondRoundMoveResponse = await requestTestDkgWithPublicUserShare(
+			ikaClient,
+			suiClient,
+			userShareEncryptionKeys,
+			testName,
+			parsedEvent.session_object_id,
+			(await ikaClient.getConfiguredNetworkEncryptionKey()).id,
+			Curve.SECP256K1,
+			signerAddress,
+			dkgSecondRoundRequestInput.userDKGMessage,
+			dkgSecondRoundRequestInput.userSecretKeyShare,
+			dkgSecondRoundRequestInput.userPublicOutput,
+		);
+
+		expect(secondRoundMoveResponse).toBeDefined();
+		expect(secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id).toBeDefined();
+
+		// Step 6: Wait for DWallet to be Active
+		const dwalletID = secondRoundMoveResponse.event_data.dwallet_id;
+
+		const finalDWallet = await retryUntil(
+			() => ikaClient.getDWalletInParticularState(dwalletID, 'Active'),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		);
 
 		expect(finalDWallet).toBeDefined();
 		expect(finalDWallet.state.$kind).toBe('Active');
