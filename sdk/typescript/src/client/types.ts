@@ -136,7 +136,11 @@ export const Curve = {
 export type Curve = (typeof Curve)[keyof typeof Curve];
 
 export const SignatureAlgorithm = {
-	ECDSA: 0,
+	ECDSASecp256k1: 0,
+	Taproot: 1,
+	ECDSASecp256r1: 2,
+	EdDSA: 3,
+	SchnorrkelSubstrate: 4,
 } as const;
 
 export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];
@@ -172,4 +176,5 @@ export type UserSignatureInputs = {
 	presign: Presign;
 	message: Uint8Array;
 	hash: Hash;
+	signatureScheme: SignatureAlgorithm;
 };
