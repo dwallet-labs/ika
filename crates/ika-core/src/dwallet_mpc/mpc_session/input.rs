@@ -25,7 +25,8 @@ use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty,
-    ReconfigurationV2Party, VersionedImportedDWalletPublicOutput,
+    ReconfigurationV2Party, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
+    VersionedImportedDWalletPublicOutput,
 };
 use group::PartyID;
 use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
@@ -93,6 +94,12 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
+            let encrypted_centralized_secret_share_and_proof =
+                match bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)? {
+                    VersionedEncryptedUserShare::V1(
+                        encrypted_centralized_secret_share_and_proof,
+                    ) => encrypted_centralized_secret_share_and_proof,
+                };
             Ok((
                 PublicInput::DWalletDKG(DWalletDKGPublicInputByCurve::try_new(
                     &data.curve,
@@ -100,9 +107,8 @@ pub(crate) fn session_input_from_request(
                     &data.centralized_public_key_share_and_proof,
                     BytesCentralizedPartyKeyShareVerification::Encrypted {
                         encryption_key: data.encryption_key.clone(),
-                        encrypted_secret_key_share_message: data
-                            .encrypted_centralized_secret_share_and_proof
-                            .clone(),
+                        encrypted_secret_key_share_message:
+                            encrypted_centralized_secret_share_and_proof,
                     },
                 )?),
                 None,
@@ -116,15 +122,20 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
+            let centralized_party_secret_key_share =
+                match bcs::from_bytes(&data.public_user_secret_key_share)? {
+                    VersionedDwalletUserSecretShare::V1(
+                        encrypted_centralized_secret_share_and_proof,
+                    ) => encrypted_centralized_secret_share_and_proof,
+                };
+
             Ok((
                 PublicInput::DWalletDKG(DWalletDKGPublicInputByCurve::try_new(
                     &data.curve,
                     encryption_key_public_data,
                     &data.centralized_public_key_share_and_proof,
                     BytesCentralizedPartyKeyShareVerification::Public {
-                        centralized_party_secret_key_share: data
-                            .public_user_secret_key_share
-                            .clone(),
+                        centralized_party_secret_key_share,
                     },
                 )?),
                 None,
