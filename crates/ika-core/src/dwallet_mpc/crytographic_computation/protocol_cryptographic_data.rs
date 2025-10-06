@@ -257,6 +257,26 @@ impl ProtocolCryptographicData {
                     DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGWithPublicShare {
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
+                ..
+            }
+            | ProtocolCryptographicData::DWalletDKGWithPublicShare {
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
+                ..
+            }
+            | ProtocolCryptographicData::DWalletDKGWithPublicShare {
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request),
+                ..
+            }
+            | ProtocolCryptographicData::DWalletDKGWithPublicShare {
+                advance_request:
+                    DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::DKGSecond {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
