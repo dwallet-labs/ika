@@ -420,7 +420,7 @@ export async function requestTestDkg(
 	const transaction = new Transaction();
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
-	const dWalletCap = ikaTransaction.requestDWalletDKG({
+	const [dWalletCap] = ikaTransaction.requestDWalletDKG({
 		dkgSecondRoundRequestInput,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
@@ -428,6 +428,56 @@ export async function requestTestDkg(
 		dwalletNetworkEncryptionKeyId,
 		curve,
 	});
+	transaction.transferObjects([dWalletCap], signerAddress);
+
+	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
+
+	const result = await executeTestTransaction(suiClient, transaction, testName);
+
+	const dkgRequestEvent = result.events?.find((event) => {
+		return (
+			event.type.includes('DWalletDKGRequestEvent') && event.type.includes('DWalletSessionEvent')
+		);
+	});
+
+	if (!dkgRequestEvent) {
+		throw new Error('Failed to find DWalletDKGSecondRoundRequestEvent');
+	}
+
+	return SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.DWalletDKGRequestEvent,
+	).fromBase64(dkgRequestEvent.bcs as string);
+}
+
+/**
+ * Request DKG second round for testing
+ */
+export async function requestTestDkgWithPublicUserShare(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
+	testName: string,
+	sessionIdentifierObjID: string,
+	dwalletNetworkEncryptionKeyId: string,
+	curve: number,
+	signerAddress: string,
+	publicKeyShareAndProof: Uint8Array,
+	publicUserSecretKeyShare: Uint8Array,
+	userPublicOutput: Uint8Array,
+) {
+	const transaction = new Transaction();
+	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
+	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
+	const [dWalletCap] = ikaTransaction.requestDWalletDKGWithPublicUserShare(
+		emptyIKACoin,
+		transaction.gas,
+		sessionIdentifierObjID,
+		dwalletNetworkEncryptionKeyId,
+		curve,
+		publicKeyShareAndProof,
+		publicUserSecretKeyShare,
+		userPublicOutput,
+	);
 	transaction.transferObjects([dWalletCap], signerAddress);
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
