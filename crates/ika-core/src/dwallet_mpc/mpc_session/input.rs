@@ -122,6 +122,7 @@ pub(crate) fn session_input_from_request(
                 protocol_public_parameters,
                 session_id,
                 bcs::from_bytes(&centralized_party_message)?,
+                // TODO (#1545): Move secret share verification logic to DKG protocol
                 CentralizedPartyKeyShareVerification::None,
             )
                 .into();
