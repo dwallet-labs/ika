@@ -442,7 +442,7 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
         bcs::from_bytes(dwallet_decentralized_output)?;
     let decentralized_dkg_output = match dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-            bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
+            bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
             bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
