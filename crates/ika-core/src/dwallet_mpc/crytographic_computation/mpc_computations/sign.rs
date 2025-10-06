@@ -9,6 +9,7 @@ use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::parse_signature_from_sign_output;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::request_protocol_data::SignData;
+use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DWalletCurve, DWalletSignatureScheme,
@@ -30,6 +31,7 @@ use rand_core::SeedableRng;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::error;
+use twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS;
 use twopc_mpc::{Protocol, sign};
 
 pub(crate) type SignParty<P: twopc_mpc::sign::Protocol> =
@@ -434,12 +436,14 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     message: &[u8],
     hash_type: &HashType,
     dwallet_decentralized_output: &SerializedWrappedMPCPublicOutput,
-    presign: &SerializedWrappedMPCPublicOutput,
+    presign: &[u8],
     partially_signed_message: &SerializedWrappedMPCPublicOutput,
     protocol_public_parameters: &P::ProtocolPublicParameters,
 ) -> DwalletMPCResult<()> {
     let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
         bcs::from_bytes(dwallet_decentralized_output)?;
+    let partially_signed_message: VersionedUserSignedMessage =
+        bcs::from_bytes(partially_signed_message)?;
     let decentralized_dkg_output = match dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
             bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
@@ -449,17 +453,10 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
         }
     };
 
-    let presign: VersionedPresignOutput = bcs::from_bytes(presign)?;
-    let partially_signed_message: VersionedUserSignedMessage =
-        bcs::from_bytes(partially_signed_message)?;
-    let presign = match presign {
-        VersionedPresignOutput::V1(presign) => presign,
-        VersionedPresignOutput::V2(presign) => presign,
-    };
+    let presign: <P as twopc_mpc::presign::Protocol>::Presign = bcs::from_bytes(&presign)?;
     let partially_signed_message = match partially_signed_message {
         VersionedUserSignedMessage::V1(partially_signed_message) => partially_signed_message,
     };
-    let presign: <P as twopc_mpc::presign::Protocol>::Presign = bcs::from_bytes(&presign)?;
     let partial: <P as twopc_mpc::sign::Protocol>::SignMessage =
         bcs::from_bytes(&partially_signed_message)?;
 
