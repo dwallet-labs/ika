@@ -25,8 +25,8 @@ use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, Party,
     WeightedThresholdAccessStructure,
 };
-use std::collections::HashMap;
 use serde::Serialize;
+use std::collections::HashMap;
 use twopc_mpc::dkg::{CentralizedPartyKeyShareVerification, Protocol};
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
@@ -141,39 +141,42 @@ pub enum BytesCentralizedPartyKeyShareVerification {
     None,
 }
 
-impl <
-    CentralizedPartySecretKeyShare,
-    EncryptionKey,
-    EncryptedSecretKeyShareMessage,
-> From<BytesCentralizedPartyKeyShareVerification>
+impl<CentralizedPartySecretKeyShare, EncryptionKey, EncryptedSecretKeyShareMessage>
+    TryFrom<BytesCentralizedPartyKeyShareVerification>
     for CentralizedPartyKeyShareVerification<
-    CentralizedPartySecretKeyShare,
-    EncryptionKey,
-    EncryptedSecretKeyShareMessage,
-> where
+        CentralizedPartySecretKeyShare,
+        EncryptionKey,
+        EncryptedSecretKeyShareMessage,
+    >
+where
     CentralizedPartySecretKeyShare: serde::de::DeserializeOwned,
     EncryptionKey: serde::de::DeserializeOwned,
     EncryptedSecretKeyShareMessage: serde::de::DeserializeOwned,
 {
-    fn from(value: BytesCentralizedPartyKeyShareVerification) -> Self {
-        match value {
+    type Error = bcs::Error;
+
+    fn try_from(value: BytesCentralizedPartyKeyShareVerification) -> bcs::Result<Self> {
+        Ok(match value {
             BytesCentralizedPartyKeyShareVerification::Encrypted {
                 encryption_key,
                 encrypted_secret_key_share_message,
             } => CentralizedPartyKeyShareVerification::Encrypted {
-                encryption_key: bcs::from_bytes(&encryption_key).unwrap(),
-                encrypted_secret_key_share_message,
+                encryption_key: bcs::from_bytes(&encryption_key)?,
+                encrypted_secret_key_share_message: bcs::from_bytes(
+                    &encrypted_secret_key_share_message,
+                )?,
             },
             BytesCentralizedPartyKeyShareVerification::Public {
                 centralized_party_secret_key_share,
             } => CentralizedPartyKeyShareVerification::Public {
                 centralized_party_secret_key_share: bcs::from_bytes(
                     &centralized_party_secret_key_share,
-                )
-                .unwrap(),
+                )?,
             },
-            BytesCentralizedPartyKeyShareVerification::None => CentralizedPartyKeyShareVerification::None,
-        }
+            BytesCentralizedPartyKeyShareVerification::None => {
+                CentralizedPartyKeyShareVerification::None
+            }
+        })
     }
 }
 
