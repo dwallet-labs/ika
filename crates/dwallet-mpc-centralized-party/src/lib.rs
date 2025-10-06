@@ -32,7 +32,7 @@ use homomorphic_encryption::{
     AdditivelyHomomorphicDecryptionKey, AdditivelyHomomorphicEncryptionKey,
     GroupsPublicParametersAccessors,
 };
-use mpc::two_party::Round;
+use mpc::two_party::{Round, RoundResult};
 use mpc::{Party, Weight, WeightedThresholdAccessStructure};
 use rand_core::SeedableRng;
 use twopc_mpc::secp256k1::SCALAR_LIMBS;
@@ -517,16 +517,18 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
         &centralized_party_public_input,
         &mut OsCsRng,
     );
-    if round_result.is_err() {
-        let err_str = format!("advance() failed on the SignCentralizedPartyV2",);
-        return Err(anyhow!(err_str.clone()).context(err_str));
+    match round_result {
+        Ok(round_result) => {
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        Err(_) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2",);
+            Err(anyhow!(err_str.clone()).context(err_str))
+        }
     }
-    let round_result = round_result.unwrap();
-
-    let signed_message =
-        VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
-    let signed_message = bcs::to_bytes(&signed_message)?;
-    Ok(signed_message)
 }
 
 pub(crate) type SignCentralizedParty<P: twopc_mpc::sign::Protocol> =
