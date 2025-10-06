@@ -383,14 +383,13 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
         protocol_public_parameters: P::ProtocolPublicParameters,
         dkg_output: &SerializedWrappedMPCPublicOutput,
         message: Vec<u8>,
-        presign: &SerializedWrappedMPCPublicOutput,
+        presign: &[u8],
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: P::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
         hash_scheme: HashType,
     ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
         let dkg_output = bcs::from_bytes(dkg_output)?;
-        let presign = bcs::from_bytes(presign)?;
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
         let decentralized_dkg_output = match dkg_output {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
@@ -401,10 +400,6 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
             }
         };
 
-        let presign = match presign {
-            VersionedPresignOutput::V1(presign) => presign,
-            VersionedPresignOutput::V2(presign) => presign,
-        };
         let centralized_signed_message = match centralized_signed_message {
             VersionedUserSignedMessage::V1(centralized_signed_message) => {
                 centralized_signed_message
@@ -436,10 +431,16 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     message: &[u8],
     hash_type: &HashType,
     dwallet_decentralized_output: &SerializedWrappedMPCPublicOutput,
-    presign: &[u8],
+    presign: SerializedWrappedMPCPublicOutput,
     partially_signed_message: &SerializedWrappedMPCPublicOutput,
     protocol_public_parameters: &P::ProtocolPublicParameters,
 ) -> DwalletMPCResult<()> {
+    let presign = match bcs::from_bytes::<VersionedPresignOutput>(&presign)? {
+        VersionedPresignOutput::V1(_) => {
+            unreachable!()
+        }
+        VersionedPresignOutput::V2(presign) => presign,
+    };
     let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
         bcs::from_bytes(dwallet_decentralized_output)?;
     let partially_signed_message: VersionedUserSignedMessage =
