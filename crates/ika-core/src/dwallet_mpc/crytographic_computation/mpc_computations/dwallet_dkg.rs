@@ -421,17 +421,9 @@ pub fn compute_dwallet_dkg<P: Protocol>(
     access_structure: &WeightedThresholdAccessStructure,
     session_id: CommitmentSizedNumber,
     advance_request: AdvanceRequest<<P::DKGDecentralizedParty as Party>::Message>,
-    protocol_public_parameters: P::ProtocolPublicParameters,
     public_input: <P::DKGDecentralizedParty as Party>::PublicInput,
-    encryption_key: P::EncryptionKey,
-    encrypted_secret_key_share_message: &[u8],
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    let encrypted_secret_key_share_message: VersionedEncryptedUserShare =
-        bcs::from_bytes(encrypted_secret_key_share_message).map_err(DwalletMPCError::BcsError)?;
-    let encrypted_secret_key_share_message = match encrypted_secret_key_share_message {
-        VersionedEncryptedUserShare::V1(message) => message,
-    };
     let result = mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::advance_with_guaranteed_output(
         session_id,
         party_id,
@@ -451,23 +443,9 @@ pub fn compute_dwallet_dkg<P: Protocol>(
             malicious_parties,
             private_output,
         } => {
-            let decentralized_output: P::DecentralizedPartyDKGOutput =
-                bcs::from_bytes(&public_output_value)?;
-            P::verify_encryption_of_centralized_party_share_proof(
-                &protocol_public_parameters,
-                decentralized_output.clone(),
-                encryption_key,
-                bcs::from_bytes(&encrypted_secret_key_share_message)?,
-                &mut group::OsCsRng,
-            )
-            .map_err(|e| {
-                DwalletMPCError::CentralizedSecretKeyShareProofVerificationFailed(e.to_string())
-            })?;
-
-            let public_output_value =
-                bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
-                    bcs::to_bytes(&decentralized_output)?,
-                ))?;
+            let public_output_value = bcs::to_bytes(
+                &VersionedDwalletDKGSecondRoundPublicOutput::V2(public_output_value),
+            )?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
