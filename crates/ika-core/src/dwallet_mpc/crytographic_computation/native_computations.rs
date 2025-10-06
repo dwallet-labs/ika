@@ -144,7 +144,7 @@ impl ProtocolCryptographicData {
                             .map_err(DwalletMPCError::from)?;
                     Vec::new()
                 }
-                VersionedPresignOutput::V2(presign) => {
+                VersionedPresignOutput::V2(_) => {
                     verify_partial_signature::<Secp256K1ECDSAProtocol>(
                         &data.message,
                         &HashType::try_from(data.hash_type.clone() as u32)
