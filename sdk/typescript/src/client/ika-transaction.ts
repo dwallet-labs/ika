@@ -226,7 +226,45 @@ export class IkaTransaction {
 	}
 
 	/**
-	 * Accept an encrypted user share for a DWallet.
+	 *
+	 *
+	 * @param params.dWalletCap - The dWalletCap object from the first round, created for dWallet
+	 * @param params.dkgSecondRoundRequestInput - Cryptographic data prepared for the second round
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns The updated IkaTransaction instance
+	 * @throws {Error} If user share encryption keys are not set
+	 */
+	requestDWalletDKGWithPublicUserShare(
+		ikaCoin: TransactionObjectArgument,
+		suiCoin: TransactionObjectArgument,
+		sessionIdentifierObjID: string,
+		dwalletNetworkEncryptionKeyId: string,
+		curve: number,
+		publicKeyShareAndProof: Uint8Array,
+		publicUserSecretKeyShare: Uint8Array,
+		userPublicOutput: Uint8Array,
+	): TransactionResult {
+		if (!this.#userShareEncryptionKeys) {
+			throw new Error('User share encryption keys are not set');
+		}
+
+		return coordinatorTx.requestDWalletDKGWithPublicUserSecretKeyShare(
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			dwalletNetworkEncryptionKeyId,
+			curve,
+			publicKeyShareAndProof,
+			publicUserSecretKeyShare,
+			userPublicOutput,
+			sessionIdentifierObjID,
+			ikaCoin,
+			suiCoin,
+			this.#transaction,
+		);
+	}
+
+	/**
 	 * This completes the user's participation in the DKG process by accepting their encrypted share.
 	 *
 	 * @param params.dWallet - The DWallet object to accept the share for
