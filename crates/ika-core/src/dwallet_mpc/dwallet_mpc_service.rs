@@ -783,10 +783,7 @@ impl DWalletMPCService {
                 });
                 vec![tx]
             }
-            ProtocolData::DWalletDKGWithPublicShare {
-                dwallet_id,
-                ..
-            } => {
+            ProtocolData::DWalletDKGWithPublicShare { dwallet_id, .. } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
                     output,
                     dwallet_id: dwallet_id.to_vec(),

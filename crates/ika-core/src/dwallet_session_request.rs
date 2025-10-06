@@ -78,12 +78,14 @@ impl DWalletSessionRequestMetricData {
 impl From<&ProtocolData> for DWalletSessionRequestMetricData {
     fn from(protocol_specific_data: &ProtocolData) -> Self {
         match protocol_specific_data {
-            ProtocolData::DWalletDKGWithEncryptedShare { data, .. } => DWalletSessionRequestMetricData {
-                name: data.to_string(),
-                curve: Some(data.curve.clone()),
-                hash_scheme: None,
-                signature_algorithm: None,
-            },
+            ProtocolData::DWalletDKGWithEncryptedShare { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve.clone()),
+                    hash_scheme: None,
+                    signature_algorithm: None,
+                }
+            }
             ProtocolData::ImportedKeyVerification { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve.clone()),
@@ -203,12 +205,14 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: None,
                 signature_algorithm: None,
             },
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare { data, .. } => DWalletSessionRequestMetricData {
-                name: data.to_string(),
-                curve: Some(data.curve.clone()),
-                hash_scheme: None,
-                signature_algorithm: None,
-            },
+            ProtocolCryptographicData::DWalletDKGWithEncryptedShare { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve.clone()),
+                    hash_scheme: None,
+                    signature_algorithm: None,
+                }
+            }
             ProtocolCryptographicData::Presign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve.clone()),

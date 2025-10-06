@@ -378,11 +378,12 @@ impl ProtocolData {
             ProtocolData::DWalletDKGWithEncryptedShare {
                 dwallet_network_encryption_key_id,
                 ..
-            } |
-            ProtocolData::DWalletDKGWithPublicShare {
+            }
+            | ProtocolData::DWalletDKGWithPublicShare {
                 dwallet_network_encryption_key_id,
                 ..
-            } | ProtocolData::DKGFirst {
+            }
+            | ProtocolData::DKGFirst {
                 dwallet_network_encryption_key_id,
                 ..
             }
