@@ -202,7 +202,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.secp256k1_protocol_public_parameters(),
                     centralized_party_public_key_share,
-                    centralized_party_key_share_verification.into(),
+                    centralized_party_key_share_verification.try_into()?,
                 )
                     .into();
 
@@ -218,7 +218,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.secp256r1_protocol_public_parameters()?,
                     centralized_party_public_key_share,
-                    centralized_party_key_share_verification.into(),
+                    centralized_party_key_share_verification.try_into()?,
                 )
                     .into();
 
@@ -234,7 +234,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.curve25519_protocol_public_parameters()?,
                     centralized_party_public_key_share,
-                    centralized_party_key_share_verification.into(),
+                    centralized_party_key_share_verification.try_into()?,
                 )
                     .into();
 
@@ -250,7 +250,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.ristretto_protocol_public_parameters()?,
                     centralized_party_public_key_share,
-                    centralized_party_key_share_verification.into(),
+                    centralized_party_key_share_verification.try_into()?,
                 )
                     .into();
 
