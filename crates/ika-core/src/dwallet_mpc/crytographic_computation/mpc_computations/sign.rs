@@ -34,7 +34,8 @@ use tracing::error;
 use twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS;
 use twopc_mpc::{Protocol, dkg, sign};
 
-pub(crate) type SignParty<P: Protocol> = <P as Protocol>::SignDecentralizedParty;
+pub(crate) type SignParty<P: twopc_mpc::sign::Protocol> =
+    <P as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub(crate) enum SignPublicInputByProtocol {

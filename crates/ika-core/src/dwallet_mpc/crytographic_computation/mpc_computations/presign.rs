@@ -362,10 +362,21 @@ pub fn compute_presign<P: presign::Protocol>(
             // Wrap the public output with its version.
             let public_output_value = match protocol_version.as_u64() {
                 1 => {
-                    let public_output_value: <Secp256K1ECDSAProtocol as Protocol>::Presign =
+                    let versioned_presign: <Secp256K1ECDSAProtocol as Protocol>::Presign =
                         bcs::from_bytes(&public_output_value.clone())?;
+
+                    let targeted_presign = match versioned_presign {
+                        twopc_mpc::ecdsa::presign::VersionedPresign::UniversalPresign(_) => {
+                            // In protocol version 1, we never generate universal presigns
+                            unreachable!()
+                        }
+                        twopc_mpc::ecdsa::presign::VersionedPresign::TargetedPresign(presign) => {
+                            presign
+                        }
+                    };
+
                     bcs::to_bytes(&VersionedPresignOutput::V1(bcs::to_bytes(
-                        &public_output_value,
+                        &targeted_presign,
                     )?))?
                 }
                 2 => bcs::to_bytes(&VersionedPresignOutput::V2(public_output_value))?,
