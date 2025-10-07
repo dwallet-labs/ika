@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
+use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty, compute_dwallet_dkg,
@@ -17,7 +18,9 @@ use crate::dwallet_mpc::presign::{
 };
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationV1toV2Party;
-use crate::dwallet_mpc::sign::SignParty;
+use crate::dwallet_mpc::sign::{
+    SignAdvanceRequestByProtocol, SignPublicInputByProtocol, compute_sign,
+};
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
     NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
@@ -213,16 +216,16 @@ impl ProtocolCryptographicData {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result = Party::<SignParty>::ready_to_advance(
+                let advance_request_result = SignAdvanceRequestByProtocol::try_new(
+                    &data.curve,
+                    &data.signature_algorithm,
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::new(),
-                    &serialized_messages_by_consensus_round,
+                    serialized_messages_by_consensus_round,
                 )?;
 
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
+                let Some(advance_request) = advance_request_result else {
                     return Ok(None);
                 };
 
@@ -439,7 +442,9 @@ impl ProtocolCryptographicData {
                                 public_output_value.clone(),
                             ))?,
                             &data.encryption_key,
-                            public_input.protocol_public_parameters.clone(),
+                            ProtocolPublicParametersByCurve::Secp256k1(
+                                public_input.protocol_public_parameters.clone(),
+                            ),
                         )?;
 
                         // Wrap the public output with its version.
@@ -525,37 +530,18 @@ impl ProtocolCryptographicData {
                     ..
                 } = &result
                 {
-                    // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
-                    let decentralized_output = match bcs::from_bytes(&public_output_value)? {
-                        DKGDecentralizedPartyVersionedOutput::<
-                            { group::secp256k1::SCALAR_LIMBS },
-                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                            {
-                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
-                            },
-                            group::secp256k1::GroupElement,
-                        >::UniversalPublicDKGOutput {
-                            output: dkg_output,
-                            ..
-                        } => dkg_output,
-                        DKGDecentralizedPartyVersionedOutput::<
-                            { group::secp256k1::SCALAR_LIMBS },
-                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                            {
-                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
-                            },
-                            group::secp256k1::GroupElement,
-                        >::TargetedPublicDKGOutput(output) => output,
-                    };
                     verify_encrypted_share(
                         &data.encrypted_centralized_secret_share_and_proof,
                         // TODO (#1482): Check the protocol config and use this hack only for V1
                         // DWallets.
                         &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
-                            bcs::to_bytes(&decentralized_output)?,
+                            public_output_value.clone(),
                         ))?,
                         &data.encryption_key,
-                        public_input.protocol_public_parameters.clone(),
+                        // DKG second is supported only for secp256k1.
+                        ProtocolPublicParametersByCurve::Secp256k1(
+                            public_input.protocol_public_parameters.clone(),
+                        ),
                     )?;
                 }
 
@@ -736,17 +722,9 @@ impl ProtocolCryptographicData {
                 protocol_version,
                 &mut rng,
             )?),
-            ProtocolCryptographicData::Presign {
-                public_input,
-                advance_request,
-                ..
-            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
-                public_input.to_string(),
-                advance_request.to_string(),
-            )),
             ProtocolCryptographicData::Sign {
-                public_input,
-                advance_request,
+                public_input: SignPublicInputByProtocol::Secp256k1ECDSA(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -755,46 +733,113 @@ impl ProtocolCryptographicData {
                     // Todo (#1408): Return update_expected_decrypters_metrics
                 }
 
-                let result = Party::<SignParty>::advance_with_guaranteed_output(
-                    session_id,
+                compute_sign::<Secp256K1ECDSAProtocol>(
                     party_id,
                     access_structure,
+                    session_id,
                     advance_request,
+                    public_input,
                     Some(decryption_key_shares),
-                    &public_input,
+                    &data,
                     &mut rng,
-                )?;
-
-                match result {
-                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-                    }
-                    GuaranteedOutputDeliveryRoundResult::Finalize {
-                        public_output_value,
-                        malicious_parties,
-                        private_output,
-                    } => {
-                        let parsed_signature_result: DwalletMPCResult<Vec<u8>> =
-                            parse_signature_from_sign_output(&data, public_output_value);
-                        if parsed_signature_result.is_err() {
-                            error!(
-                                session_identifier=?session_identifier,
-                                ?parsed_signature_result,
-                                ?malicious_parties,
-                                signature_algorithm=?data.signature_algorithm,
-                                should_never_happen = true,
-                                "failed to deserialize sign session result"
-                            );
-                            return Err(parsed_signature_result.err().unwrap());
-                        }
-                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                            public_output_value: parsed_signature_result.unwrap(),
-                            malicious_parties,
-                            private_output,
-                        })
-                    }
-                }
+                )
             }
+            ProtocolCryptographicData::Sign {
+                public_input: SignPublicInputByProtocol::Secp256k1Taproot(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    // Todo (#1408): Return update_expected_decrypters_metrics
+                }
+
+                compute_sign::<Secp256K1TaprootProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &data,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::Sign {
+                public_input: SignPublicInputByProtocol::Secp256r1(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    // Todo (#1408): Return update_expected_decrypters_metrics
+                }
+
+                compute_sign::<Secp256R1ECDSAProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &data,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::Sign {
+                public_input: SignPublicInputByProtocol::Curve25519(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Curve25519(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    // Todo (#1408): Return update_expected_decrypters_metrics
+                }
+
+                compute_sign::<Curve25519EdDSAProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &data,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::Sign {
+                public_input: SignPublicInputByProtocol::Ristretto(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    // Todo (#1408): Return update_expected_decrypters_metrics
+                }
+
+                compute_sign::<RistrettoSchnorrkelSubstrateProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &data,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::Sign {
+                public_input,
+                advance_request,
+                ..
+            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                public_input.to_string(),
+                advance_request.to_string(),
+            )),
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
                 public_input,
                 advance_request,

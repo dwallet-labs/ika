@@ -5,6 +5,7 @@ pub(super) mod mpc_computations;
 pub(super) mod native_computations;
 mod orchestrator;
 pub mod protocol_cryptographic_data;
+pub(crate) mod protocol_public_parameters;
 mod request;
 
 use derivative::Derivative;

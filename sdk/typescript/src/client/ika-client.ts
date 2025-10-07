@@ -655,8 +655,6 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 */
 	async getProtocolPublicParameters(dWallet?: DWallet): Promise<Uint8Array> {
-		const objects = await this.ensureInitialized();
-
 		let networkEncryptionKey: NetworkEncryptionKey;
 
 		if (dWallet) {

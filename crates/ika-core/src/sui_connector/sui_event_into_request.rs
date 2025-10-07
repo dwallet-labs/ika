@@ -6,7 +6,6 @@ use crate::request_protocol_data::{
     network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data,
     partial_signature_verification_protocol_data, presign_protocol_data, sign_protocol_data,
 };
-use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,

@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGFirstParty, DWalletDKGPublicInputByCurve, DWalletImportedKeyVerificationParty,
     Secp256K1DWalletDKGParty, dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
@@ -13,14 +14,17 @@ use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationPartyPublicInputGenerator, ReconfigurationV1ToV2PartyPublicInputGenerator,
     ReconfigurationV1toV2Party, ReconfigurationV2PartyPublicInputGenerator,
 };
-use crate::dwallet_mpc::sign::{SignParty, sign_session_public_input};
+use crate::dwallet_mpc::sign::SignPublicInputByProtocol;
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{PresignData, ProtocolData};
+use crate::request_protocol_data::{
+    EncryptedShareVerificationData, MakeDWalletUserSecretKeySharesPublicData,
+    PartialSignatureVerificationData, PresignData, ProtocolData,
+};
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    MPCPrivateInput, ReconfigurationParty, ReconfigurationV2Party,
-    VersionedImportedDWalletPublicOutput,
+    MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty,
+    ReconfigurationV2Party, VersionedImportedDWalletPublicOutput,
 };
 use group::PartyID;
 use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
@@ -28,6 +32,7 @@ use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
 use std::collections::HashMap;
+use twopc_mpc::dkg::CentralizedPartyKeyShareVerification;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -41,13 +46,13 @@ pub enum PublicInput {
     // Used only for V1 dWallets
     Secp256K1DWalletDKG(<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput),
     Presign(PresignPublicInputByProtocol),
-    Sign(<SignParty as mpc::Party>::PublicInput),
+    Sign(SignPublicInputByProtocol),
     NetworkEncryptionKeyDkgV1(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
     NetworkEncryptionKeyDkgV2(
         <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
     ),
-    EncryptedShareVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
-    PartialSignatureVerification(twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters),
+    EncryptedShareVerification(ProtocolPublicParametersByCurve),
+    PartialSignatureVerification(ProtocolPublicParametersByCurve),
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyReconfigurationV1(<ReconfigurationParty as mpc::Party>::PublicInput),
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
@@ -55,9 +60,7 @@ pub enum PublicInput {
         <ReconfigurationV1toV2Party as mpc::Party>::PublicInput,
     ),
     NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Party as mpc::Party>::PublicInput),
-    MakeDWalletUserSecretKeySharesPublic(
-        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    ),
+    MakeDWalletUserSecretKeySharesPublic(ProtocolPublicParametersByCurve),
 }
 
 // TODO (#542): move this logic to run before writing the event to the DB, maybe include within the session info
@@ -103,11 +106,14 @@ pub(crate) fn session_input_from_request(
             centralized_party_message,
             ..
         } => {
-            let protocol_public_parameters = network_keys.get_protocol_public_parameters(
-                // The request is assign with a Secp256k1 dWallet.
-                // Todo (#473): Support generic network key scheme
-                dwallet_network_encryption_key_id,
-            )?;
+            let protocol_public_parameters = network_keys
+                .get_network_encryption_key_public_data(
+                    // The request is assign with a Secp256k1 dWallet.
+                    // Todo (#473): Support generic network key scheme
+                    dwallet_network_encryption_key_id,
+                )?
+                .secp256k1_protocol_public_parameters()
+                .clone();
 
             let VersionedImportedDWalletPublicOutput::V1(centralized_party_message) =
                 bcs::from_bytes(&centralized_party_message)?;
@@ -116,6 +122,8 @@ pub(crate) fn session_input_from_request(
                 protocol_public_parameters,
                 session_id,
                 bcs::from_bytes(&centralized_party_message)?,
+                // TODO (#1545): Move secret share verification logic to DKG protocol
+                CentralizedPartyKeyShareVerification::None,
             )
                 .into();
 
@@ -125,11 +133,13 @@ pub(crate) fn session_input_from_request(
             ))
         }
         ProtocolData::MakeDWalletUserSecretKeySharesPublic {
+            data: MakeDWalletUserSecretKeySharesPublicData { curve, .. },
             dwallet_network_encryption_key_id,
             ..
         } => {
-            let protocol_public_parameters =
-                network_keys.get_protocol_public_parameters(dwallet_network_encryption_key_id)?;
+            let protocol_public_parameters = network_keys
+                .get_protocol_public_parameters(curve, dwallet_network_encryption_key_id)?
+                .clone();
 
             Ok((
                 PublicInput::MakeDWalletUserSecretKeySharesPublic(protocol_public_parameters),
@@ -230,11 +240,10 @@ pub(crate) fn session_input_from_request(
             dwallet_network_encryption_key_id,
             ..
         } => {
-            let protocol_public_parameters = network_keys.get_protocol_public_parameters(
-                // The event is assign with a Secp256k1 dwallet.
-                // Todo (#473): Support generic network key scheme - take curve from event
-                dwallet_network_encryption_key_id,
-            )?;
+            let protocol_public_parameters = network_keys
+                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?
+                .secp256k1_protocol_public_parameters()
+                .clone();
 
             Ok((
                 PublicInput::DKGFirst(dwallet_dkg_first_public_input(&protocol_public_parameters)?),
@@ -247,11 +256,10 @@ pub(crate) fn session_input_from_request(
             centralized_public_key_share_and_proof,
             ..
         } => {
-            let protocol_public_parameters = network_keys.get_protocol_public_parameters(
-                // The event is assign with a Secp256k1 dwallet.
-                // Todo (#473): Support generic network key scheme
-                dwallet_network_encryption_key_id,
-            )?;
+            let protocol_public_parameters = network_keys
+                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?
+                .secp256k1_protocol_public_parameters()
+                .clone();
 
             Ok((
                 PublicInput::Secp256K1DWalletDKG(dwallet_dkg_second_public_input(
@@ -277,7 +285,6 @@ pub(crate) fn session_input_from_request(
 
             Ok((
                 PublicInput::Presign(PresignPublicInputByProtocol::try_new(
-                    request.session_identifier,
                     signature_algorithm.clone(),
                     encryption_key_public_data,
                     dwallet_public_output.clone(),
@@ -293,38 +300,29 @@ pub(crate) fn session_input_from_request(
             presign,
             message_centralized_signature,
             ..
-        } => {
-            let protocol_public_parameters = network_keys.get_protocol_public_parameters(
-                // The event is assign with a Secp256k1 dwallet.
-                // Todo (#473): Support generic network key scheme
-                dwallet_network_encryption_key_id,
-            )?;
-
-            Ok((
-                PublicInput::Sign(sign_session_public_input(
-                    dwallet_network_encryption_key_id,
-                    request.session_identifier,
-                    dwallet_decentralized_public_output,
-                    message.clone(),
-                    presign,
-                    message_centralized_signature,
-                    data.hash_scheme.clone(),
-                    access_structure,
-                    network_keys,
-                    protocol_public_parameters,
-                )?),
-                None,
-            ))
-        }
+        } => Ok((
+            PublicInput::Sign(SignPublicInputByProtocol::try_new(
+                request.session_identifier,
+                dwallet_decentralized_public_output,
+                message.clone(),
+                presign,
+                message_centralized_signature,
+                data.hash_scheme.clone(),
+                access_structure,
+                network_keys
+                    .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?,
+                data.signature_algorithm,
+            )?),
+            None,
+        )),
         ProtocolData::EncryptedShareVerification {
+            data: EncryptedShareVerificationData { curve, .. },
             dwallet_network_encryption_key_id,
             ..
         } => {
-            let protocol_public_parameters = network_keys.get_protocol_public_parameters(
-                // The event is assign with a Secp256k1 dwallet.
-                // Todo (#473): Support generic network key scheme
-                dwallet_network_encryption_key_id,
-            )?;
+            let protocol_public_parameters = network_keys
+                .get_protocol_public_parameters(curve, dwallet_network_encryption_key_id)?
+                .clone();
 
             Ok((
                 PublicInput::EncryptedShareVerification(protocol_public_parameters),
@@ -332,14 +330,12 @@ pub(crate) fn session_input_from_request(
             ))
         }
         ProtocolData::PartialSignatureVerification {
+            data: PartialSignatureVerificationData { curve, .. },
             dwallet_network_encryption_key_id,
             ..
         } => {
-            let protocol_public_parameters = network_keys.get_protocol_public_parameters(
-                // The event is assign with a Secp256k1 dwallet.
-                // Todo (#473): Support generic network key scheme
-                dwallet_network_encryption_key_id,
-            )?;
+            let protocol_public_parameters = network_keys
+                .get_protocol_public_parameters(curve, dwallet_network_encryption_key_id)?;
 
             Ok((
                 PublicInput::PartialSignatureVerification(protocol_public_parameters),
