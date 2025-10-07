@@ -339,11 +339,11 @@ impl DWalletMPCService {
             }
         }
 
-        self.dwallet_mpc_manager
+        let rejected_sessions = self
+            .dwallet_mpc_manager
             .handle_mpc_request_batch(requests)
             .await;
 
-        let rejected_sessions = self.dwallet_mpc_manager.drain_rejected_sessions();
         self.handle_failed_requests_and_submit_reject_to_consensus(rejected_sessions)
             .await;
         Ok(())
