@@ -214,12 +214,12 @@ impl PresignPublicInputByProtocol {
                             }
                         }
                     };
-                let pub_input =
+                let public_input =
                     <PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
                         deserialized_dwallet_public_output,
                     ));
-                PresignPublicInputByProtocol::Secp256k1ECDSA(pub_input)
+                PresignPublicInputByProtocol::Secp256k1ECDSA(public_input)
             }
             DWalletSignatureScheme::SchnorrkelSubstrate => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
