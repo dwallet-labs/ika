@@ -12,7 +12,7 @@ use crate::request_protocol_data::SignData;
 use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyOutputSecp256k1, DWalletCurve, DWalletSignatureScheme,
+    DKGDecentralizedPartyOutputSecp256k1, DWalletCurve, DWalletSignatureScheme, MPCPublicOutput,
     NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput, VersionedNetworkEncryptionKeyPublicData,
     VersionedPresignOutput, VersionedUserSignedMessage,
@@ -268,7 +268,7 @@ impl SignPublicInputByProtocol {
                                 protocol_public_parameters,
                                 dwallet_decentralized_public_output,
                                 message,
-                                &bcs::to_bytes(&VersionedPresignOutput::V2(presign))?,
+                                &presign,
                                 message_centralized_signature,
                                 decryption_pp,
                                 expected_decrypters,
@@ -428,18 +428,12 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
         protocol_public_parameters: P::ProtocolPublicParameters,
         dkg_output: &SerializedWrappedMPCPublicOutput,
         message: Vec<u8>,
-        presign: &SerializedWrappedMPCPublicOutput,
+        presign: &MPCPublicOutput,
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: P::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
         hash_scheme: HashType,
     ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
-        let presign = match bcs::from_bytes::<VersionedPresignOutput>(&presign)? {
-            VersionedPresignOutput::V1(_) => {
-                unreachable!()
-            }
-            VersionedPresignOutput::V2(presign) => presign,
-        };
         let dkg_output = bcs::from_bytes(dkg_output)?;
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
         let decentralized_dkg_output = match dkg_output {

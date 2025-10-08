@@ -534,30 +534,6 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
 pub(crate) type SignCentralizedParty<P: twopc_mpc::sign::Protocol> =
     <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
-pub fn network_key_version_inner(
-    network_dkg_public_output: SerializedWrappedMPCPublicOutput,
-) -> anyhow::Result<u32> {
-    let network_dkg_public_output: VersionedNetworkDkgOutput =
-        bcs::from_bytes(&network_dkg_public_output)?;
-
-    match &network_dkg_public_output {
-        VersionedNetworkDkgOutput::V1(_) => Ok(1),
-        VersionedNetworkDkgOutput::V2(_) => Ok(2),
-    }
-}
-
-pub fn dwallet_version_inner(
-    dwallet_output: SerializedWrappedMPCPublicOutput,
-) -> anyhow::Result<u32> {
-    let dwallet_output: VersionedDwalletDKGSecondRoundPublicOutput =
-        bcs::from_bytes(&dwallet_output)?;
-
-    match &dwallet_output {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(_) => Ok(1),
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(_) => Ok(2),
-    }
-}
-
 pub fn sample_dwallet_keypair_inner(protocol_pp: Vec<u8>) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let protocol_public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let secret_key = twopc_mpc::secp256k1::Scalar::sample(
