@@ -13,8 +13,7 @@ on:
         default: 'latest'
 
 env:
-  GH_PRIVATE_REPO_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
-  GITHUB_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   CLOUDSDK_CORE_PROJECT: common-449616
   DOCKER_TAG: "us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:${{ github.event.inputs.imageTag }}"
@@ -38,9 +37,19 @@ jobs:
           EOF
           gcloud auth activate-service-account --key-file=key.json
           gcloud auth configure-docker us-docker.pkg.dev --quiet
-      - name: Configure git with personal access token
+
+      - name: Setup SSH for manual git
+        if: env.GH_DEPLOY_KEY
         run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Globally rewrite any GitHub HTTPS to SSH
+        if: env.GH_DEPLOY_KEY
+        run: |
+          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+
       - name: Build and push Docker image
         working-directory: sdk/typescript/test/system-tests
         run: |
