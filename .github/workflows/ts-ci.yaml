@@ -34,7 +34,7 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Globally rewrite any GitHub HTTPS to SSH
         run: |
-          git config url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
