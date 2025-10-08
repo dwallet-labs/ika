@@ -26,7 +26,7 @@ use mpc::{
     WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
-use twopc_mpc::dkg::Protocol;
+use twopc_mpc::dkg::{CentralizedPartyKeyShareVerification, Protocol};
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
 /// This struct represents the initial round of the DKG protocol.
@@ -139,6 +139,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.secp256k1_protocol_public_parameters(),
                     centralized_party_public_key_share,
+                    CentralizedPartyKeyShareVerification::None,
                 )
                     .into();
 
@@ -154,6 +155,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.secp256r1_protocol_public_parameters()?,
                     centralized_party_public_key_share,
+                    CentralizedPartyKeyShareVerification::None,
                 )
                     .into();
 
@@ -169,6 +171,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.curve25519_protocol_public_parameters()?,
                     centralized_party_public_key_share,
+                    CentralizedPartyKeyShareVerification::None,
                 )
                     .into();
 
@@ -184,6 +187,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.ristretto_protocol_public_parameters()?,
                     centralized_party_public_key_share,
+                    CentralizedPartyKeyShareVerification::None,
                 )
                     .into();
 
@@ -317,6 +321,7 @@ impl DWalletDKGSecondPartyPublicInputGenerator for Secp256K1DWalletDKGParty {
                 let input: Self::PublicInput = (
                     protocol_public_parameters_with_dkg_centralized_output,
                     centralized_party_public_key_share,
+                    CentralizedPartyKeyShareVerification::None,
                 )
                     .into();
 

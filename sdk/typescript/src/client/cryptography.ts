@@ -329,6 +329,7 @@ export async function prepareImportedKeyDWalletVerification(
  * @param presign - The presignature data from a completed presign operation
  * @param message - The message bytes to sign
  * @param hash - The hash scheme identifier to use for signing
+ * @param signatureScheme
  * @returns The user's sign message that will be sent to the network for signature generation
  * @throws {Error} If the DWallet is not in active state or public output is missing
  */
@@ -339,6 +340,7 @@ export async function createUserSignMessageWithPublicOutput(
 	presign: Uint8Array,
 	message: Uint8Array,
 	hash: number,
+	signatureScheme: number,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
 		await create_sign_user_message(
@@ -348,6 +350,7 @@ export async function createUserSignMessageWithPublicOutput(
 			presign,
 			message,
 			hash,
+			signatureScheme,
 		),
 	);
 }
