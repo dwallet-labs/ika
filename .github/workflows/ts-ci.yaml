@@ -32,6 +32,9 @@ jobs:
           printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Globally rewrite any GitHub HTTPS to SSH
+        run: |
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
