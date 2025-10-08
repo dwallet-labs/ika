@@ -15,7 +15,7 @@ concurrency:
 
 env:
   CARGO_NET_GIT_FETCH_WITH_CLI: true
-  GH_PRIVATE_REPO_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
   PROFILE: dev
 
 jobs:
@@ -25,10 +25,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Configure git with personal access token
-        if: env.GH_PRIVATE_REPO_TOKEN
+      - name: Setup SSH for manual git
+        if: env.GH_DEPLOY_KEY
         run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4

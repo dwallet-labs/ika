@@ -18,7 +18,7 @@ env:
   rust_stable: 1.88
   rust_nightly: nightly
   CARGO_NET_GIT_FETCH_WITH_CLI: true
-  GH_PRIVATE_REPO_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
 
 jobs:
   build:
@@ -28,9 +28,12 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure git with personal access token
+      - name: Setup SSH for manual git
         run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Install Rust ${{ env.rust_stable }}
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -48,9 +51,12 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure git with personal access token
+      - name: Setup SSH for manual git
         run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -69,9 +75,12 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure git with personal access token
+      - name: Setup SSH for manual git
         run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
