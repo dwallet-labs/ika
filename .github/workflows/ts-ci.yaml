@@ -33,6 +33,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Globally rewrite any GitHub HTTPS to SSH
+        if: env.GH_DEPLOY_KEY
         run: |
           git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
 
