@@ -16,7 +16,6 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::request_protocol_data::ProtocolData;
-use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::error::{IkaError, IkaResult};
 pub(crate) use input::{PublicInput, session_input_from_request};
 use std::fmt::{Debug, Formatter};
@@ -400,7 +399,10 @@ impl DWalletMPCManager {
     ///
     /// If there is no `session_request`, and we've got it in this call,
     /// we update that field in the open session.
-    fn handle_mpc_request(&mut self, request: DWalletSessionRequest) -> Option<SessionStatus> {
+    pub(crate) fn handle_mpc_request(
+        &mut self,
+        request: DWalletSessionRequest,
+    ) -> Option<SessionStatus> {
         let session_identifier = request.session_identifier;
 
         // Avoid instantiation of completed events by checking they belong to the current epoch.
