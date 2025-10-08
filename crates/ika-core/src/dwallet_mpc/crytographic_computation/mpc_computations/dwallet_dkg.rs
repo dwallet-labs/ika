@@ -228,14 +228,15 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
 
                 let VersionedImportedDWalletPublicOutput::V1(centralized_party_message) =
                     centralized_party_message;
-                let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
+                let centralized_party_message: <Secp256K1AsyncDKGProtocol as Protocol>::DealTrustedShareMessage =  bcs::from_bytes(&centralized_party_message)?;
 
-                let input = (
-                    protocol_public_parameters.clone(),
-                    session_identifier,
-                    centralized_party_message,
-                )
-                    .into();
+                let input =
+                    <Secp256K1DWalletImportedKeyVerificationParty as Party>::PublicInput::from((
+                        protocol_public_parameters.clone(),
+                        session_identifier,
+                        centralized_party_message,
+                        CentralizedPartyKeyShareVerification::None,
+                    ));
 
                 DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(input)
             }
@@ -250,10 +251,11 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     centralized_party_message;
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
-                let input = (
+                let input: <Secp256R1DWalletImportedKeyVerificationParty as Party>::PublicInput = (
                     protocol_public_parameters.clone(),
                     session_identifier,
                     centralized_party_message,
+                    CentralizedPartyKeyShareVerification::None,
                 )
                     .into();
 
@@ -270,12 +272,14 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     centralized_party_message;
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
-                let input = (
-                    protocol_public_parameters.clone(),
-                    session_identifier,
-                    centralized_party_message,
-                )
-                    .into();
+                let input: <Curve25519DWalletImportedKeyVerificationParty as Party>::PublicInput =
+                    (
+                        protocol_public_parameters.clone(),
+                        session_identifier,
+                        centralized_party_message,
+                        CentralizedPartyKeyShareVerification::None,
+                    )
+                        .into();
 
                 DWalletImportedKeyVerificationPublicInputByCurve::Curve25519DWalletImportedKeyVerification(input)
             }
@@ -290,10 +294,11 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     centralized_party_message;
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
-                let input = (
+                let input: <RistrettoDWalletImportedKeyVerificationParty as Party>::PublicInput = (
                     protocol_public_parameters.clone(),
                     session_identifier,
                     centralized_party_message,
+                    CentralizedPartyKeyShareVerification::None,
                 )
                     .into();
 

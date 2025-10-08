@@ -25,7 +25,7 @@ use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty,
-    ReconfigurationV2Party,
+    ReconfigurationV2Party, VersionedImportedDWalletPublicOutput,
 };
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
@@ -114,7 +114,6 @@ pub(crate) fn session_input_from_request(
                 &data.curve,
                 encryption_key_public_data,
                 &centralized_party_message,
-                CentralizedPartyKeyShareVerification::None,
             )?;
 
             Ok((
@@ -275,7 +274,6 @@ pub(crate) fn session_input_from_request(
 
             Ok((
                 PublicInput::Presign(PresignPublicInputByProtocol::try_new(
-                    request.session_identifier,
                     signature_algorithm.clone(),
                     encryption_key_public_data,
                     dwallet_public_output.clone(),
