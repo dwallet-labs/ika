@@ -75,6 +75,8 @@ export class IkaTransaction {
 	}
 
 	/**
+	 * @deprecated This method is deprecated. Use `requestDWalletDKG` instead.
+	 *
 	 * Request the DKG (Distributed Key Generation) first round with automatic decryption key ID fetching.
 	 * This initiates the creation of a new DWallet through a distributed key generation process.
 	 *
@@ -104,6 +106,8 @@ export class IkaTransaction {
 	}
 
 	/**
+	 * @deprecated This method is deprecated. Use `requestDWalletDKG` instead.
+	 *
 	 * Request the DKG (Distributed Key Generation) first round with explicit decryption key ID.
 	 * This initiates the creation of a new DWallet through a distributed key generation process.
 	 *
@@ -135,6 +139,8 @@ export class IkaTransaction {
 	}
 
 	/**
+	 * @deprecated This method is deprecated. Use `requestDWalletDKG` instead.
+	 *
 	 * Request the DKG (Distributed Key Generation) second round to complete DWallet creation.
 	 * This finalizes the distributed key generation process started in the first round.
 	 *
@@ -416,6 +422,40 @@ export class IkaTransaction {
 	}): TransactionObjectArgument {
 		const unverifiedPresignCap = this.#requestPresign({
 			dWallet,
+			signatureAlgorithm,
+			ikaCoin,
+			suiCoin,
+		});
+
+		return unverifiedPresignCap;
+	}
+
+	/**
+	 * Request a global presign operation.
+	 *
+	 * @param params.dwalletNetworkEncryptionKeyId - The network encryption key ID to use for the presign
+	 * @param params.curve - The curve to use for the presign
+	 * @param params.signatureAlgorithm - The signature algorithm to use
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Unverified presign capability
+	 */
+	requestGlobalPresign({
+		dwalletNetworkEncryptionKeyId,
+		curve,
+		signatureAlgorithm,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dwalletNetworkEncryptionKeyId: string;
+		curve: Curve;
+		signatureAlgorithm: SignatureAlgorithm;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		const unverifiedPresignCap = this.#requestGlobalPresign({
+			dwalletNetworkEncryptionKeyId,
+			curve,
 			signatureAlgorithm,
 			ikaCoin,
 			suiCoin,
@@ -1862,6 +1902,32 @@ export class IkaTransaction {
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			dWallet.id.id,
+			signatureAlgorithm,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.#transaction,
+		);
+	}
+
+	#requestGlobalPresign({
+		dwalletNetworkEncryptionKeyId,
+		curve,
+		signatureAlgorithm,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dwalletNetworkEncryptionKeyId: string;
+		curve: Curve;
+		signatureAlgorithm: SignatureAlgorithm;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		return coordinatorTx.requestGlobalPresign(
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			dwalletNetworkEncryptionKeyId,
+			curve,
 			signatureAlgorithm,
 			this.createSessionIdentifier(),
 			ikaCoin,
