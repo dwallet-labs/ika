@@ -15,8 +15,8 @@ use dwallet_mpc_types::dwallet_mpc::{
     NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare,
-    VersionedImportedDWalletPublicOutput, VersionedNetworkEncryptionKeyPublicData,
-    VersionedPublicKeyShareAndProof,
+    VersionedImportedDWalletPublicOutput, VersionedImportedDwalletOutgoingMessage,
+    VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
 };
 use group::{CsRng, PartyID};
 use ika_protocol_config::ProtocolVersion;
@@ -222,11 +222,11 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
             DWalletCurve::Secp256k1 => {
                 let protocol_public_parameters =
                     encryption_key_public_data.secp256k1_protocol_public_parameters();
-                let centralized_party_message: VersionedImportedDWalletPublicOutput =
+                let centralized_party_message: VersionedImportedDwalletOutgoingMessage =
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
 
-                let VersionedImportedDWalletPublicOutput::V1(centralized_party_message) =
+                let VersionedImportedDwalletOutgoingMessage::V1(centralized_party_message) =
                     centralized_party_message;
                 let centralized_party_message: <Secp256K1AsyncDKGProtocol as Protocol>::DealTrustedShareMessage =  bcs::from_bytes(&centralized_party_message)?;
 
@@ -680,20 +680,13 @@ pub fn compute_imported_key_verification<P: Protocol>(
             // Wrap the public output with its version.
             let versioned_output = match protocol_version.as_u64() {
                 1 => {
-                    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
-                    let decentralized_output = match decentralized_output {
-                        DKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
-                            output, ..
-                        } => output,
-                        DKGDecentralizedPartyVersionedOutputSecp256k1::TargetedPublicDKGOutput (
-                            output
-                        ) => output,
-                    };
-                    bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
-                        bcs::to_bytes(&decentralized_output).unwrap(),
+                    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyTargetedDKGOutput = bcs::from_bytes(&public_output_value)?;
+                    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput = decentralized_output.into();
+                    bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V1(
+                        bcs::to_bytes(&decentralized_output)?,
                     ))?
                 }
-                2 => bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
+                2 => bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V2(
                     public_output_value,
                 ))?,
                 _ => {
