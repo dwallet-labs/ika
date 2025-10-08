@@ -230,15 +230,16 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     centralized_party_message;
                 let centralized_party_message: <Secp256K1AsyncDKGProtocol as Protocol>::DealTrustedShareMessage =  bcs::from_bytes(&centralized_party_message)?;
 
-                let input =
+                let public_input =
                     <Secp256K1DWalletImportedKeyVerificationParty as Party>::PublicInput::from((
-                        protocol_public_parameters.clone(),
+                        protocol_public_parameters,
                         session_identifier,
                         centralized_party_message,
+                        // TODO (#1545): Move secret share verification logic to DKG protocol
                         CentralizedPartyKeyShareVerification::None,
                     ));
 
-                DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(input)
+                DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(public_input)
             }
             DWalletCurve::Secp256r1 => {
                 let protocol_public_parameters =
@@ -251,15 +252,16 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     centralized_party_message;
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
-                let input: <Secp256R1DWalletImportedKeyVerificationParty as Party>::PublicInput = (
-                    protocol_public_parameters.clone(),
+                let public_input = (
+                    protocol_public_parameters,
                     session_identifier,
                     centralized_party_message,
+                    // TODO (#1545): Move secret share verification logic to DKG protocol
                     CentralizedPartyKeyShareVerification::None,
                 )
                     .into();
 
-                DWalletImportedKeyVerificationPublicInputByCurve::Secp256R1DWalletImportedKeyVerification(input)
+                DWalletImportedKeyVerificationPublicInputByCurve::Secp256R1DWalletImportedKeyVerification(public_input)
             }
             DWalletCurve::Curve25519 => {
                 let protocol_public_parameters =
@@ -272,16 +274,16 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     centralized_party_message;
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
-                let input: <Curve25519DWalletImportedKeyVerificationParty as Party>::PublicInput =
-                    (
-                        protocol_public_parameters.clone(),
-                        session_identifier,
-                        centralized_party_message,
-                        CentralizedPartyKeyShareVerification::None,
-                    )
-                        .into();
+                let public_input = (
+                    protocol_public_parameters,
+                    session_identifier,
+                    centralized_party_message,
+                    // TODO (#1545): Move secret share verification logic to DKG protocol
+                    CentralizedPartyKeyShareVerification::None,
+                )
+                    .into();
 
-                DWalletImportedKeyVerificationPublicInputByCurve::Curve25519DWalletImportedKeyVerification(input)
+                DWalletImportedKeyVerificationPublicInputByCurve::Curve25519DWalletImportedKeyVerification(public_input)
             }
             DWalletCurve::Ristretto => {
                 let protocol_public_parameters =
@@ -294,15 +296,16 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     centralized_party_message;
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
-                let input: <RistrettoDWalletImportedKeyVerificationParty as Party>::PublicInput = (
-                    protocol_public_parameters.clone(),
+                let public_input = (
+                    protocol_public_parameters,
                     session_identifier,
                     centralized_party_message,
+                    // TODO (#1545): Move secret share verification logic to DKG protocol
                     CentralizedPartyKeyShareVerification::None,
                 )
                     .into();
 
-                DWalletImportedKeyVerificationPublicInputByCurve::RistrettoDWalletImportedKeyVerification(input)
+                DWalletImportedKeyVerificationPublicInputByCurve::RistrettoDWalletImportedKeyVerification(public_input)
             }
         };
 
@@ -553,7 +556,7 @@ fn try_ready_to_advance<P: Protocol>(
 
     match advance_request_result {
         ReadyToAdvanceResult::ReadyToAdvance(advance_request) => Ok(Some(advance_request)),
-        _ => Ok(None),
+        ReadyToAdvanceResult::WaitForMoreMessages { .. } => Ok(None),
     }
 }
 
@@ -578,7 +581,7 @@ fn try_ready_to_advance_imported_key<P: Protocol>(
 
     match advance_request_result {
         ReadyToAdvanceResult::ReadyToAdvance(advance_request) => Ok(Some(advance_request)),
-        _ => Ok(None),
+        ReadyToAdvanceResult::WaitForMoreMessages { .. } => Ok(None),
     }
 }
 
