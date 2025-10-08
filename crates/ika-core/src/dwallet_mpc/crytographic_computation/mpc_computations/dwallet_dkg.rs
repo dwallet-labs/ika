@@ -680,8 +680,9 @@ pub fn compute_imported_key_verification<P: Protocol>(
             // Wrap the public output with its version.
             let versioned_output = match protocol_version.as_u64() {
                 1 => {
-                    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyTargetedDKGOutput = bcs::from_bytes(&public_output_value)?;
-                    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput = decentralized_output.into();
+                    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
+                    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyTargetedDKGOutput = decentralized_output.into();
+
                     bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V1(
                         bcs::to_bytes(&decentralized_output)?,
                     ))?

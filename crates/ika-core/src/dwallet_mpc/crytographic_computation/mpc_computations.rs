@@ -582,14 +582,8 @@ impl ProtocolCryptographicData {
                         private_output,
                     } => {
                         let decentralized_output: <Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
-                        let decentralized_output = match decentralized_output {
-                            DKGDecentralizedPartyVersionedOutputSecp256k1::UniversalPublicDKGOutput {
-                                output, ..
-                            } => output,
-                            DKGDecentralizedPartyVersionedOutputSecp256k1::TargetedPublicDKGOutput (
-                                output
-                            ) => output,
-                        };
+                        let decentralized_output: <Secp256K1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput = decentralized_output.into();
+
                         let public_output_value =
                             bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
                                 bcs::to_bytes(&decentralized_output).unwrap(),
