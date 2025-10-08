@@ -8,18 +8,18 @@ use crate::request_protocol_data::{
 };
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,
-    DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
-    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
-    EncryptedShareVerificationRequestEvent, FutureSignRequestEvent, IkaNetworkConfig,
-    MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
-    SESSIONS_MANAGER_MODULE_NAME, SignRequestEvent,
+    DWALLET_SESSION_EVENT_STRUCT_NAME, DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent,
+    DWalletDKGSecondRoundRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent,
+    DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent,
+    DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent,
+    FutureSignRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent,
+    PresignRequestEvent, SESSIONS_MANAGER_MODULE_NAME, SignRequestEvent,
 };
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;
 use sui_types::dynamic_field::Field;
 use sui_types::id::ID;
-use tracing::error;
+use tracing::{error, info};
 
 pub fn sui_event_into_session_request(
     packages_config: &IkaNetworkConfig,
@@ -27,7 +27,16 @@ pub fn sui_event_into_session_request(
     contents: &[u8],
     pulled: bool,
 ) -> anyhow::Result<Option<DWalletSessionRequest>> {
-    if event_type.address != *packages_config.packages.ika_dwallet_2pc_mpc_package_id
+    if (event_type.address != *packages_config.packages.ika_dwallet_2pc_mpc_package_id
+        && (packages_config
+            .packages
+            .ika_dwallet_2pc_mpc_package_id_v2
+            .is_none()
+            || event_type.address
+                != *packages_config
+                    .packages
+                    .ika_dwallet_2pc_mpc_package_id_v2
+                    .unwrap()))
         || event_type.module != SESSIONS_MANAGER_MODULE_NAME.into()
     {
         error!(
@@ -39,73 +48,102 @@ pub fn sui_event_into_session_request(
             "received an event from a wrong SUI module - rejecting!"
         ));
     }
-
-    let session_request = if event_type
-        == DWalletSessionEvent::<DWalletImportedKeyVerificationRequestEvent>::type_(packages_config)
+    if !event_type
+        .to_string()
+        .contains(&DWALLET_SESSION_EVENT_STRUCT_NAME.to_string())
     {
+        info!("received an event that is not a DWalletSessionEvent - ignoring!",);
+        return Ok(None);
+    }
+
+    let session_request = if event_type.to_string().contains(
+        &DWalletImportedKeyVerificationRequestEvent::type_(packages_config)
+            .name
+            .to_string(),
+    ) {
         dwallet_imported_key_verification_request_event_session_request(
             deserialize_event_contents::<DWalletImportedKeyVerificationRequestEvent>(
                 &contents, pulled,
             )?,
             pulled,
         )?
-    } else if event_type
-        == DWalletSessionEvent::<MakeDWalletUserSecretKeySharesPublicRequestEvent>::type_(
-            packages_config,
-        )
-    {
+    } else if event_type.to_string().contains(
+        &MakeDWalletUserSecretKeySharesPublicRequestEvent::type_(packages_config)
+            .name
+            .to_string(),
+    ) {
         make_dwallet_user_secret_key_shares_public_request_event_session_request(
             deserialize_event_contents::<MakeDWalletUserSecretKeySharesPublicRequestEvent>(
                 &contents, pulled,
             )?,
             pulled,
         )?
-    } else if event_type
-        == DWalletSessionEvent::<DWalletDKGFirstRoundRequestEvent>::type_(packages_config)
-    {
+    } else if event_type.to_string().contains(
+        &DWalletDKGFirstRoundRequestEvent::type_(packages_config)
+            .name
+            .to_string(),
+    ) {
         dwallet_dkg_first_party_session_request(
             deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(&contents, pulled)?,
             pulled,
         )?
-    } else if event_type == DWalletSessionEvent::<DWalletDKGRequestEvent>::type_(packages_config) {
+    } else if event_type.to_string().contains(
+        &DWalletDKGRequestEvent::type_(packages_config)
+            .name
+            .to_string(),
+    ) {
         dwallet_dkg_session_request(
             deserialize_event_contents::<DWalletDKGRequestEvent>(&contents, pulled)?,
             pulled,
         )?
-    } else if event_type
-        == DWalletSessionEvent::<DWalletDKGSecondRoundRequestEvent>::type_(packages_config)
-    {
+    } else if event_type.to_string().contains(
+        &DWalletDKGSecondRoundRequestEvent::type_(packages_config)
+            .name
+            .to_string(),
+    ) {
         dwallet_dkg_second_party_session_request(
             deserialize_event_contents::<DWalletDKGSecondRoundRequestEvent>(&contents, pulled)?,
             pulled,
         )?
-    } else if event_type == DWalletSessionEvent::<PresignRequestEvent>::type_(packages_config) {
+    } else if event_type
+        .to_string()
+        .contains(&PresignRequestEvent::type_(packages_config).name.to_string())
+    {
         let deserialized_event: DWalletSessionEvent<PresignRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
         presign_party_session_request(deserialized_event, pulled)?
-    } else if event_type == DWalletSessionEvent::<SignRequestEvent>::type_(packages_config) {
+    } else if event_type
+        .to_string()
+        .contains(&SignRequestEvent::type_(packages_config).name.to_string())
+    {
         let deserialized_event: DWalletSessionEvent<SignRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
         sign_party_session_request(&deserialized_event, pulled)?
-    } else if event_type == DWalletSessionEvent::<FutureSignRequestEvent>::type_(packages_config) {
+    } else if event_type.to_string().contains(
+        &FutureSignRequestEvent::type_(packages_config)
+            .name
+            .to_string(),
+    ) {
         let deserialized_event: DWalletSessionEvent<FutureSignRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
         get_verify_partial_signatures_session_request(&deserialized_event, pulled)?
-    } else if event_type
-        == DWalletSessionEvent::<DWalletNetworkDKGEncryptionKeyRequestEvent>::type_(packages_config)
-    {
+    } else if event_type.to_string().contains(
+        &DWalletNetworkDKGEncryptionKeyRequestEvent::type_(packages_config)
+            .name
+            .to_string(),
+    ) {
         let deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 
         network_dkg_session_request(deserialized_event, pulled)?
-    } else if event_type
-        == DWalletSessionEvent::<DWalletEncryptionKeyReconfigurationRequestEvent>::type_(
-            packages_config,
-        )
-    {
+    } else if event_type.to_string().contains(
+        &DWalletEncryptionKeyReconfigurationRequestEvent::type_(packages_config)
+            .name
+            .to_string(),
+    ) {
         let deserialized_event: DWalletSessionEvent<
             DWalletEncryptionKeyReconfigurationRequestEvent,
         > = deserialize_event_contents(&contents, pulled)?;
@@ -114,9 +152,11 @@ pub fn sui_event_into_session_request(
             deserialized_event,
             pulled,
         )?
-    } else if event_type
-        == DWalletSessionEvent::<EncryptedShareVerificationRequestEvent>::type_(packages_config)
-    {
+    } else if event_type.to_string().contains(
+        &EncryptedShareVerificationRequestEvent::type_(packages_config)
+            .name
+            .to_string(),
+    ) {
         let deserialized_event: DWalletSessionEvent<EncryptedShareVerificationRequestEvent> =
             deserialize_event_contents(&contents, pulled)?;
 

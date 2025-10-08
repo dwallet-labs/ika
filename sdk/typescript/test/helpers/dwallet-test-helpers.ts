@@ -48,6 +48,7 @@ export async function createCompleteDWallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	testName: string,
+	registerEncryptionKey: boolean = true,
 ): Promise<{
 	dWallet: DWallet;
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
@@ -72,7 +73,9 @@ export async function createCompleteDWallet(
 	await delay(5); // Wait for 5 seconds to ensure the DWallet is created
 
 	// Step 2: Register encryption key
-	await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
+	if (registerEncryptionKey) {
+		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
+	}
 
 	// Step 3: Wait for DWallet to be in AwaitingUserDKGVerificationInitiation state
 	const dWallet = await retryUntil(
@@ -154,6 +157,7 @@ export async function createCompleteDWalletV2(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	testName: string,
+	registerEncryptionKey: boolean = true,
 ): Promise<{
 	dWallet: DWallet;
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
@@ -192,7 +196,9 @@ export async function createCompleteDWalletV2(
 	await delay(5); // Wait for 5 seconds to ensure the DWallet is created
 
 	// Step 2: Register encryption key
-	await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
+	if (registerEncryptionKey) {
+		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
+	}
 
 	// Step 4: Prepare network DKG input
 	const dkgSecondRoundRequestInput = await prepareDKGAsync(

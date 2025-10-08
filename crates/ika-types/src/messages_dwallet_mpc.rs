@@ -444,6 +444,7 @@ impl IkaNetworkConfig {
         ika_package_id: ObjectID,
         ika_common_package_id: ObjectID,
         ika_dwallet_2pc_mpc_package_id: ObjectID,
+        ika_dwallet_2pc_mpc_package_id_v2: Option<ObjectID>,
         ika_system_package_id: ObjectID,
         ika_system_object_id: ObjectID,
         ika_dwallet_coordinator_object_id: ObjectID,
@@ -453,6 +454,7 @@ impl IkaNetworkConfig {
                 ika_package_id,
                 ika_common_package_id,
                 ika_dwallet_2pc_mpc_package_id,
+                ika_dwallet_2pc_mpc_package_id_v2,
                 ika_system_package_id,
             },
             objects: IkaObjectsConfig {
@@ -468,6 +470,7 @@ impl IkaNetworkConfig {
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
+            None,
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
@@ -483,6 +486,9 @@ pub struct IkaPackageConfig {
     pub ika_common_package_id: ObjectID,
     /// The move package id of ika_dwallet_2pc_mpc on sui.
     pub ika_dwallet_2pc_mpc_package_id: ObjectID,
+    /// The move package id of ika_dwallet_2pc_mpc on sui.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ika_dwallet_2pc_mpc_package_id_v2: Option<ObjectID>,
     /// The move package id of ika_system on sui.
     pub ika_system_package_id: ObjectID,
 }
