@@ -105,9 +105,15 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure git with personal access token
+      - name: Setup SSH for manual git
         run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Globally rewrite any GitHub HTTPS to SSH
+        run: |
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
       - name: Install Rust ${{ env.rust_stable }}
         uses: dtolnay/rust-toolchain@stable
         with:
