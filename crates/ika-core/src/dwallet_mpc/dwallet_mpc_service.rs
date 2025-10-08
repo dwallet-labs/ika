@@ -273,7 +273,7 @@ impl DWalletMPCService {
 
         self.process_cryptographic_computations().await;
         self.handle_failed_requests_and_submit_reject_to_consensus(rejected_sessions)
-                .await;
+            .await;
     }
 
     async fn process_cryptographic_computations(&mut self) {
@@ -693,7 +693,8 @@ impl DWalletMPCService {
                         &validator_name.to_string(),
                         party_id,
                         err,
-                    ).await;
+                    )
+                    .await;
                 }
             }
         }
@@ -717,7 +718,8 @@ impl DWalletMPCService {
                     session_identifier,
                     error: "failed to create session".to_string(),
                 },
-            ).await;
+            )
+            .await;
         }
     }
 
@@ -742,13 +744,8 @@ impl DWalletMPCService {
         let consensus_adapter = self.dwallet_submit_to_consensus.clone();
         let rejected = true;
 
-        let consensus_message = self.new_dwallet_mpc_output(
-            session_identifier,
-            request,
-            vec![],
-            vec![],
-            rejected,
-        );
+        let consensus_message =
+            self.new_dwallet_mpc_output(session_identifier, request, vec![], vec![], rejected);
 
         if let Err(err) = consensus_adapter
             .submit_to_consensus(&[consensus_message])
