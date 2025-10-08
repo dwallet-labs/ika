@@ -7,6 +7,7 @@ import { prepareDKGSecondRoundAsync } from '../../src/client/cryptography';
 import { ZeroTrustDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
+	createCompleteDWalletV2,
 	makeTestDWalletUserSecretKeySharesPublic,
 	registerTestEncryptionKey,
 	requestTestDKGFirstRound,
@@ -101,6 +102,37 @@ describe('Shared DWallet (make shares public)', () => {
 			(share) => share !== null,
 			30,
 			2000,
+		);
+
+		const { secretShare } = await userShareEncryptionKeys.decryptUserShare(
+			activeDWallet,
+			encryptedUserSecretKeyShare,
+			await ikaClient.getProtocolPublicParameters(activeDWallet),
+		);
+
+		await makeTestDWalletUserSecretKeySharesPublic(
+			ikaClient,
+			suiClient,
+			activeDWallet as ZeroTrustDWallet,
+			secretShare,
+			testName,
+		);
+	});
+
+	it('should make user secret key shares public after v2 DWallet activation', async () => {
+		const testName = 'dwallet-sharing-test';
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+
+		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName);
+
+		await requestTestFaucetFunds(signerAddress);
+
+		const { dWallet: activeDWallet, encryptedUserSecretKeyShare } = await createCompleteDWalletV2(
+			ikaClient,
+			suiClient,
+			testName,
 		);
 
 		const { secretShare } = await userShareEncryptionKeys.decryptUserShare(

@@ -22,6 +22,7 @@ import {
 	generate_secp_cg_keypair_from_seed,
 	network_dkg_public_output_to_protocol_pp,
 	public_key_from_dwallet_output,
+	reconfiguration_public_output_to_protocol_pp,
 	verify_secp_signature,
 	verify_user_share,
 } from './wasm-loader.js';
@@ -328,6 +329,7 @@ export async function prepareImportedKeyDWalletVerification(
  * @param presign - The presignature data from a completed presign operation
  * @param message - The message bytes to sign
  * @param hash - The hash scheme identifier to use for signing
+ * @param signatureScheme
  * @returns The user's sign message that will be sent to the network for signature generation
  * @throws {Error} If the DWallet is not in active state or public output is missing
  */
@@ -338,6 +340,7 @@ export async function createUserSignMessageWithPublicOutput(
 	presign: Uint8Array,
 	message: Uint8Array,
 	hash: number,
+	signatureScheme: number,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
 		await create_sign_user_message(
@@ -347,6 +350,7 @@ export async function createUserSignMessageWithPublicOutput(
 			presign,
 			message,
 			hash,
+			signatureScheme,
 		),
 	);
 }
@@ -361,6 +365,25 @@ export async function networkDkgPublicOutputToProtocolPublicParameters(
 	network_dkg_public_output: Uint8Array,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(await network_dkg_public_output_to_protocol_pp(network_dkg_public_output));
+}
+
+/**
+ * Convert a reconfiguration DKG public output to the protocol public parameters.
+ *
+ * @returns The protocol public parameters
+ * @param reconfiguration_public_output
+ * @param network_dkg_public_output
+ */
+export async function reconfigurationPublicOutputToProtocolPublicParameters(
+	reconfiguration_public_output: Uint8Array,
+	network_dkg_public_output: Uint8Array,
+): Promise<Uint8Array> {
+	return Uint8Array.from(
+		await reconfiguration_public_output_to_protocol_pp(
+			reconfiguration_public_output,
+			network_dkg_public_output,
+		),
+	);
 }
 
 /**

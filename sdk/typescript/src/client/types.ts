@@ -42,7 +42,9 @@ export interface NetworkEncryptionKey {
 	/** The epoch when this encryption key was created */
 	epoch: number;
 	/** The public output ID for this encryption key */
-	publicOutputID: string;
+	networkDKGOutputID: string;
+	/** The reconfiguration output ID associated with this encryption key */
+	reconfigurationOutputID: string | undefined;
 }
 
 /**
@@ -106,6 +108,7 @@ export type Presign = typeof CoordinatorInnerModule.PresignSession.$inferType;
 export type EncryptedUserSecretKeyShare =
 	typeof CoordinatorInnerModule.EncryptedUserSecretKeyShare.$inferType;
 export type PartialUserSignature = typeof CoordinatorInnerModule.PartialUserSignature.$inferType;
+export type Sign = typeof CoordinatorInnerModule.SignSession.$inferType;
 export type EncryptionKey = typeof CoordinatorInnerModule.EncryptionKey.$inferType;
 export type DWalletState = typeof CoordinatorInnerModule.DWalletState.$inferType.$kind;
 export type PresignState = typeof CoordinatorInnerModule.PresignState.$inferType.$kind;
@@ -113,6 +116,7 @@ export type PartialUserSignatureState =
 	typeof CoordinatorInnerModule.PartialUserSignatureState.$inferType.$kind;
 export type EncryptedUserSecretKeyShareState =
 	typeof CoordinatorInnerModule.EncryptedUserSecretKeyShareState.$inferType.$kind;
+export type SignState = typeof CoordinatorInnerModule.SignState.$inferType.$kind;
 
 export const Hash = {
 	KECCAK256: 0,
@@ -134,7 +138,11 @@ export const Curve = {
 export type Curve = (typeof Curve)[keyof typeof Curve];
 
 export const SignatureAlgorithm = {
-	ECDSA: 0,
+	ECDSASecp256k1: 0,
+	Taproot: 1,
+	ECDSASecp256r1: 2,
+	EdDSA: 3,
+	SchnorrkelSubstrate: 4,
 } as const;
 
 export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];
@@ -170,4 +178,5 @@ export type UserSignatureInputs = {
 	presign: Presign;
 	message: Uint8Array;
 	hash: Hash;
+	signatureScheme: SignatureAlgorithm;
 };

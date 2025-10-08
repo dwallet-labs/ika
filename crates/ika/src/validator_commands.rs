@@ -472,6 +472,7 @@ impl IkaValidatorCommand {
                     ika_package_id,
                     ika_common_package_id,
                     ika_dwallet_2pc_mpc_package_id,
+                    None,
                     ika_system_package_id,
                     ika_system_object_id,
                     // This is done on purpose,
