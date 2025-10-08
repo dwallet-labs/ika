@@ -534,9 +534,6 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
 pub(crate) type SignCentralizedParty<P: twopc_mpc::sign::Protocol> =
     <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
-pub(crate) type SignCentralizedParty<P: twopc_mpc::sign::Protocol> =
-    <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
-
 pub fn sample_dwallet_keypair_inner(protocol_pp: Vec<u8>) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let protocol_public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let secret_key = twopc_mpc::secp256k1::Scalar::sample(

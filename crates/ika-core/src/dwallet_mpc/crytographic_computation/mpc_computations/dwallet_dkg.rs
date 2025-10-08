@@ -689,11 +689,11 @@ pub fn compute_imported_key_verification<P: Protocol>(
                             output
                         ) => output,
                     };
-                    bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V1(
+                    bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
                         bcs::to_bytes(&decentralized_output).unwrap(),
                     ))?
                 }
-                2 => bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V2(
+                2 => bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
                     public_output_value,
                 ))?,
                 _ => {
