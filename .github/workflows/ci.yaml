@@ -36,7 +36,7 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Globally rewrite any GitHub HTTPS to SSH
         run: |
-          git config --global url."git@github.com:".insteadOf "https://github.com/"
+          git config url."git@github.com:dwallet-labs/cryptography-private.git".insteadOf "https://github.com/dwallet-labs/cryptography-private.git"
       - name: Install Rust ${{ env.rust_stable }}
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -62,7 +62,7 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Globally rewrite any GitHub HTTPS to SSH
         run: |
-          git config --global url."git@github.com:".insteadOf "https://github.com/"
+          git config url."git@github.com:dwallet-labs/cryptography-private.git".insteadOf "https://github.com/dwallet-labs/cryptography-private.git"
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -89,7 +89,7 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Globally rewrite any GitHub HTTPS to SSH
         run: |
-          git config --global url."git@github.com:".insteadOf "https://github.com/"
+          git config url."git@github.com:dwallet-labs/cryptography-private.git".insteadOf "https://github.com/dwallet-labs/cryptography-private.git"
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -113,7 +113,7 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Globally rewrite any GitHub HTTPS to SSH
         run: |
-          git config --global url."git@github.com:".insteadOf "https://github.com/"
+          git config url."git@github.com:dwallet-labs/cryptography-private.git".insteadOf "https://github.com/dwallet-labs/cryptography-private.git"
       - name: Install Rust ${{ env.rust_stable }}
         uses: dtolnay/rust-toolchain@stable
         with:
