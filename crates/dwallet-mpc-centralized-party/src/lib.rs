@@ -616,17 +616,17 @@ pub fn create_imported_dwallet_centralized_step_inner_v1(
         secret_key,
     ) {
         Ok((public_output, outgoing_message, secret_share)) => {
-            let public_targeted_output: <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyTargetedDKGOutput = bcs::from_bytes(&public_output)?;
-            let public_output: <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput = public_targeted_output.into();
+            let public_output: <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput = bcs::from_bytes(&public_output)?;
             Ok((
-                   bcs::to_bytes(&VersionedDwalletUserSecretShare::V1(secret_share))?,
-            bcs::to_bytes(&VersionedCentralizedPartyImportedDWalletPublicOutput::V1(
-                bcs::to_bytes(&public_output)?
-            ))?,
-            bcs::to_bytes(&VersionedImportedDwalletOutgoingMessage::V1(
-                outgoing_message,
-            ))?,
-            )) }
+                bcs::to_bytes(&VersionedDwalletUserSecretShare::V1(secret_share))?,
+                bcs::to_bytes(&VersionedCentralizedPartyImportedDWalletPublicOutput::V1(
+                    bcs::to_bytes(&public_output)?,
+                ))?,
+                bcs::to_bytes(&VersionedImportedDwalletOutgoingMessage::V1(
+                    outgoing_message,
+                ))?,
+            ))
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -658,7 +658,7 @@ pub fn create_imported_dwallet_centralized_step_inner_v2(
             bcs::to_bytes(&VersionedCentralizedPartyImportedDWalletPublicOutput::V2(
                 public_output,
             ))?,
-            bcs::to_bytes(&VersionedImportedDwalletOutgoingMessage::V2(
+            bcs::to_bytes(&VersionedImportedDwalletOutgoingMessage::V1(
                 outgoing_message,
             ))?,
         )),

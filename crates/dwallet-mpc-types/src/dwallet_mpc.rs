@@ -320,7 +320,6 @@ pub enum VersionedImportedSecretShare {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedImportedDwalletOutgoingMessage {
     V1(MPCPublicOutput),
-    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

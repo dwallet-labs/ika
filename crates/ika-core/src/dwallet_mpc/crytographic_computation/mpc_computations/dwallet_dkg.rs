@@ -231,9 +231,6 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     VersionedImportedDwalletOutgoingMessage::V1(centralized_party_message) => {
                         centralized_party_message
                     }
-                    VersionedImportedDwalletOutgoingMessage::V2(centralized_party_message) => {
-                        centralized_party_message
-                    }
                 };
                 let centralized_party_message: <Secp256K1AsyncDKGProtocol as Protocol>::DealTrustedShareMessage =  bcs::from_bytes(&centralized_party_message)?;
 
