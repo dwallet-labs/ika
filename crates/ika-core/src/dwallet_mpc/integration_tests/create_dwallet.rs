@@ -9,11 +9,7 @@ use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
     ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData, ProtocolData,
 };
-use dwallet_mpc_centralized_party::{
-    create_imported_dwallet_centralized_step_inner_v1, encrypt_secret_key_share_and_prove_v1,
-    generate_secp256k1_cg_keypair_from_seed_internal,
-    network_dkg_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
-};
+use dwallet_mpc_centralized_party::{create_imported_dwallet_centralized_step_inner_v1, create_imported_dwallet_centralized_step_inner_v2, encrypt_secret_key_share_and_prove_v1, encrypt_secret_key_share_and_prove_v2, generate_secp256k1_cg_keypair_from_seed_internal, network_dkg_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner};
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
 use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGOutput};
@@ -236,6 +232,90 @@ async fn create_imported_dwallet() {
     let (encryption_key, decryption_key) =
         generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
     let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v1(
+        user_secret_share,
+        encryption_key.clone(),
+        protocol_pp,
+    )
+    .unwrap();
+    send_start_imported_dwallet_verification_event(
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        import_dwallet_session_id,
+        2,
+        key_id,
+        ObjectID::random(),
+        encrypted_secret_key_share_and_proof,
+        user_message,
+        encryption_key,
+    );
+    let (consensus_round, verified_dwallet_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
+    let DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(
+        imported_key_verification_output,
+    ) = verified_dwallet_checkpoint
+        .messages()
+        .clone()
+        .pop()
+        .unwrap()
+    else {
+        panic!("Expected DWallet imported key verification output message");
+    };
+    assert!(
+        !imported_key_verification_output.rejected,
+        "Imported DWallet key verification should not be rejected"
+    );
+    info!("DWallet DKG second round completed");
+}
+
+#[tokio::test]
+#[cfg(test)]
+/// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
+async fn create_imported_dwallet_v2() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (committee, _) = Committee::new_simple_test_committee();
+    let ika_network_config = IkaNetworkConfig::new_for_testing();
+    let epoch_id = 1;
+    let (
+        mut dwallet_mpc_services,
+        mut sui_data_senders,
+        mut sent_consensus_messages_collectors,
+        mut epoch_stores,
+        notify_services,
+    ) = utils::create_dwallet_mpc_services(4);
+    let mut test_state = IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee,
+        sui_data_senders,
+    };
+    for service in &mut test_state.dwallet_mpc_services {
+        service
+            .dwallet_mpc_manager_mut()
+            .last_session_to_complete_in_current_epoch = 40;
+    }
+    let (consensus_round, network_key_bytes, key_id) =
+        create_network_key_test(&mut test_state).await;
+    let protocol_pp =
+        network_dkg_public_output_to_protocol_pp_inner(network_key_bytes.clone()).unwrap();
+    let (dwallet_secret_key, dwallet_public_key) =
+        sample_dwallet_keypair_inner(protocol_pp.clone()).unwrap();
+    let import_dwallet_session_id = [2; 32];
+    let (user_secret_share, user_public_output, user_message) =
+        create_imported_dwallet_centralized_step_inner_v2(
+            0,
+            &protocol_pp,
+            &SessionIdentifier::new(SessionType::User, import_dwallet_session_id).to_vec(),
+            &dwallet_secret_key,
+        )
+        .unwrap();
+    let (encryption_key, decryption_key) =
+        generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
+    let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v2(
+        0,
         user_secret_share,
         encryption_key.clone(),
         protocol_pp,
