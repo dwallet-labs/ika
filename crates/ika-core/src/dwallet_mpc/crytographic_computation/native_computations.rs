@@ -128,6 +128,9 @@ impl ProtocolCryptographicData {
                         VersionedUserSignedMessage::V1(partially_signed_message) => {
                             partially_signed_message
                         }
+                        _ => {
+                            return Err(DwalletMPCError::InvalidPartiallySignedMessageVersion);
+                        }
                     };
                     let partial: <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage =
                             bcs::from_bytes(&partially_signed_message)?;
