@@ -298,7 +298,6 @@ pub enum VersionedCentralizedDKGPublicOutput {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedDwalletUserSecretShare {
     V1(MPCPublicOutput),
-    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

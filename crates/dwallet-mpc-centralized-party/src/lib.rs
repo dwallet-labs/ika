@@ -510,11 +510,6 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
                 &centralized_party_secret_key_share,
             )?
         }
-        VersionedDwalletUserSecretShare::V2(centralized_party_secret_key_share) => {
-            bcs::from_bytes::<P::CentralizedPartySecretKeyShare>(
-                &centralized_party_secret_key_share,
-            )?
-        }
     };
 
     let presign: <P as twopc_mpc::presign::Protocol>::Presign = bcs::from_bytes(&presign)?;
@@ -661,7 +656,7 @@ pub fn create_imported_dwallet_centralized_step_inner_v2(
 
     match round_result {
         Ok((public_output, outgoing_message, secret_share)) => Ok((
-            bcs::to_bytes(&VersionedDwalletUserSecretShare::V2(secret_share))?,
+            bcs::to_bytes(&VersionedDwalletUserSecretShare::V1(secret_share))?,
             bcs::to_bytes(&VersionedCentralizedPartyImportedDWalletPublicOutput::V2(
                 public_output,
             ))?,
@@ -871,16 +866,6 @@ fn encrypt_secret_key_share_and_prove_inner<P: twopc_mpc::dkg::Protocol>(
     let secret_key_share: VersionedDwalletUserSecretShare = bcs::from_bytes(&secret_key_share)?;
     match secret_key_share {
         VersionedDwalletUserSecretShare::V1(secret_key_share) => {
-            let protocol_public_params: <Secp256K1DKGProtocol as Protocol>::ProtocolPublicParameters = bcs::from_bytes(&protocol_public_params)?;
-            let encryption_key: <Secp256K1DKGProtocol as Protocol>::EncryptionKey =
-                bcs::from_bytes(&encryption_key)?;
-            let secret_key_share: <Secp256K1DKGProtocol as Protocol>::CentralizedPartySecretKeyShare = bcs::from_bytes(&secret_key_share)?;
-            let result = <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::encrypt_and_prove_centralized_party_share(&protocol_public_params, encryption_key, secret_key_share, &mut OsCsRng)?;
-            Ok(bcs::to_bytes(&VersionedEncryptedUserShare::V1(
-                bcs::to_bytes(&result)?,
-            ))?)
-        }
-        VersionedDwalletUserSecretShare::V2(secret_key_share) => {
             let protocol_public_params: P::ProtocolPublicParameters =
                 bcs::from_bytes(&protocol_public_params)?;
             let encryption_key: P::EncryptionKey = bcs::from_bytes(&encryption_key)?;
@@ -969,7 +954,7 @@ fn verify_secret_share_inner<P: twopc_mpc::dkg::Protocol>(
         }
         (
             VersionedDwalletDKGSecondRoundPublicOutput::V2(decentralized_dkg_output),
-            VersionedDwalletUserSecretShare::V2(secret_share),
+            VersionedDwalletUserSecretShare::V1(secret_share),
         ) => (decentralized_dkg_output, secret_share),
         _ => {
             return Err(anyhow!(
