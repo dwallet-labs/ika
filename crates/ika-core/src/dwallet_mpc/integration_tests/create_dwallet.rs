@@ -10,8 +10,7 @@ use crate::request_protocol_data::{
     ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData, ProtocolData,
 };
 use dwallet_mpc_centralized_party::{
-    create_imported_dwallet_centralized_step_inner,
-    create_imported_dwallet_centralized_step_inner_v1, encrypt_secret_key_share_and_prove,
+    create_imported_dwallet_centralized_step_inner_v1, encrypt_secret_key_share_and_prove_v1,
     generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
 };
@@ -236,9 +235,12 @@ async fn create_imported_dwallet() {
         .unwrap();
     let (encryption_key, decryption_key) =
         generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
-    let encrypted_secret_key_share_and_proof =
-        encrypt_secret_key_share_and_prove(user_secret_share, encryption_key.clone(), protocol_pp)
-            .unwrap();
+    let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v1(
+        user_secret_share,
+        encryption_key.clone(),
+        protocol_pp,
+    )
+    .unwrap();
     send_start_imported_dwallet_verification_event(
         epoch_id,
         &mut test_state.sui_data_senders,
@@ -307,7 +309,7 @@ pub(crate) async fn create_dwallet_test(
     .unwrap();
     let (encryption_key, decryption_key) =
         generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
-    let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove(
+    let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v1(
         centralized_dwallet_dkg_result
             .centralized_secret_output
             .clone(),
