@@ -6,7 +6,7 @@ use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{EncryptedShareVerificationData, ProtocolData};
 use dwallet_mpc_centralized_party::{
-    encrypt_secret_key_share_and_prove, network_dkg_public_output_to_protocol_pp_inner,
+    encrypt_secret_key_share_and_prove_v1, network_dkg_public_output_to_protocol_pp_inner,
 };
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
@@ -58,7 +58,7 @@ async fn encrypt_secret_share() {
     )
     .await;
     let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
-    let encrypted_secret_share = encrypt_secret_key_share_and_prove(
+    let encrypted_secret_share = encrypt_secret_key_share_and_prove_v1(
         dwallet_test_result.dwallet_secret_key_share.clone(),
         dwallet_test_result.class_groups_encryption_key.clone(),
         protocol_pp,
