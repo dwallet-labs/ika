@@ -4,7 +4,7 @@
 use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
     create_dkg_output_by_curve_v2, create_dkg_output_v1,
-    create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_inner,
+    create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
     encrypt_secret_key_share_and_prove_v1, generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, public_key_from_dwallet_output_inner,
     reconfiguration_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner, network_key_version_inner,
@@ -145,7 +145,7 @@ pub fn decrypt_user_share(
     encrypted_user_share_and_proof: Vec<u8>,
     protocol_pp: Vec<u8>,
 ) -> Result<JsValue, JsError> {
-    let decrypted_secret_share = decrypt_user_share_inner(
+    let decrypted_secret_share = decrypt_user_share_v1(
         decryption_key,
         encryption_key,
         dwallet_dkg_output,

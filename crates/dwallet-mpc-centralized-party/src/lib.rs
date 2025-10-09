@@ -976,70 +976,59 @@ fn verify_secret_share_inner<P: twopc_mpc::dkg::Protocol>(
 }
 
 /// Decrypts the given encrypted user share using the given decryption key.
-pub fn decrypt_user_share_inner(
+pub fn decrypt_user_share_v1(
     decryption_key: Vec<u8>,
-    encryption_key: Vec<u8>,
+    _encryption_key: Vec<u8>,
     dwallet_dkg_output: Vec<u8>,
     encrypted_user_share_and_proof: Vec<u8>,
     protocol_pp: Vec<u8>,
 ) -> anyhow::Result<Vec<u8>> {
-    let protocol_public_params: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
-    let VersionedEncryptedUserShare::V1(encrypted_user_share_and_proof) =
-        bcs::from_bytes(&encrypted_user_share_and_proof)?;
-    let dwallet_dkg_output = match bcs::from_bytes(&dwallet_dkg_output)? {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-            bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice())?.into()
-        }
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
-        }
-    };
-
-    let (_, encryption_of_discrete_log): <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::EncryptedSecretKeyShareMessage = bcs::from_bytes(&encrypted_user_share_and_proof)?;
-    <Secp256K1DKGProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
-        &protocol_public_params,
-        dwallet_dkg_output,
-        bcs::from_bytes(&encryption_key)?,
-        bcs::from_bytes(&encrypted_user_share_and_proof)?,
-        &mut OsCsRng,
-    )
-    .map_err(Into::<anyhow::Error>::into)?;
-    let decryption_key = bcs::from_bytes(&decryption_key)?;
-    let public_parameters = homomorphic_encryption::PublicParameters::<
-        SCALAR_LIMBS,
-        crate::Secp256k1EncryptionKey,
-    >::new_from_secret_key(
-        protocol_public_params
-            .encryption_scheme_public_parameters
-            .setup_parameters
-            .clone(),
+    decrypt_user_share_v2(
+        DWalletCurve::Secp256k1 as u32,
         decryption_key,
-    )?;
-    let ciphertext = CiphertextSpaceGroupElement::new(
-        encryption_of_discrete_log,
-        public_parameters.ciphertext_space_public_parameters(),
-    )?;
-
-    let decryption_key: DecryptionKey<
-        SCALAR_LIMBS,
-        SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-        SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-        secp256k1::GroupElement,
-    > = DecryptionKey::new(decryption_key, &public_parameters)?;
-    let Some(plaintext): Option<<Secp256k1EncryptionKey as AdditivelyHomomorphicEncryptionKey<SCALAR_LIMBS>>::PlaintextSpaceGroupElement> = decryption_key
-        .decrypt(&ciphertext, &public_parameters).into() else {
-        return Err(anyhow!("Decryption failed"));
-    };
-    let secret_share_bytes =
-        VersionedDwalletUserSecretShare::V1(bcs::to_bytes(&plaintext.value())?);
-    let secret_share_bytes = bcs::to_bytes(&secret_share_bytes)?;
-    Ok(secret_share_bytes)
+        dwallet_dkg_output,
+        encrypted_user_share_and_proof,
+        protocol_pp,
+    )
 }
 
+pub fn decrypt_user_share_v2(
+    curve: u32,
+    decryption_key: Vec<u8>,
+    dwallet_dkg_output: Vec<u8>,
+    encrypted_user_share_and_proof: Vec<u8>,
+    protocol_pp: Vec<u8>,
+) -> anyhow::Result<Vec<u8>> {
+    match DWalletCurve::try_from(curve)? {
+        DWalletCurve::Secp256k1 => decrypt_user_share_inner::<Secp256K1DKGProtocol>(
+            &decryption_key,
+            &dwallet_dkg_output,
+            &encrypted_user_share_and_proof,
+            &protocol_pp,
+        ),
+        DWalletCurve::Ristretto => decrypt_user_share_inner::<RistrettoDKGProtocol>(
+            &decryption_key,
+            &dwallet_dkg_output,
+            &encrypted_user_share_and_proof,
+            &protocol_pp,
+        ),
+        DWalletCurve::Curve25519 => decrypt_user_share_inner::<Curve25519DKGProtocol>(
+            &decryption_key,
+            &dwallet_dkg_output,
+            &encrypted_user_share_and_proof,
+            &protocol_pp,
+        ),
+        DWalletCurve::Secp256r1 => decrypt_user_share_inner::<Secp256R1DKGProtocol>(
+            &decryption_key,
+            &dwallet_dkg_output,
+            &encrypted_user_share_and_proof,
+            &protocol_pp,
+        ),
+    }
+}
 
-fn decrypt_user_share_inner_inner<P: twopc_mpc::dkg::Protocol>(
+fn decrypt_user_share_inner<P: twopc_mpc::dkg::Protocol>(
     decryption_key: &[u8],
-    encryption_key: &[u8],
     dwallet_dkg_output: &[u8],
     encrypted_user_share_and_proof: &[u8],
     protocol_pp: &[u8],
@@ -1050,52 +1039,25 @@ fn decrypt_user_share_inner_inner<P: twopc_mpc::dkg::Protocol>(
     let dwallet_dkg_output = match bcs::from_bytes(&dwallet_dkg_output)? {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
             let versioned_output: P::DecentralizedPartyDKGOutput =
-                bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(&output)?
-                    .into();
-            versioned_output.into()
+                bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(&output)?.into();
+            versioned_output
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
+            bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(&output)?
         }
     };
 
-    let (_, encryption_of_discrete_log): P::EncryptedSecretKeyShareMessage = bcs::from_bytes(&encrypted_user_share_and_proof)?;
-    P::verify_encryption_of_centralized_party_share_proof(
-        &protocol_public_params,
-        dwallet_dkg_output,
-        bcs::from_bytes(&encryption_key)?,
-        bcs::from_bytes(&encrypted_user_share_and_proof)?,
-        &mut OsCsRng,
-    )
-        .map_err(Into::<anyhow::Error>::into)?;
-    let decryption_key = bcs::from_bytes(&decryption_key)?;
-    let public_parameters = homomorphic_encryption::PublicParameters::<
-        SCALAR_LIMBS,
-        crate::Secp256k1EncryptionKey,
-    >::new_from_secret_key(
-        protocol_public_params
-            .encryption_scheme_public_parameters
-            .setup_parameters
-            .clone(),
-        decryption_key,
-    )?;
-    let ciphertext = CiphertextSpaceGroupElement::new(
-        encryption_of_discrete_log,
-        public_parameters.ciphertext_space_public_parameters(),
-    )?;
+    let centralized_party_secret_share =
+        P::verify_and_decrypt_encryption_of_centralized_party_share_proof(
+            &protocol_public_params,
+            dwallet_dkg_output,
+            bcs::from_bytes(&encrypted_user_share_and_proof)?,
+            bcs::from_bytes(&decryption_key)?,
+            &mut OsCsRng,
+        )?;
 
-    let decryption_key: DecryptionKey<
-        SCALAR_LIMBS,
-        SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-        SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-        secp256k1::GroupElement,
-    > = DecryptionKey::new(decryption_key, &public_parameters)?;
-    let Some(plaintext): Option<<Secp256k1EncryptionKey as AdditivelyHomomorphicEncryptionKey<SCALAR_LIMBS>>::PlaintextSpaceGroupElement> = decryption_key
-        .decrypt(&ciphertext, &public_parameters).into() else {
-        return Err(anyhow!("Decryption failed"));
-    };
     let secret_share_bytes =
-        VersionedDwalletUserSecretShare::V1(bcs::to_bytes(&plaintext.value())?);
+        VersionedDwalletUserSecretShare::V1(bcs::to_bytes(&centralized_party_secret_share)?);
     let secret_share_bytes = bcs::to_bytes(&secret_share_bytes)?;
     Ok(secret_share_bytes)
 }
