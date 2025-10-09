@@ -391,12 +391,7 @@ pub fn advance_centralized_sign_party(
             let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
                 bcs::from_bytes(&centralized_party_secret_key_share)?;
             let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
-                centralized_party_secret_key_share
-            else {
-                return Err(anyhow!(
-                    "Only V1 centralized party secret key share is supported for V1 presign output"
-                ));
-            };
+                centralized_party_secret_key_share;
             let centralized_public_output = DKGCentralizedPartyVersionedOutput::<
                 { group::secp256k1::SCALAR_LIMBS },
                 group::secp256k1::GroupElement,
@@ -620,15 +615,18 @@ pub fn create_imported_dwallet_centralized_step_inner_v1(
         session_identifier,
         secret_key,
     ) {
-        Ok((public_output, outgoing_message, secret_share)) => Ok((
-            bcs::to_bytes(&VersionedDwalletUserSecretShare::V1(secret_share))?,
+        Ok((public_output, outgoing_message, secret_share)) => {
+            let public_targeted_output: <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyTargetedDKGOutput = bcs::from_bytes(&public_output)?;
+            let public_output: <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput = public_targeted_output.into();
+            Ok((
+                   bcs::to_bytes(&VersionedDwalletUserSecretShare::V1(secret_share))?,
             bcs::to_bytes(&VersionedCentralizedPartyImportedDWalletPublicOutput::V1(
-                public_output,
+                bcs::to_bytes(&public_output)?
             ))?,
             bcs::to_bytes(&VersionedImportedDwalletOutgoingMessage::V1(
                 outgoing_message,
             ))?,
-        )),
+            )) }
         Err(e) => Err(e.into()),
     }
 }
