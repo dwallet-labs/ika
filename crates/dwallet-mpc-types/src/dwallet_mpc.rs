@@ -298,16 +298,19 @@ pub enum VersionedCentralizedDKGPublicOutput {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedDwalletUserSecretShare {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedUserSignedMessage {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
-pub enum VersionedImportedDWalletPublicOutput {
+pub enum VersionedCentralizedPartyImportedDWalletPublicOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -318,11 +321,13 @@ pub enum VersionedImportedSecretShare {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedImportedDwalletOutgoingMessage {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedEncryptedUserShare {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[enum_dispatch(MPCDataTrait)]

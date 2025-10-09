@@ -13,10 +13,11 @@ use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletCurve,
     NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
+    VersionedCentralizedPartyImportedDWalletPublicOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare,
-    VersionedImportedDWalletPublicOutput, VersionedImportedDwalletOutgoingMessage,
-    VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
+    VersionedImportedDwalletOutgoingMessage, VersionedNetworkEncryptionKeyPublicData,
+    VersionedPublicKeyShareAndProof,
 };
 use group::{CsRng, PartyID};
 use ika_protocol_config::ProtocolVersion;
@@ -226,8 +227,14 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
 
-                let VersionedImportedDwalletOutgoingMessage::V1(centralized_party_message) =
-                    centralized_party_message;
+                let centralized_party_message = match centralized_party_message {
+                    VersionedImportedDwalletOutgoingMessage::V1(centralized_party_message) => {
+                        centralized_party_message
+                    }
+                    VersionedImportedDwalletOutgoingMessage::V2(centralized_party_message) => {
+                        centralized_party_message
+                    }
+                };
                 let centralized_party_message: <Secp256K1AsyncDKGProtocol as Protocol>::DealTrustedShareMessage =  bcs::from_bytes(&centralized_party_message)?;
 
                 let public_input =
@@ -244,12 +251,18 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
             DWalletCurve::Secp256r1 => {
                 let protocol_public_parameters =
                     encryption_key_public_data.secp256r1_protocol_public_parameters()?;
-                let centralized_party_message: VersionedImportedDWalletPublicOutput =
+                let centralized_party_message: VersionedCentralizedPartyImportedDWalletPublicOutput =
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
 
-                let VersionedImportedDWalletPublicOutput::V1(centralized_party_message) =
-                    centralized_party_message;
+                let VersionedCentralizedPartyImportedDWalletPublicOutput::V2(
+                    centralized_party_message,
+                ) = centralized_party_message
+                else {
+                    return Err(
+                        DwalletMPCError::InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
+                    );
+                };
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
                 let public_input = (
@@ -266,12 +279,18 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
             DWalletCurve::Curve25519 => {
                 let protocol_public_parameters =
                     encryption_key_public_data.curve25519_protocol_public_parameters()?;
-                let centralized_party_message: VersionedImportedDWalletPublicOutput =
+                let centralized_party_message: VersionedCentralizedPartyImportedDWalletPublicOutput =
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
 
-                let VersionedImportedDWalletPublicOutput::V1(centralized_party_message) =
-                    centralized_party_message;
+                let VersionedCentralizedPartyImportedDWalletPublicOutput::V2(
+                    centralized_party_message,
+                ) = centralized_party_message
+                else {
+                    return Err(
+                        DwalletMPCError::InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
+                    );
+                };
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
                 let public_input = (
@@ -288,12 +307,18 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
             DWalletCurve::Ristretto => {
                 let protocol_public_parameters =
                     encryption_key_public_data.ristretto_protocol_public_parameters()?;
-                let centralized_party_message: VersionedImportedDWalletPublicOutput =
+                let centralized_party_message: VersionedCentralizedPartyImportedDWalletPublicOutput =
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
 
-                let VersionedImportedDWalletPublicOutput::V1(centralized_party_message) =
-                    centralized_party_message;
+                let VersionedCentralizedPartyImportedDWalletPublicOutput::V2(
+                    centralized_party_message,
+                ) = centralized_party_message
+                else {
+                    return Err(
+                        DwalletMPCError::InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
+                    );
+                };
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
                 let public_input = (
@@ -600,6 +625,7 @@ pub fn compute_dwallet_dkg<P: Protocol>(
         bcs::from_bytes(encrypted_secret_key_share_message).map_err(DwalletMPCError::BcsError)?;
     let encrypted_secret_key_share_message = match encrypted_secret_key_share_message {
         VersionedEncryptedUserShare::V1(message) => message,
+        VersionedEncryptedUserShare::V2(message) => message,
     };
     let result = mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::advance_with_guaranteed_output(
         session_id,

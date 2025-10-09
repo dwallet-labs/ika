@@ -10,7 +10,8 @@ use crate::request_protocol_data::{
     ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData, ProtocolData,
 };
 use dwallet_mpc_centralized_party::{
-    create_imported_dwallet_centralized_step_inner, encrypt_secret_key_share_and_prove,
+    create_imported_dwallet_centralized_step_inner,
+    create_imported_dwallet_centralized_step_inner_v1, encrypt_secret_key_share_and_prove,
     generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
 };
@@ -227,10 +228,10 @@ async fn create_imported_dwallet() {
         sample_dwallet_keypair_inner(protocol_pp.clone()).unwrap();
     let import_dwallet_session_id = [2; 32];
     let (user_secret_share, user_public_output, user_message) =
-        create_imported_dwallet_centralized_step_inner(
-            protocol_pp.clone(),
-            SessionIdentifier::new(SessionType::User, import_dwallet_session_id).to_vec(),
-            dwallet_secret_key.clone(),
+        create_imported_dwallet_centralized_step_inner_v1(
+            &protocol_pp,
+            &SessionIdentifier::new(SessionType::User, import_dwallet_session_id).to_vec(),
+            &dwallet_secret_key,
         )
         .unwrap();
     let (encryption_key, decryption_key) =

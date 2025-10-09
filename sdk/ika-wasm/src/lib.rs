@@ -4,7 +4,7 @@
 use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
     create_dkg_output_by_curve_v2, create_dkg_output_v1,
-    create_imported_dwallet_centralized_step_inner, decrypt_user_share_inner,
+    create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_inner,
     encrypt_secret_key_share_and_prove, generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, public_key_from_dwallet_output_inner,
     reconfiguration_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
@@ -188,7 +188,7 @@ pub fn create_imported_dwallet_centralized_step(
     secret_share: Vec<u8>,
 ) -> Result<JsValue, JsError> {
     Ok(serde_wasm_bindgen::to_value(
-        &create_imported_dwallet_centralized_step_inner(
+        &create_imported_dwallet_centralized_step_inner_v1(
             network_dkg_public_output,
             session_identifier,
             secret_share,

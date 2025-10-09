@@ -51,15 +51,29 @@ pub(crate) fn verify_encrypted_share(
         )
         .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string())),
         (
-            VersionedEncryptedUserShare::V1(encrypted_centralized_secret_share_and_proof),
-            VersionedDwalletDKGSecondRoundPublicOutput::V2(decentralized_public_output),
-        ) => verify_centralized_secret_key_share_proof_v2(
             encrypted_centralized_secret_share_and_proof,
-            decentralized_public_output,
-            encryption_key,
-            protocol_public_parameters,
-        )
-        .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string())),
+            VersionedDwalletDKGSecondRoundPublicOutput::V2(decentralized_public_output),
+        ) => {
+            let encrypted_centralized_secret_share_and_proof =
+                match encrypted_centralized_secret_share_and_proof {
+                    VersionedEncryptedUserShare::V1(
+                        encrypted_centralized_secret_share_and_proof,
+                    )
+                    | VersionedEncryptedUserShare::V2(
+                        encrypted_centralized_secret_share_and_proof,
+                    ) => encrypted_centralized_secret_share_and_proof,
+                };
+            verify_centralized_secret_key_share_proof_v2(
+                encrypted_centralized_secret_share_and_proof,
+                decentralized_public_output,
+                encryption_key,
+                protocol_public_parameters,
+            )
+            .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string()))
+        }
+        _ => Err(DwalletMPCError::EncryptedUserShareVerificationFailed(
+            "Mismatched versions between encrypted user share and dkg output".into(),
+        )),
     }
 }
 
@@ -80,7 +94,8 @@ fn verify_centralized_secret_key_share_proof_v1(
     };
 
     let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyTargetedDKGOutput = bcs::from_bytes(&dkg_public_output).map_err(|e| anyhow::anyhow!("Failed to deserialize dkg public output: {}", e))?;
-    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput = decentralized_output.into();
+    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput =
+        decentralized_output.into();
 
     <ECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_parameters,
