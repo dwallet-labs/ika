@@ -75,7 +75,7 @@ export class IkaTransaction {
 	}
 
 	/**
-	 * @deprecated This method is deprecated. Use `requestDWalletDKG` instead.
+	 * @deprecated This method is deprecated. Use `requestDWalletDKG` or `requestDWalletDKGWithPublicUserShare` instead.
 	 *
 	 * Request the DKG (Distributed Key Generation) first round with automatic decryption key ID fetching.
 	 * This initiates the creation of a new DWallet through a distributed key generation process.
@@ -106,7 +106,7 @@ export class IkaTransaction {
 	}
 
 	/**
-	 * @deprecated This method is deprecated. Use `requestDWalletDKG` instead.
+	 * @deprecated This method is deprecated. Use `requestDWalletDKG` or `requestDWalletDKGWithPublicUserShare` instead.
 	 *
 	 * Request the DKG (Distributed Key Generation) first round with explicit decryption key ID.
 	 * This initiates the creation of a new DWallet through a distributed key generation process.
@@ -139,7 +139,7 @@ export class IkaTransaction {
 	}
 
 	/**
-	 * @deprecated This method is deprecated. Use `requestDWalletDKG` instead.
+	 * @deprecated This method is deprecated. Use `requestDWalletDKG` or `requestDWalletDKGWithPublicUserShare` instead.
 	 *
 	 * Request the DKG (Distributed Key Generation) second round to complete DWallet creation.
 	 * This finalizes the distributed key generation process started in the first round.
@@ -185,18 +185,20 @@ export class IkaTransaction {
 	}
 
 	/**
-	 * Request the DKG (Distributed Key Generation) second round to complete DWallet creation.
-	 * This finalizes the distributed key generation process started in the first round.
+	 * Request the DKG (Distributed Key Generation) to create a dWallet.
 	 *
-	 * @param params.dWalletCap - The dWalletCap object from the first round, created for dWallet
-	 * @param params.dkgSecondRoundRequestInput - Cryptographic data prepared for the second round
+	 * @param params.dkgRequestInput - Cryptographic data prepared for the DKG
+	 * @param params.sessionIdentifierObjID - The session identifier object ID
+	 * @param params.dwalletNetworkEncryptionKeyId - The dWallet network encryption key ID
+	 * @param params.signDuringDKGRequest - The sign during DKG request
+	 * @param params.curve - The curve
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns The updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async requestDWalletDKG({
-		dkgSecondRoundRequestInput,
+		dkgRequestInput,
 		ikaCoin,
 		suiCoin,
 		sessionIdentifierObjID,
@@ -204,7 +206,7 @@ export class IkaTransaction {
 		signDuringDKGRequest,
 		curve,
 	}: {
-		dkgSecondRoundRequestInput: DKGRequestInput;
+		dkgRequestInput: DKGRequestInput;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 		sessionIdentifierObjID: string;
@@ -215,7 +217,7 @@ export class IkaTransaction {
 			hashScheme: Hash;
 			signatureAlgorithm: SignatureAlgorithm;
 		};
-		curve: number;
+		curve: Curve;
 	}): Promise<TransactionResult> {
 		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
@@ -226,10 +228,10 @@ export class IkaTransaction {
 			this.#getCoordinatorObjectRef(),
 			dwalletNetworkEncryptionKeyId,
 			curve,
-			dkgSecondRoundRequestInput.userDKGMessage,
-			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
+			dkgRequestInput.userDKGMessage,
+			dkgRequestInput.encryptedUserShareAndProof,
 			this.#userShareEncryptionKeys.getSuiAddress(),
-			dkgSecondRoundRequestInput.userPublicOutput,
+			dkgRequestInput.userPublicOutput,
 			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
 			sessionIdentifierObjID,
 			signDuringDKGRequest
@@ -241,6 +243,8 @@ export class IkaTransaction {
 						signDuringDKGRequest.message,
 						await this.#getUserSignMessage({
 							userSignatureInputs: {
+								secretShare: dkgRequestInput.userSecretKeyShare,
+								publicOutput: dkgRequestInput.userPublicOutput,
 								hash: signDuringDKGRequest.hashScheme,
 								message: signDuringDKGRequest.message,
 								signatureScheme: signDuringDKGRequest.signatureAlgorithm,
@@ -257,18 +261,22 @@ export class IkaTransaction {
 	}
 
 	/**
+	 * Request the DKG (Distributed Key Generation) with public user share to create a dWallet.
 	 *
-	 *
-	 * @param params.dWalletCap - The dWalletCap object from the first round, created for dWallet
-	 * @param params.dkgSecondRoundRequestInput - Cryptographic data prepared for the second round
+	 * @param params.sessionIdentifierObjID - The session identifier object ID
+	 * @param params.dwalletNetworkEncryptionKeyId - The dWallet network encryption key ID
+	 * @param params.curve - The curve
+	 * @param params.publicKeyShareAndProof - The public key share and proof
+	 * @param params.publicUserSecretKeyShare - The public user secret key share
+	 * @param params.signDuringDKGRequest - The sign during DKG request
+	 * @param params.userPublicOutput - The user's public output from the DKG process
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 *
 	 * @returns The updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async requestDWalletDKGWithPublicUserShare({
-		ikaCoin,
-		suiCoin,
 		sessionIdentifierObjID,
 		dwalletNetworkEncryptionKeyId,
 		curve,
@@ -276,12 +284,14 @@ export class IkaTransaction {
 		publicUserSecretKeyShare,
 		signDuringDKGRequest,
 		userPublicOutput,
+		ikaCoin,
+		suiCoin,
 	}: {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 		sessionIdentifierObjID: string;
 		dwalletNetworkEncryptionKeyId: string;
-		curve: number;
+		curve: Curve;
 		publicKeyShareAndProof: Uint8Array;
 		publicUserSecretKeyShare: Uint8Array;
 		userPublicOutput: Uint8Array;
