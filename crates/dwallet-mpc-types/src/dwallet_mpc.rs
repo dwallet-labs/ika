@@ -325,7 +325,6 @@ pub enum VersionedImportedDwalletOutgoingMessage {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedEncryptedUserShare {
     V1(MPCPublicOutput),
-    V2(MPCPublicOutput),
 }
 
 #[enum_dispatch(MPCDataTrait)]

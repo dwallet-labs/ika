@@ -51,29 +51,15 @@ pub(crate) fn verify_encrypted_share(
         )
         .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string())),
         (
-            encrypted_centralized_secret_share_and_proof,
+            VersionedEncryptedUserShare::V1(encrypted_centralized_secret_share_and_proof),
             VersionedDwalletDKGSecondRoundPublicOutput::V2(decentralized_public_output),
-        ) => {
-            let encrypted_centralized_secret_share_and_proof =
-                match encrypted_centralized_secret_share_and_proof {
-                    VersionedEncryptedUserShare::V1(
-                        encrypted_centralized_secret_share_and_proof,
-                    )
-                    | VersionedEncryptedUserShare::V2(
-                        encrypted_centralized_secret_share_and_proof,
-                    ) => encrypted_centralized_secret_share_and_proof,
-                };
-            verify_centralized_secret_key_share_proof_v2(
-                encrypted_centralized_secret_share_and_proof,
-                decentralized_public_output,
-                encryption_key,
-                protocol_public_parameters,
-            )
-            .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string()))
-        }
-        _ => Err(DwalletMPCError::EncryptedUserShareVerificationFailed(
-            "Mismatched versions between encrypted user share and dkg output".into(),
-        )),
+        ) => verify_centralized_secret_key_share_proof_v2(
+            encrypted_centralized_secret_share_and_proof,
+            decentralized_public_output,
+            encryption_key,
+            protocol_public_parameters,
+        )
+        .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string())),
     }
 }
 

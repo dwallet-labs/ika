@@ -620,10 +620,9 @@ pub fn compute_dwallet_dkg<P: Protocol>(
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let encrypted_secret_key_share_message: VersionedEncryptedUserShare =
         bcs::from_bytes(encrypted_secret_key_share_message).map_err(DwalletMPCError::BcsError)?;
-    let encrypted_secret_key_share_message = match encrypted_secret_key_share_message {
-        VersionedEncryptedUserShare::V1(message) => message,
-        VersionedEncryptedUserShare::V2(message) => message,
-    };
+    let VersionedEncryptedUserShare::V1(encrypted_secret_key_share_message) =
+        encrypted_secret_key_share_message;
+
     let result = mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::advance_with_guaranteed_output(
         session_id,
         party_id,
