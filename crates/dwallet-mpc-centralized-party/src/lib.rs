@@ -499,13 +499,11 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
 
     let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
         bcs::from_bytes(&centralized_party_secret_key_share)?;
-    let centralized_party_secret_key_share = match versioned_centralized_party_secret_key_share {
-        VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) => {
-            bcs::from_bytes::<P::CentralizedPartySecretKeyShare>(
-                &centralized_party_secret_key_share,
-            )?
-        }
-    };
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share =
+        bcs::from_bytes::<P::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share)?;
 
     let presign: <P as twopc_mpc::presign::Protocol>::Presign = bcs::from_bytes(&presign)?;
     let centralized_party_public_input =
@@ -955,11 +953,6 @@ fn verify_secret_share_inner<P: twopc_mpc::dkg::Protocol>(
             VersionedDwalletDKGSecondRoundPublicOutput::V2(decentralized_dkg_output),
             VersionedDwalletUserSecretShare::V1(secret_share),
         ) => (decentralized_dkg_output, secret_share),
-        _ => {
-            return Err(anyhow!(
-                "Mismatched versions between dkg output and secret share"
-            ));
-        }
     };
 
     let protocol_public_params: P::ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
