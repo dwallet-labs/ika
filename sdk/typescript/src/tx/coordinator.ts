@@ -8,7 +8,7 @@ import type {
 	TransactionResult,
 } from '@mysten/sui/transactions';
 
-import type { IkaConfig } from '../client/types.js';
+import type { Hash, IkaConfig } from '../client/types.js';
 import { SignDuringDKGRequest } from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 
 export function registerEncryptionKeyTx(
@@ -163,10 +163,22 @@ export function requestDWalletDKG(
 	userPublicOutput: Uint8Array,
 	signerPublicKey: Uint8Array,
 	sessionIdentifierObjID: string,
+	signDuringDKGRequest: TransactionObjectArgument | null,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ): TransactionResult {
+	let signDuringDKGRequestSerialized: TransactionObjectArgument | null = null;
+
+	if (signDuringDKGRequest) {
+		signDuringDKGRequestSerialized = tx.moveCall({
+			target: `0x1::option::some`,
+			arguments: [signDuringDKGRequest],
+		});
+	} else {
+		signDuringDKGRequestSerialized = tx.pure(bcs.option(SignDuringDKGRequest).serialize(null));
+	}
+
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg`,
 		arguments: [
@@ -178,8 +190,7 @@ export function requestDWalletDKG(
 			tx.pure.address(encryptionKeyAddress),
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(signerPublicKey)),
-			// TODO (itay this pr)
-			tx.pure(bcs.option(SignDuringDKGRequest).serialize(null)),
+			signDuringDKGRequestSerialized,
 			tx.object(sessionIdentifierObjID),
 			ikaCoin,
 			suiCoin,
@@ -196,10 +207,22 @@ export function requestDWalletDKGWithPublicUserSecretKeyShare(
 	publicUserSecretKeyShare: Uint8Array,
 	userPublicOutput: Uint8Array,
 	sessionIdentifierObjID: string,
+	signDuringDKGRequest: TransactionObjectArgument | null,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ): TransactionResult {
+	let signDuringDKGRequestSerialized: TransactionObjectArgument | null = null;
+
+	if (signDuringDKGRequest) {
+		signDuringDKGRequestSerialized = tx.moveCall({
+			target: `0x1::option::some`,
+			arguments: [signDuringDKGRequest],
+		});
+	} else {
+		signDuringDKGRequestSerialized = tx.pure(bcs.option(SignDuringDKGRequest).serialize(null));
+	}
+
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg_with_public_user_secret_key_share`,
 		arguments: [
@@ -209,11 +232,31 @@ export function requestDWalletDKGWithPublicUserSecretKeyShare(
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicKeyShareAndProof)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(publicUserSecretKeyShare)),
-			// TODO (#1546): Add support for signing during DKG request
-			tx.pure(bcs.option(SignDuringDKGRequest).serialize(null)),
+			signDuringDKGRequestSerialized,
 			tx.object(sessionIdentifierObjID),
 			ikaCoin,
 			suiCoin,
+		],
+	});
+}
+
+export function signDuringDKGRequest(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	presignCap: TransactionObjectArgument,
+	hashScheme: Hash,
+	message: Uint8Array,
+	messageCentralizedSignature: Uint8Array,
+	tx: Transaction,
+): TransactionObjectArgument {
+	return tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::sign_during_dkg_request`,
+		arguments: [
+			coordinatorObjectRef,
+			presignCap,
+			tx.pure.u32(hashScheme),
+			tx.pure(bcs.vector(bcs.u8()).serialize(message)),
+			tx.pure(bcs.vector(bcs.u8()).serialize(messageCentralizedSignature)),
 		],
 	});
 }

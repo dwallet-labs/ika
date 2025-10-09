@@ -174,7 +174,7 @@ export const CoordinatorInnerDynamicField = DynamicField(
 export const SystemInnerDynamicField = DynamicField(SystemInnerModule.SystemInner);
 
 export type UserSignatureInputs = {
-	activeDWallet: DWallet;
+	activeDWallet?: DWallet;
 	publicOutput?: Uint8Array;
 	secretShare?: Uint8Array;
 	encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;

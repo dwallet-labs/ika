@@ -195,12 +195,13 @@ export class IkaTransaction {
 	 * @returns The updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
-	requestDWalletDKG({
+	async requestDWalletDKG({
 		dkgSecondRoundRequestInput,
 		ikaCoin,
 		suiCoin,
 		sessionIdentifierObjID,
 		dwalletNetworkEncryptionKeyId,
+		signDuringDKGRequest,
 		curve,
 	}: {
 		dkgSecondRoundRequestInput: DKGRequestInput;
@@ -208,8 +209,14 @@ export class IkaTransaction {
 		suiCoin: TransactionObjectArgument;
 		sessionIdentifierObjID: string;
 		dwalletNetworkEncryptionKeyId: string;
+		signDuringDKGRequest?: {
+			message: Uint8Array;
+			presign: Presign;
+			hashScheme: Hash;
+			signatureAlgorithm: SignatureAlgorithm;
+		};
 		curve: number;
-	}): TransactionResult {
+	}): Promise<TransactionResult> {
 		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
@@ -225,6 +232,24 @@ export class IkaTransaction {
 			dkgSecondRoundRequestInput.userPublicOutput,
 			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
 			sessionIdentifierObjID,
+			signDuringDKGRequest
+				? coordinatorTx.signDuringDKGRequest(
+						this.#ikaClient.ikaConfig,
+						this.#getCoordinatorObjectRef(),
+						this.#transaction.object(signDuringDKGRequest.presign.id.id),
+						signDuringDKGRequest.hashScheme,
+						signDuringDKGRequest.message,
+						await this.#getUserSignMessage({
+							userSignatureInputs: {
+								hash: signDuringDKGRequest.hashScheme,
+								message: signDuringDKGRequest.message,
+								signatureScheme: signDuringDKGRequest.signatureAlgorithm,
+								presign: signDuringDKGRequest.presign,
+							},
+						}),
+						this.#transaction,
+					)
+				: null,
 			ikaCoin,
 			suiCoin,
 			this.#transaction,
@@ -241,16 +266,32 @@ export class IkaTransaction {
 	 * @returns The updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
-	requestDWalletDKGWithPublicUserShare(
-		ikaCoin: TransactionObjectArgument,
-		suiCoin: TransactionObjectArgument,
-		sessionIdentifierObjID: string,
-		dwalletNetworkEncryptionKeyId: string,
-		curve: number,
-		publicKeyShareAndProof: Uint8Array,
-		publicUserSecretKeyShare: Uint8Array,
-		userPublicOutput: Uint8Array,
-	): TransactionResult {
+	async requestDWalletDKGWithPublicUserShare({
+		ikaCoin,
+		suiCoin,
+		sessionIdentifierObjID,
+		dwalletNetworkEncryptionKeyId,
+		curve,
+		publicKeyShareAndProof,
+		publicUserSecretKeyShare,
+		signDuringDKGRequest,
+		userPublicOutput,
+	}: {
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+		sessionIdentifierObjID: string;
+		dwalletNetworkEncryptionKeyId: string;
+		curve: number;
+		publicKeyShareAndProof: Uint8Array;
+		publicUserSecretKeyShare: Uint8Array;
+		userPublicOutput: Uint8Array;
+		signDuringDKGRequest?: {
+			message: Uint8Array;
+			presign: Presign;
+			hashScheme: Hash;
+			signatureAlgorithm: SignatureAlgorithm;
+		};
+	}): Promise<TransactionResult> {
 		if (!this.#userShareEncryptionKeys) {
 			throw new Error('User share encryption keys are not set');
 		}
@@ -264,6 +305,24 @@ export class IkaTransaction {
 			publicUserSecretKeyShare,
 			userPublicOutput,
 			sessionIdentifierObjID,
+			signDuringDKGRequest
+				? coordinatorTx.signDuringDKGRequest(
+						this.#ikaClient.ikaConfig,
+						this.#getCoordinatorObjectRef(),
+						this.#transaction.object(signDuringDKGRequest.presign.id.id),
+						signDuringDKGRequest.hashScheme,
+						signDuringDKGRequest.message,
+						await this.#getUserSignMessage({
+							userSignatureInputs: {
+								hash: signDuringDKGRequest.hashScheme,
+								message: signDuringDKGRequest.message,
+								signatureScheme: signDuringDKGRequest.signatureAlgorithm,
+								presign: signDuringDKGRequest.presign,
+							},
+						}),
+						this.#transaction,
+					)
+				: null,
 			ikaCoin,
 			suiCoin,
 			this.#transaction,
@@ -1980,7 +2039,6 @@ export class IkaTransaction {
 		userSignatureInputs: UserSignatureInputs;
 	}): Promise<Uint8Array> {
 		this.#assertPresignCompleted(userSignatureInputs.presign);
-		this.#assertDWalletPublicOutputSet(userSignatureInputs.activeDWallet);
 
 		const publicParameters = await this.#ikaClient.getProtocolPublicParameters(
 			userSignatureInputs.activeDWallet,
@@ -1988,22 +2046,40 @@ export class IkaTransaction {
 
 		let secretShare, publicOutput;
 
-		// If the dWallet is a public user-share dWallet, we use the public user secret key share. It is a different trust assumption in which no zero-trust security is assured.
-		// Otherwise, we use the secret share from the user signature inputs.
-		if (userSignatureInputs.activeDWallet.public_user_secret_key_share) {
-			secretShare = Uint8Array.from(userSignatureInputs.activeDWallet.public_user_secret_key_share);
-			publicOutput = Uint8Array.from(userSignatureInputs.activeDWallet.state.Active?.public_output);
-		} else {
-			const userSecretKeyShareResponse = await this.#getUserSecretKeyShare({
-				secretShare: userSignatureInputs.secretShare,
-				encryptedUserSecretKeyShare: userSignatureInputs.encryptedUserSecretKeyShare,
-				activeDWallet: userSignatureInputs.activeDWallet,
-				publicParameters,
-				publicOutput: userSignatureInputs.publicOutput,
-			});
+		if (userSignatureInputs.activeDWallet) {
+			// If the dWallet is a public user-share dWallet, we use the public user secret key share. It is a different trust assumption in which no zero-trust security is assured.
+			// Otherwise, we use the secret share from the user signature inputs.
+			if (
+				userSignatureInputs.activeDWallet.public_user_secret_key_share &&
+				userSignatureInputs.activeDWallet.state.Active?.public_output
+			) {
+				secretShare = Uint8Array.from(
+					userSignatureInputs.activeDWallet.public_user_secret_key_share,
+				);
+				publicOutput = Uint8Array.from(
+					userSignatureInputs.activeDWallet.state.Active?.public_output,
+				);
+			} else {
+				const userSecretKeyShareResponse = await this.#getUserSecretKeyShare({
+					secretShare: userSignatureInputs.secretShare,
+					encryptedUserSecretKeyShare: userSignatureInputs.encryptedUserSecretKeyShare,
+					activeDWallet: userSignatureInputs.activeDWallet,
+					publicParameters,
+					publicOutput: userSignatureInputs.publicOutput,
+				});
 
-			secretShare = userSecretKeyShareResponse.secretShare;
-			publicOutput = userSecretKeyShareResponse.verifiedPublicOutput;
+				secretShare = userSecretKeyShareResponse.secretShare;
+				publicOutput = userSecretKeyShareResponse.verifiedPublicOutput;
+			}
+		} else {
+			if (!userSignatureInputs.secretShare || !userSignatureInputs.publicOutput) {
+				throw new Error(
+					'Secret share and public output are required when activeDWallet is not set',
+				);
+			}
+
+			secretShare = userSignatureInputs.secretShare;
+			publicOutput = userSignatureInputs.publicOutput;
 		}
 
 		return this.#createUserSignMessageWithPublicOutput({
@@ -2058,6 +2134,10 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
+		if (!userSignatureInputs.activeDWallet) {
+			throw new Error('Active DWallet is required');
+		}
+
 		const userSignMessage = await this.#getUserSignMessage({
 			userSignatureInputs,
 		});
