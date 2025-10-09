@@ -8,7 +8,7 @@ use dwallet_mpc_centralized_party::{
     encrypt_secret_key_share_and_prove_v1, generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, public_key_from_dwallet_output_inner,
     reconfiguration_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner, network_key_version_inner,
-    verify_secp_signature_inner, verify_secret_share_v1,
+    verify_secp_signature_inner, verify_secret_share_v1, dwallet_version_inner,
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
