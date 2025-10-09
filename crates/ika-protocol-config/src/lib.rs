@@ -503,9 +503,6 @@ impl ProtocolConfig {
                 //
                 //     // Remove a constant (ensure that it is never accessed during this version).
                 //     existing_constant: None,
-                2 => {
-                    cfg.network_encryption_key_version = Some(2);
-                }
                 _ => panic!("unsupported version {version:?}"),
             }
         }

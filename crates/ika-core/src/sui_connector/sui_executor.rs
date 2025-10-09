@@ -15,15 +15,7 @@ use ika_types::committee::EpochId;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointMessage;
-use ika_types::messages_dwallet_mpc::{
-    DKG_FIRST_ROUND_PROTOCOL_FLAG, DKG_SECOND_ROUND_PROTOCOL_FLAG,
-    DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME, DWALLET_DKG_PROTOCOL_FLAG,
-    DWalletNetworkEncryptionKeyData, FUTURE_SIGN_PROTOCOL_FLAG,
-    IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG,
-    MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG, PRESIGN_PROTOCOL_FLAG,
-    RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG, SIGN_PROTOCOL_FLAG,
-    SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG,
-};
+use ika_types::messages_dwallet_mpc::{DKG_FIRST_ROUND_PROTOCOL_FLAG, DKG_SECOND_ROUND_PROTOCOL_FLAG, DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME, DWALLET_DKG_PROTOCOL_FLAG, DWalletNetworkEncryptionKeyData, FUTURE_SIGN_PROTOCOL_FLAG, IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG, MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG, PRESIGN_PROTOCOL_FLAG, RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG, SIGN_PROTOCOL_FLAG, SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG, DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG};
 use ika_types::messages_system_checkpoints::SystemCheckpointMessage;
 use ika_types::sui::epoch_start_system::EpochStartSystem;
 use ika_types::sui::system_inner_v1::BlsCommittee;
@@ -591,6 +583,9 @@ where
         ))?;
         let dwallet_dkg_protocol_flag =
             ptb.input(CallArg::Pure(bcs::to_bytes(&DWALLET_DKG_PROTOCOL_FLAG)?))?;
+        let dwallet_dkg_with_sign_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
+            &DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG,
+        )?))?;
         let dwallet_coordinator_ptb_arg = ptb.input(CallArg::Object(dwallet_coordinator_arg))?;
 
         for network_encryption_key_id in network_encryption_key_ids {
@@ -722,6 +717,18 @@ where
                 zero,
                 none_option,
                 dwallet_dkg_protocol_flag,
+            ],
+        );
+        ptb.programmable_move_call(
+            ika_dwallet_2pc_mpc_package_id,
+            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+            ident_str!("calculate_pricing_votes").into(),
+            vec![],
+            vec![
+                dwallet_coordinator_ptb_arg,
+                zero,
+                none_option,
+                dwallet_dkg_with_sign_protocol_flag,
             ],
         );
         let transaction = super::build_sui_transaction(
