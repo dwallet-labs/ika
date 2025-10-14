@@ -367,6 +367,25 @@ export function setGasFeeReimbursementSuiSystemCallValueByCap(
 	});
 }
 
+export function setSupportedAndPricing(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	defaultPricing: TransactionObjectArgument,
+	supportedCurvesToSignatureAlgorithmsToHashSchemes: TransactionObjectArgument,
+	verifiedProtocolCap: string,
+	tx: Transaction,
+) {
+	tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::set_supported_and_pricing`,
+		arguments: [
+			coordinatorObjectRef,
+			defaultPricing,
+			supportedCurvesToSignatureAlgorithmsToHashSchemes,
+			tx.object(verifiedProtocolCap),
+		],
+	});
+}
+
 export function setPausedCurvesAndSignatureAlgorithms(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
@@ -388,6 +407,25 @@ export function setPausedCurvesAndSignatureAlgorithms(
 	});
 }
 
+export function setGlobalPresignConfig(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	curveToSignatureAlgorithmsForDkg: TransactionObjectArgument,
+	curveToSignatureAlgorithmsForImportedKey: TransactionObjectArgument,
+	verifiedProtocolCap: string,
+	tx: Transaction,
+) {
+	tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::set_global_presign_config`,
+		arguments: [
+			coordinatorObjectRef,
+			curveToSignatureAlgorithmsForDkg,
+			curveToSignatureAlgorithmsForImportedKey,
+			tx.object(verifiedProtocolCap),
+		],
+	});
+}
+
 export function requestLockEpochSessions(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
@@ -397,6 +435,38 @@ export function requestLockEpochSessions(
 	tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_lock_epoch_sessions`,
 		arguments: [coordinatorObjectRef, tx.object(systemCurrentStatusInfo)],
+	});
+}
+
+export function setPricingVote(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	pricing: TransactionObjectArgument,
+	verifiedValidatorOperationCap: string,
+	tx: Transaction,
+) {
+	tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::set_pricing_vote`,
+		arguments: [coordinatorObjectRef, pricing, tx.object(verifiedValidatorOperationCap)],
+	});
+}
+
+export function calculatePricingVotes(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	curve: number,
+	signatureAlgorithm: TransactionObjectArgument,
+	protocol: number,
+	tx: Transaction,
+) {
+	tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::calculate_pricing_votes`,
+		arguments: [
+			coordinatorObjectRef,
+			tx.pure.u32(curve),
+			signatureAlgorithm,
+			tx.pure.u32(protocol),
+		],
 	});
 }
 
@@ -599,6 +669,31 @@ export function requestSign(
 	});
 }
 
+export function requestSignAndReturnId(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	verifiedPresignCap: TransactionObjectArgument,
+	messageApproval: TransactionObjectArgument,
+	messageUserSignature: Uint8Array,
+	sessionIdentifier: TransactionObjectArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
+	tx: Transaction,
+): TransactionObjectArgument {
+	return tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_sign_and_return_id`,
+		arguments: [
+			coordinatorObjectRef,
+			verifiedPresignCap,
+			messageApproval,
+			tx.pure(bcs.vector(bcs.u8()).serialize(messageUserSignature)),
+			sessionIdentifier,
+			ikaCoin,
+			suiCoin,
+		],
+	});
+}
+
 export function requestImportedKeySign(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
@@ -612,6 +707,31 @@ export function requestImportedKeySign(
 ) {
 	tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_imported_key_sign`,
+		arguments: [
+			coordinatorObjectRef,
+			verifiedPresignCap,
+			importedKeyMessageApproval,
+			tx.pure(bcs.vector(bcs.u8()).serialize(messageUserSignature)),
+			sessionIdentifier,
+			ikaCoin,
+			suiCoin,
+		],
+	});
+}
+
+export function requestImportedKeySignAndReturnId(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	verifiedPresignCap: TransactionObjectArgument,
+	importedKeyMessageApproval: TransactionObjectArgument,
+	messageUserSignature: Uint8Array,
+	sessionIdentifier: TransactionObjectArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
+	tx: Transaction,
+): TransactionObjectArgument {
+	return tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_imported_key_sign_and_return_id`,
 		arguments: [
 			coordinatorObjectRef,
 			verifiedPresignCap,
@@ -700,6 +820,29 @@ export function requestSignWithPartialUserSignature(
 	});
 }
 
+export function requestSignWithPartialUserSignatureAndReturnId(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	verifiedPartialUserSignatureCap: TransactionObjectArgument,
+	messageApproval: TransactionObjectArgument,
+	sessionIdentifier: TransactionObjectArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
+	tx: Transaction,
+): TransactionObjectArgument {
+	return tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_sign_with_partial_user_signature_and_return_id`,
+		arguments: [
+			coordinatorObjectRef,
+			tx.object(verifiedPartialUserSignatureCap),
+			tx.object(messageApproval),
+			sessionIdentifier,
+			ikaCoin,
+			suiCoin,
+		],
+	});
+}
+
 export function requestImportedKeySignWithPartialUserSignature(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
@@ -712,6 +855,29 @@ export function requestImportedKeySignWithPartialUserSignature(
 ) {
 	tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_imported_key_sign_with_partial_user_signature`,
+		arguments: [
+			coordinatorObjectRef,
+			tx.object(verifiedPartialUserSignatureCap),
+			tx.object(importedKeyMessageApproval),
+			sessionIdentifier,
+			ikaCoin,
+			suiCoin,
+		],
+	});
+}
+
+export function requestImportedKeySignWithPartialUserSignatureAndReturnId(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	verifiedPartialUserSignatureCap: string,
+	importedKeyMessageApproval: string,
+	sessionIdentifier: TransactionObjectArgument,
+	ikaCoin: TransactionObjectArgument,
+	suiCoin: TransactionObjectArgument,
+	tx: Transaction,
+): TransactionObjectArgument {
+	return tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_imported_key_sign_with_partial_user_signature_and_return_id`,
 		arguments: [
 			coordinatorObjectRef,
 			tx.object(verifiedPartialUserSignatureCap),
@@ -754,6 +920,30 @@ export function matchPartialUserSignatureWithImportedKeyMessageApproval(
 			tx.object(verifiedPartialUserSignatureCap),
 			tx.object(importedKeyMessageApproval),
 		],
+	});
+}
+
+export function hasDWallet(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	dwalletId: string,
+	tx: Transaction,
+): TransactionObjectArgument {
+	return tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::has_dwallet`,
+		arguments: [coordinatorObjectRef, tx.pure.id(dwalletId)],
+	});
+}
+
+export function getDWallet(
+	ikaConfig: IkaConfig,
+	coordinatorObjectRef: TransactionObjectArgument,
+	dwalletId: string,
+	tx: Transaction,
+): TransactionObjectArgument {
+	return tx.moveCall({
+		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::get_dwallet`,
+		arguments: [coordinatorObjectRef, tx.pure.id(dwalletId)],
 	});
 }
 
