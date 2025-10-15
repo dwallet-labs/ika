@@ -219,8 +219,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
         curve: &DWalletCurve,
         encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         centralized_party_message: &[u8],
-        encryption_key: &[u8],
-        encrypted_secret_key_share_message: &[u8],
+        secret_share_verification_type: BytesCentralizedPartyKeyShareVerification,
     ) -> DwalletMPCResult<Self> {
         let public_input = match curve {
             DWalletCurve::Secp256k1 => {
@@ -242,11 +241,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                         protocol_public_parameters,
                         session_identifier,
                         centralized_party_message,
-                        // TODO (#1545): Move secret share verification logic to DKG protocol
-                        CentralizedPartyKeyShareVerification::Encrypted {
-                            encryption_key: encryption_key.clone(),
-                            encrypted_secret_key_share_message: encrypted_secret_key_share_message.clone(),
-                        },
+                        secret_share_verification_type.try_into()?,
                     ));
 
                 DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(public_input)
@@ -272,8 +267,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     protocol_public_parameters,
                     session_identifier,
                     centralized_party_message,
-                    // TODO (#1545): Move secret share verification logic to DKG protocol
-                    CentralizedPartyKeyShareVerification::None,
+                    secret_share_verification_type.try_into()?,
                 )
                     .into();
 
@@ -300,8 +294,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     protocol_public_parameters,
                     session_identifier,
                     centralized_party_message,
-                    // TODO (#1545): Move secret share verification logic to DKG protocol
-                    CentralizedPartyKeyShareVerification::None,
+                    secret_share_verification_type.try_into()?,
                 )
                     .into();
 
@@ -328,8 +321,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     protocol_public_parameters,
                     session_identifier,
                     centralized_party_message,
-                    // TODO (#1545): Move secret share verification logic to DKG protocol
-                    CentralizedPartyKeyShareVerification::None,
+                    secret_share_verification_type.try_into()?,
                 )
                     .into();
 
