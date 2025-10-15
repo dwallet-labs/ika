@@ -533,7 +533,7 @@ export async function acceptTestEncryptedUserShare(
 	userPublicOutput: Uint8Array,
 	secondRoundMoveResponse: {
 		event_data: {
-			user_secret_key_share: EncryptedShare | PublicShare;
+			user_secret_key_share: EncryptedShare;
 		};
 	},
 	userShareEncryptionKeys: UserShareEncryptionKeys,
@@ -542,15 +542,13 @@ export async function acceptTestEncryptedUserShare(
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
-	if ('Encrypted' in secondRoundMoveResponse.event_data.user_secret_key_share) {
-		await ikaTransaction.acceptEncryptedUserShare({
-			dWallet,
-			userPublicOutput,
-			encryptedUserSecretKeyShareId:
-				secondRoundMoveResponse.event_data.user_secret_key_share.Encrypted
-					.encrypted_user_secret_key_share_id,
-		});
-	}
+	await ikaTransaction.acceptEncryptedUserShare({
+		dWallet,
+		userPublicOutput,
+		encryptedUserSecretKeyShareId:
+			secondRoundMoveResponse.event_data.user_secret_key_share.Encrypted
+				.encrypted_user_secret_key_share_id,
+	});
 
 	await executeTestTransaction(suiClient, transaction, testName);
 }
