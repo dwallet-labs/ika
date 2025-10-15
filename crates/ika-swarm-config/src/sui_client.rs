@@ -374,7 +374,8 @@ pub async fn init_ika_on_sui(
         protocol_cap_id,
         ika_dwallet_2pc_mpc_package_id,
         ika_dwallet_coordinator_object_id,
-    ).await?;
+    )
+    .await?;
     println!("Running `system::set_global_presign_config` done.");
 
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
@@ -544,8 +545,10 @@ pub async fn set_global_presign_config(
         vec![system_arg, protocol_cap_arg],
     );
 
-    let curve_to_signature_algorithms_for_dkg = new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
-    let curve_to_signature_algorithms_for_imported_key = new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
+    let curve_to_signature_algorithms_for_dkg =
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
+    let curve_to_signature_algorithms_for_imported_key =
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
     ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
         ident_str!("coordinator").into(),
