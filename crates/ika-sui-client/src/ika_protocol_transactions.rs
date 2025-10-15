@@ -532,7 +532,7 @@ fn new_supported_curves_to_signature_algorithms_to_hash_schemes_argument(
     Ok(supported_curves_to_signature_algorithms_to_hash_schemes_arg)
 }
 
-async fn get_verified_protocol_cap(
+pub async fn get_verified_protocol_cap(
     context: &mut WalletContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,

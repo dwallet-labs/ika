@@ -737,6 +737,48 @@ pub async fn ika_system_initialize(
         ],
     );
 
+    let protocol_cap_ref = client
+        .transaction_builder()
+        .get_object_ref(protocol_cap_id)
+        .await?;
+
+    let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+        protocol_cap_ref,
+    )))?;
+
+
+    let system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
+        id: ika_system_object_id,
+        initial_shared_version: init_system_shared_version,
+        mutable: true,
+    }))?;
+
+    let verified_cap = ptb.programmable_move_call(
+        ika_system_package_id,
+        SYSTEM_MODULE_NAME.into(),
+        ident_str!("verify_protocol_cap").into(),
+        vec![],
+        vec![system_arg, protocol_cap_arg],
+    );
+
+    let protocol_cap_ref = client
+        .transaction_builder()
+        .get_object_ref(protocol_cap_id)
+        .await?;
+
+    let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+        protocol_cap_ref,
+    )))?;
+
+    ptb.programmable_move_call(
+        ika_dwallet_2pc_mpc_package_id,
+        ident_str!("coordinator").into(),
+        ident_str!("set_global_presign_config").into(),
+        vec![],
+        vec![protocol_cap_arg, verified_cap],
+    );
+
+
     let supported_signature_algorithms_to_hash_schemes = ptb.programmable_move_call(
         SUI_FRAMEWORK_PACKAGE_ID,
         ident_str!("vec_map").into(),
