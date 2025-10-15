@@ -757,16 +757,6 @@ pub fn compute_imported_key_verification<P: Protocol>(
                 }
             };
 
-            // Verify the encrypted share before finalizing, guaranteeing a two-for-one
-            // computation of both that the key import was successful, and
-            // the encrypted user share is valid.
-            verify_encrypted_share(
-                &data.encrypted_centralized_secret_share_and_proof,
-                &versioned_output,
-                &data.encryption_key,
-                protocol_public_parameters,
-            )?;
-
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value: versioned_output,
                 malicious_parties,
