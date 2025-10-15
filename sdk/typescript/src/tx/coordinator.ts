@@ -9,7 +9,6 @@ import type {
 } from '@mysten/sui/transactions';
 
 import type { Hash, IkaConfig } from '../client/types.js';
-import { SignDuringDKGRequest } from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 
 export function registerEncryptionKeyTx(
 	ikaConfig: IkaConfig,
@@ -162,7 +161,7 @@ export function requestDWalletDKG(
 	encryptionKeyAddress: string,
 	userPublicOutput: Uint8Array,
 	signerPublicKey: Uint8Array,
-	sessionIdentifierObjID: string,
+	sessionIdentifier: TransactionObjectArgument,
 	signDuringDKGRequest: TransactionObjectArgument | null,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
@@ -194,7 +193,7 @@ export function requestDWalletDKG(
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(signerPublicKey)),
 			signDuringDKGRequestSerialized,
-			tx.object(sessionIdentifierObjID),
+			tx.object(sessionIdentifier),
 			ikaCoin,
 			suiCoin,
 		],
@@ -223,7 +222,10 @@ export function requestDWalletDKGWithPublicUserSecretKeyShare(
 			arguments: [signDuringDKGRequest],
 		});
 	} else {
-		signDuringDKGRequestSerialized = tx.pure(bcs.option(SignDuringDKGRequest).serialize(null));
+		signDuringDKGRequestSerialized = tx.object.option({
+			type: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::SignDuringDKGRequest`,
+			value: null,
+		});
 	}
 
 	return tx.moveCall({

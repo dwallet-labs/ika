@@ -188,20 +188,21 @@ export class IkaTransaction {
 	 * Request the DKG (Distributed Key Generation) to create a dWallet.
 	 *
 	 * @param params.dkgRequestInput - Cryptographic data prepared for the DKG
-	 * @param params.sessionIdentifierObjID - The session identifier object ID
+	 * @param params.sessionIdentifier - The session identifier object
 	 * @param params.dwalletNetworkEncryptionKeyId - The dWallet network encryption key ID
 	 * @param params.signDuringDKGRequest - The sign during DKG request
 	 * @param params.curve - The curve
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns The updated IkaTransaction instance
+	 *
+	 * @returns The DWallet capability and sign id if signDuringDKGRequest is provided
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async requestDWalletDKG({
 		dkgRequestInput,
 		ikaCoin,
 		suiCoin,
-		sessionIdentifierObjID,
+		sessionIdentifier,
 		dwalletNetworkEncryptionKeyId,
 		signDuringDKGRequest,
 		curve,
@@ -209,7 +210,7 @@ export class IkaTransaction {
 		dkgRequestInput: DKGRequestInput;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-		sessionIdentifierObjID: string;
+		sessionIdentifier: TransactionObjectArgument;
 		dwalletNetworkEncryptionKeyId: string;
 		signDuringDKGRequest?: {
 			message: Uint8Array;
@@ -233,7 +234,7 @@ export class IkaTransaction {
 			this.#userShareEncryptionKeys.getSuiAddress(),
 			dkgRequestInput.userPublicOutput,
 			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
-			sessionIdentifierObjID,
+			sessionIdentifier,
 			signDuringDKGRequest
 				? coordinatorTx.signDuringDKGRequest(
 						this.#ikaClient.ikaConfig,
@@ -273,7 +274,7 @@ export class IkaTransaction {
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 *
-	 * @returns The updated IkaTransaction instance
+	 * @returns The DWallet capability and sign id if signDuringDKGRequest is provided
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async requestDWalletDKGWithPublicUserShare({
@@ -2147,6 +2148,21 @@ export class IkaTransaction {
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			createRandomSessionIdentifier(),
+			this.#transaction,
+		);
+	}
+
+	/**
+	 * Register a unique session identifier for the current transaction.
+	 * This generates a fresh address and converts it to bytes for use as a session identifier.
+	 *
+	 * @returns The session identifier transaction object argument
+	 */
+	registerSessionIdentifier(sessionIdentifier: Uint8Array) {
+		return coordinatorTx.registerSessionIdentifier(
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			sessionIdentifier,
 			this.#transaction,
 		);
 	}
