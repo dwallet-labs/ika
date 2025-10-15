@@ -244,7 +244,7 @@ pub fn dwallet_dkg_first_protocol_data(
     })
 }
 
-pub fn dwallet_dkg_protocol_data(
+pub fn dwallet_dkg_with_encrypted_share_protocol_data(
     request_event_data: DWalletDKGRequestEvent,
     encrypted_centralized_secret_share_and_proof: Vec<u8>,
     encryption_key: Vec<u8>,
@@ -261,6 +261,23 @@ pub fn dwallet_dkg_protocol_data(
         dwallet_id: request_event_data.dwallet_id,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
         encrypted_secret_share_id,
+    })
+}
+
+pub fn dwallet_dkg_with_public_share_protocol_data(
+    request_event_data: DWalletDKGRequestEvent,
+    public_user_secret_key_share: Vec<u8>,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::DWalletDKGWithPublicShare {
+        data: DWalletDKGWithPublicShareData {
+            curve: request_event_data.curve.try_into()?,
+            public_user_secret_key_share,
+            dwallet_centralized_public_output: request_event_data.user_public_output.clone(),
+            centralized_public_key_share_and_proof: request_event_data
+                .centralized_public_key_share_and_proof,
+        },
+        dwallet_id: request_event_data.dwallet_id,
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
     })
 }
 
