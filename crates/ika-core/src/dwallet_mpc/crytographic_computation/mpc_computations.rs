@@ -4,13 +4,10 @@
 use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
-    Curve25519DWalletImportedKeyVerificationParty, DWalletDKGAdvanceRequestByCurve,
-    DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
+    DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationAdvanceRequestByCurve,
-    DWalletImportedKeyVerificationPublicInputByCurve, RistrettoDWalletImportedKeyVerificationParty,
-    Secp256K1DWalletDKGParty, Secp256K1DWalletImportedKeyVerificationParty,
-    Secp256R1DWalletImportedKeyVerificationParty, compute_dwallet_dkg,
-    compute_imported_key_verification,
+    DWalletImportedKeyVerificationPublicInputByCurve, Secp256K1DWalletDKGParty,
+    compute_dwallet_dkg, compute_imported_key_verification,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
@@ -35,8 +32,7 @@ use class_groups::dkg::Secp256k1Party;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletSignatureScheme, ReconfigurationParty,
-    ReconfigurationV2Party, VersionedDWalletImportedKeyVerificationOutput,
+    DWalletSignatureScheme, ReconfigurationParty, ReconfigurationV2Party,
     VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput,
 };

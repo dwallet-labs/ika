@@ -2,7 +2,6 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureScheme, SerializedWrappedMPCPublicOutput,
 };
 use group::HashType;
-use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,

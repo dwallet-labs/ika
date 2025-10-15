@@ -8,11 +8,9 @@
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::request_protocol_data::ImportedKeyVerificationData;
-use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletCurve,
-    NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
+    DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedCentralizedPartyImportedDWalletPublicOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare,
@@ -24,7 +22,7 @@ use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
-    Secp256R1AsyncDKGProtocol, SessionIdentifier,
+    Secp256R1AsyncDKGProtocol,
 };
 use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
 use mpc::{
@@ -482,11 +480,6 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
     fn generate_public_input(
         protocol_public_parameters: ProtocolPublicParameters,
     ) -> DwalletMPCResult<<DWalletDKGFirstParty as Party>::PublicInput> {
-        let base_protocol_context = BaseProtocolContext {
-            protocol_name: "2PC-MPC DKG".to_string(),
-            round: 1,
-            proof_name: "Encryption of Secret Key Share and Public Key Share Proof".to_string(),
-        };
         let secp256k1_public_input =
             twopc_mpc::dkg::encryption_of_secret_key_share::PublicInput::new_targeted_dkg(
                 protocol_public_parameters

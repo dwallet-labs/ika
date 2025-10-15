@@ -33,11 +33,10 @@ use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
 use std::collections::HashMap;
-use twopc_mpc::dkg::CentralizedPartyKeyShareVerification;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
-pub enum PublicInput {
+pub(crate) enum PublicInput {
     DWalletImportedKeyVerificationRequest(DWalletImportedKeyVerificationPublicInputByCurve),
     DWalletDKG(DWalletDKGPublicInputByCurve),
     // Used only for V1 dWallets

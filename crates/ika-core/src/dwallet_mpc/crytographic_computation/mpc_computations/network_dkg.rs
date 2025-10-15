@@ -16,15 +16,13 @@ use class_groups::{
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureScheme, NetworkDecryptionKeyPublicOutputType,
-    NetworkEncryptionKeyPublicDataTrait, NetworkEncryptionKeyPublicDataV1,
-    NetworkEncryptionKeyPublicDataV2, ReconfigurationParty, SerializedWrappedMPCPublicOutput,
-    VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
-    VersionedNetworkEncryptionKeyPublicData,
+    DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataTrait,
+    NetworkEncryptionKeyPublicDataV1, NetworkEncryptionKeyPublicDataV2, ReconfigurationParty,
+    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
+    VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData,
 };
-use group::{GroupElement, OsCsRng, PartyID, secp256k1};
+use group::{GroupElement, PartyID, secp256k1};
 use homomorphic_encryption::GroupsPublicParametersAccessors;
-use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
