@@ -4,12 +4,12 @@
 use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
     create_dkg_output_by_curve_v2, create_dkg_output_v1,
-    create_imported_dwallet_centralized_step_inner, decrypt_user_share_inner,
-    dwallet_version_inner, encrypt_secret_key_share_and_prove,
+    create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
+    dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
     generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
     public_key_from_dwallet_output_inner, reconfiguration_public_output_to_protocol_pp_inner,
-    sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share,
+    sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share_v1,
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
@@ -132,7 +132,7 @@ pub fn encrypt_secret_share(
     protocol_pp: Vec<u8>,
 ) -> Result<JsValue, JsError> {
     let encryption_and_proof =
-        encrypt_secret_key_share_and_prove(secret_key_share, encryption_key, protocol_pp)
+        encrypt_secret_key_share_and_prove_v1(secret_key_share, encryption_key, protocol_pp)
             .map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&encryption_and_proof)?)
 }
@@ -146,7 +146,7 @@ pub fn decrypt_user_share(
     encrypted_user_share_and_proof: Vec<u8>,
     protocol_pp: Vec<u8>,
 ) -> Result<JsValue, JsError> {
-    let decrypted_secret_share = decrypt_user_share_inner(
+    let decrypted_secret_share = decrypt_user_share_v1(
         decryption_key,
         encryption_key,
         dwallet_dkg_output,
@@ -166,7 +166,7 @@ pub fn verify_user_share(
     network_dkg_public_output: Vec<u8>,
 ) -> Result<JsValue, JsError> {
     Ok(JsValue::from(
-        verify_secret_share(secret_share, dkg_output, network_dkg_public_output)
+        verify_secret_share_v1(secret_share, dkg_output, &network_dkg_public_output)
             .map_err(to_js_err)?,
     ))
 }
@@ -205,10 +205,10 @@ pub fn create_imported_dwallet_centralized_step(
     secret_share: Vec<u8>,
 ) -> Result<JsValue, JsError> {
     Ok(serde_wasm_bindgen::to_value(
-        &create_imported_dwallet_centralized_step_inner(
-            network_dkg_public_output,
-            session_identifier,
-            secret_share,
+        &create_imported_dwallet_centralized_step_inner_v1(
+            &network_dkg_public_output,
+            &session_identifier,
+            &secret_share,
         )
         .map_err(to_js_err)?,
     )?)

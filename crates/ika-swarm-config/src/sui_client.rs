@@ -721,6 +721,22 @@ pub async fn ika_system_initialize(
         ],
     );
 
+    ptb.programmable_move_call(
+        ika_dwallet_2pc_mpc_package_id,
+        ident_str!("pricing").into(),
+        ident_str!("insert_or_update_pricing").into(),
+        vec![],
+        vec![
+            pricing,
+            zero,
+            none_option,
+            dwallet_dkg_with_sign_protocol_flag,
+            zero_price,
+            zero_price,
+            zero_price,
+        ],
+    );
+
     let supported_signature_algorithms_to_hash_schemes = ptb.programmable_move_call(
         SUI_FRAMEWORK_PACKAGE_ID,
         ident_str!("vec_map").into(),

@@ -208,6 +208,12 @@ pub enum DwalletMPCError {
     },
     #[error("unsupported protocol version: {0}")]
     UnsupportedProtocolVersion(u64),
+
+    #[error("invalid partially signed message version")]
+    InvalidPartiallySignedMessageVersion,
+
+    #[error("invalid centralized party imported dWallet public output version")]
+    InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
 }
 
 /// A wrapper type for the result of a runtime operation.
