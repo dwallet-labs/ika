@@ -28,6 +28,7 @@ import {
 } from '../../src/client/types.js';
 import type { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
 import * as CoordinatorInnerModule from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
+import { UserSecretKeyShareEventType } from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SessionsManagerModule from '../../src/generated/ika_dwallet_2pc_mpc/sessions_manager.js';
 import {
 	createEmptyTestIkaToken,
@@ -412,7 +413,7 @@ function numberToCurve(curve: number): Curve {
 		case 2:
 			return Curve.ED25519;
 		case 3:
-			return Curve.SECP256R1
+			return Curve.SECP256R1;
 	}
 }
 
@@ -512,6 +513,16 @@ export async function requestTestDkgWithPublicUserShare(
 	).fromBase64(dkgRequestEvent.bcs as string);
 }
 
+interface EncryptedShare {
+	Encrypted: {
+		encrypted_user_secret_key_share_id: string;
+	};
+}
+
+interface PublicShare {
+	Public: {};
+}
+
 /**
  * Accept encrypted user share for testing
  */
@@ -522,7 +533,7 @@ export async function acceptTestEncryptedUserShare(
 	userPublicOutput: Uint8Array,
 	secondRoundMoveResponse: {
 		event_data: {
-			encrypted_user_secret_key_share_id: string;
+			user_secret_key_share: EncryptedShare | PublicShare;
 		};
 	},
 	userShareEncryptionKeys: UserShareEncryptionKeys,
@@ -531,12 +542,15 @@ export async function acceptTestEncryptedUserShare(
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
-	await ikaTransaction.acceptEncryptedUserShare({
-		dWallet,
-		userPublicOutput,
-		encryptedUserSecretKeyShareId:
-			secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
-	});
+	if ('Encrypted' in secondRoundMoveResponse.event_data.user_secret_key_share) {
+		await ikaTransaction.acceptEncryptedUserShare({
+			dWallet,
+			userPublicOutput,
+			encryptedUserSecretKeyShareId:
+				secondRoundMoveResponse.event_data.user_secret_key_share.Encrypted
+					.encrypted_user_secret_key_share_id,
+		});
+	}
 
 	await executeTestTransaction(suiClient, transaction, testName);
 }
