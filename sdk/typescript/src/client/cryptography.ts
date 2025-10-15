@@ -193,7 +193,8 @@ export async function prepareDKGSecondRound(
  *
  * @param protocolPublicParameters - The protocol public parameters
  * @param encryptionKey - The user's public encryption key
- * @param session_id - The session identifier
+ * @param bytesToHash - The bytes to hash
+ * @param senderAddress - The sender address
  * @returns Complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available in the DWallet
  *
@@ -202,10 +203,16 @@ export async function prepareDKGSecondRound(
 export async function prepareDKG(
 	protocolPublicParameters: Uint8Array,
 	encryptionKey: Uint8Array,
-	session_id: Uint8Array,
+	bytesToHash: Uint8Array,
+	senderAddress: string,
 ): Promise<DKGRequestInput> {
+	const senderAddressBytes = bcs.Address.serialize(senderAddress).toBytes();
+
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] =
-		await create_dkg_centralized_output_v2(protocolPublicParameters, session_id);
+		await create_dkg_centralized_output_v2(
+			protocolPublicParameters,
+			sessionIdentifierDigest(bytesToHash, senderAddressBytes),
+		);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(
 		userSecretKeyShare,
@@ -251,7 +258,8 @@ export async function prepareDKGSecondRoundAsync(
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
- * @param sessionId - The session identifier
+ * @param bytesToHash - The bytes to hash
+ * @param senderAddress - The sender address
  * @returns Promise resolving to complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available or network parameters cannot be fetched
  *
@@ -260,11 +268,17 @@ export async function prepareDKGSecondRoundAsync(
 export async function prepareDKGAsync(
 	ikaClient: IkaClient,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
-	sessionId: Uint8Array,
+	bytesToHash: Uint8Array,
+	senderAddress: string,
 ): Promise<DKGRequestInput> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
-	return prepareDKG(protocolPublicParameters, userShareEncryptionKeys.encryptionKey, sessionId);
+	return prepareDKG(
+		protocolPublicParameters,
+		userShareEncryptionKeys.encryptionKey,
+		bytesToHash,
+		senderAddress,
+	);
 }
 
 /**
@@ -280,7 +294,8 @@ export async function prepareDKGAsync(
  */
 export async function prepareImportedKeyDWalletVerification(
 	ikaClient: IkaClient,
-	sessionIdentifier: Uint8Array,
+	bytesToHash: Uint8Array,
+	senderAddress: string,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	keypair: Keypair,
 ): Promise<ImportDWalletVerificationRequestInput> {
@@ -288,12 +303,13 @@ export async function prepareImportedKeyDWalletVerification(
 		throw new Error('Only Secp256k1 keypairs are supported for now');
 	}
 
+	const senderAddressBytes = bcs.Address.serialize(senderAddress).toBytes();
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
 	const [userSecretShare, userPublicOutput, userMessage] =
 		await create_imported_dwallet_user_output(
 			protocolPublicParameters,
-			sessionIdentifierDigest(sessionIdentifier),
+			sessionIdentifierDigest(bytesToHash, senderAddressBytes),
 			bcs
 				.vector(bcs.u8())
 				.serialize(decodeSuiPrivateKey(keypair.getSecretKey()).secretKey)
@@ -504,13 +520,17 @@ export async function userAndNetworkDKGOutputMatch(
  * @returns The SHA3-256 digest of the versioned and domain-separated session identifier
  * @private
  */
-export function sessionIdentifierDigest(sessionIdentifier: Uint8Array): Uint8Array {
+export function sessionIdentifierDigest(
+	bytesToHash: Uint8Array,
+	senderAddressBytes: Uint8Array,
+): Uint8Array {
+	const preimage = keccak_256(Uint8Array.from([...senderAddressBytes, ...bytesToHash]));
 	const version = 0; // Version of the session identifier
 	// Calculate the user session identifier for digest
 	const data = Uint8Array.from([
 		...u64ToBytesBigEndian(version),
 		...encodeToASCII('USER'),
-		...sessionIdentifier,
+		...preimage,
 	]);
 	// Compute the SHA3-256 digest of the serialized data
 	const digest = keccak_256(data);
