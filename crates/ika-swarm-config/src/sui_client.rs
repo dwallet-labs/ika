@@ -29,12 +29,15 @@ use ika_types::sui::{
     REQUEST_ADD_VALIDATOR_FUNCTION_NAME,
     REQUEST_DWALLET_NETWORK_DECRYPTION_KEY_DKG_BY_CAP_FUNCTION_NAME, SYSTEM_MODULE_NAME, System,
     TABLE_VEC_MODULE_NAME, VALIDATOR_CAP_MODULE_NAME, VALIDATOR_CAP_STRUCT_NAME,
-    VALIDATOR_METADATA_MODULE_NAME,
+    VALIDATOR_METADATA_MODULE_NAME, VEC_MAP_FROM_KEYS_VALUES_FUNCTION_NAME,
+    VEC_MAP_INSERT_FUNCTION_NAME, VEC_MAP_MODULE_NAME, VEC_MAP_NEW_FUNCTION_NAME,
+    VEC_MAP_STRUCT_NAME,
 };
 use move_core_types::ident_str;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use move_package::BuildConfig;
 use shared_crypto::intent::Intent;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
@@ -470,6 +473,73 @@ pub async fn ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
     Ok(())
 }
 
+fn new_curve_to_signature_algorithm_vecmap(
+    ptb: &mut ProgrammableTransactionBuilder,
+    curve_to_signature_algorithms: HashMap<u32, Vec<u32>>,
+) -> anyhow::Result<Argument> {
+    let (keys, values): (Vec<u32>, Vec<Vec<u32>>) =
+        curve_to_signature_algorithms.into_iter().unzip();
+
+    let keys = ptb.input(CallArg::Pure(bcs::to_bytes(&keys)?))?;
+    let values = ptb.input(CallArg::Pure(bcs::to_bytes(&values)?))?;
+
+    Ok(ptb.programmable_move_call(
+        SUI_FRAMEWORK_PACKAGE_ID,
+        VEC_MAP_MODULE_NAME.into(),
+        VEC_MAP_FROM_KEYS_VALUES_FUNCTION_NAME.into(),
+        vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+        vec![keys, values],
+    ))
+}
+
+pub async fn set_global_presign_config(
+    publisher_address: SuiAddress,
+    context: &mut WalletContext,
+    client: SuiClient,
+    ika_system_package_id: ObjectID,
+    ika_system_object_id: ObjectID,
+    init_system_shared_version: SequenceNumber,
+    init_coordinator_shared_version: SequenceNumber,
+    protocol_cap_id: ObjectID,
+    ika_dwallet_2pc_mpc_package_id: ObjectID,
+    ika_dwallet_2pc_mpc_init_id: ObjectID,
+) -> Result<(ObjectID, SequenceNumber), anyhow::Error> {
+    let mut ptb = ProgrammableTransactionBuilder::new();
+    let system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
+        id: ika_system_object_id,
+        initial_shared_version: init_system_shared_version,
+        mutable: true,
+    }))?;
+    let coordinator_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
+        id: ika_dwallet_2pc_mpc_init_id,
+        initial_shared_version: init_coordinator_shared_version,
+        mutable: true,
+    }))?;
+    let protocol_cap_ref = client
+        .transaction_builder()
+        .get_object_ref(protocol_cap_id)
+        .await?;
+    let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+        protocol_cap_ref,
+    )))?;
+
+    let verified_cap = ptb.programmable_move_call(
+        ika_system_package_id,
+        SYSTEM_MODULE_NAME.into(),
+        ident_str!("verify_protocol_cap").into(),
+        vec![],
+        vec![system_arg, protocol_cap_arg],
+    );
+
+    ptb.programmable_move_call(
+        ika_dwallet_2pc_mpc_package_id,
+        ident_str!("coordinator").into(),
+        ident_str!("set_global_presign_config").into(),
+        vec![],
+        vec![coordinator_arg, verified_cap],
+    );
+}
+
 pub async fn ika_system_initialize(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
@@ -736,48 +806,6 @@ pub async fn ika_system_initialize(
             zero_price,
         ],
     );
-
-    let protocol_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(protocol_cap_id)
-        .await?;
-
-    let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
-        protocol_cap_ref,
-    )))?;
-
-
-    let system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
-        id: ika_system_object_id,
-        initial_shared_version: init_system_shared_version,
-        mutable: true,
-    }))?;
-
-    let verified_cap = ptb.programmable_move_call(
-        ika_system_package_id,
-        SYSTEM_MODULE_NAME.into(),
-        ident_str!("verify_protocol_cap").into(),
-        vec![],
-        vec![system_arg, protocol_cap_arg],
-    );
-
-    let protocol_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(protocol_cap_id)
-        .await?;
-
-    let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
-        protocol_cap_ref,
-    )))?;
-
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("coordinator").into(),
-        ident_str!("set_global_presign_config").into(),
-        vec![],
-        vec![protocol_cap_arg, verified_cap],
-    );
-
 
     let supported_signature_algorithms_to_hash_schemes = ptb.programmable_move_call(
         SUI_FRAMEWORK_PACKAGE_ID,
