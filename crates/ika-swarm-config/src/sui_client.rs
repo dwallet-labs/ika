@@ -375,6 +375,7 @@ pub async fn init_ika_on_sui(
         ika_dwallet_2pc_mpc_package_id,
         ika_dwallet_coordinator_object_id,
     ).await?;
+    println!("Running `system::set_global_presign_config` done.");
 
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
         publisher_address,
