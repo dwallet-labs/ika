@@ -260,7 +260,8 @@ export async function createCompleteDWalletV2(
 	const encryptedUserSecretKeyShare = await retryUntil(
 		() =>
 			ikaClient.getEncryptedUserSecretKeyShare(
-				decentralizedRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
+				decentralizedRoundMoveResponse.event_data.user_secret_key_share.Encrypted
+					.encrypted_user_secret_key_share_id,
 			),
 		(share) => share !== null,
 		30,
