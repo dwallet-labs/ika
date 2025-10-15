@@ -4,8 +4,8 @@
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
-    DWalletImportedKeyVerificationParty, Secp256K1DWalletDKGParty, dwallet_dkg_first_public_input,
-    dwallet_dkg_second_public_input,
+    DWalletImportedKeyVerificationParty, DWalletImportedKeyVerificationPublicInputByCurve,
+    Secp256K1DWalletDKGParty, dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
 };
 use crate::dwallet_mpc::network_dkg::{
     DwalletMPCNetworkKeys, network_dkg_v1_public_input, network_dkg_v2_public_input,
@@ -148,11 +148,21 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
+            let encrypted_secret_share_and_proof = match bcs::from_bytes(
+                &data.encrypted_centralized_secret_share_and_proof,
+            )? {
+                VersionedEncryptedUserShare::V1(encrypted_centralized_secret_share_and_proof) => {
+                    encrypted_centralized_secret_share_and_proof
+                }
+            };
+
             let public_input = DWalletImportedKeyVerificationPublicInputByCurve::try_new(
                 session_id,
                 &data.curve,
                 encryption_key_public_data,
                 &centralized_party_message,
+                &data.encryption_key,
+                &encrypted_secret_share_and_proof
             )?;
 
             Ok((
