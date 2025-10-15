@@ -403,6 +403,19 @@ export async function requestTestDkgSecondRound(
 	).fromBase64(dkgSecondRoundRequestEvent.bcs as string);
 }
 
+function numberToCurve(curve: number): Curve {
+	switch (curve) {
+		case 0:
+			return Curve.SECP256K1;
+		case 1:
+			return Curve.RISTRETTO;
+		case 2:
+			return Curve.ED25519;
+		case 3:
+			return Curve.SECP256R1
+	}
+}
+
 /**
  * Request DKG second round for testing
  */
@@ -420,13 +433,13 @@ export async function requestTestDkg(
 	const transaction = new Transaction();
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
-	const [dWalletCap] = ikaTransaction.requestDWalletDKG({
-		dkgSecondRoundRequestInput,
+	const [dWalletCap] = await ikaTransaction.requestDWalletDKG({
+		dkgRequestInput: dkgSecondRoundRequestInput,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
 		sessionIdentifierObjID,
 		dwalletNetworkEncryptionKeyId,
-		curve,
+		curve: numberToCurve(curve),
 	});
 	transaction.transferObjects([dWalletCap], signerAddress);
 
