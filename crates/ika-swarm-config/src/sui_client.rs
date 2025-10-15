@@ -363,6 +363,18 @@ pub async fn init_ika_on_sui(
         )
         .await?;
     println!("Running `system::initialize` done.");
+    set_global_presign_config(
+        publisher_address,
+        &mut context,
+        client.clone(),
+        ika_system_package_id,
+        ika_system_object_id,
+        init_system_shared_version,
+        dwallet_2pc_mpc_coordinator_initial_shared_version,
+        protocol_cap_id,
+        ika_dwallet_2pc_mpc_package_id,
+        ika_dwallet_coordinator_object_id,
+    ).await?;
 
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
         publisher_address,
@@ -502,8 +514,8 @@ pub async fn set_global_presign_config(
     init_coordinator_shared_version: SequenceNumber,
     protocol_cap_id: ObjectID,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
-    ika_dwallet_2pc_mpc_init_id: ObjectID,
-) -> Result<(ObjectID, SequenceNumber), anyhow::Error> {
+    ika_dwallet_coordinator_object_id: ObjectID,
+) -> Result<(), anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
@@ -511,7 +523,7 @@ pub async fn set_global_presign_config(
         mutable: true,
     }))?;
     let coordinator_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
-        id: ika_dwallet_2pc_mpc_init_id,
+        id: ika_dwallet_coordinator_object_id,
         initial_shared_version: init_coordinator_shared_version,
         mutable: true,
     }))?;
@@ -531,13 +543,32 @@ pub async fn set_global_presign_config(
         vec![system_arg, protocol_cap_arg],
     );
 
+    let curve_to_signature_algorithms_for_dkg = new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
+    let curve_to_signature_algorithms_for_imported_key = new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
     ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
         ident_str!("coordinator").into(),
         ident_str!("set_global_presign_config").into(),
         vec![],
-        vec![coordinator_arg, verified_cap],
+        vec![
+            coordinator_arg,
+            curve_to_signature_algorithms_for_dkg,
+            curve_to_signature_algorithms_for_imported_key,
+            verified_cap,
+        ],
     );
+    let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
+
+    let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
+    if response.errors.is_empty() {
+        println!("Transaction executed successfully. {:?}", response.digest);
+    } else {
+        panic!(
+            "Errors occurred during transaction execution: {:?}",
+            response.errors
+        );
+    }
+    Ok(())
 }
 
 pub async fn ika_system_initialize(
