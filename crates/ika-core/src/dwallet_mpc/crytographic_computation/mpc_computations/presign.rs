@@ -156,8 +156,8 @@ impl PresignPublicInputByProtocol {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
                 Self::try_new_v1(versioned_network_encryption_key_public_data, dkg_output)
             }
-            VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) => {
-                unreachable!()
+            VersionedDwalletDKGSecondRoundPublicOutput::V2(_) => {
+                unreachable!("Only global presign is supported for v2 dWallets")
             }
         }
     }
