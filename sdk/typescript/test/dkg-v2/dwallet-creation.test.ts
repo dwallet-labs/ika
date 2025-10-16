@@ -28,7 +28,10 @@ describe('DWallet Creation', () => {
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
 
-		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName);
+		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(
+			testName,
+			Curve.SECP256K1,
+		);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -166,7 +169,10 @@ describe('DWallet Creation', () => {
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
 
-		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName);
+		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(
+			testName,
+			Curve.SECP256R1,
+		);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -304,7 +310,10 @@ describe('DWallet Creation', () => {
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
 
-		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName);
+		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(
+			testName,
+			Curve.ED25519,
+		);
 
 		await requestTestFaucetFunds(signerAddress);
 
@@ -442,7 +451,10 @@ describe('DWallet Creation', () => {
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
 
-		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName);
+		const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(
+			testName,
+			Curve.RISTRETTO,
+		);
 
 		await requestTestFaucetFunds(signerAddress);
 

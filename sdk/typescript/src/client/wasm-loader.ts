@@ -3,6 +3,8 @@
 
 import type * as WasmModule from '@ika.xyz/ika-wasm';
 
+import { Curve } from './types';
+
 let wasmModule: typeof WasmModule | null = null;
 let initPromise: Promise<void> | null = null;
 const isNode = typeof process !== 'undefined' && !!process.versions?.node;
@@ -59,10 +61,11 @@ export async function verify_user_share(
 }
 
 export async function generate_secp_cg_keypair_from_seed(
+	curve: Curve,
 	seed: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array]> {
 	const wasm = await getWasmModule();
-	return wasm.generate_secp_cg_keypair_from_seed(seed);
+	return wasm.generate_secp_cg_keypair_from_seed(curve, seed);
 }
 
 export async function create_dkg_centralized_output_v1(
@@ -121,10 +124,11 @@ export async function verify_secp_signature(
 }
 
 export async function public_key_from_dwallet_output(
+	curve: Curve,
 	dWalletOutput: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
-	return wasm.public_key_from_dwallet_output(dWalletOutput);
+	return wasm.public_key_from_dwallet_output(curve, dWalletOutput);
 }
 
 export async function reconfiguration_public_output_to_protocol_pp(

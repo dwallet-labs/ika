@@ -59,7 +59,7 @@ export interface ImportDWalletVerificationRequestInput {
 
 /**
  * Create a class groups keypair from a seed for encryption/decryption operations.
- * Uses SECP256k1 curve with class groups for homomorphic encryption capabilities.
+ * Uses SECP256k1, SECP256r1, Ristretto, or ED25519 curves with class groups for homomorphic encryption capabilities.
  *
  * @param seed - The seed bytes to generate the keypair from
  * @param curve - The curve to use for key generation
@@ -79,10 +79,17 @@ export async function createClassGroupsKeypair(
 	let encryptionKey: Uint8Array;
 	let decryptionKey: Uint8Array;
 
-	if (curve === Curve.SECP256K1) {
-		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed(seed);
+	if (
+		curve === Curve.SECP256K1 ||
+		curve === Curve.SECP256R1 ||
+		curve === Curve.RISTRETTO ||
+		curve === Curve.ED25519
+	) {
+		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed(curve, seed);
 	} else {
-		throw new Error('Only SECP256K1 curve is supported for now');
+		throw new Error(
+			'Only SECP256K1, SECP256R1, RISTRETTO, and ED25519 curves are supported for now',
+		);
 	}
 
 	return {
@@ -438,10 +445,14 @@ export async function verifySecpSignature(
  * Create a public key from a DWallet output.
  *
  * @param dWalletOutput - The DWallet output
+ * @param curve - The curve to use for key generation
  * @returns The public key
  */
-export async function publicKeyFromDWalletOutput(dWalletOutput: Uint8Array): Promise<Uint8Array> {
-	return Uint8Array.from(await public_key_from_dwallet_output(dWalletOutput));
+export async function publicKeyFromDWalletOutput(
+	dWalletOutput: Uint8Array,
+	curve: Curve,
+): Promise<Uint8Array> {
+	return Uint8Array.from(await public_key_from_dwallet_output(curve, dWalletOutput));
 }
 
 /**

@@ -248,14 +248,11 @@ export async function executeTestTransactionWithKeypair(
 /**
  * Generates deterministic keypair for testing
  */
-export async function generateTestKeypair(testName: string) {
+export async function generateTestKeypair(testName: string, curve: Curve = Curve.SECP256K1) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
-		seed,
-		Curve.SECP256K1,
-	);
+	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve);
 
 	return {
 		userShareEncryptionKeys,
