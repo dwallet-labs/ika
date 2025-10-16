@@ -8,50 +8,39 @@
 
 use anyhow::{Context, anyhow};
 use class_groups::dkg::Secp256k1Party;
-use class_groups::setup::get_setup_parameters_secp256k1;
 use class_groups::{
-    CiphertextSpaceGroupElement, Curve25519DecryptionKey, Curve25519SetupParameters,
-    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, DecryptionKey, EncryptionKey, RistrettoDecryptionKey,
-    RistrettoSetupParameters, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_SCALAR_LIMBS, Secp256k1DecryptionKey,
-    Secp256k1SetupParameters, Secp256r1DecryptionKey, Secp256r1SetupParameters,
+    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_SCALAR_LIMBS,
     setup::DeriveFromPlaintextPublicParameters,
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
-    DWalletCurve, DWalletSignatureScheme, NetworkDecryptionKeyPublicOutputType,
-    NetworkEncryptionKeyPublicDataV1, NetworkEncryptionKeyPublicDataV2,
-    SerializedWrappedMPCPublicOutput, VersionedCentralizedDKGPublicOutput,
-    VersionedCentralizedPartyImportedDWalletPublicOutput,
+    DWalletCurve, DWalletSignatureScheme, SerializedWrappedMPCPublicOutput,
+    VersionedCentralizedDKGPublicOutput, VersionedCentralizedPartyImportedDWalletPublicOutput,
     VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput, VersionedDwalletUserSecretShare,
     VersionedEncryptedUserShare, VersionedImportedDwalletOutgoingMessage,
-    VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput,
-    VersionedPublicKeyShareAndProof, VersionedSignOutput, VersionedUserSignedMessage,
+    VersionedNetworkDkgOutput, VersionedPresignOutput, VersionedPublicKeyShareAndProof,
+    VersionedSignOutput, VersionedUserSignedMessage,
 };
-use group::{CyclicGroupElement, GroupElement, HashType, OsCsRng, PartyID, Samplable, secp256k1};
-use homomorphic_encryption::{
-    AdditivelyHomomorphicDecryptionKey, AdditivelyHomomorphicEncryptionKey,
-    GroupsPublicParametersAccessors,
-};
-use mpc::two_party::{Round, RoundResult};
-use mpc::{Party, Weight, WeightedThresholdAccessStructure};
+use group::{CyclicGroupElement, GroupElement, HashType, OsCsRng, Samplable, secp256k1};
+use homomorphic_encryption::GroupsPublicParametersAccessors;
+use mpc::Party;
+use mpc::two_party::Round;
 use rand_core::SeedableRng;
+use std::fmt::Debug;
 use twopc_mpc::secp256k1::SCALAR_LIMBS;
 
-use class_groups::encryption_key::public_parameters::Instantiate;
 use commitment::CommitmentSizedNumber;
-use twopc_mpc::class_groups::{
-    DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput,
-    DKGDecentralizedPartyVersionedOutput,
-};
+use crypto_bigint::{Encoding, Uint};
+use serde::{Deserialize, Serialize};
+use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput};
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
+use twopc_mpc::dkg::decentralized_party::{Output, VersionedOutput};
 use twopc_mpc::ecdsa::VerifyingKey;
-use twopc_mpc::secp256k1::class_groups::{
-    FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, ProtocolPublicParameters,
-    TaprootProtocol,
-};
+use twopc_mpc::secp256k1::class_groups::{ProtocolPublicParameters, TaprootProtocol};
+use twopc_mpc::{curve25519, ristretto, secp256r1};
 
 type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
@@ -64,17 +53,8 @@ type DKGCentralizedParty =
     <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
 type SignCentralizedPartyV1 =
     <Secp256K1DKGProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
-type DKGDecentralizedOutput =
-    <Secp256K1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 
 type SignedMessage = Vec<u8>;
-
-type Secp256k1EncryptionKey = EncryptionKey<
-    SCALAR_LIMBS,
-    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    secp256k1::GroupElement,
->;
 
 pub struct CentralizedDKGWasmResult {
     pub public_key_share_and_proof: Vec<u8>,
@@ -294,29 +274,52 @@ pub fn create_dkg_output_v1(
     }
 }
 
-pub fn public_key_from_dwallet_output(
+pub fn public_key_from_dwallet_output_by_curve(
     curve: u32,
     dwallet_output: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
     match curve.try_into()? {
-        DWalletCurve::Secp256k1 => {
-            public_key_from_dwallet_output_inner::<Secp256K1DKGProtocol>(dwallet_output)
-        }
-        DWalletCurve::Ristretto => {
-            public_key_from_dwallet_output_inner::<RistrettoDKGProtocol>(dwallet_output)
-        }
-        DWalletCurve::Curve25519 => {
-            public_key_from_dwallet_output_inner::<Curve25519DKGProtocol>(dwallet_output)
-        }
-        DWalletCurve::Secp256r1 => {
-            public_key_from_dwallet_output_inner::<Secp256R1DKGProtocol>(dwallet_output)
-        }
+        DWalletCurve::Secp256k1 => public_key_from_dwallet_output_inner::<
+            { secp256k1::SCALAR_LIMBS },
+            group::secp256k1::group_element::Value,
+            class_groups::CiphertextSpaceValue<
+                { class_groups::SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+            >,
+        >(dwallet_output),
+        DWalletCurve::Ristretto => public_key_from_dwallet_output_inner::<
+            { ristretto::SCALAR_LIMBS },
+            group::ristretto::GroupElement,
+            class_groups::CiphertextSpaceValue<
+                { class_groups::RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+            >,
+        >(dwallet_output),
+        DWalletCurve::Curve25519 => public_key_from_dwallet_output_inner::<
+            { curve25519::SCALAR_LIMBS },
+            group::curve25519::GroupElement,
+            class_groups::CiphertextSpaceValue<
+                { class_groups::CURVE25519_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+            >,
+        >(dwallet_output),
+        DWalletCurve::Secp256r1 => public_key_from_dwallet_output_inner::<
+            { secp256r1::SCALAR_LIMBS },
+            group::secp256r1::group_element::Value,
+            class_groups::CiphertextSpaceValue<
+                { class_groups::SECP256R1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+            >,
+        >(dwallet_output),
     }
 }
 
-pub fn public_key_from_dwallet_output_inner<P: Protocol>(
+pub fn public_key_from_dwallet_output_inner<
+    const SCALAR_LIMBS: usize,
+    GroupElementValue: Serialize + for<'a> Deserialize<'a> + Clone + Debug + PartialEq + Eq,
+    CiphertextValue: Serialize + for<'a> Deserialize<'a> + Clone + Debug + PartialEq + Eq,
+>(
     dwallet_output: &[u8],
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<Vec<u8>>
+where
+    Uint<SCALAR_LIMBS>: Encoding,
+{
     let versioned_dkg_public_output: VersionedDwalletDKGSecondRoundPublicOutput =
         bcs::from_bytes(&dwallet_output)?;
     match versioned_dkg_public_output {
@@ -325,10 +328,15 @@ pub fn public_key_from_dwallet_output_inner<P: Protocol>(
             Ok(bcs::to_bytes(&output.public_key)?)
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) => {
-            let dkg_versioned_output: P::DecentralizedPartyDKGOutput =
-                bcs::from_bytes(&dkg_output)?;
-            let dkg_output = dkg_versioned_output.into();
-            Ok(bcs::to_bytes(&dkg_output.public_key)?)
+            let dkg_versioned_output: VersionedOutput<
+                SCALAR_LIMBS,
+                GroupElementValue,
+                CiphertextValue,
+            > = bcs::from_bytes(&dkg_output)?;
+            let dkg_output: Output<GroupElementValue, CiphertextValue> =
+                dkg_versioned_output.into();
+            let public_key = dkg_output.public_key;
+            Ok(bcs::to_bytes(&public_key)?)
         }
     }
 }
@@ -770,7 +778,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
 
     match &reconfiguration_dkg_public_output {
         // TODO (#1487): Remove temporary support for V1 reconfiguration keys.
-        VersionedDecryptionKeyReconfigurationOutput::V1(public_output_bytes) => {
+        VersionedDecryptionKeyReconfigurationOutput::V1(_) => {
             protocol_public_parameters(versioned_network_dkg_output)
         }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
@@ -824,7 +832,7 @@ pub fn generate_cg_keypair_from_seed_inner<P: Protocol>(
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
     let decryption_key = P::generate_decryption_key(&mut rng)?;
-    let encryption_key = P::encryption_key_from_decryption_key(&decryption_key)?;
+    let encryption_key = P::encryption_key_from_decryption_key(decryption_key.clone())?;
     Ok((
         bcs::to_bytes(&encryption_key)?,
         bcs::to_bytes(&decryption_key)?,

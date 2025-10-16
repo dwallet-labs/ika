@@ -6,9 +6,9 @@ use dwallet_mpc_centralized_party::{
     create_dkg_output_by_curve_v2, create_dkg_output_v1,
     create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
     dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
-    generate_secp256k1_cg_keypair_from_seed_internal,
+    generate_cg_keypair_from_seed,
     network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
-    public_key_from_dwallet_output_inner, reconfiguration_public_output_to_protocol_pp_inner,
+    public_key_from_dwallet_output_by_curve, reconfiguration_public_output_to_protocol_pp_inner,
     sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share_v1,
 };
 use wasm_bindgen::JsValue;
@@ -48,7 +48,7 @@ pub fn create_dkg_centralized_output_v2(
 #[wasm_bindgen]
 pub fn public_key_from_dwallet_output(dwallet_output: Vec<u8>) -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(
-        &public_key_from_dwallet_output_inner(dwallet_output)
+        &public_key_from_dwallet_output_by_curve(0, &dwallet_output)
             .map_err(|e| JsError::new(&e.to_string()))?,
     )
     .map_err(|e| JsError::new(&e.to_string()))
@@ -84,7 +84,7 @@ pub fn generate_secp_cg_keypair_from_seed(seed: &[u8]) -> Result<JsValue, JsErro
         .try_into()
         .map_err(|_| JsError::new("seed must be 32 bytes long"))?;
     let (public_key, private_key) =
-        generate_secp256k1_cg_keypair_from_seed_internal(seed).map_err(to_js_err)?;
+        generate_cg_keypair_from_seed(0, seed).map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&(public_key, private_key))?)
 }
 

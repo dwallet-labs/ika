@@ -3643,6 +3643,7 @@ dependencies = [
  "class_groups",
  "commitment",
  "console_log",
+ "crypto-bigint 0.7.0-pre.6",
  "dwallet-mpc-types",
  "getrandom 0.2.16",
  "group 0.1.0",

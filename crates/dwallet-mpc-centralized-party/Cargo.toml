@@ -23,9 +23,13 @@ tracing-subscriber = "0.3.19"
 tracing = "0.1.41"
 log = "0.4.27"
 console_log = "1.0.0"
+crypto-bigint.workspace = true
 
 [features]
 wasm_js = ["group/wasm_js", "dep:getrandom"]
 
 [lints]
 workspace = true
+
+[patch.crates-io]
+crypto-bigint = { git = 'https://github.com/erik-3milabs/crypto-bigint.git', rev = "d0929d4" }
