@@ -78,14 +78,12 @@ impl DWalletSessionRequestMetricData {
 impl From<&ProtocolData> for DWalletSessionRequestMetricData {
     fn from(protocol_specific_data: &ProtocolData) -> Self {
         match protocol_specific_data {
-            ProtocolData::DWalletDKG { data, .. } => {
-                DWalletSessionRequestMetricData {
-                    name: data.to_string(),
-                    curve: Some(data.curve.clone()),
-                    hash_scheme: None,
-                    signature_algorithm: None,
-                }
-            }
+            ProtocolData::DWalletDKG { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve.clone()),
+                hash_scheme: None,
+                signature_algorithm: None,
+            },
             ProtocolData::ImportedKeyVerification { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve.clone()),
@@ -154,14 +152,6 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
                     signature_algorithm: Some(data.signature_algorithm.clone()),
                 }
             }
-            ProtocolData::DWalletDKGWithPublicShare { data, .. } => {
-                DWalletSessionRequestMetricData {
-                    name: data.to_string(),
-                    curve: Some(data.curve.clone()),
-                    hash_scheme: None,
-                    signature_algorithm: None,
-                }
-            }
         }
     }
 }
@@ -170,14 +160,6 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
     fn from(advance_specific_data: &ProtocolCryptographicData) -> Self {
         match advance_specific_data {
             ProtocolCryptographicData::ImportedKeyVerification { data, .. } => {
-                DWalletSessionRequestMetricData {
-                    name: data.to_string(),
-                    curve: Some(data.curve.clone()),
-                    hash_scheme: None,
-                    signature_algorithm: None,
-                }
-            }
-            ProtocolCryptographicData::DWalletDKGWithPublicShare { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
                     curve: Some(data.curve.clone()),

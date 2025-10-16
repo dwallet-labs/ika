@@ -10,12 +10,11 @@ use crate::dwallet_mpc::presign::{PresignAdvanceRequestByProtocol, PresignPublic
 use crate::dwallet_mpc::reconfiguration::ReconfigurationV1toV2Party;
 use crate::dwallet_mpc::sign::{SignAdvanceRequestByProtocol, SignPublicInputByProtocol};
 use crate::request_protocol_data::{
-    DKGFirstData, DKGSecondData, DWalletDKGData, DWalletDKGWithPublicShareData,
-    EncryptedShareVerificationData, ImportedKeyVerificationData,
-    MakeDWalletUserSecretKeySharesPublicData, NetworkEncryptionKeyDkgData,
-    NetworkEncryptionKeyReconfigurationData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
-    NetworkEncryptionKeyV2ReconfigurationData, PartialSignatureVerificationData, PresignData,
-    ProtocolData, SignData,
+    DKGFirstData, DKGSecondData, DWalletDKGData, EncryptedShareVerificationData,
+    ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData,
+    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData,
+    NetworkEncryptionKeyV1ToV2ReconfigurationData, NetworkEncryptionKeyV2ReconfigurationData,
+    PartialSignatureVerificationData, PresignData, ProtocolData, SignData,
 };
 use class_groups::SecretKeyShareSizedInteger;
 use class_groups::dkg::Secp256k1Party;
@@ -55,12 +54,6 @@ pub enum ProtocolCryptographicData {
 
     DWalletDKGWithEncryptedShare {
         data: DWalletDKGData,
-        public_input: DWalletDKGPublicInputByCurve,
-        advance_request: DWalletDKGAdvanceRequestByCurve,
-    },
-
-    DWalletDKGWithPublicShare {
-        data: DWalletDKGWithPublicShareData,
         public_input: DWalletDKGPublicInputByCurve,
         advance_request: DWalletDKGAdvanceRequestByCurve,
     },
@@ -220,26 +213,6 @@ impl ProtocolCryptographicData {
                     DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
                 ..
             } => advance_request.attempt_number,
-            ProtocolCryptographicData::DWalletDKGWithPublicShare {
-                advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
-                ..
-            }
-            | ProtocolCryptographicData::DWalletDKGWithPublicShare {
-                advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
-                ..
-            }
-            | ProtocolCryptographicData::DWalletDKGWithPublicShare {
-                advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request),
-                ..
-            }
-            | ProtocolCryptographicData::DWalletDKGWithPublicShare {
-                advance_request:
-                    DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
-                ..
-            } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV2 {
                 advance_request, ..
             } => advance_request.attempt_number,
@@ -267,26 +240,6 @@ impl ProtocolCryptographicData {
                 ..
             }
             | ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
-                advance_request:
-                    DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
-                ..
-            } => Some(advance_request.mpc_round_number),
-            ProtocolCryptographicData::DWalletDKGWithPublicShare {
-                advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
-                ..
-            }
-            | ProtocolCryptographicData::DWalletDKGWithPublicShare {
-                advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
-                ..
-            }
-            | ProtocolCryptographicData::DWalletDKGWithPublicShare {
-                advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request),
-                ..
-            }
-            | ProtocolCryptographicData::DWalletDKGWithPublicShare {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
                 ..
