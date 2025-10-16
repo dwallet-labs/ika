@@ -325,8 +325,10 @@ pub fn public_key_from_dwallet_output_inner<P: Protocol>(
             Ok(bcs::to_bytes(&output.public_key)?)
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) => {
-            let dkg_output: P::DecentralizedPartyDKGOutput = bcs::from_bytes(&dkg_output)?;
-            Ok(bcs::to_bytes(&dkg_output.public_key)?) // todo: missing, need for scaly.
+            let dkg_versioned_output: P::DecentralizedPartyDKGOutput =
+                bcs::from_bytes(&dkg_output)?;
+            let dkg_output = dkg_versioned_output.into();
+            Ok(bcs::to_bytes(&dkg_output.public_key)?)
         }
     }
 }
@@ -787,7 +789,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
 
 /// Derives class groups keypair from a given seed, by given curve.
 ///
-/// The class groups public encryption key being used to encrypt a Secp256k1 keypair will be
+/// The class groups public encryption key being used to encrypt a keypair will be
 /// different from the encryption key used to encrypt a Ristretto keypair.
 /// The plaintext space/fundamental group will correspond to the order
 /// of the respective elliptic curve.
@@ -802,59 +804,31 @@ pub fn generate_cg_keypair_from_seed(
     seed: [u8; 32],
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     match DWalletCurve::try_from(crrve)? {
-        DWalletCurve::Secp256k1 => generate_secp256k1_cg_keypair_from_seed_internal(seed),
-        DWalletCurve::Ristretto => generate_ristretto_cg_keypair_from_seed_internal(seed),
-        DWalletCurve::Curve25519 => generate_curve25519_cg_keypair_from_seed_internal(seed),
-        DWalletCurve::Secp256r1 => generate_secp256r1_cg_keypair_from_seed_internal(seed),
+        DWalletCurve::Secp256k1 => {
+            generate_cg_keypair_from_seed_inner::<Secp256K1DKGProtocol>(seed)
+        }
+        DWalletCurve::Ristretto => {
+            generate_cg_keypair_from_seed_inner::<RistrettoDKGProtocol>(seed)
+        }
+        DWalletCurve::Curve25519 => {
+            generate_cg_keypair_from_seed_inner::<Curve25519DKGProtocol>(seed)
+        }
+        DWalletCurve::Secp256r1 => {
+            generate_cg_keypair_from_seed_inner::<Secp256R1DKGProtocol>(seed)
+        }
     }
 }
 
-pub fn generate_secp256k1_cg_keypair_from_seed_internal(
+pub fn generate_cg_keypair_from_seed_inner<P: Protocol>(
     seed: [u8; 32],
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
-    let setup_parameters = Secp256k1SetupParameters::default();
-    let (encryption_scheme_public_parameters, decryption_key) =
-        Secp256k1DecryptionKey::generate(setup_parameters, &mut rng)?;
-    let decryption_key = bcs::to_bytes(&decryption_key.decryption_key)?;
-    let encryption_key = bcs::to_bytes(&encryption_scheme_public_parameters.encryption_key)?;
-    Ok((encryption_key, decryption_key))
-}
-
-pub fn generate_ristretto_cg_keypair_from_seed_internal(
-    seed: [u8; 32],
-) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
-    let setup_parameters = RistrettoSetupParameters::default();
-    let (encryption_scheme_public_parameters, decryption_key) =
-        RistrettoDecryptionKey::generate(setup_parameters, &mut rng)?;
-    let decryption_key = bcs::to_bytes(&decryption_key.decryption_key)?;
-    let encryption_key = bcs::to_bytes(&encryption_scheme_public_parameters.encryption_key)?;
-    Ok((encryption_key, decryption_key))
-}
-
-pub fn generate_curve25519_cg_keypair_from_seed_internal(
-    seed: [u8; 32],
-) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
-    let setup_parameters = Curve25519SetupParameters::default();
-    let (encryption_scheme_public_parameters, decryption_key) =
-        Curve25519DecryptionKey::generate(setup_parameters, &mut rng)?;
-    let decryption_key = bcs::to_bytes(&decryption_key.decryption_key)?;
-    let encryption_key = bcs::to_bytes(&encryption_scheme_public_parameters.encryption_key)?;
-    Ok((encryption_key, decryption_key))
-}
-
-pub fn generate_secp256r1_cg_keypair_from_seed_internal(
-    seed: [u8; 32],
-) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
-    let setup_parameters = Secp256r1SetupParameters::default();
-    let (encryption_scheme_public_parameters, decryption_key) =
-        Secp256r1DecryptionKey::generate(setup_parameters, &mut rng)?;
-    let decryption_key = bcs::to_bytes(&decryption_key.decryption_key)?;
-    let encryption_key = bcs::to_bytes(&encryption_scheme_public_parameters.encryption_key)?;
-    Ok((encryption_key, decryption_key))
+    let decryption_key = P::generate_decryption_key(&mut rng)?;
+    let encryption_key = P::encryption_key_from_decryption_key(&decryption_key)?;
+    Ok((
+        bcs::to_bytes(&encryption_key)?,
+        bcs::to_bytes(&decryption_key)?,
+    ))
 }
 
 /// Encrypts the given secret key share with the given encryption key.
