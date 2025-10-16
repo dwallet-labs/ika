@@ -528,8 +528,8 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
             let signed_message = bcs::to_bytes(&signed_message)?;
             Ok(signed_message)
         }
-        Err(_) => {
-            let err_str = format!("advance() failed on the SignCentralizedPartyV2",);
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
             Err(anyhow!(err_str.clone()).context(err_str))
         }
     }
