@@ -483,16 +483,16 @@ export async function requestTestDkgWithPublicUserShare(
 	const transaction = new Transaction();
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
-	const [dWalletCap] = ikaTransaction.requestDWalletDKGWithPublicUserShare(
-		emptyIKACoin,
-		transaction.gas,
+	const [dWalletCap] = await ikaTransaction.requestDWalletDKGWithPublicUserShare({
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
 		sessionIdentifierObjID,
 		dwalletNetworkEncryptionKeyId,
-		curve,
+		curve: numberToCurve(curve),
 		publicKeyShareAndProof,
 		publicUserSecretKeyShare,
 		userPublicOutput,
-	);
+	});
 	transaction.transferObjects([dWalletCap], signerAddress);
 
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
