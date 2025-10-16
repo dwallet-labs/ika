@@ -27,7 +27,7 @@ use ika_types::dwallet_mpc_error::DwalletMPCError;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
 
-pub enum ProtocolCryptographicData {
+pub(crate) enum ProtocolCryptographicData {
     ImportedKeyVerification {
         data: ImportedKeyVerificationData,
         public_input: DWalletImportedKeyVerificationPublicInputByCurve,

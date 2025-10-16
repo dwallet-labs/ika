@@ -130,10 +130,8 @@ impl DWalletMPCManager {
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
-        let mpc_computations_orchestrator = CryptographicComputationsOrchestrator::try_new(
-            root_seed.clone(),
-            protocol_config.clone(),
-        )?;
+        let mpc_computations_orchestrator =
+            CryptographicComputationsOrchestrator::try_new(root_seed.clone())?;
         let party_id = authority_name_to_party_id_from_committee(&committee, &validator_name)?;
 
         let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
