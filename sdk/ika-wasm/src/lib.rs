@@ -11,8 +11,8 @@ use dwallet_mpc_centralized_party::{
     public_key_from_dwallet_output_inner, reconfiguration_public_output_to_protocol_pp_inner,
     sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share_v1,
 };
-use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsValue;
 
 #[wasm_bindgen]
 pub fn create_dkg_centralized_output_v1(
@@ -127,12 +127,13 @@ pub fn centralized_and_decentralized_parties_dkg_output_match(
 /// Returns a tuple of the encryption key and proof of encryption.
 #[wasm_bindgen]
 pub fn encrypt_secret_share(
+    curve: u32,
     secret_key_share: Vec<u8>,
     encryption_key: Vec<u8>,
     protocol_pp: Vec<u8>,
 ) -> Result<JsValue, JsError> {
     let encryption_and_proof =
-        encrypt_secret_key_share_and_prove_v1(secret_key_share, encryption_key, protocol_pp)
+        encrypt_secret_key_share_and_prove_v2(curve, secret_key_share, encryption_key, protocol_pp)
             .map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&encryption_and_proof)?)
 }
