@@ -2138,23 +2138,16 @@ export class IkaTransaction {
 	}
 
 	/**
-	 * Create a unique session identifier for the current transaction.
-	 * This generates a fresh address and converts it to bytes for use as a session identifier.
+	 * Create a unique session identifier for the current transaction and register it with the coordinator.
 	 *
 	 * @returns The session identifier transaction object argument
 	 */
 	createSessionIdentifier() {
-		return coordinatorTx.registerSessionIdentifier(
-			this.#ikaClient.ikaConfig,
-			this.#getCoordinatorObjectRef(),
-			createRandomSessionIdentifier(),
-			this.#transaction,
-		);
+		return this.registerSessionIdentifier(createRandomSessionIdentifier());
 	}
 
 	/**
 	 * Register a unique session identifier for the current transaction.
-	 * This generates a fresh address and converts it to bytes for use as a session identifier.
 	 *
 	 * @returns The session identifier transaction object argument
 	 */
