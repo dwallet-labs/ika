@@ -264,7 +264,7 @@ export class IkaTransaction {
 	/**
 	 * Request the DKG (Distributed Key Generation) with public user share to create a dWallet.
 	 *
-	 * @param params.sessionIdentifierObjID - The session identifier object ID
+	 * @param params.sessionIdentifier - The session identifier object ID
 	 * @param params.dwalletNetworkEncryptionKeyId - The dWallet network encryption key ID
 	 * @param params.curve - The curve
 	 * @param params.publicKeyShareAndProof - The public key share and proof
@@ -278,7 +278,7 @@ export class IkaTransaction {
 	 * @throws {Error} If user share encryption keys are not set
 	 */
 	async requestDWalletDKGWithPublicUserShare({
-		sessionIdentifierObjID,
+		sessionIdentifier,
 		dwalletNetworkEncryptionKeyId,
 		curve,
 		publicKeyShareAndProof,
@@ -290,7 +290,7 @@ export class IkaTransaction {
 	}: {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-		sessionIdentifierObjID: string;
+		sessionIdentifier: TransactionObjectArgument;
 		dwalletNetworkEncryptionKeyId: string;
 		curve: Curve;
 		publicKeyShareAndProof: Uint8Array;
@@ -315,7 +315,7 @@ export class IkaTransaction {
 			publicKeyShareAndProof,
 			publicUserSecretKeyShare,
 			userPublicOutput,
-			sessionIdentifierObjID,
+			sessionIdentifier,
 			signDuringDKGRequest
 				? coordinatorTx.signDuringDKGRequest(
 						this.#ikaClient.ikaConfig,
