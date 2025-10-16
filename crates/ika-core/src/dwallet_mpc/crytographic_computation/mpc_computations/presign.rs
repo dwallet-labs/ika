@@ -164,10 +164,12 @@ impl PresignPublicInputByProtocol {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
                 Self::try_new_v1(versioned_network_encryption_key_public_data, dkg_output)
             }
+            // TODO: remove, as presign is always global
             VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) => Self::try_new_v2(
                 session_identifier,
                 protocol,
                 versioned_network_encryption_key_public_data,
+                // this should not be an option - not exist
                 Some(dkg_output),
             ),
         }
