@@ -1,7 +1,7 @@
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
     dwallet_dkg_first_protocol_data, dwallet_dkg_protocol_data, dwallet_dkg_second_protocol_data,
-    dwallet_dkg_with_public_share_protocol_data, encrypted_share_verification_protocol_data,
+    encrypted_share_verification_protocol_data,
     imported_key_verification_protocol_data,
     make_dwallet_user_secret_key_shares_public_protocol_data,
     network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data,
