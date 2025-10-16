@@ -404,18 +404,22 @@ where
             BytesCentralizedPartyKeyShareVerification::Encrypted {
                 encryption_key,
                 encrypted_secret_key_share_message,
-            } => CentralizedPartyKeyShareVerification::Encrypted {
-                encryption_key: bcs::from_bytes(&encryption_key).map_err(|e| {
-                    bcs::Error::Custom("failed to deserialize encryption key".to_string())
-                })?,
-                encrypted_secret_key_share_message: bcs::from_bytes(
-                    &encrypted_secret_key_share_message,
-                )
-                .map_err(|e| {
-                    bcs::Error::Custom(
-                        "failed to deserialize encrypted secret key share message".to_string(),
+            } => {
+                let VersionedEncryptedUserShare::V1(encrypted_secret_key_share_message) =
+                    bcs::from_bytes(&encrypted_secret_key_share_message)?;
+                CentralizedPartyKeyShareVerification::Encrypted {
+                    encryption_key: bcs::from_bytes(&encryption_key).map_err(|e| {
+                        bcs::Error::Custom("failed to deserialize encryption key".to_string())
+                    })?,
+                    encrypted_secret_key_share_message: bcs::from_bytes(
+                        &encrypted_secret_key_share_message,
                     )
-                })?,
+                        .map_err(|e| {
+                            bcs::Error::Custom(
+                                "failed to deserialize encrypted secret key share message".to_string(),
+                            )
+                        })?,
+                }
             },
             BytesCentralizedPartyKeyShareVerification::Public {
                 centralized_party_secret_key_share,
