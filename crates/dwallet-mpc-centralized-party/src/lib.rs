@@ -9,7 +9,14 @@
 use anyhow::{Context, anyhow};
 use class_groups::dkg::Secp256k1Party;
 use class_groups::setup::get_setup_parameters_secp256k1;
-use class_groups::{CiphertextSpaceGroupElement, DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, DecryptionKey, EncryptionKey, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_SCALAR_LIMBS, Secp256k1DecryptionKey, setup::DeriveFromPlaintextPublicParameters, RistrettoDecryptionKey, Curve25519SetupParameters, RistrettoSetupParameters, Curve25519DecryptionKey, Secp256k1SetupParameters, Secp256r1SetupParameters, Secp256r1DecryptionKey};
+use class_groups::{
+    CiphertextSpaceGroupElement, Curve25519DecryptionKey, Curve25519SetupParameters,
+    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, DecryptionKey, EncryptionKey, RistrettoDecryptionKey,
+    RistrettoSetupParameters, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_SCALAR_LIMBS, Secp256k1DecryptionKey,
+    Secp256k1SetupParameters, Secp256r1DecryptionKey, Secp256r1SetupParameters,
+    setup::DeriveFromPlaintextPublicParameters,
+};
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
     DWalletCurve, DWalletSignatureScheme, NetworkDecryptionKeyPublicOutputType,
@@ -790,7 +797,10 @@ fn protocol_public_parameters_from_reconfiguration_output(
 /// # Warning
 /// The secret (private) key returned from this function should never be sent
 /// and should always be kept private.
-pub fn generate_cg_keypair_from_seed(crrve: u32, seed: [u8; 32]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+pub fn generate_cg_keypair_from_seed(
+    crrve: u32,
+    seed: [u8; 32],
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     match DWalletCurve::try_from(crrve)? {
         DWalletCurve::Secp256k1 => generate_secp256k1_cg_keypair_from_seed_internal(seed),
         DWalletCurve::Ristretto => generate_ristretto_cg_keypair_from_seed_internal(seed),
@@ -827,7 +837,7 @@ pub fn generate_curve25519_cg_keypair_from_seed_internal(
     seed: [u8; 32],
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
-    let setup_parameters =  Curve25519SetupParameters::default();
+    let setup_parameters = Curve25519SetupParameters::default();
     let (encryption_scheme_public_parameters, decryption_key) =
         Curve25519DecryptionKey::generate(setup_parameters, &mut rng)?;
     let decryption_key = bcs::to_bytes(&decryption_key.decryption_key)?;
