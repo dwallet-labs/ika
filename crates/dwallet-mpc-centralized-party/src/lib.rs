@@ -292,33 +292,39 @@ pub fn create_dkg_output_v1(
     }
 }
 
-pub fn public_key_from_dwallet_output_inner(dwallet_output: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-    let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput = bcs::from_bytes(&dwallet_output)?;
-    match dkg_output {
+pub fn public_key_from_dwallet_output(
+    curve: u32,
+    dwallet_output: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    match curve.try_into()? {
+        DWalletCurve::Secp256k1 => {
+            public_key_from_dwallet_output_inner::<Secp256K1DKGProtocol>(dwallet_output)
+        }
+        DWalletCurve::Ristretto => {
+            public_key_from_dwallet_output_inner::<RistrettoDKGProtocol>(dwallet_output)
+        }
+        DWalletCurve::Curve25519 => {
+            public_key_from_dwallet_output_inner::<Curve25519DKGProtocol>(dwallet_output)
+        }
+        DWalletCurve::Secp256r1 => {
+            public_key_from_dwallet_output_inner::<Secp256R1DKGProtocol>(dwallet_output)
+        }
+    }
+}
+
+pub fn public_key_from_dwallet_output_inner<P: Protocol>(
+    dwallet_output: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_dkg_public_output: VersionedDwalletDKGSecondRoundPublicOutput =
+        bcs::from_bytes(&dwallet_output)?;
+    match versioned_dkg_public_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
             let output: DKGDecentralizedPartyOutputSecp256k1 = bcs::from_bytes(&dkg_output)?;
             Ok(bcs::to_bytes(&output.public_key)?)
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) => {
-            let dkg_output: DKGDecentralizedOutput = bcs::from_bytes(&dkg_output)?;
-            let public_key = match dkg_output {
-                DKGDecentralizedPartyVersionedOutput::<
-                    { group::secp256k1::SCALAR_LIMBS },
-                    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    group::secp256k1::GroupElement,
-                >::UniversalPublicDKGOutput {
-                    output: dkg_output,
-                    ..
-                } => dkg_output.public_key,
-                DKGDecentralizedPartyVersionedOutput::<
-                    { group::secp256k1::SCALAR_LIMBS },
-                    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    group::secp256k1::GroupElement,
-                >::TargetedPublicDKGOutput(output) => output.public_key,
-            };
-            Ok(bcs::to_bytes(&public_key)?)
+            let dkg_output: P::DecentralizedPartyDKGOutput = bcs::from_bytes(&dkg_output)?;
+            Ok(bcs::to_bytes(&dkg_output.public_key)?)
         }
     }
 }
@@ -777,7 +783,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
     }
 }
 
-/// Derives a Secp256k1 class groups keypair from a given seed.
+/// Derives class groups keypair from a given seed, by given curve.
 ///
 /// The class groups public encryption key being used to encrypt a Secp256k1 keypair will be
 /// different from the encryption key used to encrypt a Ristretto keypair.
