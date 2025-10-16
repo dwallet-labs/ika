@@ -405,9 +405,13 @@ where
                 encryption_key,
                 encrypted_secret_key_share_message,
             } => CentralizedPartyKeyShareVerification::Encrypted {
-                encryption_key: bcs::from_bytes(&encryption_key)?,
+                encryption_key: bcs::from_bytes(&encryption_key).map_err(|e| {
+                    bcs::Error::Custom("failed to deserialize encryption key".to_string())
+                })?,
                 encrypted_secret_key_share_message: bcs::from_bytes(
                     &encrypted_secret_key_share_message,
+                ).map_err(
+                    |e| bcs::Error::Custom("failed to deserialize encrypted secret key share message".to_string())
                 )?,
             },
             BytesCentralizedPartyKeyShareVerification::Public {
@@ -415,6 +419,8 @@ where
             } => CentralizedPartyKeyShareVerification::Public {
                 centralized_party_secret_key_share: bcs::from_bytes(
                     &centralized_party_secret_key_share,
+                ).map_err(
+                    |e| bcs::Error::Custom("failed to deserialize centralized party secret key share".to_string())
                 )?,
             },
         })
@@ -436,8 +442,12 @@ impl DWalletDKGPublicInputByCurve {
             DWalletCurve::Secp256k1 => {
                 let centralized_party_public_key_share = match centralized_party_public_key_share {
                     VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
-                        bcs::from_bytes(&centralized_party_public_key_share)
-                            .map_err(DwalletMPCError::BcsError)?
+                        bcs::from_bytes(&centralized_party_public_key_share).map_err(|e| {
+                            DwalletMPCError::BcsError(bcs::Error::Custom(
+                                "failed to deserialize centralized party public key share"
+                                    .to_string(),
+                            ))
+                        })?
                     }
                 };
                 let input = (
