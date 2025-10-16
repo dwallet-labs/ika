@@ -324,7 +324,7 @@ pub fn public_key_from_dwallet_output_inner<P: Protocol>(
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) => {
             let dkg_output: P::DecentralizedPartyDKGOutput = bcs::from_bytes(&dkg_output)?;
-            Ok(bcs::to_bytes(&dkg_output.public_key)?)
+            Ok(bcs::to_bytes(&dkg_output.public_key)?) // todo: missing, need for scaly.
         }
     }
 }
