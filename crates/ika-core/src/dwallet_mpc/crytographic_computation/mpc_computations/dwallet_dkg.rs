@@ -15,9 +15,9 @@ use dwallet_mpc_types::dwallet_mpc::{
     NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedCentralizedPartyImportedDWalletPublicOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare,
-    VersionedImportedDwalletOutgoingMessage, VersionedNetworkEncryptionKeyPublicData,
-    VersionedPublicKeyShareAndProof,
+    VersionedDwalletDKGSecondRoundPublicOutput, VersionedDwalletUserSecretShare,
+    VersionedEncryptedUserShare, VersionedImportedDwalletOutgoingMessage,
+    VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
 };
 use group::{CsRng, PartyID};
 use ika_protocol_config::ProtocolVersion;
@@ -419,16 +419,20 @@ where
             },
             BytesCentralizedPartyKeyShareVerification::Public {
                 centralized_party_secret_key_share,
-            } => CentralizedPartyKeyShareVerification::Public {
-                centralized_party_secret_key_share: bcs::from_bytes(
-                    &centralized_party_secret_key_share,
-                )
-                .map_err(|e| {
-                    bcs::Error::Custom(
-                        "failed to deserialize centralized party secret key share".to_string(),
+            } => {
+                let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
+                    bcs::from_bytes(&centralized_party_secret_key_share)?;
+                CentralizedPartyKeyShareVerification::Public {
+                    centralized_party_secret_key_share: bcs::from_bytes(
+                        &centralized_party_secret_key_share,
                     )
-                })?,
-            },
+                    .map_err(|e| {
+                        bcs::Error::Custom(
+                            "failed to deserialize centralized party secret key share".to_string(),
+                        )
+                    })?,
+                }
+            }
         })
     }
 }
