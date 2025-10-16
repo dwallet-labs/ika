@@ -239,7 +239,7 @@ export class IkaTransaction {
 				? coordinatorTx.signDuringDKGRequest(
 						this.#ikaClient.ikaConfig,
 						this.#getCoordinatorObjectRef(),
-						this.#transaction.object(signDuringDKGRequest.presign.id.id),
+						this.verifyPresignCap({ presign: signDuringDKGRequest.presign }),
 						signDuringDKGRequest.hashScheme,
 						signDuringDKGRequest.message,
 						await this.#getUserSignMessage({
@@ -320,7 +320,7 @@ export class IkaTransaction {
 				? coordinatorTx.signDuringDKGRequest(
 						this.#ikaClient.ikaConfig,
 						this.#getCoordinatorObjectRef(),
-						this.#transaction.object(signDuringDKGRequest.presign.id.id),
+						this.verifyPresignCap({ presign: signDuringDKGRequest.presign }),
 						signDuringDKGRequest.hashScheme,
 						signDuringDKGRequest.message,
 						await this.#getUserSignMessage({
