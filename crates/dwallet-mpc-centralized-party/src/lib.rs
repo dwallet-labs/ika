@@ -424,7 +424,6 @@ pub fn advance_centralized_sign_party(
             let signature_scheme = DWalletSignatureScheme::try_from(signature_scheme)?;
             match signature_scheme {
                 DWalletSignatureScheme::ECDSASecp256k1 => {
-                    println!("bien");
                     advance_sign_by_protocol::<Secp256K1ECDSAProtocol>(
                         &centralized_party_secret_key_share,
                         &presign,
