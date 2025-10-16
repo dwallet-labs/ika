@@ -414,13 +414,13 @@ where
                     encrypted_secret_key_share_message: bcs::from_bytes(
                         &encrypted_secret_key_share_message,
                     )
-                        .map_err(|e| {
-                            bcs::Error::Custom(
-                                "failed to deserialize encrypted secret key share message".to_string(),
-                            )
-                        })?,
+                    .map_err(|e| {
+                        bcs::Error::Custom(
+                            "failed to deserialize encrypted secret key share message".to_string(),
+                        )
+                    })?,
                 }
-            },
+            }
             BytesCentralizedPartyKeyShareVerification::Public {
                 centralized_party_secret_key_share,
             } => {
