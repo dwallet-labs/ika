@@ -1,6 +1,8 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { Buffer } from 'buffer';
+import { writeFile } from 'fs/promises';
 import type * as WasmModule from '@ika.xyz/ika-wasm';
 
 let wasmModule: typeof WasmModule | null = null;
@@ -90,6 +92,14 @@ export async function create_sign_centralized_party_message(
 	hash: number,
 	signatureScheme: number,
 ): Promise<Uint8Array> {
+	await writeFile('protocolPublicParameters.bin', protocolPublicParameters);
+	console.log('protocolPublicParameters written to protocolPublicParameters.bin');
+	console.log('publicOutput:', Buffer.from(publicOutput).toString('base64'));
+	console.log('userSecretKeyShare:', Buffer.from(userSecretKeyShare).toString('base64'));
+	console.log('presign:', Buffer.from(presign).toString('base64'));
+	console.log('message:', Buffer.from(message).toString('base64'));
+	console.log('hash:', hash);
+	console.log('signatureScheme:', signatureScheme);
 	const wasm = await getWasmModule();
 	return wasm.create_sign_centralized_party_message(
 		protocolPublicParameters,
@@ -98,7 +108,7 @@ export async function create_sign_centralized_party_message(
 		presign,
 		message,
 		hash,
-		signatureScheme,
+		0,
 	);
 }
 
