@@ -362,9 +362,6 @@ pub enum BytesCentralizedPartyKeyShareVerification {
     Public {
         centralized_party_secret_key_share: Vec<u8>,
     },
-    /// No verification: the centralized party (a.k.a. the "user") is
-    /// in sole-responsibility for the self-custody of its share.
-    None,
 }
 
 impl<CentralizedPartySecretKeyShare, EncryptionKey, EncryptedSecretKeyShareMessage>
@@ -399,9 +396,6 @@ where
                     &centralized_party_secret_key_share,
                 )?,
             },
-            BytesCentralizedPartyKeyShareVerification::None => {
-                CentralizedPartyKeyShareVerification::None
-            }
         })
     }
 }
