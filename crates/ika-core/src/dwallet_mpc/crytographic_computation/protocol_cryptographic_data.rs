@@ -52,7 +52,7 @@ pub enum ProtocolCryptographicData {
         first_round_output: Vec<u8>,
     },
 
-    DWalletDKGWithEncryptedShare {
+    DWalletDKG {
         data: DWalletDKGData,
         public_input: DWalletDKGPublicInputByCurve,
         advance_request: DWalletDKGAdvanceRequestByCurve,
@@ -193,22 +193,22 @@ impl ProtocolCryptographicData {
                 advance_request,
                 ..
             } => advance_request.attempt_number,
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
                 ..
             }
-            | ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            | ProtocolCryptographicData::DWalletDKG {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
                 ..
             }
-            | ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            | ProtocolCryptographicData::DWalletDKG {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request),
                 ..
             }
-            | ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            | ProtocolCryptographicData::DWalletDKG {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
                 ..
@@ -224,22 +224,22 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::DKGFirst {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
                 ..
             }
-            | ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            | ProtocolCryptographicData::DWalletDKG {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
                 ..
             }
-            | ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            | ProtocolCryptographicData::DWalletDKG {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request),
                 ..
             }
-            | ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            | ProtocolCryptographicData::DWalletDKG {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
                 ..

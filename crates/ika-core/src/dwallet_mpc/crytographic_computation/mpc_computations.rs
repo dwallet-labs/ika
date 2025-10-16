@@ -124,7 +124,7 @@ impl ProtocolCryptographicData {
                     return Ok(None);
                 };
 
-                ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+                ProtocolCryptographicData::DWalletDKG {
                     data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
@@ -596,7 +596,7 @@ impl ProtocolCryptographicData {
                     }
                 }
             }
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input: DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input),
                 data,
                 advance_request:
@@ -610,7 +610,7 @@ impl ProtocolCryptographicData {
                 public_input,
                 &mut rng,
             )?),
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input: DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input),
                 data,
                 advance_request:
@@ -624,7 +624,7 @@ impl ProtocolCryptographicData {
                 public_input,
                 &mut rng,
             )?),
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input: DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input),
                 data,
                 advance_request:
@@ -638,7 +638,7 @@ impl ProtocolCryptographicData {
                 public_input,
                 &mut rng,
             )?),
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input: DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input),
                 data,
                 advance_request:
@@ -652,7 +652,7 @@ impl ProtocolCryptographicData {
                 public_input,
                 &mut rng,
             )?),
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input,
                 advance_request,
                 ..
