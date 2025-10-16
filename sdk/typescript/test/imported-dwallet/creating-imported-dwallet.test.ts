@@ -325,7 +325,7 @@ describe('Imported Key DWallet Creation', () => {
 		// Create a modified input with false data to trigger rejection
 		const falseVerificationInput = {
 			...importDWalletVerificationRequestInput,
-			userPublicOutput: new Uint8Array(32).fill(0), // False data
+			userPublicOutput: new Uint8Array(32).fill(1), // False data
 		};
 
 		const importedKeyDWalletVerificationRequestEvent =
@@ -359,12 +359,12 @@ describe('Imported Key DWallet Creation', () => {
 		expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
 		expect(awaitingKeyHolderSignatureDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
 
-		// Verify that the dwallet remains in AwaitingKeyHolderSignature state (not Active)
+		// Verify that the dwallet in NetworkRejectedImportedKeyVerification state
 		const stillAwaitingDWallet = await retryUntil(
 			() =>
 				ikaClient.getDWalletInParticularState(
 					importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
-					'AwaitingKeyHolderSignature',
+					'NetworkRejectedImportedKeyVerification',
 				),
 			(wallet) => wallet !== null,
 			10,
@@ -372,6 +372,6 @@ describe('Imported Key DWallet Creation', () => {
 		);
 
 		expect(stillAwaitingDWallet).toBeDefined();
-		expect(stillAwaitingDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
+		expect(stillAwaitingDWallet.state.$kind).toBe('NetworkRejectedImportedKeyVerification');
 	});
 });
