@@ -3571,7 +3571,7 @@ public(package) fun request_presign(
     } else {
         global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm)
     };
-    assert!(is_global_presign, EOnlyGlobalPresignAllowed);
+    assert!(!is_global_presign, EOnlyGlobalPresignAllowed);
 
     let id = object::new(ctx);
     let presign_id = id.to_inner();
