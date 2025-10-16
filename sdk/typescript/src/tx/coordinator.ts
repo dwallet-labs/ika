@@ -223,7 +223,10 @@ export function requestDWalletDKGWithPublicUserSecretKeyShare(
 			arguments: [signDuringDKGRequest],
 		});
 	} else {
-		signDuringDKGRequestSerialized = tx.pure(bcs.option(SignDuringDKGRequest).serialize(null));
+		signDuringDKGRequestSerialized = tx.object.option({
+			type: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::SignDuringDKGRequest`,
+			value: null,
+		});
 	}
 
 	return tx.moveCall({
