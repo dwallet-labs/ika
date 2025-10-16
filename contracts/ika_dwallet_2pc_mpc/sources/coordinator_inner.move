@@ -3571,7 +3571,7 @@ public(package) fun request_presign(
     } else {
         global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm)
     };
-    assert!(is_global_presign, EOnlyGlobalPresignAllowed);
+    assert!(!is_global_presign, EOnlyGlobalPresignAllowed);
 
     let id = object::new(ctx);
     let presign_id = id.to_inner();
@@ -3683,7 +3683,7 @@ public(package) fun request_global_presign(
     self.validate_network_encryption_key_supports_curve(dwallet_network_encryption_key_id, curve);
     let global_presign_config = self.global_presign_config();
     let is_global_presign = global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm) || global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm);
-    assert!(!is_global_presign, EGlobalPresignNotAllowed);
+    assert!(is_global_presign, EGlobalPresignNotAllowed);
 
     let mut id = object::new(ctx);
     dynamic_field::add(&mut id, b"dwallet_network_encryption_key_id", dwallet_network_encryption_key_id);

@@ -701,48 +701,6 @@ export class IkaTransaction {
 	}): Promise<TransactionObjectArgument>;
 
 	/**
-	 * Sign a message using a ZeroTrust DWallet with encrypted user shares.
-	 * This performs the actual signing operation using the presign and user's encrypted share.
-	 *
-	 * @param params.dWallet - The ZeroTrust DWallet to sign with
-	 * @param params.messageApproval - Message approval
-	 * @param params.hashScheme - The hash scheme used for the message
-	 * @param params.verifiedPresignCap - The verified presign capability
-	 * @param params.presign - The completed presign object
-	 * @param params.encryptedUserSecretKeyShare - The user's encrypted secret key share
-	 * @param params.message - The message bytes to sign
-	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
-	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @param params.returnId - If false or undefined, returns the IkaTransaction instance
-	 * @returns Promise resolving to the updated IkaTransaction instance
-	 */
-	async requestSign({
-		dWallet,
-		messageApproval,
-		hashScheme,
-		verifiedPresignCap,
-		presign,
-		encryptedUserSecretKeyShare,
-		message,
-		signatureScheme,
-		ikaCoin,
-		suiCoin,
-		returnId,
-	}: {
-		dWallet: ZeroTrustDWallet;
-		messageApproval: TransactionObjectArgument;
-		hashScheme: Hash;
-		verifiedPresignCap: TransactionObjectArgument;
-		presign: Presign;
-		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
-		message: Uint8Array;
-		signatureScheme: SignatureAlgorithm;
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-		returnId?: false;
-	}): Promise<IkaTransaction>;
-
-	/**
 	 * Sign a message using a ZeroTrust DWallet with unencrypted secret shares.
 	 * This performs the actual signing operation using the presign and user's unencrypted share.
 	 *

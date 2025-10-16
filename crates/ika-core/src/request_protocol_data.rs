@@ -8,7 +8,7 @@ use ika_types::messages_dwallet_mpc::{
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
     DWalletNetworkDKGEncryptionKeyRequestEvent, EncryptedShareVerificationRequestEvent,
     FutureSignRequestEvent, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
-    SignRequestEvent,
+    SignRequestEvent, UserSecretKeyShareEventType,
 };
 use sui_types::base_types::ObjectID;
 
@@ -47,18 +47,8 @@ pub struct DKGSecondData {
 #[display("dWallet DKG Second Round")]
 pub struct DWalletDKGData {
     pub curve: DWalletCurve,
-    pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
-    pub encryption_key: Vec<u8>,
     pub centralized_public_key_share_and_proof: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
-#[display("dWallet DKG Second Round")]
-pub struct DWalletDKGWithPublicShareData {
-    pub curve: DWalletCurve,
-    pub public_user_secret_key_share: Vec<u8>,
-    pub dwallet_centralized_public_output: SerializedWrappedMPCPublicOutput,
-    pub centralized_public_key_share_and_proof: Vec<u8>,
+    pub user_secret_key_share: UserSecretKeyShareEventType,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
@@ -135,14 +125,8 @@ pub enum ProtocolData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
-    DWalletDKGWithEncryptedShare {
+    DWalletDKG {
         data: DWalletDKGData,
-        dwallet_id: ObjectID,
-        dwallet_network_encryption_key_id: ObjectID,
-        encrypted_secret_share_id: ObjectID,
-    },
-    DWalletDKGWithPublicShare {
-        data: DWalletDKGWithPublicShareData,
         dwallet_id: ObjectID,
         dwallet_network_encryption_key_id: ObjectID,
     },
@@ -243,37 +227,16 @@ pub fn dwallet_dkg_first_protocol_data(
     })
 }
 
-pub fn dwallet_dkg_with_encrypted_share_protocol_data(
+pub fn dwallet_dkg_protocol_data(
     request_event_data: DWalletDKGRequestEvent,
-    encrypted_centralized_secret_share_and_proof: Vec<u8>,
-    encryption_key: Vec<u8>,
-    encrypted_secret_share_id: ObjectID,
+    user_secret_key_share: UserSecretKeyShareEventType,
 ) -> DwalletMPCResult<ProtocolData> {
-    Ok(ProtocolData::DWalletDKGWithEncryptedShare {
+    Ok(ProtocolData::DWalletDKG {
         data: DWalletDKGData {
             curve: request_event_data.curve.try_into()?,
-            encrypted_centralized_secret_share_and_proof,
-            encryption_key,
             centralized_public_key_share_and_proof: request_event_data
                 .centralized_public_key_share_and_proof,
-        },
-        dwallet_id: request_event_data.dwallet_id,
-        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
-        encrypted_secret_share_id,
-    })
-}
-
-pub fn dwallet_dkg_with_public_share_protocol_data(
-    request_event_data: DWalletDKGRequestEvent,
-    public_user_secret_key_share: Vec<u8>,
-) -> DwalletMPCResult<ProtocolData> {
-    Ok(ProtocolData::DWalletDKGWithPublicShare {
-        data: DWalletDKGWithPublicShareData {
-            curve: request_event_data.curve.try_into()?,
-            public_user_secret_key_share,
-            dwallet_centralized_public_output: request_event_data.user_public_output.clone(),
-            centralized_public_key_share_and_proof: request_event_data
-                .centralized_public_key_share_and_proof,
+            user_secret_key_share,
         },
         dwallet_id: request_event_data.dwallet_id,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
@@ -391,11 +354,7 @@ pub fn partial_signature_verification_protocol_data(
 impl ProtocolData {
     pub fn network_encryption_key_id(&self) -> Option<ObjectID> {
         match self {
-            ProtocolData::DWalletDKGWithEncryptedShare {
-                dwallet_network_encryption_key_id,
-                ..
-            }
-            | ProtocolData::DWalletDKGWithPublicShare {
+            ProtocolData::DWalletDKG {
                 dwallet_network_encryption_key_id,
                 ..
             }

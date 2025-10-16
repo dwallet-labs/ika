@@ -103,7 +103,7 @@ impl ProtocolCryptographicData {
                     protocol_version: *protocol_version,
                 }
             }
-            ProtocolData::DWalletDKGWithEncryptedShare { data, .. } => {
+            ProtocolData::DWalletDKG { data, .. } => {
                 let PublicInput::DWalletDKG(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
@@ -120,30 +120,7 @@ impl ProtocolCryptographicData {
                     return Ok(None);
                 };
 
-                ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
-                    data: data.clone(),
-                    public_input: public_input.clone(),
-                    advance_request,
-                }
-            }
-            ProtocolData::DWalletDKGWithPublicShare { data, .. } => {
-                let PublicInput::DWalletDKG(public_input) = public_input else {
-                    return Err(DwalletMPCError::InvalidSessionPublicInput);
-                };
-
-                let advance_request = DWalletDKGAdvanceRequestByCurve::try_new(
-                    &data.curve,
-                    party_id,
-                    access_structure,
-                    consensus_round,
-                    serialized_messages_by_consensus_round,
-                )?;
-
-                let Some(advance_request) = advance_request else {
-                    return Ok(None);
-                };
-
-                ProtocolCryptographicData::DWalletDKGWithPublicShare {
+                ProtocolCryptographicData::DWalletDKG {
                     data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
@@ -615,7 +592,7 @@ impl ProtocolCryptographicData {
                     }
                 }
             }
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input: DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input),
                 data,
                 advance_request:
@@ -629,7 +606,7 @@ impl ProtocolCryptographicData {
                 public_input,
                 &mut rng,
             )?),
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input: DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input),
                 data,
                 advance_request:
@@ -643,7 +620,7 @@ impl ProtocolCryptographicData {
                 public_input,
                 &mut rng,
             )?),
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input: DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input),
                 data,
                 advance_request:
@@ -657,7 +634,7 @@ impl ProtocolCryptographicData {
                 public_input,
                 &mut rng,
             )?),
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input: DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input),
                 data,
                 advance_request:
@@ -671,7 +648,7 @@ impl ProtocolCryptographicData {
                 public_input,
                 &mut rng,
             )?),
-            ProtocolCryptographicData::DWalletDKGWithEncryptedShare {
+            ProtocolCryptographicData::DWalletDKG {
                 public_input,
                 advance_request,
                 ..

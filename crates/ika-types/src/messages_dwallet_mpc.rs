@@ -523,7 +523,9 @@ pub struct SignDuringDKGRequestEvent {
     pub message_centralized_signature: Vec<u8>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
+#[derive(
+    Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash, Ord, PartialOrd,
+)]
 pub enum UserSecretKeyShareEventType {
     Encrypted {
         /// ID of the encrypted user secret key share being created
