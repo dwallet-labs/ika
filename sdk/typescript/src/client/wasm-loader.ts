@@ -1,8 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { Buffer } from 'buffer';
-import { writeFile } from 'fs/promises';
 import type * as WasmModule from '@ika.xyz/ika-wasm';
 
 let wasmModule: typeof WasmModule | null = null;
