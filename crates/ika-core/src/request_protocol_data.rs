@@ -129,7 +129,7 @@ pub enum ProtocolData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 
-    DWalletDKGWithEncryptedShare {
+    DWalletDKG {
         data: DWalletDKGData,
         dwallet_id: ObjectID,
         dwallet_network_encryption_key_id: ObjectID,
@@ -240,7 +240,7 @@ pub fn dwallet_dkg_protocol_data(
     request_event_data: DWalletDKGRequestEvent,
     user_secret_key_share: UserSecretKeyShareEventType,
 ) -> DwalletMPCResult<ProtocolData> {
-    Ok(ProtocolData::DWalletDKGWithEncryptedShare {
+    Ok(ProtocolData::DWalletDKG {
         data: DWalletDKGData {
             curve: request_event_data.curve.try_into()?,
             centralized_public_key_share_and_proof: request_event_data
@@ -380,7 +380,7 @@ pub fn partial_signature_verification_protocol_data(
 impl ProtocolData {
     pub fn network_encryption_key_id(&self) -> Option<ObjectID> {
         match self {
-            ProtocolData::DWalletDKGWithEncryptedShare {
+            ProtocolData::DWalletDKG {
                 dwallet_network_encryption_key_id,
                 ..
             }
