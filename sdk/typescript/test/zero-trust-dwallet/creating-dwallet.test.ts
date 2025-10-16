@@ -360,7 +360,9 @@ describe('DWallet Creation', () => {
 		);
 
 		expect(secondRoundMoveResponse).toBeDefined();
-		expect(secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id).toBeDefined();
+		expect(
+			secondRoundMoveResponse.event_data.user_secret_key_share.Public.public_user_secret_key_share,
+		).toBeDefined();
 
 		// Step 6: Wait for DWallet to be Active
 		const dwalletID = secondRoundMoveResponse.event_data.dwallet_id;
