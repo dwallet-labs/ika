@@ -2601,6 +2601,7 @@ export class IkaTransaction {
 			dWallet.id.id,
 			destinationEncryptionKeyAddress,
 			await encryptSecretShare(
+				destinationEncryptionKeyObj.curve as Curve,
 				sourceSecretShare,
 				new Uint8Array(destinationEncryptionKeyObj.encryption_key),
 				publicParameters,

@@ -40,6 +40,7 @@ describe('DWallet Creation', () => {
 		const { encryptedUserShareAndProof, userDKGMessage, userPublicOutput, userSecretKeyShare } =
 			await prepareDKGAsync(
 				ikaClient,
+				Curve.SECP256K1,
 				userShareEncryptionKeys,
 				randomSessionIdentifier,
 				signerAddress,
@@ -181,6 +182,7 @@ describe('DWallet Creation', () => {
 		const { encryptedUserShareAndProof, userDKGMessage, userPublicOutput, userSecretKeyShare } =
 			await prepareDKGAsync(
 				ikaClient,
+				Curve.SECP256R1,
 				userShareEncryptionKeys,
 				randomSessionIdentifier,
 				signerAddress,
@@ -322,6 +324,7 @@ describe('DWallet Creation', () => {
 		const { encryptedUserShareAndProof, userDKGMessage, userPublicOutput, userSecretKeyShare } =
 			await prepareDKGAsync(
 				ikaClient,
+				Curve.ED25519,
 				userShareEncryptionKeys,
 				randomSessionIdentifier,
 				signerAddress,
@@ -463,6 +466,7 @@ describe('DWallet Creation', () => {
 		const { encryptedUserShareAndProof, userDKGMessage, userPublicOutput, userSecretKeyShare } =
 			await prepareDKGAsync(
 				ikaClient,
+				Curve.RISTRETTO,
 				userShareEncryptionKeys,
 				randomSessionIdentifier,
 				signerAddress,

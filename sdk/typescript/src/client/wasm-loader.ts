@@ -43,12 +43,18 @@ async function getWasmModule() {
 
 // Export wrapped functions that ensure WASM is initialized
 export async function encrypt_secret_share(
+	curve: Curve,
 	userSecretKeyShare: Uint8Array,
 	encryptionKey: Uint8Array,
 	protocolPublicParameters: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
-	return wasm.encrypt_secret_share(userSecretKeyShare, encryptionKey, protocolPublicParameters);
+	return wasm.encrypt_secret_share(
+		curve,
+		userSecretKeyShare,
+		encryptionKey,
+		protocolPublicParameters,
+	);
 }
 
 export async function verify_user_share(

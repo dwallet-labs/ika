@@ -140,11 +140,13 @@ export async function createDKGUserOutput(
  * @returns The encrypted secret share with proof of correct encryption
  */
 export async function encryptSecretShare(
+	curve: Curve,
 	userSecretKeyShare: Uint8Array,
 	encryptionKey: Uint8Array,
 	protocolPublicParameters: Uint8Array,
 ): Promise<Uint8Array> {
 	const encryptedUserShareAndProof = await encrypt_secret_share(
+		curve,
 		userSecretKeyShare,
 		encryptionKey,
 		protocolPublicParameters,
@@ -156,49 +158,27 @@ export async function encryptSecretShare(
 /**
  * @deprecated Use prepareDKG instead
  *
- * @param protocolPublicParameters - The protocol public parameters
- * @param dWallet - The DWallet object containing first round output
- * @param encryptionKey - The user's public encryption key
+ * @param _protocolPublicParameters - The protocol public parameters
+ * @param _dWallet - The DWallet object containing first round output
+ * @param _encryptionKey - The user's public encryption key
  * @returns Complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available in the DWallet
  *
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
 export async function prepareDKGSecondRound(
-	protocolPublicParameters: Uint8Array,
-	dWallet: DWallet,
-	encryptionKey: Uint8Array,
+	_protocolPublicParameters: Uint8Array,
+	_dWallet: DWallet,
+	_encryptionKey: Uint8Array,
 ): Promise<DKGRequestInput> {
-	const networkFirstRoundOutput =
-		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
-
-	if (!networkFirstRoundOutput) {
-		throw new Error('First round output is undefined');
-	}
-
-	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
-		protocolPublicParameters,
-		Uint8Array.from(networkFirstRoundOutput),
-	);
-
-	const encryptedUserShareAndProof = await encryptSecretShare(
-		userSecretKeyShare,
-		encryptionKey,
-		protocolPublicParameters,
-	);
-
-	return {
-		userDKGMessage: Uint8Array.from(userDKGMessage),
-		userPublicOutput: Uint8Array.from(userPublicOutput),
-		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
-		userSecretKeyShare: Uint8Array.from(userSecretKeyShare),
-	};
+	throw new Error('prepareDKGSecondRound is deprecated. Use prepareDKG instead');
 }
 
 /**
  * Prepare all cryptographic data needed for DKG.
  *
  * @param protocolPublicParameters - The protocol public parameters
+ * @param curve - The curve to use for key generation
  * @param encryptionKey - The user's public encryption key
  * @param bytesToHash - The bytes to hash
  * @param senderAddress - The sender address
@@ -209,6 +189,7 @@ export async function prepareDKGSecondRound(
  */
 export async function prepareDKG(
 	protocolPublicParameters: Uint8Array,
+	curve: Curve,
 	encryptionKey: Uint8Array,
 	bytesToHash: Uint8Array,
 	senderAddress: string,
@@ -222,6 +203,7 @@ export async function prepareDKG(
 		);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(
+		curve,
 		userSecretKeyShare,
 		encryptionKey,
 		protocolPublicParameters,
@@ -264,6 +246,7 @@ export async function prepareDKGSecondRoundAsync(
  * Prepare all cryptographic data needed for DKG.
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
+ * @param curve - The curve to use for key generation
  * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
  * @param bytesToHash - The bytes to hash
  * @param senderAddress - The sender address
@@ -274,6 +257,7 @@ export async function prepareDKGSecondRoundAsync(
  */
 export async function prepareDKGAsync(
 	ikaClient: IkaClient,
+	curve: Curve,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	bytesToHash: Uint8Array,
 	senderAddress: string,
@@ -282,6 +266,7 @@ export async function prepareDKGAsync(
 
 	return prepareDKG(
 		protocolPublicParameters,
+		curve,
 		userShareEncryptionKeys.encryptionKey,
 		bytesToHash,
 		senderAddress,
@@ -293,20 +278,22 @@ export async function prepareDKGAsync(
  * This function creates all necessary proofs and encrypted data for the import process.
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
+ * @param curve - The curve to use for key generation
  * @param sessionIdentifier - Unique identifier for this import session
  * @param userShareEncryptionKeys - The user's encryption keys for securing the imported share
- * @param keypair - The existing keypair to import as a DWallet. WE SUPPORT ONLY SECP256K1 FOR NOW.
+ * @param keypair - The existing keypair to import as a DWallet.
  * @returns Promise resolving to complete verification data for the import process
  * @throws {Error} If network parameters cannot be fetched or key import preparation fails
  */
 export async function prepareImportedKeyDWalletVerification(
 	ikaClient: IkaClient,
+	curve: Curve,
 	bytesToHash: Uint8Array,
 	senderAddress: string,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	keypair: Keypair,
 ): Promise<ImportDWalletVerificationRequestInput> {
-	if (keypair.getKeyScheme() !== 'Secp256k1') {
+	if (keypair.getKeyScheme() !== 'Secp256k1' && curve !== Curve.SECP256K1) {
 		throw new Error('Only Secp256k1 keypairs are supported for now');
 	}
 
@@ -324,6 +311,7 @@ export async function prepareImportedKeyDWalletVerification(
 		);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(
+		curve,
 		userSecretShare,
 		userShareEncryptionKeys.encryptionKey,
 		protocolPublicParameters,
