@@ -410,18 +410,24 @@ where
                 })?,
                 encrypted_secret_key_share_message: bcs::from_bytes(
                     &encrypted_secret_key_share_message,
-                ).map_err(
-                    |e| bcs::Error::Custom("failed to deserialize encrypted secret key share message".to_string())
-                )?,
+                )
+                .map_err(|e| {
+                    bcs::Error::Custom(
+                        "failed to deserialize encrypted secret key share message".to_string(),
+                    )
+                })?,
             },
             BytesCentralizedPartyKeyShareVerification::Public {
                 centralized_party_secret_key_share,
             } => CentralizedPartyKeyShareVerification::Public {
                 centralized_party_secret_key_share: bcs::from_bytes(
                     &centralized_party_secret_key_share,
-                ).map_err(
-                    |e| bcs::Error::Custom("failed to deserialize centralized party secret key share".to_string())
-                )?,
+                )
+                .map_err(|e| {
+                    bcs::Error::Custom(
+                        "failed to deserialize centralized party secret key share".to_string(),
+                    )
+                })?,
             },
         })
     }
@@ -435,8 +441,11 @@ impl DWalletDKGPublicInputByCurve {
         centralized_party_key_share_verification: BytesCentralizedPartyKeyShareVerification,
     ) -> DwalletMPCResult<Self> {
         let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
-            bcs::from_bytes(centralized_party_public_key_share_buf)
-                .map_err(DwalletMPCError::BcsError)?;
+            bcs::from_bytes(centralized_party_public_key_share_buf).map_err(|e| {
+                bcs::Error::Custom(
+                    "failed to deserialize centralized party public key share".to_string(),
+                )
+            })?;
 
         let public_input = match curve {
             DWalletCurve::Secp256k1 => {
