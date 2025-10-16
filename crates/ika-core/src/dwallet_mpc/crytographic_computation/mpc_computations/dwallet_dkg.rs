@@ -24,7 +24,7 @@ use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
-    Secp256R1AsyncDKGProtocol, SessionIdentifier,
+    Secp256R1AsyncDKGProtocol, SessionIdentifier, UserSecretKeyShareEventType,
 };
 use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
 use mpc::{
@@ -362,6 +362,27 @@ pub enum BytesCentralizedPartyKeyShareVerification {
     Public {
         centralized_party_secret_key_share: Vec<u8>,
     },
+}
+
+impl From<UserSecretKeyShareEventType> for BytesCentralizedPartyKeyShareVerification {
+    fn from(value: UserSecretKeyShareEventType) -> Self {
+        match value {
+            UserSecretKeyShareEventType::Public {
+                public_user_secret_key_share,
+                ..
+            } => BytesCentralizedPartyKeyShareVerification::Public {
+                centralized_party_secret_key_share: public_user_secret_key_share,
+            },
+            UserSecretKeyShareEventType::Encrypted {
+                encryption_key,
+                encrypted_centralized_secret_share_and_proof,
+                ..
+            } => BytesCentralizedPartyKeyShareVerification::Encrypted {
+                encryption_key,
+                encrypted_secret_key_share_message: encrypted_centralized_secret_share_and_proof,
+            },
+        }
+    }
 }
 
 impl<CentralizedPartySecretKeyShare, EncryptionKey, EncryptedSecretKeyShareMessage>
