@@ -92,14 +92,6 @@ export async function create_sign_centralized_party_message(
 	hash: number,
 	signatureScheme: number,
 ): Promise<Uint8Array> {
-	await writeFile('protocolPublicParameters.bin', protocolPublicParameters);
-	console.log('protocolPublicParameters written to protocolPublicParameters.bin');
-	console.log('publicOutput:', Buffer.from(publicOutput).toString('base64'));
-	console.log('userSecretKeyShare:', Buffer.from(userSecretKeyShare).toString('base64'));
-	console.log('presign:', Buffer.from(presign).toString('base64'));
-	console.log('message:', Buffer.from(message).toString('base64'));
-	console.log('hash:', hash);
-	console.log('signatureScheme:', signatureScheme);
 	const wasm = await getWasmModule();
 	return wasm.create_sign_centralized_party_message(
 		protocolPublicParameters,
@@ -108,7 +100,7 @@ export async function create_sign_centralized_party_message(
 		presign,
 		message,
 		hash,
-		0,
+		signatureScheme,
 	);
 }
 
