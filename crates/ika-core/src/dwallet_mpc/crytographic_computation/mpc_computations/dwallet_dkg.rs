@@ -8,27 +8,30 @@
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
 use crate::request_protocol_data::ImportedKeyVerificationData;
+use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
+    DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletCurve,
+    NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedCentralizedPartyImportedDWalletPublicOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare,
-    VersionedImportedDwalletOutgoingMessage, VersionedNetworkEncryptionKeyPublicData,
-    VersionedPublicKeyShareAndProof,
+    VersionedDwalletDKGSecondRoundPublicOutput, VersionedDwalletUserSecretShare,
+    VersionedEncryptedUserShare, VersionedImportedDwalletOutgoingMessage,
+    VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
 };
 use group::{CsRng, PartyID};
 use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
-    Secp256R1AsyncDKGProtocol,
+    Secp256R1AsyncDKGProtocol, SessionIdentifier, UserSecretKeyShareEventType,
 };
 use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, Party,
     WeightedThresholdAccessStructure,
 };
+use serde::Serialize;
 use std::collections::HashMap;
 use twopc_mpc::dkg::{CentralizedPartyKeyShareVerification, Protocol};
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
@@ -216,6 +219,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
         curve: &DWalletCurve,
         encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         centralized_party_message: &[u8],
+        secret_share_verification_type: BytesCentralizedPartyKeyShareVerification,
     ) -> DwalletMPCResult<Self> {
         let public_input = match curve {
             DWalletCurve::Secp256k1 => {
@@ -237,8 +241,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                         protocol_public_parameters,
                         session_identifier,
                         centralized_party_message,
-                        // TODO (#1545): Move secret share verification logic to DKG protocol
-                        CentralizedPartyKeyShareVerification::None,
+                        secret_share_verification_type.try_into()?,
                     ));
 
                 DWalletImportedKeyVerificationPublicInputByCurve::Secp256K1DWalletImportedKeyVerification(public_input)
@@ -264,8 +267,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     protocol_public_parameters,
                     session_identifier,
                     centralized_party_message,
-                    // TODO (#1545): Move secret share verification logic to DKG protocol
-                    CentralizedPartyKeyShareVerification::None,
+                    secret_share_verification_type.try_into()?,
                 )
                     .into();
 
@@ -292,8 +294,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     protocol_public_parameters,
                     session_identifier,
                     centralized_party_message,
-                    // TODO (#1545): Move secret share verification logic to DKG protocol
-                    CentralizedPartyKeyShareVerification::None,
+                    secret_share_verification_type.try_into()?,
                 )
                     .into();
 
@@ -320,8 +321,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                     protocol_public_parameters,
                     session_identifier,
                     centralized_party_message,
-                    // TODO (#1545): Move secret share verification logic to DKG protocol
-                    CentralizedPartyKeyShareVerification::None,
+                    secret_share_verification_type.try_into()?,
                 )
                     .into();
 
@@ -345,28 +345,132 @@ pub enum DWalletDKGPublicInputByCurve {
     RistrettoDWalletDKG(<RistrettoDWalletDKGParty as Party>::PublicInput),
 }
 
+/// Defines the verification method to be performed (if any)
+/// on the centralized party's (a.k.a. the "user") key share
+/// by the decentralized party (a.k.a. the "network".)
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum BytesCentralizedPartyKeyShareVerification {
+    /// Used in the "encrypted user-share" feature,
+    /// in which the centralized party (a.k.a. the "user") encrypts its secret key share under its own key,
+    /// which is verified & store it as backup by the decentralized party (a.k.a. the "network".)
+    Encrypted {
+        encryption_key: Vec<u8>,
+        encrypted_secret_key_share_message: Vec<u8>,
+    },
+    /// Used in the "public user-share" feature, in which the centralized party (a.k.a. the "user")
+    /// publishes its secret key share so that anyone can emulate it.
+    Public {
+        centralized_party_secret_key_share: Vec<u8>,
+    },
+}
+
+impl From<UserSecretKeyShareEventType> for BytesCentralizedPartyKeyShareVerification {
+    fn from(value: UserSecretKeyShareEventType) -> Self {
+        match value {
+            UserSecretKeyShareEventType::Public {
+                public_user_secret_key_share,
+                ..
+            } => BytesCentralizedPartyKeyShareVerification::Public {
+                centralized_party_secret_key_share: public_user_secret_key_share,
+            },
+            UserSecretKeyShareEventType::Encrypted {
+                encryption_key,
+                encrypted_centralized_secret_share_and_proof,
+                ..
+            } => BytesCentralizedPartyKeyShareVerification::Encrypted {
+                encryption_key,
+                encrypted_secret_key_share_message: encrypted_centralized_secret_share_and_proof,
+            },
+        }
+    }
+}
+
+impl<CentralizedPartySecretKeyShare, EncryptionKey, EncryptedSecretKeyShareMessage>
+    TryFrom<BytesCentralizedPartyKeyShareVerification>
+    for CentralizedPartyKeyShareVerification<
+        CentralizedPartySecretKeyShare,
+        EncryptionKey,
+        EncryptedSecretKeyShareMessage,
+    >
+where
+    CentralizedPartySecretKeyShare: serde::de::DeserializeOwned,
+    EncryptionKey: serde::de::DeserializeOwned,
+    EncryptedSecretKeyShareMessage: serde::de::DeserializeOwned,
+{
+    type Error = bcs::Error;
+
+    fn try_from(value: BytesCentralizedPartyKeyShareVerification) -> bcs::Result<Self> {
+        Ok(match value {
+            BytesCentralizedPartyKeyShareVerification::Encrypted {
+                encryption_key,
+                encrypted_secret_key_share_message,
+            } => {
+                let VersionedEncryptedUserShare::V1(encrypted_secret_key_share_message) =
+                    bcs::from_bytes(&encrypted_secret_key_share_message)?;
+                CentralizedPartyKeyShareVerification::Encrypted {
+                    encryption_key: bcs::from_bytes(&encryption_key).map_err(|e| {
+                        bcs::Error::Custom("failed to deserialize encryption key".to_string())
+                    })?,
+                    encrypted_secret_key_share_message: bcs::from_bytes(
+                        &encrypted_secret_key_share_message,
+                    )
+                    .map_err(|e| {
+                        bcs::Error::Custom(
+                            "failed to deserialize encrypted secret key share message".to_string(),
+                        )
+                    })?,
+                }
+            }
+            BytesCentralizedPartyKeyShareVerification::Public {
+                centralized_party_secret_key_share,
+            } => {
+                let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
+                    bcs::from_bytes(&centralized_party_secret_key_share)?;
+                CentralizedPartyKeyShareVerification::Public {
+                    centralized_party_secret_key_share: bcs::from_bytes(
+                        &centralized_party_secret_key_share,
+                    )
+                    .map_err(|e| {
+                        bcs::Error::Custom(
+                            "failed to deserialize centralized party secret key share".to_string(),
+                        )
+                    })?,
+                }
+            }
+        })
+    }
+}
+
 impl DWalletDKGPublicInputByCurve {
     pub fn try_new(
         curve: &DWalletCurve,
         encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
+        centralized_party_key_share_verification: BytesCentralizedPartyKeyShareVerification,
     ) -> DwalletMPCResult<Self> {
         let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
-            bcs::from_bytes(centralized_party_public_key_share_buf)
-                .map_err(DwalletMPCError::BcsError)?;
+            bcs::from_bytes(centralized_party_public_key_share_buf).map_err(|e| {
+                bcs::Error::Custom(
+                    "failed to deserialize centralized party public key share".to_string(),
+                )
+            })?;
 
         let public_input = match curve {
             DWalletCurve::Secp256k1 => {
                 let centralized_party_public_key_share = match centralized_party_public_key_share {
                     VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
-                        bcs::from_bytes(&centralized_party_public_key_share)
-                            .map_err(DwalletMPCError::BcsError)?
+                        bcs::from_bytes(&centralized_party_public_key_share).map_err(|e| {
+                            DwalletMPCError::BcsError(bcs::Error::Custom(
+                                "failed to deserialize centralized party public key share"
+                                    .to_string(),
+                            ))
+                        })?
                     }
                 };
                 let input = (
                     encryption_key_public_data.secp256k1_protocol_public_parameters(),
                     centralized_party_public_key_share,
-                    CentralizedPartyKeyShareVerification::None,
+                    centralized_party_key_share_verification.try_into()?,
                 )
                     .into();
 
@@ -382,7 +486,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.secp256r1_protocol_public_parameters()?,
                     centralized_party_public_key_share,
-                    CentralizedPartyKeyShareVerification::None,
+                    centralized_party_key_share_verification.try_into()?,
                 )
                     .into();
 
@@ -398,7 +502,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.curve25519_protocol_public_parameters()?,
                     centralized_party_public_key_share,
-                    CentralizedPartyKeyShareVerification::None,
+                    centralized_party_key_share_verification.try_into()?,
                 )
                     .into();
 
@@ -414,7 +518,7 @@ impl DWalletDKGPublicInputByCurve {
                 let input = (
                     encryption_key_public_data.ristretto_protocol_public_parameters()?,
                     centralized_party_public_key_share,
-                    CentralizedPartyKeyShareVerification::None,
+                    centralized_party_key_share_verification.try_into()?,
                 )
                     .into();
 
@@ -480,6 +584,11 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
     fn generate_public_input(
         protocol_public_parameters: ProtocolPublicParameters,
     ) -> DwalletMPCResult<<DWalletDKGFirstParty as Party>::PublicInput> {
+        let base_protocol_context = BaseProtocolContext {
+            protocol_name: "2PC-MPC DKG".to_string(),
+            round: 1,
+            proof_name: "Encryption of Secret Key Share and Public Key Share Proof".to_string(),
+        };
         let secp256k1_public_input =
             twopc_mpc::dkg::encryption_of_secret_key_share::PublicInput::new_targeted_dkg(
                 protocol_public_parameters
@@ -605,17 +714,9 @@ pub fn compute_dwallet_dkg<P: Protocol>(
     access_structure: &WeightedThresholdAccessStructure,
     session_id: CommitmentSizedNumber,
     advance_request: AdvanceRequest<<P::DKGDecentralizedParty as Party>::Message>,
-    protocol_public_parameters: P::ProtocolPublicParameters,
     public_input: <P::DKGDecentralizedParty as Party>::PublicInput,
-    encryption_key: P::EncryptionKey,
-    encrypted_secret_key_share_message: &[u8],
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    let encrypted_secret_key_share_message: VersionedEncryptedUserShare =
-        bcs::from_bytes(encrypted_secret_key_share_message).map_err(DwalletMPCError::BcsError)?;
-    let VersionedEncryptedUserShare::V1(encrypted_secret_key_share_message) =
-        encrypted_secret_key_share_message;
-
     let result = mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::advance_with_guaranteed_output(
         session_id,
         party_id,
@@ -635,23 +736,9 @@ pub fn compute_dwallet_dkg<P: Protocol>(
             malicious_parties,
             private_output,
         } => {
-            let decentralized_output: P::DecentralizedPartyDKGOutput =
-                bcs::from_bytes(&public_output_value)?;
-            P::verify_encryption_of_centralized_party_share_proof(
-                &protocol_public_parameters,
-                decentralized_output.clone(),
-                encryption_key,
-                bcs::from_bytes(&encrypted_secret_key_share_message)?,
-                &mut group::OsCsRng,
-            )
-            .map_err(|e| {
-                DwalletMPCError::CentralizedSecretKeyShareProofVerificationFailed(e.to_string())
-            })?;
-
-            let public_output_value =
-                bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
-                    bcs::to_bytes(&decentralized_output)?,
-                ))?;
+            let public_output_value = bcs::to_bytes(
+                &VersionedDwalletDKGSecondRoundPublicOutput::V2(public_output_value),
+            )?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
@@ -711,16 +798,6 @@ pub fn compute_imported_key_verification<P: Protocol>(
                     ));
                 }
             };
-
-            // Verify the encrypted share before finalizing, guaranteeing a two-for-one
-            // computation of both that the key import was successful, and
-            // the encrypted user share is valid.
-            verify_encrypted_share(
-                &data.encrypted_centralized_secret_share_and_proof,
-                &versioned_output,
-                &data.encryption_key,
-                protocol_public_parameters,
-            )?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value: versioned_output,

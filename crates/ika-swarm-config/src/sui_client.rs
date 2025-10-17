@@ -13,8 +13,9 @@ use ika_protocol_config::Chain;
 use ika_types::ika_coin::IKACoin;
 use ika_types::messages_dwallet_mpc::{
     DKG_FIRST_ROUND_PROTOCOL_FLAG, DKG_SECOND_ROUND_PROTOCOL_FLAG, DWALLET_DKG_PROTOCOL_FLAG,
-    FUTURE_SIGN_PROTOCOL_FLAG, IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG, IkaNetworkConfig,
-    IkaObjectsConfig, IkaPackageConfig, MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG,
+    DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG, FUTURE_SIGN_PROTOCOL_FLAG,
+    IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG, IkaNetworkConfig, IkaObjectsConfig,
+    IkaPackageConfig, MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG,
     PRESIGN_PROTOCOL_FLAG, RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG, SIGN_PROTOCOL_FLAG,
     SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG,
 };
@@ -28,12 +29,15 @@ use ika_types::sui::{
     REQUEST_ADD_VALIDATOR_FUNCTION_NAME,
     REQUEST_DWALLET_NETWORK_DECRYPTION_KEY_DKG_BY_CAP_FUNCTION_NAME, SYSTEM_MODULE_NAME, System,
     TABLE_VEC_MODULE_NAME, VALIDATOR_CAP_MODULE_NAME, VALIDATOR_CAP_STRUCT_NAME,
-    VALIDATOR_METADATA_MODULE_NAME,
+    VALIDATOR_METADATA_MODULE_NAME, VEC_MAP_FROM_KEYS_VALUES_FUNCTION_NAME,
+    VEC_MAP_INSERT_FUNCTION_NAME, VEC_MAP_MODULE_NAME, VEC_MAP_NEW_FUNCTION_NAME,
+    VEC_MAP_STRUCT_NAME,
 };
 use move_core_types::ident_str;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use move_package::BuildConfig;
 use shared_crypto::intent::Intent;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
@@ -359,6 +363,20 @@ pub async fn init_ika_on_sui(
         )
         .await?;
     println!("Running `system::initialize` done.");
+    set_global_presign_config(
+        publisher_address,
+        &mut context,
+        client.clone(),
+        ika_system_package_id,
+        ika_system_object_id,
+        init_system_shared_version,
+        dwallet_2pc_mpc_coordinator_initial_shared_version,
+        protocol_cap_id,
+        ika_dwallet_2pc_mpc_package_id,
+        ika_dwallet_coordinator_object_id,
+    )
+    .await?;
+    println!("Running `system::set_global_presign_config` done.");
 
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
         publisher_address,
@@ -469,6 +487,94 @@ pub async fn ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
     Ok(())
 }
 
+fn new_curve_to_signature_algorithm_vecmap(
+    ptb: &mut ProgrammableTransactionBuilder,
+    curve_to_signature_algorithms: HashMap<u32, Vec<u32>>,
+) -> anyhow::Result<Argument> {
+    let (keys, values): (Vec<u32>, Vec<Vec<u32>>) =
+        curve_to_signature_algorithms.into_iter().unzip();
+
+    let keys = ptb.input(CallArg::Pure(bcs::to_bytes(&keys)?))?;
+    let values = ptb.input(CallArg::Pure(bcs::to_bytes(&values)?))?;
+
+    Ok(ptb.programmable_move_call(
+        SUI_FRAMEWORK_PACKAGE_ID,
+        VEC_MAP_MODULE_NAME.into(),
+        VEC_MAP_FROM_KEYS_VALUES_FUNCTION_NAME.into(),
+        vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+        vec![keys, values],
+    ))
+}
+
+pub async fn set_global_presign_config(
+    publisher_address: SuiAddress,
+    context: &mut WalletContext,
+    client: SuiClient,
+    ika_system_package_id: ObjectID,
+    ika_system_object_id: ObjectID,
+    init_system_shared_version: SequenceNumber,
+    init_coordinator_shared_version: SequenceNumber,
+    protocol_cap_id: ObjectID,
+    ika_dwallet_2pc_mpc_package_id: ObjectID,
+    ika_dwallet_coordinator_object_id: ObjectID,
+) -> Result<(), anyhow::Error> {
+    let mut ptb = ProgrammableTransactionBuilder::new();
+    let system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
+        id: ika_system_object_id,
+        initial_shared_version: init_system_shared_version,
+        mutable: true,
+    }))?;
+    let coordinator_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
+        id: ika_dwallet_coordinator_object_id,
+        initial_shared_version: init_coordinator_shared_version,
+        mutable: true,
+    }))?;
+    let protocol_cap_ref = client
+        .transaction_builder()
+        .get_object_ref(protocol_cap_id)
+        .await?;
+    let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+        protocol_cap_ref,
+    )))?;
+
+    let verified_cap = ptb.programmable_move_call(
+        ika_system_package_id,
+        SYSTEM_MODULE_NAME.into(),
+        ident_str!("verify_protocol_cap").into(),
+        vec![],
+        vec![system_arg, protocol_cap_arg],
+    );
+
+    let curve_to_signature_algorithms_for_dkg =
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
+    let curve_to_signature_algorithms_for_imported_key =
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
+    ptb.programmable_move_call(
+        ika_dwallet_2pc_mpc_package_id,
+        ident_str!("coordinator").into(),
+        ident_str!("set_global_presign_config").into(),
+        vec![],
+        vec![
+            coordinator_arg,
+            curve_to_signature_algorithms_for_dkg,
+            curve_to_signature_algorithms_for_imported_key,
+            verified_cap,
+        ],
+    );
+    let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
+
+    let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
+    if response.errors.is_empty() {
+        println!("Transaction executed successfully. {:?}", response.digest);
+    } else {
+        panic!(
+            "Errors occurred during transaction execution: {:?}",
+            response.errors
+        );
+    }
+    Ok(())
+}
+
 pub async fn ika_system_initialize(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
@@ -525,6 +631,9 @@ pub async fn ika_system_initialize(
     ))?;
     let dwallet_dkg_protocol_flag =
         ptb.input(CallArg::Pure(bcs::to_bytes(&DWALLET_DKG_PROTOCOL_FLAG)?))?;
+    let dwallet_dkg_with_sign_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
+        &DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG,
+    )?))?;
 
     let zero_price = ptb.input(CallArg::Pure(bcs::to_bytes(&0u64)?))?;
 
@@ -696,6 +805,37 @@ pub async fn ika_system_initialize(
             zero,
             none_option,
             dwallet_dkg_protocol_flag,
+            zero_price,
+            zero_price,
+            zero_price,
+        ],
+    );
+    ptb.programmable_move_call(
+        ika_dwallet_2pc_mpc_package_id,
+        ident_str!("pricing").into(),
+        ident_str!("insert_or_update_pricing").into(),
+        vec![],
+        vec![
+            pricing,
+            zero,
+            zero_option,
+            dwallet_dkg_with_sign_protocol_flag,
+            zero_price,
+            zero_price,
+            zero_price,
+        ],
+    );
+
+    ptb.programmable_move_call(
+        ika_dwallet_2pc_mpc_package_id,
+        ident_str!("pricing").into(),
+        ident_str!("insert_or_update_pricing").into(),
+        vec![],
+        vec![
+            pricing,
+            zero,
+            none_option,
+            dwallet_dkg_with_sign_protocol_flag,
             zero_price,
             zero_price,
             zero_price,

@@ -503,7 +503,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     let versioned_decentralized_dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
         bcs::from_bytes(&decentralized_party_dkg_public_output)?;
 
-    let decentralized_dkg_output = match versioned_decentralized_dkg_output {
+    let centralized_dkg_output = match versioned_decentralized_dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
             let versioned_output: P::DecentralizedPartyDKGOutput =
                 bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?
@@ -528,7 +528,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
         <P as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
             message,
             HashType::try_from(hash_type)?,
-            decentralized_dkg_output,
+            centralized_dkg_output,
             presign,
             bcs::from_bytes(&protocol_pp)?,
         ));
@@ -546,8 +546,8 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
             let signed_message = bcs::to_bytes(&signed_message)?;
             Ok(signed_message)
         }
-        Err(_) => {
-            let err_str = format!("advance() failed on the SignCentralizedPartyV2",);
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
             Err(anyhow!(err_str.clone()).context(err_str))
         }
     }
