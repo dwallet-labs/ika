@@ -86,23 +86,14 @@ export class IkaTransaction {
 	 * @returns Promise resolving to a DWallet capability
 	 * @throws {Error} If the decryption key ID cannot be fetched
 	 */
-	async requestDWalletDKGFirstRoundAsync({
-		curve,
-		ikaCoin,
-		suiCoin,
-	}: {
+	async requestDWalletDKGFirstRoundAsync({}: {
 		curve: Curve;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<TransactionObjectArgument> {
-		const dwalletCap = this.#requestDWalletDKGFirstRound({
-			curve,
-			networkEncryptionKeyID: (await this.#ikaClient.getConfiguredNetworkEncryptionKey()).id,
-			ikaCoin,
-			suiCoin,
-		});
-
-		return dwalletCap;
+		throw new Error(
+			'requestDWalletDKGFirstRoundAsync is deprecated. Use requestDWalletDKGFirstRound instead',
+		);
 	}
 
 	/**
@@ -117,25 +108,13 @@ export class IkaTransaction {
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns DWallet capability
 	 */
-	requestDWalletDKGFirstRound({
-		curve,
-		networkEncryptionKeyID,
-		ikaCoin,
-		suiCoin,
-	}: {
+	requestDWalletDKGFirstRound({}: {
 		curve: Curve;
 		networkEncryptionKeyID: string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): TransactionObjectArgument {
-		const dwalletCap = this.#requestDWalletDKGFirstRound({
-			curve,
-			networkEncryptionKeyID,
-			ikaCoin,
-			suiCoin,
-		});
-
-		return dwalletCap;
+		throw new Error('requestDWalletDKGFirstRound is deprecated. Use requestDWalletDKG instead');
 	}
 
 	/**
@@ -151,37 +130,13 @@ export class IkaTransaction {
 	 * @returns The updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
-	requestDWalletDKGSecondRound({
-		dWalletCap,
-		dkgSecondRoundRequestInput,
-		ikaCoin,
-		suiCoin,
-	}: {
+	requestDWalletDKGSecondRound({}: {
 		dWalletCap: TransactionObjectArgument | string;
 		dkgSecondRoundRequestInput: DKGRequestInput;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		if (!this.#userShareEncryptionKeys) {
-			throw new Error('User share encryption keys are not set');
-		}
-
-		coordinatorTx.requestDWalletDKGSecondRound(
-			this.#ikaClient.ikaConfig,
-			this.#getCoordinatorObjectRef(),
-			this.#transaction.object(dWalletCap),
-			dkgSecondRoundRequestInput.userDKGMessage,
-			dkgSecondRoundRequestInput.encryptedUserShareAndProof,
-			this.#userShareEncryptionKeys.getSuiAddress(),
-			dkgSecondRoundRequestInput.userPublicOutput,
-			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
-			this.createSessionIdentifier(),
-			ikaCoin,
-			suiCoin,
-			this.#transaction,
-		);
-
-		return this;
+		throw new Error('requestDWalletDKGSecondRound is deprecated. Use requestDWalletDKG instead');
 	}
 
 	/**
