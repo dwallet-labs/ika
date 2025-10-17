@@ -234,8 +234,7 @@ async fn create_imported_dwallet() {
             &dwallet_secret_key,
         )
         .unwrap();
-    let (encryption_key, decryption_key) =
-        generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
+    let (encryption_key, decryption_key) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
     let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v1(
         user_secret_share,
         encryption_key.clone(),
@@ -317,8 +316,7 @@ async fn create_imported_dwallet_v2() {
             &dwallet_secret_key,
         )
         .unwrap();
-    let (encryption_key, decryption_key) =
-        generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
+    let (encryption_key, decryption_key) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
     let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v2(
         0,
         user_secret_share,
@@ -392,8 +390,7 @@ pub(crate) async fn create_dwallet_test(
         dwallet_dkg_first_round_output.output.clone(),
     )
     .unwrap();
-    let (encryption_key, decryption_key) =
-        generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
+    let (encryption_key, decryption_key) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
     let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v1(
         centralized_dwallet_dkg_result
             .centralized_secret_output
