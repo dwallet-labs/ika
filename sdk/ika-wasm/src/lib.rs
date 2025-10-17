@@ -5,17 +5,15 @@ use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
     create_dkg_output_by_curve_v2, create_dkg_output_v1,
     create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
-    dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
-    generate_cg_keypair_from_seed,
-    dwallet_version_inner, encrypt_secret_key_share_and_prove_v2,
+    dwallet_version_inner, dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
+    encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
     generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
     public_key_from_dwallet_output_by_curve, reconfiguration_public_output_to_protocol_pp_inner,
-    public_key_from_dwallet_output_by_curve, reconfiguration_public_output_to_protocol_pp_inner,
     sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share_v1,
 };
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub fn create_dkg_centralized_output_v1(
@@ -55,7 +53,6 @@ pub fn public_key_from_dwallet_output(
 ) -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(
         &public_key_from_dwallet_output_by_curve(curve, &dwallet_output)
-        &public_key_from_dwallet_output_by_curve(curve, &dwallet_output)
             .map_err(|e| JsError::new(&e.to_string()))?,
     )
     .map_err(|e| JsError::new(&e.to_string()))
@@ -78,9 +75,7 @@ pub fn dwallet_version(dwallet_output_bytes: Vec<u8>) -> Result<JsValue, JsError
 }
 
 /// Derives a class groups keypair from a given seed.
-/// Derives a class groups keypair from a given seed.
 ///
-/// The class groups public encryption key being used to encrypt a keypair will be
 /// The class groups public encryption key being used to encrypt a keypair will be
 /// different from the encryption key used to encrypt a Ristretto keypair.
 /// The plaintext space/fundamental group will correspond to the order
@@ -89,12 +84,10 @@ pub fn dwallet_version(dwallet_output_bytes: Vec<u8>) -> Result<JsValue, JsError
 /// but to simplify security analysis and implementation current version maintain distinct key-pairs.
 #[wasm_bindgen]
 pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsValue, JsError> {
-pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsValue, JsError> {
     let seed: [u8; 32] = seed
         .try_into()
         .map_err(|_| JsError::new("seed must be 32 bytes long"))?;
     let (public_key, private_key) =
-        generate_cg_keypair_from_seed(curve, seed).map_err(to_js_err)?;
         generate_cg_keypair_from_seed(curve, seed).map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&(public_key, private_key))?)
 }
