@@ -11,4 +11,40 @@ describe('DWallet Creation', () => {
 			signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
 		});
 	});
+
+	it('should sign during DKG v2 for a new zero trust DWallet - Secp256r1', async () => {
+		await runCompleteDKGFlow('dwallet-creation-dkg-v2-test-secp256r1', Curve.SECP256R1, {
+			message: Buffer.from('test message'),
+			hashScheme: Hash.SHA256,
+			signatureAlgorithm: SignatureAlgorithm.ECDSASecp256r1,
+		});
+	});
+
+	it('should sign during DKG v2 for a new zero trust DWallet - Ed25519', async () => {
+		await runCompleteDKGFlow('dwallet-creation-dkg-v2-test-ed25519', Curve.ED25519, {
+			message: Buffer.from('test message'),
+			hashScheme: Hash.SHA256,
+			signatureAlgorithm: SignatureAlgorithm.EdDSA,
+		});
+	});
+
+	it('should sign during DKG v2 for a new zero trust DWallet - Ristretto SchnorrkelSubstrate', async () => {
+		await runCompleteDKGFlow(
+			'dwallet-creation-dkg-v2-test-ristretto-schnorrkel-substrate',
+			Curve.RISTRETTO,
+			{
+				message: Buffer.from('test message'),
+				hashScheme: Hash.SHA256,
+				signatureAlgorithm: SignatureAlgorithm.SchnorrkelSubstrate,
+			},
+		);
+	});
+
+	it('should sign during DKG v2 for a new zero trust DWallet - Ristretto Taproot', async () => {
+		await runCompleteDKGFlow('dwallet-creation-dkg-v2-test-ristretto-taproot', Curve.RISTRETTO, {
+			message: Buffer.from('test message'),
+			hashScheme: Hash.SHA256,
+			signatureAlgorithm: SignatureAlgorithm.Taproot,
+		});
+	});
 });

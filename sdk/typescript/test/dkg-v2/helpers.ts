@@ -358,3 +358,84 @@ export async function runCompleteDKGFlow(
 		awaitingDWallet,
 	);
 }
+
+export async function runCompleteSharedDKGFlow(testName: string, curve: Curve): Promise<void> {
+	const setup = await setupDKGTest(testName, curve);
+	const { suiClient, ikaClient, userShareEncryptionKeys, signerAddress } = setup;
+
+	const randomSessionIdentifier = createRandomSessionIdentifier();
+
+	const { encryptedUserShareAndProof, userDKGMessage, userPublicOutput, userSecretKeyShare } =
+		await prepareDKGAsync(
+			ikaClient,
+			curve,
+			userShareEncryptionKeys,
+			randomSessionIdentifier,
+			signerAddress,
+		);
+
+	expect(encryptedUserShareAndProof).toBeDefined();
+	expect(userDKGMessage).toBeDefined();
+	expect(userPublicOutput).toBeDefined();
+	expect(userSecretKeyShare).toBeDefined();
+
+	const suiTransaction = new Transaction();
+
+	const ikaTransaction = createTestIkaTransaction(
+		ikaClient,
+		suiTransaction,
+		userShareEncryptionKeys,
+	);
+
+	const latestNetworkEncryptionKey = await ikaClient.getLatestNetworkEncryptionKey();
+
+	expect(latestNetworkEncryptionKey).toBeDefined();
+
+	const emptyIKACoin = createEmptyTestIkaToken(suiTransaction, ikaClient.ikaConfig);
+
+	const [dWalletCap] = await ikaTransaction.requestDWalletDKGWithPublicUserShare({
+		publicKeyShareAndProof: userDKGMessage,
+		publicUserSecretKeyShare: userSecretKeyShare,
+		userPublicOutput: userPublicOutput,
+		curve: curve,
+		dwalletNetworkEncryptionKeyId: latestNetworkEncryptionKey.id,
+		ikaCoin: emptyIKACoin,
+		suiCoin: suiTransaction.gas,
+		sessionIdentifier: ikaTransaction.registerSessionIdentifier(randomSessionIdentifier),
+	});
+
+	suiTransaction.transferObjects([dWalletCap], signerAddress);
+
+	destroyEmptyTestIkaToken(suiTransaction, ikaClient.ikaConfig, emptyIKACoin);
+
+	const result = await executeTestTransaction(suiClient, suiTransaction, testName);
+
+	const dkgEvent = result.events?.find((event) => {
+		return (
+			event.type.includes('DWalletDKGRequestEvent') && event.type.includes('DWalletSessionEvent')
+		);
+	});
+
+	expect(dkgEvent).toBeDefined();
+
+	const parsedDkgEvent = SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.DWalletDKGRequestEvent,
+	).fromBase64(dkgEvent?.bcs as string);
+
+	expect(parsedDkgEvent).toBeDefined();
+
+	const dWalletID = parsedDkgEvent.event_data.dwallet_id;
+
+	expect(dWalletID).toBeDefined();
+
+	const activeDWallet = await retryUntil(
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
+		(wallet) => wallet !== null,
+		30,
+		1000,
+	);
+
+	expect(activeDWallet).toBeDefined();
+	expect(activeDWallet.state.$kind).toBe('Active');
+	expect(activeDWallet.id.id).toBe(dWalletID);
+}
