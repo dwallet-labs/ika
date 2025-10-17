@@ -258,7 +258,7 @@ export async function prepareDKGAsync(
 	bytesToHash: Uint8Array,
 	senderAddress: string,
 ): Promise<DKGRequestInput> {
-	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
+	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters(undefined, curve);
 
 	return prepareDKG(
 		protocolPublicParameters,
@@ -294,7 +294,7 @@ export async function prepareImportedKeyDWalletVerification(
 	}
 
 	const senderAddressBytes = bcs.Address.serialize(senderAddress).toBytes();
-	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
+	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters(undefined, curve);
 
 	const [userSecretShare, userPublicOutput, userMessage] =
 		await create_imported_dwallet_user_output(

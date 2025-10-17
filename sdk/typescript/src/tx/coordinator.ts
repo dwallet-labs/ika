@@ -167,19 +167,10 @@ export function requestDWalletDKG(
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ): TransactionResult {
-	let signDuringDKGRequestSerialized: TransactionObjectArgument | null = null;
-
-	if (signDuringDKGRequest) {
-		signDuringDKGRequestSerialized = tx.moveCall({
-			target: `0x1::option::some`,
-			arguments: [signDuringDKGRequest],
-		});
-	} else {
-		signDuringDKGRequestSerialized = tx.object.option({
-			type: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::SignDuringDKGRequest`,
-			value: null,
-		});
-	}
+	const signDuringDKGRequestSerialized = tx.object.option({
+		type: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::SignDuringDKGRequest`,
+		value: signDuringDKGRequest,
+	})(tx);
 
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg`,
@@ -214,19 +205,10 @@ export function requestDWalletDKGWithPublicUserSecretKeyShare(
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ): TransactionResult {
-	let signDuringDKGRequestSerialized: TransactionObjectArgument | null = null;
-
-	if (signDuringDKGRequest) {
-		signDuringDKGRequestSerialized = tx.moveCall({
-			target: `0x1::option::some`,
-			arguments: [signDuringDKGRequest],
-		});
-	} else {
-		signDuringDKGRequestSerialized = tx.object.option({
-			type: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::SignDuringDKGRequest`,
-			value: null,
-		});
-	}
+	const signDuringDKGRequestSerialized = tx.object.option({
+		type: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::SignDuringDKGRequest`,
+		value: signDuringDKGRequest,
+	})(tx);
 
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg_with_public_user_secret_key_share`,

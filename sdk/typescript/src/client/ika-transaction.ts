@@ -2345,11 +2345,13 @@ export class IkaTransaction {
 			secretShare = userSignatureInputs.secretShare;
 			publicOutput = userSignatureInputs.publicOutput;
 
-			await this.#verifySecretShare({
-				verifiedPublicOutput: publicOutput,
-				secretShare,
-				publicParameters,
-			});
+			if (userSignatureInputs.curve === undefined) {
+				await this.#verifySecretShare({
+					verifiedPublicOutput: publicOutput,
+					secretShare,
+					publicParameters,
+				});
+			}
 		}
 
 		return this.#createUserSignMessageWithPublicOutput({
@@ -2648,7 +2650,7 @@ export class IkaTransaction {
 		signatureScheme: SignatureAlgorithm;
 		curve?: Curve;
 	}): Promise<Uint8Array> {
-		if (curve) {
+		if (curve !== undefined) {
 			return new Uint8Array(
 				await create_sign_with_centralized_output(
 					protocolPublicParameters,
