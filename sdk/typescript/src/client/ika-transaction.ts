@@ -2209,29 +2209,6 @@ export class IkaTransaction {
 		return { publicParameters, secretShare, verifiedPublicOutput };
 	}
 
-	#requestDWalletDKGFirstRound({
-		curve,
-		networkEncryptionKeyID,
-		ikaCoin,
-		suiCoin,
-	}: {
-		curve: Curve;
-		networkEncryptionKeyID: string;
-		ikaCoin: TransactionObjectArgument;
-		suiCoin: TransactionObjectArgument;
-	}) {
-		return coordinatorTx.requestDWalletDKGFirstRound(
-			this.#ikaClient.ikaConfig,
-			this.#getCoordinatorObjectRef(),
-			networkEncryptionKeyID,
-			curve,
-			this.createSessionIdentifier(),
-			ikaCoin,
-			suiCoin,
-			this.#transaction,
-		);
-	}
-
 	#requestPresign({
 		dWallet,
 		signatureAlgorithm,
