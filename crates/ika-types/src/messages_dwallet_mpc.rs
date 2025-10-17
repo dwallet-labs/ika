@@ -512,21 +512,51 @@ pub struct DWalletDKGFirstRoundRequestEvent {
     pub curve: u32,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
+pub struct SignDuringDKGRequestEvent {
+    pub sign_id: ObjectID,
+    pub presign_id: ObjectID,
+    pub presign: Vec<u8>,
+    pub signature_algorithm: u32,
+    pub hash_scheme: u32,
+    pub message: Vec<u8>,
+    pub message_centralized_signature: Vec<u8>,
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash, Ord, PartialOrd,
+)]
+pub enum UserSecretKeyShareEventType {
+    Encrypted {
+        /// ID of the encrypted user secret key share being created
+        encrypted_user_secret_key_share_id: ObjectID,
+        /// User's encrypted secret key share with zero-knowledge proof
+        encrypted_centralized_secret_share_and_proof: Vec<u8>,
+        /// Serialized encryption key used to encrypt the user's secret share
+        encryption_key: Vec<u8>,
+        /// ObjectID of the encryption key object
+        encryption_key_id: ObjectID,
+        /// Address of the encryption key owner
+        encryption_key_address: SuiAddress,
+        /// Ed25519 public key for verifying the user's signature
+        signer_public_key: Vec<u8>,
+    },
+    Public {
+        public_user_secret_key_share: Vec<u8>,
+    },
+}
+
 /// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletDKGFirstRoundRequestEvent`.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
 pub struct DWalletDKGRequestEvent {
-    pub encrypted_user_secret_key_share_id: ObjectID,
     pub dwallet_id: ObjectID,
     pub centralized_public_key_share_and_proof: Vec<u8>,
-    pub dwallet_cap_id: ObjectID,
-    pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
-    pub encryption_key: Vec<u8>,
-    pub encryption_key_id: ObjectID,
-    pub encryption_key_address: SuiAddress,
     pub user_public_output: Vec<u8>,
-    pub signer_public_key: Vec<u8>,
+    pub dwallet_cap_id: ObjectID,
     pub dwallet_network_encryption_key_id: ObjectID,
     pub curve: u32,
+    pub user_secret_key_share: UserSecretKeyShareEventType,
+    pub sign_during_dkg_request: Option<SignDuringDKGRequestEvent>,
 }
 
 impl DWalletSessionEventTrait for DWalletDKGFirstRoundRequestEvent {

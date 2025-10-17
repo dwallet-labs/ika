@@ -594,6 +594,7 @@ where
         let dwallet_dkg_with_sign_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
             &DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG,
         )?))?;
+
         let dwallet_coordinator_ptb_arg = ptb.input(CallArg::Object(dwallet_coordinator_arg))?;
 
         for network_encryption_key_id in network_encryption_key_ids {
@@ -735,7 +736,7 @@ where
             vec![
                 dwallet_coordinator_ptb_arg,
                 zero,
-                none_option,
+                zero_option,
                 dwallet_dkg_with_sign_protocol_flag,
             ],
         );

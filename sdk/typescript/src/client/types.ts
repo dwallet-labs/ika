@@ -133,6 +133,9 @@ export type Hash = (typeof Hash)[keyof typeof Hash];
 
 export const Curve = {
 	SECP256K1: 0,
+	SECP256R1: 1,
+	ED25519: 2,
+	RISTRETTO: 3,
 } as const;
 
 export type Curve = (typeof Curve)[keyof typeof Curve];
@@ -171,7 +174,7 @@ export const CoordinatorInnerDynamicField = DynamicField(
 export const SystemInnerDynamicField = DynamicField(SystemInnerModule.SystemInner);
 
 export type UserSignatureInputs = {
-	activeDWallet: DWallet;
+	activeDWallet?: DWallet;
 	publicOutput?: Uint8Array;
 	secretShare?: Uint8Array;
 	encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;

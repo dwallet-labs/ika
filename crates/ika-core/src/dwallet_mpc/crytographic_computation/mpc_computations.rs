@@ -607,10 +607,7 @@ impl ProtocolCryptographicData {
                 access_structure,
                 session_id,
                 advance_request,
-                public_input.protocol_public_parameters.clone(),
                 public_input,
-                bcs::from_bytes(&data.encryption_key)?,
-                &data.encrypted_centralized_secret_share_and_proof,
                 &mut rng,
             )?),
             ProtocolCryptographicData::DWalletDKG {
@@ -624,10 +621,7 @@ impl ProtocolCryptographicData {
                 access_structure,
                 session_id,
                 advance_request,
-                public_input.protocol_public_parameters.clone(),
                 public_input,
-                bcs::from_bytes(&data.encryption_key)?,
-                &data.encrypted_centralized_secret_share_and_proof,
                 &mut rng,
             )?),
             ProtocolCryptographicData::DWalletDKG {
@@ -641,10 +635,7 @@ impl ProtocolCryptographicData {
                 access_structure,
                 session_id,
                 advance_request,
-                public_input.protocol_public_parameters.clone(),
                 public_input,
-                bcs::from_bytes(&data.encryption_key)?,
-                &data.encrypted_centralized_secret_share_and_proof,
                 &mut rng,
             )?),
             ProtocolCryptographicData::DWalletDKG {
@@ -658,10 +649,7 @@ impl ProtocolCryptographicData {
                 access_structure,
                 session_id,
                 advance_request,
-                public_input.protocol_public_parameters.clone(),
                 public_input,
-                bcs::from_bytes(&data.encryption_key)?,
-                &data.encrypted_centralized_secret_share_and_proof,
                 &mut rng,
             )?),
             ProtocolCryptographicData::DWalletDKG {
