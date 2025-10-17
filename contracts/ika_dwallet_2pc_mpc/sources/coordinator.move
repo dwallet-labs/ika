@@ -4,30 +4,32 @@
 module ika_dwallet_2pc_mpc::coordinator;
 
 use ika::ika::IKA;
-use ika_common::advance_epoch_approver::AdvanceEpochApprover;
-use ika_common::protocol_cap::VerifiedProtocolCap;
-use ika_common::system_current_status_info::SystemCurrentStatusInfo;
-use ika_common::validator_cap::VerifiedValidatorOperationCap;
-use ika_dwallet_2pc_mpc::coordinator_inner::{
-    Self,
-    DWalletCap,
-    DWalletCoordinatorInner,
-    ImportedKeyDWalletCap,
-    ImportedKeyMessageApproval,
-    MessageApproval,
-    UnverifiedPartialUserSignatureCap,
-    UnverifiedPresignCap,
-    VerifiedPartialUserSignatureCap,
-    VerifiedPresignCap
+use ika_common::{
+    advance_epoch_approver::AdvanceEpochApprover,
+    protocol_cap::VerifiedProtocolCap,
+    system_current_status_info::SystemCurrentStatusInfo,
+    upgrade_package_approver::UpgradePackageApprover,
+    validator_cap::VerifiedValidatorOperationCap
 };
-use ika_dwallet_2pc_mpc::pricing::PricingInfo;
-use ika_dwallet_2pc_mpc::sessions_manager::SessionIdentifier;
-use sui::coin::Coin;
-use sui::dynamic_field;
-use sui::sui::SUI;
-use sui::vec_map::VecMap;
-use ika_common::upgrade_package_approver::UpgradePackageApprover;
-use ika_dwallet_2pc_mpc::coordinator_inner::DWallet;
+use ika_dwallet_2pc_mpc::{
+    coordinator_inner::{
+        Self,
+        DWalletCap,
+        DWalletCoordinatorInner,
+        ImportedKeyDWalletCap,
+        ImportedKeyMessageApproval,
+        MessageApproval,
+        UnverifiedPartialUserSignatureCap,
+        UnverifiedPresignCap,
+        VerifiedPartialUserSignatureCap,
+        VerifiedPresignCap,
+        DWallet,
+        SignDuringDKGRequest
+    },
+    pricing::PricingInfo,
+    sessions_manager::SessionIdentifier
+};
+use sui::{coin::Coin, dynamic_field, sui::SUI, vec_map::VecMap};
 
 // === Errors ===
 
@@ -192,11 +194,13 @@ public fun set_global_presign_config(
     curve_to_signature_algorithms_for_imported_key: VecMap<u32, vector<u32>>,
     cap: &VerifiedProtocolCap,
 ) {
-    self.inner_mut().set_global_presign_config(
-        curve_to_signature_algorithms_for_dkg,
-        curve_to_signature_algorithms_for_imported_key,
-        cap,
-    );
+    self
+        .inner_mut()
+        .set_global_presign_config(
+            curve_to_signature_algorithms_for_dkg,
+            curve_to_signature_algorithms_for_imported_key,
+            cap,
+        );
 }
 
 public fun request_lock_epoch_sessions(
@@ -328,7 +332,7 @@ public fun sign_during_dkg_request(
         .inner_mut()
         .sign_during_dkg_request(
             presign_cap,
-            hash_scheme, 
+            hash_scheme,
             message,
             message_centralized_signature,
         )
@@ -840,7 +844,11 @@ public fun commit_upgrade(
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
 /// This function can be called immediately after the upgrade is committed.
-public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtocolCap, ctx: &mut TxContext) {
+public fun try_migrate_by_cap(
+    self: &mut DWalletCoordinator,
+    _: &VerifiedProtocolCap,
+    ctx: &mut TxContext,
+) {
     self.try_migrate_impl(ctx);
 }
 
@@ -849,9 +857,12 @@ public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtoco
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
 /// Call this function after the migration epoch is reached.
-public fun try_migrate(self: &mut DWalletCoordinator) {
-    assert!(self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e), EInvalidMigration);
-    self.try_migrate_impl();
+public fun try_migrate(self: &mut DWalletCoordinator, ctx: &mut TxContext) {
+    assert!(
+        self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e),
+        EInvalidMigration,
+    );
+    self.try_migrate_impl(ctx);
 }
 
 /// Migrate the coordinator object to the new package id.

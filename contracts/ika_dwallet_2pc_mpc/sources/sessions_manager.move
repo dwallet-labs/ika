@@ -246,10 +246,7 @@ public(package) fun register_session_identifier(
     bytes: vector<u8>,
     ctx: &mut TxContext,
 ): SessionIdentifier {
-    assert!(
-        bytes.length() == SESSION_IDENTIFIER_LENGTH,
-        ESessionIdentifierInvalidLength,
-    );
+    assert!(bytes.length() == SESSION_IDENTIFIER_LENGTH, ESessionIdentifierInvalidLength);
     let mut bytes_to_hash = ctx.sender().to_bytes();
     bytes_to_hash.append(bytes);
     let identifier_preimage = sui::hash::keccak256(&bytes_to_hash);

@@ -27,7 +27,7 @@ importers:
         specifier: ^0.24.0
         version: 0.24.0
       '@mysten/prettier-plugin-move':
-        specifier: 0.3.0
+        specifier: ^0.3.0
         version: 0.3.0
       '@tanstack/eslint-plugin-query':
         specifier: ^5.50.1
