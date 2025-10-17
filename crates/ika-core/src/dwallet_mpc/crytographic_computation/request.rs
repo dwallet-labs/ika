@@ -7,7 +7,6 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use dwallet_rng::RootSeed;
 use group::PartyID;
-use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use mpc::{GuaranteedOutputDeliveryRoundResult, WeightedThresholdAccessStructure};

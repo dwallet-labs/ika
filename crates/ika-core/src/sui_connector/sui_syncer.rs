@@ -106,22 +106,42 @@ where
             ));
         }
 
-        for module in self.modules {
-            let metrics = self.metrics.clone();
-            let sui_client_clone = self.sui_client.clone();
-            let new_requests_sender_clone = new_requests_sender.clone();
-            let system_object_receiver_clone = system_object_receiver.clone();
-            task_handles.push(spawn_logged_monitored_task!(
-                Self::run_event_listening_task(
-                    system_object_receiver_clone,
-                    module,
-                    sui_client_clone,
-                    query_interval,
-                    metrics,
-                    new_requests_sender_clone,
-                )
-            ));
+        let ika_dwallet_2pc_mpc_package_id = self
+            .sui_client
+            .ika_network_config
+            .packages
+            .ika_dwallet_2pc_mpc_package_id
+            .clone();
+        let ika_dwallet_2pc_mpc_package_id_v2 = self
+            .sui_client
+            .ika_network_config
+            .packages
+            .ika_dwallet_2pc_mpc_package_id_v2
+            .clone();
+        let mut package_ids = vec![ika_dwallet_2pc_mpc_package_id];
+        if ika_dwallet_2pc_mpc_package_id_v2.is_some() {
+            package_ids.push(ika_dwallet_2pc_mpc_package_id_v2.unwrap());
         }
+        for package_id in package_ids {
+            for module in self.modules.clone() {
+                let metrics = self.metrics.clone();
+                let sui_client_clone = self.sui_client.clone();
+                let new_requests_sender_clone = new_requests_sender.clone();
+                let system_object_receiver_clone = system_object_receiver.clone();
+                task_handles.push(spawn_logged_monitored_task!(
+                    Self::run_event_listening_task(
+                        system_object_receiver_clone,
+                        module,
+                        package_id,
+                        sui_client_clone,
+                        query_interval,
+                        metrics,
+                        new_requests_sender_clone,
+                    )
+                ));
+            }
+        }
+
         Ok(task_handles)
     }
 
@@ -484,6 +504,7 @@ where
         // Module is always of ika system package.
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         module: Identifier,
+        package_id: ObjectID,
         sui_client: Arc<SuiClient<C>>,
         query_interval: Duration,
         metrics: Arc<SuiConnectorMetrics>,
@@ -546,7 +567,7 @@ where
 
             interval.tick().await;
             let Ok(Ok(events)) = retry_with_max_elapsed_time!(
-                sui_client.query_events_by_module(module.clone(), cursor),
+                sui_client.query_events_by_module(module.clone(), package_id, cursor),
                 Duration::from_secs(120)
             ) else {
                 // todo(zeev): alert.
@@ -576,7 +597,7 @@ where
                             Ok(Some(request)) => Some(request),
                             Ok(None) => None,
                             Err(e) => {
-                                error!(error=?e, ?module, "failed to parse Sui event");
+                                error!(error=?e, ?module, event_type =? event.type_, "failed to parse Sui event");
                                 None
                             }
                         }

@@ -208,7 +208,7 @@ describe('DWallet Signing', () => {
 			ikaClient,
 			suiClient,
 			activeDWallet,
-			SignatureAlgorithm.ECDSA,
+			SignatureAlgorithm.ECDSASecp256k1,
 			signerAddress,
 			testName,
 		);

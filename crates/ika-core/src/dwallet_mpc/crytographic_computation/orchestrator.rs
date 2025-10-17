@@ -24,7 +24,6 @@ use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
 use group::PartyID;
-use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -81,15 +80,11 @@ pub(crate) struct CryptographicComputationsOrchestrator {
     /// advancing this session.
     /// SECURITY NOTICE: *MUST KEEP PRIVATE*.
     root_seed: RootSeed,
-    protocol_config: ProtocolConfig,
 }
 
 impl CryptographicComputationsOrchestrator {
     /// Creates a new orchestrator for cryptographic computations.
-    pub(crate) fn try_new(
-        root_seed: RootSeed,
-        protocol_config: ProtocolConfig,
-    ) -> DwalletMPCResult<Self> {
+    pub(crate) fn try_new(root_seed: RootSeed) -> DwalletMPCResult<Self> {
         let (report_computation_completed_sender, report_computation_completed_receiver) =
             tokio::sync::mpsc::channel(COMPUTATION_UPDATE_CHANNEL_SIZE);
         let mut available_cores_for_computations =
@@ -113,7 +108,6 @@ impl CryptographicComputationsOrchestrator {
             currently_running_cryptographic_computations: HashSet::new(),
             completed_cryptographic_computations: HashSet::new(),
             root_seed,
-            protocol_config,
         })
     }
 
@@ -184,6 +178,11 @@ impl CryptographicComputationsOrchestrator {
                     ComputationResultData::Native => {
                         dwallet_mpc_metrics.add_native_completion(
                             &computation_update.protocol_metadata,
+                            elapsed_ms as i64,
+                        );
+                        dwallet_mpc_metrics.set_last_completion_duration(
+                            &computation_update.protocol_metadata,
+                            &"1".to_string(),
                             elapsed_ms as i64,
                         );
                     }
@@ -262,7 +261,6 @@ impl CryptographicComputationsOrchestrator {
 
         let computation_channel_sender = self.completed_computation_sender.clone();
         let root_seed = self.root_seed.clone();
-        let protocol_config = self.protocol_config.clone();
 
         rayon::spawn_fifo(move || {
             let advance_start_time = Instant::now();

@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use class_groups::reconfiguration::Secp256k1Party;
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -246,6 +247,7 @@ pub type ClassGroupsPublicKeyAndProofBytes = Vec<u8>;
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedDWalletImportedKeyVerificationOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -262,6 +264,7 @@ pub enum VersionedDwalletDKGSecondRoundPublicOutput {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedPresignOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -300,11 +303,13 @@ pub enum VersionedDwalletUserSecretShare {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedUserSignedMessage {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
-pub enum VersionedImportedDWalletPublicOutput {
+pub enum VersionedCentralizedPartyImportedDWalletPublicOutput {
     V1(MPCPublicOutput),
+    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -518,3 +523,6 @@ impl NetworkEncryptionKeyPublicDataTrait for NetworkEncryptionKeyPublicDataV2 {
             .clone())
     }
 }
+
+pub type ReconfigurationParty = Secp256k1Party;
+pub type ReconfigurationV2Party = twopc_mpc::decentralized_party::reconfiguration::Party;

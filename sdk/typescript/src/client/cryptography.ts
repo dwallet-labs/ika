@@ -22,6 +22,7 @@ import {
 	generate_secp_cg_keypair_from_seed,
 	network_dkg_public_output_to_protocol_pp,
 	public_key_from_dwallet_output,
+	reconfiguration_public_output_to_protocol_pp,
 	verify_secp_signature,
 	verify_user_share,
 } from './wasm-loader.js';
@@ -146,8 +147,7 @@ export async function encryptSecretShare(
 }
 
 /**
- * Prepare all cryptographic data needed for the second round of DKG.
- * This function combines the DKG output generation and secret share encryption.
+ * @deprecated Use prepareDKG instead
  *
  * @param protocolPublicParameters - The protocol public parameters
  * @param dWallet - The DWallet object containing first round output
@@ -189,12 +189,11 @@ export async function prepareDKGSecondRound(
 }
 
 /**
- * Prepare all cryptographic data needed for the second round of DKG.
- * This function combines the DKG output generation and secret share encryption.
+ * Prepare all cryptographic data needed for DKG.
  *
  * @param protocolPublicParameters - The protocol public parameters
  * @param encryptionKey - The user's public encryption key
- * @param session_id
+ * @param session_id - The session identifier
  * @returns Complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available in the DWallet
  *
@@ -223,8 +222,7 @@ export async function prepareDKG(
 }
 
 /**
- * Asynchronously prepare all cryptographic data needed for the second round of DKG.
- * This function fetches network parameters automatically and prepares the second round data.
+ * @deprecated Use prepareDKGAsync instead
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param dWallet - The DWallet object containing first round output
@@ -249,12 +247,11 @@ export async function prepareDKGSecondRoundAsync(
 }
 
 /**
- * Asynchronously prepare all cryptographic data needed for the second round of DKG.
- * This function fetches network parameters automatically and prepares the second round data.
+ * Prepare all cryptographic data needed for DKG.
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
- * @param sessionId
+ * @param sessionId - The session identifier
  * @returns Promise resolving to complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available or network parameters cannot be fetched
  *
@@ -328,6 +325,7 @@ export async function prepareImportedKeyDWalletVerification(
  * @param presign - The presignature data from a completed presign operation
  * @param message - The message bytes to sign
  * @param hash - The hash scheme identifier to use for signing
+ * @param signatureScheme
  * @returns The user's sign message that will be sent to the network for signature generation
  * @throws {Error} If the DWallet is not in active state or public output is missing
  */
@@ -338,6 +336,7 @@ export async function createUserSignMessageWithPublicOutput(
 	presign: Uint8Array,
 	message: Uint8Array,
 	hash: number,
+	signatureScheme: number,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
 		await create_sign_user_message(
@@ -347,6 +346,7 @@ export async function createUserSignMessageWithPublicOutput(
 			presign,
 			message,
 			hash,
+			signatureScheme,
 		),
 	);
 }
@@ -361,6 +361,25 @@ export async function networkDkgPublicOutputToProtocolPublicParameters(
 	network_dkg_public_output: Uint8Array,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(await network_dkg_public_output_to_protocol_pp(network_dkg_public_output));
+}
+
+/**
+ * Convert a reconfiguration DKG public output to the protocol public parameters.
+ *
+ * @returns The protocol public parameters
+ * @param reconfiguration_public_output
+ * @param network_dkg_public_output
+ */
+export async function reconfigurationPublicOutputToProtocolPublicParameters(
+	reconfiguration_public_output: Uint8Array,
+	network_dkg_public_output: Uint8Array,
+): Promise<Uint8Array> {
+	return Uint8Array.from(
+		await reconfiguration_public_output_to_protocol_pp(
+			reconfiguration_public_output,
+			network_dkg_public_output,
+		),
+	);
 }
 
 /**

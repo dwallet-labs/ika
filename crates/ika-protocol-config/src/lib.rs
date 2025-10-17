@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 1;
-const MAX_PROTOCOL_VERSION: u64 = 1;
+const MAX_PROTOCOL_VERSION: u64 = 2;
 
 // Record history of protocol version allocations here:
 //
@@ -80,7 +80,19 @@ impl std::ops::Add<u64> for ProtocolVersion {
 pub enum Chain {
     Mainnet,
     Testnet,
+    Devnet,
     Unknown,
+}
+
+impl From<String> for Chain {
+    fn from(s: String) -> Self {
+        match s.to_lowercase().as_str() {
+            "devnet" => Chain::Devnet,
+            "testnet" => Chain::Testnet,
+            "mainnet" => Chain::Mainnet,
+            _ => Chain::Unknown,
+        }
+    }
 }
 
 impl Default for Chain {
@@ -94,6 +106,7 @@ impl Chain {
         match self {
             Chain::Mainnet => "mainnet",
             Chain::Testnet => "testnet",
+            Chain::Devnet => "devnet",
             Chain::Unknown => "unknown",
         }
     }
@@ -477,6 +490,9 @@ impl ProtocolConfig {
         for cur in 2..=version.0 {
             match cur {
                 1 => unreachable!(),
+                2 => {
+                    cfg.network_encryption_key_version = Some(2);
+                }
                 // Use this template when making changes:
                 //
                 //     // modify an existing constant.
