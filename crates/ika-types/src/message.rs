@@ -18,10 +18,21 @@ pub struct DKGFirstRoundOutput {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Serialize, Deserialize)]
-pub struct DWalletDKGOutput {
+pub struct DWalletDKGSecondRoundOutput {
     pub dwallet_id: Vec<u8>,
     pub encrypted_secret_share_id: Vec<u8>,
     pub output: Vec<u8>,
+    pub rejected: bool,
+    pub session_sequence_number: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct DWalletDKGOutput {
+    pub dwallet_id: Vec<u8>,
+    pub output: Vec<u8>,
+    pub encrypted_secret_share_id: Option<Vec<u8>>,
+    pub sign_id: Option<Vec<u8>>,
+    pub signature: Vec<u8>,
     pub rejected: bool,
     pub session_sequence_number: u64,
 }
@@ -103,7 +114,7 @@ pub struct DWalletImportedKeyVerificationOutput {
 #[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum DWalletCheckpointMessageKind {
     RespondDWalletDKGFirstRoundOutput(DKGFirstRoundOutput),
-    RespondDWalletDKGSecondRoundOutput(DWalletDKGOutput),
+    RespondDWalletDKGSecondRoundOutput(DWalletDKGSecondRoundOutput),
     RespondDWalletEncryptedUserShare(EncryptedUserShareOutput),
     RespondMakeDWalletUserSecretKeySharesPublic(MakeDWalletUserSecretKeySharesPublicOutput),
     RespondDWalletImportedKeyVerificationOutput(DWalletImportedKeyVerificationOutput),
