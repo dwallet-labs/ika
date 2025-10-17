@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use dwallet_mpc_centralized_party::{
-    advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
-    create_dkg_output_by_curve_v2, create_dkg_output_v1,
-    create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
+    advance_centralized_sign_party, advance_centralized_sign_party_with_centralized_output,
+    centralized_and_decentralized_parties_dkg_output_match_inner, create_dkg_output_by_curve_v2,
+    create_dkg_output_v1, create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
     dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
     encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
     network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
@@ -235,6 +235,34 @@ pub fn create_sign_centralized_party_message(
     let signed_message = advance_centralized_sign_party(
         protocol_pp,
         decentralized_party_dkg_public_output,
+        centralized_party_dkg_secret_output,
+        presign,
+        message,
+        hash_type,
+        signature_scheme,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))?;
+
+    serde_wasm_bindgen::to_value(&signed_message).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Creates a signed message using centralized DKG output directly.
+///
+/// This version accepts the centralized DKG output directly instead of deriving it
+/// from the decentralized party's DKG public output.
+#[wasm_bindgen]
+pub fn create_sign_centralized_party_message_with_centralized_output(
+    protocol_pp: Vec<u8>,
+    centralized_dkg_output: Vec<u8>,
+    centralized_party_dkg_secret_output: Vec<u8>,
+    presign: Vec<u8>,
+    message: Vec<u8>,
+    hash_type: u32,
+    signature_scheme: u32,
+) -> Result<JsValue, JsError> {
+    let signed_message = advance_centralized_sign_party_with_centralized_output(
+        protocol_pp,
+        centralized_dkg_output,
         centralized_party_dkg_secret_output,
         presign,
         message,
