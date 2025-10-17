@@ -2305,6 +2305,12 @@ export class IkaTransaction {
 
 			secretShare = userSignatureInputs.secretShare;
 			publicOutput = userSignatureInputs.publicOutput;
+
+			await this.#verifySecretShare({
+				verifiedPublicOutput: publicOutput,
+				secretShare,
+				publicParameters,
+			});
 		}
 
 		return this.#createUserSignMessageWithPublicOutput({
