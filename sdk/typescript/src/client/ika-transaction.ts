@@ -1453,6 +1453,39 @@ export class IkaTransaction {
 	}
 
 	/**
+	 * Complete a future sign operation for imported key using a previously created partial user signature.
+	 * This method takes a partial signature created earlier and combines it with imported key message approval to create a full signature.
+	 *
+	 * @param params.partialUserSignatureCap - The partial user signature capability created by requestFutureSignWithImportedKey
+	 * @param params.importedKeyMessageApproval - The imported key message approval from approveImportedKeyMessage
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns The signature ID
+	 */
+	futureSignWithImportedKey({
+		partialUserSignatureCap,
+		importedKeyMessageApproval,
+		ikaCoin,
+		suiCoin,
+	}: {
+		partialUserSignatureCap: string;
+		importedKeyMessageApproval: string;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		return coordinatorTx.requestImportedKeySignWithPartialUserSignatureAndReturnId(
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			partialUserSignatureCap,
+			importedKeyMessageApproval,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.#transaction,
+		);
+	}
+
+	/**
 	 * Request verification for an Imported Key DWallet key and keep the capability.
 	 * This method creates a DWallet from an existing cryptographic key that was generated outside the network.
 	 *
