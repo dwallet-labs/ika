@@ -63,21 +63,24 @@ pub struct CentralizedDKGWasmResult {
 }
 
 pub fn network_dkg_public_output_to_protocol_pp_inner(
+    curve: u32,
     network_dkg_public_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
-    let public_parameters = protocol_public_parameters(network_dkg_public_output)?;
-    Ok(bcs::to_bytes(&public_parameters)?)
+    let public_parameters = protocol_public_parameters(curve, network_dkg_public_output)?;
+    Ok(public_parameters)
 }
 
 pub fn reconfiguration_public_output_to_protocol_pp_inner(
+    curve: u32,
     reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
     versioned_network_dkg_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
     let public_parameters = protocol_public_parameters_from_reconfiguration_output(
+        curve,
         reconfiguration_dkg_public_output,
         versioned_network_dkg_output,
     )?;
-    Ok(bcs::to_bytes(&public_parameters)?)
+    Ok(public_parameters)
 }
 
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
@@ -553,8 +556,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     }
 }
 
-pub(crate) type SignCentralizedParty<P: twopc_mpc::sign::Protocol> =
-    <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
+pub(crate) type SignCentralizedParty<P> = <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
 pub fn network_key_version_inner(
     network_dkg_public_output: SerializedWrappedMPCPublicOutput,
@@ -711,8 +713,9 @@ fn create_imported_dwallet_centralized_step_inner<P: twopc_mpc::dkg::Protocol>(
 }
 
 fn protocol_public_parameters(
+    curve: u32,
     network_dkg_public_output: SerializedWrappedMPCPublicOutput,
-) -> anyhow::Result<ProtocolPublicParameters> {
+) -> anyhow::Result<Vec<u8>> {
     let network_dkg_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(&network_dkg_public_output)?;
 
@@ -759,38 +762,65 @@ fn protocol_public_parameters(
                 neutral_ciphertext_value,
                 encryption_scheme_public_parameters.clone(),
             );
-            Ok(protocol_public_parameters)
+            Ok(bcs::to_bytes(&protocol_public_parameters)?)
         }
         VersionedNetworkDkgOutput::V2(network_dkg_public_output) => {
             let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
-            Ok(network_dkg_public_output.secp256k1_protocol_public_parameters()?)
+
+            let pp = match DWalletCurve::try_from(curve)? {
+                DWalletCurve::Secp256k1 => bcs::to_bytes(
+                    &network_dkg_public_output.secp256k1_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Ristretto => bcs::to_bytes(
+                    &network_dkg_public_output.ristretto_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Curve25519 => bcs::to_bytes(
+                    &network_dkg_public_output.curve25519_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Secp256r1 => bcs::to_bytes(
+                    &network_dkg_public_output.secp256r1_protocol_public_parameters()?,
+                )?,
+            };
+
+            Ok(pp)
         }
     }
 }
 
 fn protocol_public_parameters_from_reconfiguration_output(
+    curve: u32,
     reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
     versioned_network_dkg_output: SerializedWrappedMPCPublicOutput,
-) -> anyhow::Result<ProtocolPublicParameters> {
+) -> anyhow::Result<Vec<u8>> {
     let reconfiguration_dkg_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(&reconfiguration_dkg_public_output)?;
 
     match &reconfiguration_dkg_public_output {
         // TODO (#1487): Remove temporary support for V1 reconfiguration keys.
         VersionedDecryptionKeyReconfigurationOutput::V1(_) => {
-            protocol_public_parameters(versioned_network_dkg_output)
+            protocol_public_parameters(curve, versioned_network_dkg_output)
         }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
-            // TODO (#1530): Add support for all the curves the network supports.
-            let secp256k1_protocol_public_parameters =
-                twopc_mpc::decentralized_party::reconfiguration::PublicOutput::secp256k1_protocol_public_parameters(
-                    &public_output,
-                )?;
 
-            Ok(secp256k1_protocol_public_parameters)
+            let pp = match DWalletCurve::try_from(curve)? {
+                DWalletCurve::Secp256k1 => {
+                    bcs::to_bytes(&public_output.secp256k1_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Ristretto => {
+                    bcs::to_bytes(&public_output.ristretto_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Curve25519 => {
+                    bcs::to_bytes(&public_output.curve25519_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Secp256r1 => {
+                    bcs::to_bytes(&public_output.secp256r1_protocol_public_parameters()?)?
+                }
+            };
+
+            Ok(pp)
         }
     }
 }

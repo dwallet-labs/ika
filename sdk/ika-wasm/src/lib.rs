@@ -94,19 +94,23 @@ pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsV
 
 #[wasm_bindgen]
 pub fn network_dkg_public_output_to_protocol_pp(
+    curve: u32,
     network_dkg_public_output: Vec<u8>,
 ) -> Result<JsValue, JsError> {
-    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_dkg_public_output)
-        .map_err(to_js_err)?;
+    let protocol_pp =
+        network_dkg_public_output_to_protocol_pp_inner(curve, network_dkg_public_output)
+            .map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&protocol_pp)?)
 }
 
 #[wasm_bindgen]
 pub fn reconfiguration_public_output_to_protocol_pp(
+    curve: u32,
     reconfig_public_output: Vec<u8>,
     network_dkg_public_output: Vec<u8>,
 ) -> Result<JsValue, JsError> {
     let protocol_pp = reconfiguration_public_output_to_protocol_pp_inner(
+        curve,
         reconfig_public_output,
         network_dkg_public_output,
     )
