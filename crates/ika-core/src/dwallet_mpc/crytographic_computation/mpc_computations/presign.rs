@@ -19,16 +19,15 @@ use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
-    RistrettoSchnorrkelSubstrateProtocol, Secp256K1AsyncDKGProtocol, Secp256K1ECDSAProtocol,
-    Secp256K1TaprootProtocol, Secp256R1ECDSAProtocol, SessionIdentifier,
+    RistrettoSchnorrkelSubstrateProtocol, Secp256K1ECDSAProtocol, Secp256K1TaprootProtocol,
+    Secp256R1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{
-    GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, PublicInput,
-    WeightedThresholdAccessStructure,
+    GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
-use tracing::{error, warn};
+use tracing::error;
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
 

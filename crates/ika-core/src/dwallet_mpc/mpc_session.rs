@@ -62,7 +62,7 @@ pub(crate) struct DWalletSession {
 ///   The session has failed due to an unrecoverable error.
 ///   This status indicates that the session cannot proceed further.
 #[derive(Clone, PartialEq)]
-pub enum SessionStatus {
+pub(crate) enum SessionStatus {
     Active {
         public_input: PublicInput,
         private_input: MPCPrivateInput,
@@ -257,7 +257,7 @@ impl DWalletSession {
 }
 
 impl fmt::Display for SessionStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             SessionStatus::Active { .. } => write!(f, "Active"),
             SessionStatus::WaitingForSessionRequest => write!(f, "Waiting for Session Request"),

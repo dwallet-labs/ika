@@ -18,7 +18,7 @@ use group::{HashType, OsCsRng};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256K1ECDSAProtocol,
-    Secp256K1TaprootProtocol, Secp256R1ECDSAProtocol, SessionIdentifier,
+    Secp256R1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::GuaranteedOutputDeliveryRoundResult;
 use std::sync::Arc;
