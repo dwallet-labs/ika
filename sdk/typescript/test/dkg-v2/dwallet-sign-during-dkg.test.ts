@@ -128,6 +128,7 @@ describe('DWallet Creation', () => {
 			signDuringDKGRequest: {
 				hashScheme: Hash.SHA256,
 				message: Buffer.from('test message'),
+				verifiedPresignCap: ikaTransaction.verifyPresignCap({ presign }),
 				signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
 				presign,
 			},
