@@ -856,8 +856,8 @@ export function requestImportedKeySignWithPartialUserSignature(
 export function requestImportedKeySignWithPartialUserSignatureAndReturnId(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
-	verifiedPartialUserSignatureCap: string,
-	importedKeyMessageApproval: string,
+	verifiedPartialUserSignatureCap: TransactionObjectArgument | string,
+	importedKeyMessageApproval: TransactionObjectArgument | string,
 	sessionIdentifier: TransactionObjectArgument,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,

@@ -1468,8 +1468,8 @@ export class IkaTransaction {
 		ikaCoin,
 		suiCoin,
 	}: {
-		partialUserSignatureCap: string;
-		importedKeyMessageApproval: string;
+		partialUserSignatureCap: TransactionObjectArgument | string;
+		importedKeyMessageApproval: TransactionObjectArgument | string;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
