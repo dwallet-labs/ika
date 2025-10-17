@@ -539,3 +539,65 @@ export async function runCompleteSharedDKGFlowWithSign(
 	expect(activeDWallet.state.$kind).toBe('Active');
 	expect(activeDWallet.id.id).toBe(dWalletID);
 }
+
+export async function runGlobalPresignTest(
+	testName: string,
+	curve: Curve,
+	signatureAlgorithm: SignatureAlgorithm,
+): Promise<void> {
+	const suiClient = createTestSuiClient();
+	const ikaClient = createTestIkaClient(suiClient);
+	await ikaClient.initialize();
+
+	const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName, curve);
+
+	await requestTestFaucetFunds(signerAddress);
+
+	const suiTransaction = new Transaction();
+	const ikaTransaction = createTestIkaTransaction(
+		ikaClient,
+		suiTransaction,
+		userShareEncryptionKeys,
+	);
+
+	const emptyIKACoin = createEmptyTestIkaToken(suiTransaction, ikaClient.ikaConfig);
+	const latestNetworkEncryptionKey = await ikaClient.getLatestNetworkEncryptionKey();
+
+	const unverifiedPresignCap = ikaTransaction.requestGlobalPresign({
+		dwalletNetworkEncryptionKeyId: latestNetworkEncryptionKey.id,
+		curve: curve,
+		signatureAlgorithm: signatureAlgorithm,
+		ikaCoin: emptyIKACoin,
+		suiCoin: suiTransaction.gas,
+	});
+
+	destroyEmptyTestIkaToken(suiTransaction, ikaClient.ikaConfig, emptyIKACoin);
+
+	suiTransaction.transferObjects([unverifiedPresignCap], signerAddress);
+
+	const result = await executeTestTransaction(suiClient, suiTransaction, testName);
+
+	const presignEvent = result.events?.find((event) => {
+		return event.type.includes('PresignRequestEvent') && event.type.includes('DWalletSessionEvent');
+	});
+
+	expect(presignEvent).toBeDefined();
+
+	const parsedPresignEvent = SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.PresignRequestEvent,
+	).fromBase64(presignEvent?.bcs as string);
+
+	expect(parsedPresignEvent).toBeDefined();
+	expect(parsedPresignEvent.event_data.presign_id).toBeDefined();
+
+	const presign = await retryUntil(
+		() =>
+			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
+		(presign) => presign !== null,
+		30,
+		2000,
+	);
+
+	expect(presign).toBeDefined();
+	expect(presign.state.$kind).toBe('Completed');
+}
