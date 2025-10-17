@@ -17,10 +17,12 @@ import {
 	create_dkg_centralized_output_v2,
 	create_dkg_centralized_output_v1 as create_dkg_user_output,
 	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
+	create_sign_centralized_party_message_with_centralized_output,
 	create_sign_centralized_party_message as create_sign_user_message,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
 	network_dkg_public_output_to_protocol_pp,
+	public_key_from_centralized_dkg_output,
 	public_key_from_dwallet_output,
 	reconfiguration_public_output_to_protocol_pp,
 	verify_secp_signature,
@@ -357,30 +359,75 @@ export async function createUserSignMessageWithPublicOutput(
 }
 
 /**
+ * Create the user's sign message for the signature generation process.
+ * This function combines the user's secret key, presign, and message to create a sign message to be sent to the network.
+ *
+ * This function is used when developer has access to the centralized DKG output which should be verified before using this method.
+ *
+ * @param protocolPublicParameters - The protocol public parameters
+ * @param centralizedDkgOutput - The centralized DKG output
+ * @param userSecretKeyShare - The user's secret key share
+ * @param presign - The presignature data from a completed presign operation
+ * @param message - The message bytes to sign
+ * @param hash - The hash scheme identifier to use for signing
+ * @param signatureScheme
+ * @returns The user's sign message that will be sent to the network for signature generation
+ * @throws {Error} If the DWallet is not in active state or public output is missing
+ */
+export async function createUserSignMessageWithCentralizedOutput(
+	protocolPublicParameters: Uint8Array,
+	centralizedDkgOutput: Uint8Array,
+	userSecretKeyShare: Uint8Array,
+	presign: Uint8Array,
+	message: Uint8Array,
+	hash: number,
+	signatureScheme: number,
+): Promise<Uint8Array> {
+	return Uint8Array.from(
+		await create_sign_centralized_party_message_with_centralized_output(
+			protocolPublicParameters,
+			centralizedDkgOutput,
+			userSecretKeyShare,
+			presign,
+			message,
+			hash,
+			signatureScheme,
+		),
+	);
+}
+
+/**
  * Convert a network DKG public output to the protocol public parameters.
  *
+ * @param curve - The curve to use for key generation
  * @param network_dkg_public_output - The network DKG public output
  * @returns The protocol public parameters
  */
 export async function networkDkgPublicOutputToProtocolPublicParameters(
+	curve: Curve,
 	network_dkg_public_output: Uint8Array,
 ): Promise<Uint8Array> {
-	return Uint8Array.from(await network_dkg_public_output_to_protocol_pp(network_dkg_public_output));
+	return Uint8Array.from(
+		await network_dkg_public_output_to_protocol_pp(curve, network_dkg_public_output),
+	);
 }
 
 /**
  * Convert a reconfiguration DKG public output to the protocol public parameters.
  *
+ * @param curve - The curve to use for key generation
+ * @param reconfiguration_public_output - The reconfiguration DKG public output
+ * @param network_dkg_public_output - The network DKG public output
  * @returns The protocol public parameters
- * @param reconfiguration_public_output
- * @param network_dkg_public_output
  */
 export async function reconfigurationPublicOutputToProtocolPublicParameters(
+	curve: Curve,
 	reconfiguration_public_output: Uint8Array,
 	network_dkg_public_output: Uint8Array,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
 		await reconfiguration_public_output_to_protocol_pp(
+			curve,
 			reconfiguration_public_output,
 			network_dkg_public_output,
 		),
@@ -435,6 +482,20 @@ export async function publicKeyFromDWalletOutput(
 	curve: Curve,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(await public_key_from_dwallet_output(curve, dWalletOutput));
+}
+
+/**
+ * Create a public key from a centralized DKG output.
+ *
+ * @param curve - The curve to use for key generation
+ * @param centralizedDkgOutput - The centralized DKG output
+ * @returns The public key
+ */
+export async function publicKeyFromCentralizedDKGOutput(
+	curve: Curve,
+	centralizedDkgOutput: Uint8Array,
+): Promise<Uint8Array> {
+	return Uint8Array.from(await public_key_from_centralized_dkg_output(curve, centralizedDkgOutput));
 }
 
 /**

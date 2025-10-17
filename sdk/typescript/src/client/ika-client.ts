@@ -18,6 +18,7 @@ import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.
 import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
 	CoordinatorInner,
+	Curve,
 	DWallet,
 	DWalletCap,
 	DWalletInternal,
@@ -709,12 +710,13 @@ export class IkaClient {
 	 * Retrieve the protocol public parameters used for cryptographic operations.
 	 * These parameters are cached by encryption key ID and only refetched when the epoch or decryption key changes.
 	 *
-	 * @param options - Options for encryption key selection
+	 * @param dWallet - The DWallet to get the protocol public parameters for
+	 * @param curve - The curve to use for key generation
 	 * @returns Promise resolving to the protocol public parameters as bytes
 	 * @throws {ObjectNotFoundError} If the public parameters cannot be found
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getProtocolPublicParameters(dWallet?: DWallet): Promise<Uint8Array> {
+	async getProtocolPublicParameters(dWallet?: DWallet, curve?: Curve): Promise<Uint8Array> {
 		await this.#fetchEncryptionKeysFromNetwork();
 
 		let networkEncryptionKey: NetworkEncryptionKey;
@@ -741,11 +743,21 @@ export class IkaClient {
 			}
 		}
 
+		let selectedCurve: Curve;
+
+		if (dWallet) {
+			selectedCurve = dWallet.curve as Curve;
+		} else {
+			selectedCurve = curve ?? (0 as Curve);
+		}
+
 		const protocolPublicParameters = !networkEncryptionKey.reconfigurationOutputID
 			? await networkDkgPublicOutputToProtocolPublicParameters(
+					selectedCurve,
 					await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 				)
 			: await reconfigurationPublicOutputToProtocolPublicParameters(
+					selectedCurve,
 					await this.readTableVecAsRawBytes(networkEncryptionKey.reconfigurationOutputID),
 					await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 				);

@@ -31,7 +31,10 @@ import type {
 } from './types.js';
 import { SignatureAlgorithm } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
-import { create_sign_centralized_party_message as create_sign_user_message } from './wasm-loader.js';
+import {
+	create_sign_centralized_party_message as create_sign,
+	create_sign_centralized_party_message_with_centralized_output as create_sign_with_centralized_output,
+} from './wasm-loader.js';
 
 /**
  * Parameters for creating an IkaTransaction instance
@@ -206,6 +209,7 @@ export class IkaTransaction {
 								message: signDuringDKGRequest.message,
 								signatureScheme: signDuringDKGRequest.signatureAlgorithm,
 								presign: signDuringDKGRequest.presign,
+								curve,
 							},
 						}),
 						this.#transaction,
@@ -286,6 +290,7 @@ export class IkaTransaction {
 								message: signDuringDKGRequest.message,
 								signatureScheme: signDuringDKGRequest.signatureAlgorithm,
 								presign: signDuringDKGRequest.presign,
+								curve,
 							},
 						}),
 						this.#transaction,
@@ -2300,6 +2305,7 @@ export class IkaTransaction {
 
 		const publicParameters = await this.#ikaClient.getProtocolPublicParameters(
 			userSignatureInputs.activeDWallet,
+			userSignatureInputs.curve,
 		);
 
 		let secretShare, publicOutput;
@@ -2354,6 +2360,7 @@ export class IkaTransaction {
 			message: userSignatureInputs.message,
 			hash: userSignatureInputs.hash,
 			signatureScheme: userSignatureInputs.signatureScheme,
+			curve: userSignatureInputs.curve,
 		});
 	}
 
@@ -2630,25 +2637,41 @@ export class IkaTransaction {
 		message,
 		hash,
 		signatureScheme,
+		curve,
 	}: {
 		protocolPublicParameters: Uint8Array;
 		publicOutput: Uint8Array;
 		userSecretKeyShare: Uint8Array;
 		presign: Uint8Array;
 		message: Uint8Array;
-		hash: number;
-		signatureScheme: number;
+		hash: Hash;
+		signatureScheme: SignatureAlgorithm;
+		curve?: Curve;
 	}): Promise<Uint8Array> {
-		return new Uint8Array(
-			await create_sign_user_message(
-				protocolPublicParameters,
-				publicOutput,
-				userSecretKeyShare,
-				presign,
-				message,
-				hash,
-				signatureScheme,
-			),
-		);
+		if (curve) {
+			return new Uint8Array(
+				await create_sign_with_centralized_output(
+					protocolPublicParameters,
+					publicOutput,
+					userSecretKeyShare,
+					presign,
+					message,
+					hash,
+					signatureScheme,
+				),
+			);
+		} else {
+			return new Uint8Array(
+				await create_sign(
+					protocolPublicParameters,
+					publicOutput,
+					userSecretKeyShare,
+					presign,
+					message,
+					hash,
+					signatureScheme,
+				),
+			);
+		}
 	}
 }

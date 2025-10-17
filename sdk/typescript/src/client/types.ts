@@ -182,4 +182,5 @@ export type UserSignatureInputs = {
 	message: Uint8Array;
 	hash: Hash;
 	signatureScheme: SignatureAlgorithm;
+	curve?: Curve;
 };
