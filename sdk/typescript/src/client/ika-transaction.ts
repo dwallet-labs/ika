@@ -170,6 +170,7 @@ export class IkaTransaction {
 		signDuringDKGRequest?: {
 			message: Uint8Array;
 			presign: Presign;
+			verifiedPresignCap: TransactionObjectArgument;
 			hashScheme: Hash;
 			signatureAlgorithm: SignatureAlgorithm;
 		};
@@ -194,7 +195,7 @@ export class IkaTransaction {
 				? coordinatorTx.signDuringDKGRequest(
 						this.#ikaClient.ikaConfig,
 						this.#getCoordinatorObjectRef(),
-						this.verifyPresignCap({ presign: signDuringDKGRequest.presign }),
+						signDuringDKGRequest.verifiedPresignCap,
 						signDuringDKGRequest.hashScheme,
 						signDuringDKGRequest.message,
 						await this.#getUserSignMessage({
@@ -254,6 +255,7 @@ export class IkaTransaction {
 		signDuringDKGRequest?: {
 			message: Uint8Array;
 			presign: Presign;
+			verifiedPresignCap: TransactionObjectArgument;
 			hashScheme: Hash;
 			signatureAlgorithm: SignatureAlgorithm;
 		};
@@ -275,7 +277,7 @@ export class IkaTransaction {
 				? coordinatorTx.signDuringDKGRequest(
 						this.#ikaClient.ikaConfig,
 						this.#getCoordinatorObjectRef(),
-						this.verifyPresignCap({ presign: signDuringDKGRequest.presign }),
+						signDuringDKGRequest.verifiedPresignCap,
 						signDuringDKGRequest.hashScheme,
 						signDuringDKGRequest.message,
 						await this.#getUserSignMessage({
@@ -568,11 +570,42 @@ export class IkaTransaction {
 	 * @param params.presign - The presign object to verify
 	 * @returns Verified presign capability
 	 */
-	verifyPresignCap({ presign }: { presign: Presign }): TransactionObjectArgument {
+	verifyPresignCap({ presign }: { presign: Presign }): TransactionObjectArgument;
+
+	/**
+	 * Verify a presign capability to ensure it can be used for signing.
+	 * This converts an unverified presign capability into a verified one.
+	 *
+	 * @param params.unverifiedPresignCap - The unverified presign capability object or ID
+	 * @returns Verified presign capability
+	 */
+	verifyPresignCap({
+		unverifiedPresignCap,
+	}: {
+		unverifiedPresignCap: TransactionObjectArgument | string;
+	}): TransactionObjectArgument;
+
+	verifyPresignCap({
+		presign,
+		unverifiedPresignCap,
+	}: {
+		presign?: Presign;
+		unverifiedPresignCap?: TransactionObjectArgument | string;
+	}): TransactionObjectArgument {
+		let capId: TransactionObjectArgument | string;
+
+		if (unverifiedPresignCap) {
+			capId = unverifiedPresignCap;
+		} else if (presign?.cap_id) {
+			capId = presign.cap_id;
+		} else {
+			throw new Error('Either presign or unverifiedPresignCap must be provided');
+		}
+
 		const verifiedPresignCap = coordinatorTx.verifyPresignCap(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			presign.cap_id,
+			this.#transaction.object(capId),
 			this.#transaction,
 		);
 

@@ -9,7 +9,6 @@ import type {
 } from '@mysten/sui/transactions';
 
 import type { Hash, IkaConfig } from '../client/types.js';
-import type { Hash, IkaConfig } from '../client/types.js';
 
 export function registerEncryptionKeyTx(
 	ikaConfig: IkaConfig,
@@ -641,7 +640,7 @@ export function isPresignValid(
 export function verifyPresignCap(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
-	unverifiedPresignCap: string,
+	unverifiedPresignCap: TransactionObjectArgument,
 	tx: Transaction,
 ): TransactionObjectArgument {
 	return tx.moveCall({
