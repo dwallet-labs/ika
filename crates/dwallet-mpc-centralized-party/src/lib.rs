@@ -29,12 +29,13 @@ use mpc::Party;
 use mpc::two_party::Round;
 use rand_core::SeedableRng;
 use std::fmt::Debug;
+use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput};
+use twopc_mpc::dkg::centralized_party;
 use twopc_mpc::secp256k1::SCALAR_LIMBS;
 
 use commitment::CommitmentSizedNumber;
 use crypto_bigint::{Encoding, Uint};
 use serde::{Deserialize, Serialize};
-use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput};
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::dkg::decentralized_party::{Output, VersionedOutput};
@@ -311,6 +312,63 @@ pub fn public_key_from_dwallet_output_by_curve(
             >,
         >(dwallet_output),
     }
+}
+
+pub fn public_key_from_centralized_dkg_output_by_curve(
+    curve: u32,
+    centralized_dkg_output: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    match curve.try_into()? {
+        DWalletCurve::Secp256k1 => public_key_from_centralized_dkg_output_inner::<
+            { secp256k1::SCALAR_LIMBS },
+            group::secp256k1::GroupElement,
+        >(centralized_dkg_output),
+        DWalletCurve::Ristretto => public_key_from_centralized_dkg_output_inner::<
+            { ristretto::SCALAR_LIMBS },
+            group::ristretto::GroupElement,
+        >(centralized_dkg_output),
+        DWalletCurve::Curve25519 => public_key_from_centralized_dkg_output_inner::<
+            { curve25519::SCALAR_LIMBS },
+            group::curve25519::GroupElement,
+        >(centralized_dkg_output),
+        DWalletCurve::Secp256r1 => public_key_from_centralized_dkg_output_inner::<
+            { secp256r1::SCALAR_LIMBS },
+            group::secp256r1::GroupElement,
+        >(centralized_dkg_output),
+    }
+}
+
+fn public_key_from_centralized_dkg_output_inner<
+    const SCALAR_LIMBS: usize,
+    GroupElement: group::GroupElement,
+>(
+    centralized_dkg_output: &[u8],
+) -> anyhow::Result<Vec<u8>>
+where
+    Uint<SCALAR_LIMBS>: Encoding,
+{
+    let versioned_centralized_dkg_output: VersionedCentralizedDKGPublicOutput =
+        bcs::from_bytes(&centralized_dkg_output)?;
+
+    let public_key = match versioned_centralized_dkg_output {
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let dkg_output: DKGCentralizedPartyOutput<SCALAR_LIMBS, GroupElement> =
+                bcs::from_bytes(output.as_slice())?;
+            dkg_output.public_key
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => {
+            let dkg_output: DKGCentralizedPartyVersionedOutput<SCALAR_LIMBS, GroupElement> =
+                bcs::from_bytes(output.as_slice())?;
+            match dkg_output {
+                centralized_party::VersionedOutput::TargetedPublicDKGOutput(o) => o.public_key,
+                centralized_party::VersionedOutput::UniversalPublicDKGOutput {
+                    output: o, ..
+                } => o.public_key,
+            }
+        }
+    };
+
+    Ok(bcs::to_bytes(&public_key)?)
 }
 
 pub fn public_key_from_dwallet_output_inner<
