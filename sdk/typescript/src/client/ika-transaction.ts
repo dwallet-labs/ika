@@ -1422,7 +1422,7 @@ export class IkaTransaction {
 	 * @param params.messageApproval - The message approval from approveMessage
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
-	 * @returns The updated IkaTransaction instance
+	 * @returns The signature ID
 	 */
 	futureSign({
 		partialUserSignatureCap,
@@ -1435,7 +1435,7 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
-		coordinatorTx.requestSignWithPartialUserSignature(
+		return coordinatorTx.requestSignWithPartialUserSignatureAndReturnId(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			coordinatorTx.verifyPartialUserSignatureCap(
@@ -1450,8 +1450,6 @@ export class IkaTransaction {
 			suiCoin,
 			this.#transaction,
 		);
-
-		return this;
 	}
 
 	/**
