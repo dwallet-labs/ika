@@ -243,6 +243,30 @@ pub fn create_sign_centralized_party_message(
     serde_wasm_bindgen::to_value(&signed_message).map_err(|e| JsError::new(&e.to_string()))
 }
 
+#[wasm_bindgen]
+pub fn create_sign_centralized_party_message_with_centralized_party_dkg_output(
+    protocol_pp: Vec<u8>,
+    centralized_party_dkg_public_output: Vec<u8>,
+    centralized_party_dkg_secret_output: Vec<u8>,
+    presign: Vec<u8>,
+    message: Vec<u8>,
+    hash_type: u32,
+    signature_scheme: u32,
+) -> Result<JsValue, JsError> {
+    let signed_message = advance_centralized_sign_party_with_centralized_party_dkg_output(
+        protocol_pp,
+        centralized_party_dkg_public_output,
+        centralized_party_dkg_secret_output,
+        presign,
+        message,
+        hash_type,
+        signature_scheme,
+    )
+        .map_err(|e| JsError::new(&e.to_string()))?;
+
+    serde_wasm_bindgen::to_value(&signed_message).map_err(|e| JsError::new(&e.to_string()))
+}
+
 // There is no way to implement From<anyhow::Error> for JsErr
 // since the current From<Error> is generic, and it results in a conflict.
 fn to_js_err(e: anyhow::Error) -> JsError {
