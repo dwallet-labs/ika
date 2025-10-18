@@ -748,7 +748,7 @@ export class IkaClient {
 		if (dWallet) {
 			selectedCurve = dWallet.curve as Curve;
 		} else {
-			selectedCurve = curve ?? (0 as Curve);
+			selectedCurve = curve !== undefined ? curve : (0 as Curve);
 		}
 
 		const protocolPublicParameters = !networkEncryptionKey.reconfigurationOutputID
