@@ -33,7 +33,7 @@ import { SignatureAlgorithm } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import {
 	create_sign_centralized_party_message as create_sign,
-	create_sign_centralized_party_message_with_centralized_output as create_sign_with_centralized_output,
+	create_sign_centralized_party_message_with_centralized_party_dkg_output as create_sign_with_centralized_output,
 } from './wasm-loader.js';
 
 /**

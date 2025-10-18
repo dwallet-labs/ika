@@ -17,7 +17,7 @@ import {
 	create_dkg_centralized_output_v2,
 	create_dkg_centralized_output_v1 as create_dkg_user_output,
 	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
-	create_sign_centralized_party_message_with_centralized_output,
+	create_sign_centralized_party_message_with_centralized_party_dkg_output,
 	create_sign_centralized_party_message as create_sign_user_message,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
@@ -384,7 +384,7 @@ export async function createUserSignMessageWithCentralizedOutput(
 	signatureScheme: number,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
-		await create_sign_centralized_party_message_with_centralized_output(
+		await create_sign_centralized_party_message_with_centralized_party_dkg_output(
 			protocolPublicParameters,
 			centralizedDkgOutput,
 			userSecretKeyShare,
