@@ -2,18 +2,19 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use dwallet_mpc_centralized_party::{
-    advance_centralized_sign_party, advance_centralized_sign_party_with_centralized_output,
-    centralized_and_decentralized_parties_dkg_output_match_inner, create_dkg_output_by_curve_v2,
-    create_dkg_output_v1, create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
-    dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
+    advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
+    create_dkg_output_by_curve_v2, create_dkg_output_v1,
+    create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
+    dwallet_version_inner, dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
     encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
+    generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
     public_key_from_centralized_dkg_output_by_curve, public_key_from_dwallet_output_by_curve,
     reconfiguration_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
     verify_secp_signature_inner, verify_secret_share_v1,
 };
-use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsValue;
 
 #[wasm_bindgen]
 pub fn create_dkg_centralized_output_v1(
@@ -259,23 +260,19 @@ pub fn create_sign_centralized_party_message(
     serde_wasm_bindgen::to_value(&signed_message).map_err(|e| JsError::new(&e.to_string()))
 }
 
-/// Creates a signed message using centralized DKG output directly.
-///
-/// This version accepts the centralized DKG output directly instead of deriving it
-/// from the decentralized party's DKG public output.
 #[wasm_bindgen]
-pub fn create_sign_centralized_party_message_with_centralized_output(
+pub fn create_sign_centralized_party_message_with_centralized_party_dkg_output(
     protocol_pp: Vec<u8>,
-    centralized_dkg_output: Vec<u8>,
+    centralized_party_dkg_public_output: Vec<u8>,
     centralized_party_dkg_secret_output: Vec<u8>,
     presign: Vec<u8>,
     message: Vec<u8>,
     hash_type: u32,
     signature_scheme: u32,
 ) -> Result<JsValue, JsError> {
-    let signed_message = advance_centralized_sign_party_with_centralized_output(
+    let signed_message = advance_centralized_sign_party_with_centralized_party_dkg_output(
         protocol_pp,
-        centralized_dkg_output,
+        centralized_party_dkg_public_output,
         centralized_party_dkg_secret_output,
         presign,
         message,
