@@ -725,10 +725,6 @@ pub(crate) trait SignPartyPublicInputGenerator<P: twopc_mpc::sign::Protocol>: Pa
     ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput>;
 }
 
-/// A trait for generating the public input for decentralized `Sign` round in the MPC protocol.
-///
-/// This trait is implemented to resolve compiler type ambiguities that arise in the 2PC-MPC library
-/// when accessing [`Party::PublicInput`].
 pub(crate) trait DKGAndSignPartyPublicInputGenerator<P: twopc_mpc::sign::Protocol>:
     Party
 {
