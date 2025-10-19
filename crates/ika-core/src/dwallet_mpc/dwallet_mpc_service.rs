@@ -831,7 +831,7 @@ impl DWalletMPCService {
             ProtocolData::DWalletDKGAndSign {
                 dwallet_id, data, ..
             } => {
-                todo!(this pr);
+                todo!("this pr");
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
                     output,
                     dwallet_id: dwallet_id.to_vec(),
