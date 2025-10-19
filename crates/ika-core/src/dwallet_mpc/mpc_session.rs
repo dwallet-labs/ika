@@ -499,7 +499,7 @@ impl DWalletMPCManager {
                 request: request.clone(),
             },
             Err(e) => {
-                error!(should_never_happen=true, error=?e, ?request, "create session input from dWallet request with error");
+                error!(error=?e, ?request, "create session input from dWallet request with error");
                 SessionStatus::Failed
             }
         };

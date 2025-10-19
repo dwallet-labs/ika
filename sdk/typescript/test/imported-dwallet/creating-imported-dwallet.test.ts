@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { prepareImportedKeyDWalletVerification } from '../../src/client/cryptography';
+import {
+	ImportDWalletVerificationRequestInput,
+	prepareImportedKeyDWalletVerification,
+} from '../../src/client/cryptography';
 import { Curve, ImportedKeyDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
@@ -324,9 +327,10 @@ describe('Imported Key DWallet Creation', () => {
 
 		// Create a modified input with false data to trigger rejection
 		const falseVerificationInput = {
-			...importDWalletVerificationRequestInput,
-			userPublicOutput: new Uint8Array(32).fill(1), // False data
-		};
+			userPublicOutput: new Uint8Array(20).fill(1), // False data
+			encryptedUserShareAndProof: new Uint8Array(20).fill(2), // False data
+			userMessage: new Uint8Array(20).fill(3), // False data
+		} as ImportDWalletVerificationRequestInput;
 
 		const importedKeyDWalletVerificationRequestEvent =
 			await requestTestImportedKeyDWalletVerification(
@@ -349,7 +353,7 @@ describe('Imported Key DWallet Creation', () => {
 			() =>
 				ikaClient.getDWalletInParticularState(
 					importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
-					'AwaitingKeyHolderSignature',
+					'AwaitingNetworkImportedKeyVerification',
 				),
 			(wallet) => wallet !== null,
 			30,
@@ -357,7 +361,9 @@ describe('Imported Key DWallet Creation', () => {
 		);
 
 		expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
-		expect(awaitingKeyHolderSignatureDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
+		expect(awaitingKeyHolderSignatureDWallet.state.$kind).toBe(
+			'AwaitingNetworkImportedKeyVerification',
+		);
 
 		// Verify that the dwallet in NetworkRejectedImportedKeyVerification state
 		const stillAwaitingDWallet = await retryUntil(
