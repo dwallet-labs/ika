@@ -178,23 +178,23 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::DWalletDKGAndSign {
-                advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::DWalletDKGAndSign {
-                advance_request: SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::DWalletDKGAndSign {
-                advance_request: SignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::DWalletDKGAndSign {
-                advance_request: SignAdvanceRequestByProtocol::Curve25519(advance_request),
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::DWalletDKGAndSign {
-                advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
