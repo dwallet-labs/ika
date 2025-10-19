@@ -64,6 +64,7 @@ pub struct DWalletDKGAndSignData {
     pub hash_type: HashType,
     pub message: Vec<u8>,
     pub message_centralized_signature: Vec<u8>,
+    pub sign_id: ObjectID,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
@@ -285,6 +286,7 @@ pub fn dwallet_dkg_and_sign_protocol_data(
             message_centralized_signature: sign_during_dkg_request
                 .message_centralized_signature
                 .clone(),
+            sign_id: sign_during_dkg_request.sign_id,
         },
         dwallet_id: request_event_data.dwallet_id,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
