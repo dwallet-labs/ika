@@ -182,11 +182,13 @@ export async function reconfiguration_public_output_to_protocol_pp(
 }
 
 export async function centralized_and_decentralized_parties_dkg_output_match(
+	curve: Curve,
 	userPublicOutput: Uint8Array,
 	networkDKGOutput: Uint8Array,
 ): Promise<boolean> {
 	const wasm = await getWasmModule();
 	return wasm.centralized_and_decentralized_parties_dkg_output_match(
+		curve,
 		userPublicOutput,
 		networkDKGOutput,
 	);

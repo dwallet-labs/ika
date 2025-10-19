@@ -135,10 +135,12 @@ pub fn reconfiguration_public_output_to_protocol_pp(
 
 #[wasm_bindgen]
 pub fn centralized_and_decentralized_parties_dkg_output_match(
+    curve: u32,
     centralized_dkg_output: Vec<u8>,
     decentralized_dkg_output: Vec<u8>,
 ) -> Result<JsValue, JsError> {
     let result = centralized_and_decentralized_parties_dkg_output_match_inner(
+        curve,
         &centralized_dkg_output,
         &decentralized_dkg_output,
     )

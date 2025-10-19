@@ -558,10 +558,12 @@ export async function verifyAndGetDWalletDKGPublicOutput(
  * @returns True if the user's public output matches the network's public output, false otherwise
  */
 export async function userAndNetworkDKGOutputMatch(
+	curve: Curve,
 	userPublicOutput: Uint8Array,
 	networkDKGOutput: Uint8Array,
 ): Promise<boolean> {
 	return await centralized_and_decentralized_parties_dkg_output_match(
+		curve,
 		userPublicOutput,
 		networkDKGOutput,
 	);

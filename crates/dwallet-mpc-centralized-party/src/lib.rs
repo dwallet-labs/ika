@@ -31,7 +31,6 @@ use rand_core::SeedableRng;
 use std::fmt::Debug;
 use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput};
 use twopc_mpc::dkg::centralized_party;
-use twopc_mpc::secp256k1::SCALAR_LIMBS;
 
 use commitment::CommitmentSizedNumber;
 use crypto_bigint::{Encoding, Uint};
@@ -406,29 +405,68 @@ where
 ///
 /// Required usage: when accepting an encrypted user share after DKG before we sign on the network's public output.
 pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
+    curve: u32,
+    centralized_dkg_output: &Vec<u8>,
+    decentralized_dkg_output: &Vec<u8>,
+) -> anyhow::Result<bool> {
+    match curve.try_into()? {
+        DWalletCurve::Secp256k1 => {
+            centralized_and_decentralized_parties_dkg_output_match_by_protocol::<Secp256K1DKGProtocol>(
+                centralized_dkg_output,
+                decentralized_dkg_output,
+            )
+        }
+        DWalletCurve::Ristretto => {
+            centralized_and_decentralized_parties_dkg_output_match_by_protocol::<RistrettoDKGProtocol>(
+                centralized_dkg_output,
+                decentralized_dkg_output,
+            )
+        }
+        DWalletCurve::Curve25519 => {
+            centralized_and_decentralized_parties_dkg_output_match_by_protocol::<
+                Curve25519DKGProtocol,
+            >(centralized_dkg_output, decentralized_dkg_output)
+        }
+        DWalletCurve::Secp256r1 => {
+            centralized_and_decentralized_parties_dkg_output_match_by_protocol::<Secp256R1DKGProtocol>(
+                centralized_dkg_output,
+                decentralized_dkg_output,
+            )
+        }
+    }
+}
+
+fn centralized_and_decentralized_parties_dkg_output_match_by_protocol<
+    P: twopc_mpc::dkg::Protocol,
+>(
     centralized_dkg_output: &Vec<u8>,
     decentralized_dkg_output: &Vec<u8>,
 ) -> anyhow::Result<bool> {
     let versioned_centralized_dkg_output =
         bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(centralized_dkg_output)?;
     let centralized_dkg_output = match versioned_centralized_dkg_output {
-        VersionedCentralizedDKGPublicOutput::V1(output) => bcs::from_bytes::<
-            DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
-        >(output.as_slice())?
-        .into(),
-        VersionedCentralizedDKGPublicOutput::V2(output) => bcs::from_bytes::<
-            DKGCentralizedPartyVersionedOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
-        >(output.as_slice())?,
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let targeted: P::CentralizedPartyTargetedDKGOutput =
+                bcs::from_bytes(output.as_slice())?;
+            let versioned: P::CentralizedPartyDKGOutput = targeted.into();
+            versioned
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => {
+            bcs::from_bytes::<P::CentralizedPartyDKGOutput>(output.as_slice())?
+        }
     };
 
     let versioned_decentralized_dkg_output =
         bcs::from_bytes::<VersionedDwalletDKGSecondRoundPublicOutput>(decentralized_dkg_output)?;
     let decentralized_dkg_output = match versioned_decentralized_dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-            bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice())?.into()
+            let targeted: P::DecentralizedPartyTargetedDKGOutput =
+                bcs::from_bytes(output.as_slice())?;
+            let versioned: P::DecentralizedPartyDKGOutput = targeted.into();
+            versioned
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
+            bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
         }
     };
 

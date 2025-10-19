@@ -43,6 +43,48 @@ pub type DKGDecentralizedPartyVersionedOutputSecp256k1 = DKGDecentralizedPartyVe
     group::secp256k1::GroupElement,
 >;
 
+pub type DKGDecentralizedPartyOutputRistretto = DKGDecentralizedPartyOutput<
+    { twopc_mpc::ristretto::SCALAR_LIMBS },
+    { twopc_mpc::ristretto::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::ristretto::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::ristretto::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyVersionedOutputRistretto = DKGDecentralizedPartyVersionedOutput<
+    { twopc_mpc::ristretto::SCALAR_LIMBS },
+    { twopc_mpc::ristretto::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::ristretto::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::ristretto::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyOutputCurve25519 = DKGDecentralizedPartyOutput<
+    { twopc_mpc::curve25519::SCALAR_LIMBS },
+    { twopc_mpc::curve25519::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::curve25519::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::curve25519::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyVersionedOutputCurve25519 = DKGDecentralizedPartyVersionedOutput<
+    { twopc_mpc::curve25519::SCALAR_LIMBS },
+    { twopc_mpc::curve25519::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::curve25519::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::curve25519::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyOutputSecp256r1 = DKGDecentralizedPartyOutput<
+    { twopc_mpc::secp256r1::SCALAR_LIMBS },
+    { twopc_mpc::secp256r1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::secp256r1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::secp256r1::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyVersionedOutputSecp256r1 = DKGDecentralizedPartyVersionedOutput<
+    { twopc_mpc::secp256r1::SCALAR_LIMBS },
+    { twopc_mpc::secp256r1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::secp256r1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::secp256r1::GroupElement,
+>;
+
 #[enum_dispatch]
 pub trait NetworkEncryptionKeyPublicDataTrait {
     fn epoch(&self) -> u64;

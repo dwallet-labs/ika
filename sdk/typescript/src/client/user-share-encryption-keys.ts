@@ -187,7 +187,9 @@ export class UserShareEncryptionKeys {
 			dWallet.state.AwaitingKeyHolderSignature?.public_output,
 		);
 
-		if (!userAndNetworkDKGOutputMatch(userPublicOutput, dWalletPublicOutput)) {
+		if (
+			!userAndNetworkDKGOutputMatch(dWallet.curve as Curve, userPublicOutput, dWalletPublicOutput)
+		) {
 			throw new Error('User public output does not match the DWallet public output');
 		}
 
