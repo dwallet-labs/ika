@@ -828,6 +828,27 @@ impl DWalletMPCService {
                 });
                 vec![tx]
             }
+            ProtocolData::DWalletDKGAndSign {
+                dwallet_id, data, ..
+            } => {
+                todo!(this pr);
+                let tx = DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
+                    output,
+                    dwallet_id: dwallet_id.to_vec(),
+                    encrypted_secret_share_id: match data.user_secret_key_share {
+                        UserSecretKeyShareEventType::Encrypted {
+                            encrypted_user_secret_key_share_id,
+                            ..
+                        } => Some(encrypted_user_secret_key_share_id.to_vec()),
+                        UserSecretKeyShareEventType::Public { .. } => None,
+                    },
+                    sign_id: None,
+                    signature: vec![],
+                    rejected,
+                    session_sequence_number: session_request.session_sequence_number,
+                });
+                vec![tx]
+            }
             ProtocolData::DKGFirst { dwallet_id, .. } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
                     DKGFirstRoundOutput {
