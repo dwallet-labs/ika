@@ -988,7 +988,9 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
             // since the output is already in the correct format
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value: bcs::to_bytes(&(
-                    bcs::to_bytes(&dwallet_dkg_output)?,
+                    bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
+                        bcs::to_bytes(&dwallet_dkg_output)?,
+                    ))?,
                     bcs::to_bytes(&parsed_signature_result.unwrap())?,
                 ))?,
                 malicious_parties,
