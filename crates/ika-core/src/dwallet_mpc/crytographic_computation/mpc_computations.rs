@@ -244,7 +244,7 @@ impl ProtocolCryptographicData {
 
                 let advance_request_result = DWalletDKGAndSignAdvanceRequestByProtocol::try_new(
                     &data.curve,
-                    &DWalletSignatureScheme::try_from(data.signature_algorithm)?,
+                    &data.signature_algorithm,
                     party_id,
                     access_structure,
                     consensus_round,

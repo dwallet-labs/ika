@@ -126,7 +126,7 @@ pub(crate) fn session_input_from_request(
                     data.hash_type,
                     access_structure,
                     encryption_key_public_data,
-                    DWalletSignatureScheme::try_from(data.signature_algorithm)?,
+                    data.signature_algorithm,
                 )?),
                 None,
             ))
