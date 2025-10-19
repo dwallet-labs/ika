@@ -118,33 +118,67 @@ export type EncryptedUserSecretKeyShareState =
 	typeof CoordinatorInnerModule.EncryptedUserSecretKeyShareState.$inferType.$kind;
 export type SignState = typeof CoordinatorInnerModule.SignState.$inferType.$kind;
 
+/**
+ * Hash algorithms supported by the Ika network.
+ *
+ * **Valid Combinations:**
+ * - `KECCAK256`, `SHA256`, `DoubleSHA256`: Compatible with ECDSASecp256k1, Taproot
+ * - `SHA256`, `DoubleSHA256`: Compatible with ECDSASecp256r1
+ * - `SHA512`: Compatible with EdDSA
+ * - `Merlin`: Compatible with SchnorrkelSubstrate
+ */
 export const Hash = {
+	/** KECCAK256 (SHA3) - Compatible with: ECDSASecp256k1, Taproot */
 	KECCAK256: 0,
+	/** SHA256 - Compatible with: ECDSASecp256k1, Taproot, ECDSASecp256r1 */
 	SHA256: 1,
-	/// A double sha256 hash: h(x) = sha256(sha256(x)). Used by bitcoin
+	/** Double SHA256: h(x) = sha256(sha256(x)) - Used by Bitcoin. Compatible with: ECDSASecp256k1, Taproot, ECDSASecp256r1 */
 	DoubleSHA256: 2,
+	/** SHA512 - Compatible with: EdDSA only */
 	SHA512: 3,
-	/// Not a hash-function per-sa, but a STROBE-based transcript construction.
-	/// Used in Schnorrkel signatures.
+	/** Merlin (STROBE-based transcript construction) - Compatible with: SchnorrkelSubstrate only */
 	Merlin: 4,
 } as const;
 
 export type Hash = (typeof Hash)[keyof typeof Hash];
 
+/**
+ * Elliptic curves supported by the Ika network.
+ * Each curve is associated with specific signature algorithms.
+ */
 export const Curve = {
+	/** secp256k1 - Used by: ECDSASecp256k1, Taproot */
 	SECP256K1: 0,
+	/** Ristretto - Used by: SchnorrkelSubstrate */
 	RISTRETTO: 1,
+	/** Ed25519 - Used by: EdDSA */
 	ED25519: 2,
+	/** secp256r1 (P-256) - Used by: ECDSASecp256r1 */
 	SECP256R1: 3,
 } as const;
 
 export type Curve = (typeof Curve)[keyof typeof Curve];
 
+/**
+ * Signature algorithms supported by the Ika network.
+ *
+ * **Valid Hash Combinations:**
+ * - `ECDSASecp256k1`: KECCAK256, SHA256, DoubleSHA256
+ * - `Taproot`: KECCAK256, SHA256, DoubleSHA256
+ * - `ECDSASecp256r1`: SHA256, DoubleSHA256
+ * - `EdDSA`: SHA512 only
+ * - `SchnorrkelSubstrate`: Merlin only
+ */
 export const SignatureAlgorithm = {
+	/** ECDSA with secp256k1 curve - Valid hashes: KECCAK256, SHA256, DoubleSHA256 */
 	ECDSASecp256k1: 0,
+	/** Taproot (Bitcoin) - Valid hashes: KECCAK256, SHA256, DoubleSHA256 */
 	Taproot: 1,
+	/** ECDSA with secp256r1 (P-256) curve - Valid hashes: SHA256, DoubleSHA256 */
 	ECDSASecp256r1: 2,
+	/** EdDSA (Ed25519) - Valid hash: SHA512 only */
 	EdDSA: 3,
+	/** Schnorrkel/Ristretto (Substrate) - Valid hash: Merlin only */
 	SchnorrkelSubstrate: 4,
 } as const;
 

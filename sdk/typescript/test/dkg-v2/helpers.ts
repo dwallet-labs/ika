@@ -150,16 +150,18 @@ export async function requestPresignForDKG(
 	return presign;
 }
 
-export async function executeDKGRequest(
+export async function executeDKGRequest<S extends SignatureAlgorithm = never>(
 	setup: DKGTestSetup,
 	dkgPrepare: DKGPrepareResult,
 	curve: Curve,
-	signDuringDKGOptions?: {
-		presign: Presign;
-		message: Buffer;
-		hashScheme: Hash;
-		signatureAlgorithm: SignatureAlgorithm;
-	},
+	signDuringDKGOptions?: S extends never
+		? never
+		: {
+				presign: Presign;
+				message: Buffer;
+				hashScheme: Hash;
+				signatureAlgorithm: S;
+			},
 ): Promise<DKGExecuteResult> {
 	const { suiClient, ikaClient, userShareEncryptionKeys, signerAddress, testName } = setup;
 	const {
@@ -198,7 +200,7 @@ export async function executeDKGRequest(
 		sessionIdentifier: ikaTransaction.registerSessionIdentifier(randomSessionIdentifier),
 		...(signDuringDKGOptions && {
 			signDuringDKGRequest: {
-				hashScheme: signDuringDKGOptions.hashScheme,
+				hashScheme: signDuringDKGOptions.hashScheme as any,
 				message: signDuringDKGOptions.message,
 				verifiedPresignCap: ikaTransaction.verifyPresignCap({
 					presign: signDuringDKGOptions.presign,
@@ -509,7 +511,7 @@ export async function runCompleteSharedDKGFlowWithSign(
 		suiCoin: suiTransaction.gas,
 		sessionIdentifier: ikaTransaction.registerSessionIdentifier(randomSessionIdentifier),
 		signDuringDKGRequest: {
-			hashScheme: signDuringDKGOptions.hashScheme,
+			hashScheme: signDuringDKGOptions.hashScheme as any,
 			message: signDuringDKGOptions.message,
 			verifiedPresignCap: ikaTransaction.verifyPresignCap({
 				presign: presign,

@@ -9,3 +9,4 @@ export * from './cryptography.js';
 export * from './user-share-encryption-keys.js';
 export * from './utils.js';
 export * from './network-configs.js';
+export * from './hash-signature-validation.js';
