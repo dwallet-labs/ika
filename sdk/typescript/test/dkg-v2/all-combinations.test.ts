@@ -356,32 +356,14 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 		});
 	});
 
-	// Taproot + SECP256K1 combinations (3 tests)
+	// Taproot + SECP256K1 combinations (1 test)
 	describe('Taproot on SECP256K1', () => {
-		it('should work with KECCAK256', async () => {
-			await testCombination(
-				Curve.SECP256K1,
-				SignatureAlgorithm.Taproot,
-				Hash.KECCAK256,
-				'taproot-keccak256',
-			);
-		});
-
 		it('should work with SHA256', async () => {
 			await testCombination(
 				Curve.SECP256K1,
 				SignatureAlgorithm.Taproot,
 				Hash.SHA256,
 				'taproot-sha256',
-			);
-		});
-
-		it('should work with DoubleSHA256', async () => {
-			await testCombination(
-				Curve.SECP256K1,
-				SignatureAlgorithm.Taproot,
-				Hash.DoubleSHA256,
-				'taproot-double-sha256',
 			);
 		});
 	});

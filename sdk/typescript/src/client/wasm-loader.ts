@@ -58,12 +58,13 @@ export async function encrypt_secret_share(
 }
 
 export async function verify_user_share(
+	curve: Curve,
 	userSecretKeyShare: Uint8Array,
 	userDKGOutput: Uint8Array,
 	networkDkgPublicOutput: Uint8Array,
 ): Promise<boolean> {
 	const wasm = await getWasmModule();
-	return wasm.verify_user_share(userSecretKeyShare, userDKGOutput, networkDkgPublicOutput);
+	return wasm.verify_user_share(curve, userSecretKeyShare, userDKGOutput, networkDkgPublicOutput);
 }
 
 export async function generate_secp_cg_keypair_from_seed(
@@ -208,16 +209,16 @@ export async function create_imported_dwallet_centralized_step(
 }
 
 export async function decrypt_user_share(
+	curve: Curve,
 	decryptionKey: Uint8Array,
-	encryptionKey: Uint8Array,
 	dWalletPublicOutput: Uint8Array,
 	encryptedShare: Uint8Array,
 	protocolPublicParameters: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
 	return wasm.decrypt_user_share(
+		curve,
 		decryptionKey,
-		encryptionKey,
 		dWalletPublicOutput,
 		encryptedShare,
 		protocolPublicParameters,

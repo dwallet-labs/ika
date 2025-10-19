@@ -5,13 +5,13 @@ use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party,
     advance_centralized_sign_party_with_centralized_party_dkg_output,
     centralized_and_decentralized_parties_dkg_output_match_inner, create_dkg_output_by_curve_v2,
-    create_dkg_output_v1, create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
+    create_dkg_output_v1, create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v2,
     dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
     encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
     network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
     parse_signature_from_sign_output_inner, public_key_from_centralized_dkg_output_by_curve,
     public_key_from_dwallet_output_by_curve, reconfiguration_public_output_to_protocol_pp_inner,
-    sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share_v1,
+    sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share_v2,
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
@@ -166,15 +166,15 @@ pub fn encrypt_secret_share(
 /// Decrypts the given encrypted user share using the given decryption key.
 #[wasm_bindgen]
 pub fn decrypt_user_share(
+    curve: u32,
     decryption_key: Vec<u8>,
-    encryption_key: Vec<u8>,
     dwallet_dkg_output: Vec<u8>,
     encrypted_user_share_and_proof: Vec<u8>,
     protocol_pp: Vec<u8>,
 ) -> Result<JsValue, JsError> {
-    let decrypted_secret_share = decrypt_user_share_v1(
+    let decrypted_secret_share = decrypt_user_share_v2(
+        curve,
         decryption_key,
-        encryption_key,
         dwallet_dkg_output,
         encrypted_user_share_and_proof,
         protocol_pp,
@@ -187,12 +187,13 @@ pub fn decrypt_user_share(
 /// DKG output->centralized_party_public_key_share.
 #[wasm_bindgen]
 pub fn verify_user_share(
+    curve: u32,
     secret_share: Vec<u8>,
     dkg_output: Vec<u8>,
     network_dkg_public_output: Vec<u8>,
 ) -> Result<JsValue, JsError> {
     Ok(JsValue::from(
-        verify_secret_share_v1(secret_share, dkg_output, &network_dkg_public_output)
+        verify_secret_share_v2(curve, secret_share, dkg_output, &network_dkg_public_output)
             .map_err(to_js_err)?,
     ))
 }

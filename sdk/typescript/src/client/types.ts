@@ -122,17 +122,18 @@ export type SignState = typeof CoordinatorInnerModule.SignState.$inferType.$kind
  * Hash algorithms supported by the Ika network.
  *
  * **Valid Combinations:**
- * - `KECCAK256`, `SHA256`, `DoubleSHA256`: Compatible with ECDSASecp256k1, Taproot
+ * - `KECCAK256`, `SHA256`, `DoubleSHA256`: Compatible with ECDSASecp256k1
+ * - `SHA256`: Compatible with Taproot
  * - `SHA256`, `DoubleSHA256`: Compatible with ECDSASecp256r1
  * - `SHA512`: Compatible with EdDSA
  * - `Merlin`: Compatible with SchnorrkelSubstrate
  */
 export const Hash = {
-	/** KECCAK256 (SHA3) - Compatible with: ECDSASecp256k1, Taproot */
+	/** KECCAK256 (SHA3) - Compatible with: ECDSASecp256k1 */
 	KECCAK256: 0,
 	/** SHA256 - Compatible with: ECDSASecp256k1, Taproot, ECDSASecp256r1 */
 	SHA256: 1,
-	/** Double SHA256: h(x) = sha256(sha256(x)) - Used by Bitcoin. Compatible with: ECDSASecp256k1, Taproot, ECDSASecp256r1 */
+	/** Double SHA256: h(x) = sha256(sha256(x)) - Compatible with: ECDSASecp256k1, ECDSASecp256r1 */
 	DoubleSHA256: 2,
 	/** SHA512 - Compatible with: EdDSA only */
 	SHA512: 3,
@@ -164,7 +165,7 @@ export type Curve = (typeof Curve)[keyof typeof Curve];
  *
  * **Valid Hash Combinations:**
  * - `ECDSASecp256k1`: KECCAK256, SHA256, DoubleSHA256
- * - `Taproot`: KECCAK256, SHA256, DoubleSHA256
+ * - `Taproot`: SHA256 only
  * - `ECDSASecp256r1`: SHA256, DoubleSHA256
  * - `EdDSA`: SHA512 only
  * - `SchnorrkelSubstrate`: Merlin only
@@ -172,7 +173,7 @@ export type Curve = (typeof Curve)[keyof typeof Curve];
 export const SignatureAlgorithm = {
 	/** ECDSA with secp256k1 curve - Valid hashes: KECCAK256, SHA256, DoubleSHA256 */
 	ECDSASecp256k1: 0,
-	/** Taproot (Bitcoin) - Valid hashes: KECCAK256, SHA256, DoubleSHA256 */
+	/** Taproot (Bitcoin) - Valid hash: SHA256 only */
 	Taproot: 1,
 	/** ECDSA with secp256r1 (P-256) curve - Valid hashes: SHA256, DoubleSHA256 */
 	ECDSASecp256r1: 2,

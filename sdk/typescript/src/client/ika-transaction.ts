@@ -227,6 +227,7 @@ export class IkaTransaction {
 								presign: signDuringDKGRequest.presign,
 								curve,
 							},
+							signDuringDKG: signDuringDKGRequest ? true : false,
 						}),
 						this.#transaction,
 					)
@@ -319,6 +320,7 @@ export class IkaTransaction {
 								presign: signDuringDKGRequest.presign,
 								curve,
 							},
+							signDuringDKG: signDuringDKGRequest ? true : false,
 						}),
 						this.#transaction,
 					)
@@ -1797,15 +1799,22 @@ export class IkaTransaction {
 	}
 
 	async #verifySecretShare({
+		curve,
 		verifiedPublicOutput,
 		secretShare,
 		publicParameters,
 	}: {
+		curve: Curve;
 		verifiedPublicOutput: Uint8Array;
 		secretShare: Uint8Array;
 		publicParameters: Uint8Array;
 	}) {
-		const userShareVerified = verifyUserShare(secretShare, verifiedPublicOutput, publicParameters);
+		const userShareVerified = verifyUserShare(
+			curve,
+			secretShare,
+			verifiedPublicOutput,
+			publicParameters,
+		);
 
 		if (!userShareVerified) {
 			throw new Error('User share verification failed');
@@ -1841,6 +1850,7 @@ export class IkaTransaction {
 			);
 
 		await this.#verifySecretShare({
+			curve: dWallet.curve as Curve,
 			verifiedPublicOutput,
 			secretShare,
 			publicParameters,
@@ -1900,8 +1910,10 @@ export class IkaTransaction {
 
 	async #getUserSignMessage({
 		userSignatureInputs,
+		signDuringDKG = false,
 	}: {
 		userSignatureInputs: UserSignatureInputs;
+		signDuringDKG?: boolean;
 	}): Promise<Uint8Array> {
 		this.#assertPresignCompleted(userSignatureInputs.presign);
 
@@ -1947,11 +1959,18 @@ export class IkaTransaction {
 			secretShare = userSignatureInputs.secretShare;
 			publicOutput = userSignatureInputs.publicOutput;
 
-			if (userSignatureInputs.curve === undefined) {
+			if (!signDuringDKG) {
+				if (!userSignatureInputs.curve) {
+					throw new Error(
+						'Curve is required when providing explicit secret share and public output without activeDWallet',
+					);
+				}
+
 				await this.#verifySecretShare({
+					curve: userSignatureInputs.curve,
 					verifiedPublicOutput: publicOutput,
 					secretShare,
-					publicParameters,
+					publicParameters: publicParameters,
 				});
 			}
 		}

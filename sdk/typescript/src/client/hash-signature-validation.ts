@@ -7,14 +7,15 @@ import { Curve, Hash, SignatureAlgorithm } from './types.js';
  * Supported hash algorithms for each signature algorithm.
  *
  * Mapping:
- * - secp256k1 (ECDSASecp256k1, Taproot): SHA2 (SHA256, DoubleSHA256), SHA3 (KECCAK256)
+ * - secp256k1 (ECDSASecp256k1): SHA2 (SHA256, DoubleSHA256), SHA3 (KECCAK256)
+ * - Taproot: SHA256 only
  * - secp256r1 (ECDSASecp256r1): SHA2 (SHA256, DoubleSHA256) only
  * - EdDSA (Ed25519): SHA512 only
  * - SchnorrkelSubstrate (Ristretto): Merlin only
  */
 const VALID_HASH_SIGNATURE_COMBINATIONS: Record<SignatureAlgorithm, readonly Hash[]> = {
 	[SignatureAlgorithm.ECDSASecp256k1]: [Hash.KECCAK256, Hash.SHA256, Hash.DoubleSHA256],
-	[SignatureAlgorithm.Taproot]: [Hash.KECCAK256, Hash.SHA256, Hash.DoubleSHA256],
+	[SignatureAlgorithm.Taproot]: [Hash.SHA256],
 	[SignatureAlgorithm.ECDSASecp256r1]: [Hash.SHA256, Hash.DoubleSHA256],
 	[SignatureAlgorithm.EdDSA]: [Hash.SHA512],
 	[SignatureAlgorithm.SchnorrkelSubstrate]: [Hash.Merlin],
@@ -142,7 +143,7 @@ export type ValidHashForSignature<S extends SignatureAlgorithm> =
 	S extends typeof SignatureAlgorithm.ECDSASecp256k1
 		? typeof Hash.KECCAK256 | typeof Hash.SHA256 | typeof Hash.DoubleSHA256
 		: S extends typeof SignatureAlgorithm.Taproot
-			? typeof Hash.KECCAK256 | typeof Hash.SHA256 | typeof Hash.DoubleSHA256
+			? typeof Hash.SHA256
 			: S extends typeof SignatureAlgorithm.ECDSASecp256r1
 				? typeof Hash.SHA256 | typeof Hash.DoubleSHA256
 				: S extends typeof SignatureAlgorithm.EdDSA

@@ -253,8 +253,8 @@ export class UserShareEncryptionKeys {
 			verifiedPublicOutput: dWalletPublicOutput,
 			secretShare: Uint8Array.from(
 				await decrypt_user_share(
+					this.curve,
 					this.decryptionKey,
-					this.encryptionKey,
 					dWalletPublicOutput,
 					Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
 					protocolPublicParameters,
