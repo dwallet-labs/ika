@@ -298,6 +298,26 @@ impl ProtocolCryptographicData {
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: SignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: SignAdvanceRequestByProtocol::Curve25519(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
