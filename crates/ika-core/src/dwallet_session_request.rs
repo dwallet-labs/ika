@@ -88,7 +88,7 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve.clone()),
                 hash_scheme: Some(data.hash_type),
-                signature_algorithm: None,
+                signature_algorithm: Some(data.signature_algorithm.clone()),
             },
             ProtocolData::ImportedKeyVerification { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
