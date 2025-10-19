@@ -341,7 +341,12 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Retry utility for tests that need to wait for network state changes
+ * Retry utility for tests that need to wait for network state changes.
+ * Note: This is now a simple wrapper since IkaClient methods like getPresignInParticularState
+ * already handle polling internally with exponential backoff.
+ *
+ * @deprecated Consider using IkaClient's *InParticularState methods directly instead,
+ * which have built-in polling with exponential backoff and AbortSignal support.
  */
 export async function retryUntil<T>(
 	fn: () => Promise<T>,
@@ -349,20 +354,28 @@ export async function retryUntil<T>(
 	maxAttempts: number = 30,
 	delayMs: number = 1000,
 ): Promise<T> {
-	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+	// If the function being called is already a polling method (like getPresignInParticularState),
+	// it will handle its own retries internally. Just call it once and verify the result.
+	const result = await fn();
+
+	if (condition(result)) {
+		return result;
+	}
+
+	// If the condition isn't met, the inner polling method should have thrown an error.
+	// If we get here, it means we need to do manual retries (for non-polling methods).
+	for (let attempt = 1; attempt < maxAttempts; attempt++) {
+		await sleep(delayMs);
+
 		try {
 			const result = await fn();
 			if (condition(result)) {
 				return result;
 			}
 		} catch (error) {
-			if (attempt === maxAttempts) {
+			if (attempt === maxAttempts - 1) {
 				throw error;
 			}
-		}
-
-		if (attempt < maxAttempts) {
-			await sleep(delayMs);
 		}
 	}
 

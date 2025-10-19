@@ -1,3 +1,4 @@
+import { bcs } from '@mysten/sui/bcs';
 import { Secp256k1PublicKey } from '@mysten/sui/keypairs/secp256k1';
 import { Transaction } from '@mysten/sui/transactions';
 import { sha256, sha512 } from '@noble/hashes/sha2';
@@ -163,11 +164,8 @@ async function signAndVerifyHash(
 	const expectedHash = computeHash(message, hashScheme);
 
 	// Get the encrypted user secret key share
-	const encryptedUserSecretKeyShare = await retryUntil(
-		() => ikaClient.getEncryptedUserSecretKeyShare(encryptedUserSecretKeyShareId),
-		(share) => share !== null,
-		30,
-		1000,
+	const encryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeyShare(
+		encryptedUserSecretKeyShareId,
 	);
 
 	expect(encryptedUserSecretKeyShare).toBeDefined();
@@ -221,18 +219,15 @@ async function signAndVerifyHash(
 	expect(expectedHash).toBeDefined();
 	expect(expectedHash.length).toBeGreaterThan(0);
 
-	const sign = await retryUntil(
-		() => ikaClient.getSignInParticularState(signEventData.event_data.sign_id, 'Completed'),
-		(sign) => sign !== null,
-		30,
-		1000,
+	const sign = await ikaClient.getSignInParticularState(
+		signEventData.event_data.sign_id,
+		'Completed',
+		{ timeout: 60000, interval: 1000 },
 	);
 
-	const dWallet = await retryUntil(
-		() => ikaClient.getDWalletInParticularState(signEventData.event_data.dwallet_id, 'Active'),
-		(dWallet) => dWallet !== null,
-		30,
-		1000,
+	const dWallet = await ikaClient.getDWalletInParticularState(
+		signEventData.event_data.dwallet_id,
+		'Active',
 	);
 
 	expect(sign).toBeDefined();
@@ -248,7 +243,7 @@ async function signAndVerifyHash(
 
 	const verified = await pk.verify(
 		expectedHash,
-		Uint8Array.from(sign.state.Completed?.signature ?? []).slice(1),
+		Uint8Array.from(sign.state.Completed?.signature ?? []),
 	);
 
 	expect(verified).toBe(true);

@@ -184,3 +184,5 @@ export type UserSignatureInputs = {
 	signatureScheme: SignatureAlgorithm;
 	curve?: Curve;
 };
+
+export const PublicKeyBCS = bcs.vector(bcs.u8());
