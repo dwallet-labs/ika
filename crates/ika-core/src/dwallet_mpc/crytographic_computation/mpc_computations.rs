@@ -1032,10 +1032,10 @@ impl ProtocolCryptographicData {
 }
 
 fn parse_signature_from_sign_output(
-    data: &SignData,
+    signature_algorithm: &DWalletSignatureScheme,
     public_output_value: Vec<u8>,
 ) -> DwalletMPCResult<Vec<u8>> {
-    match data.signature_algorithm {
+    match signature_algorithm {
         DWalletSignatureScheme::ECDSASecp256k1 => {
             let signature: ECDSASecp256k1Signature = bcs::from_bytes(&public_output_value)?;
             Ok(signature.to_bytes().to_vec())

@@ -9,7 +9,7 @@ use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::parse_signature_from_sign_output;
 use crate::dwallet_mpc::dwallet_dkg::DWalletDKGPublicInputByCurve;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
-use crate::request_protocol_data::SignData;
+use crate::request_protocol_data::{DWalletDKGAndSignData, SignData};
 use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -914,7 +914,10 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
             private_output,
         } => {
             let parsed_signature_result: DwalletMPCResult<Vec<u8>> =
-                parse_signature_from_sign_output(&sign_data, public_output_value);
+                parse_signature_from_sign_output(
+                    &sign_data.signature_algorithm,
+                    public_output_value,
+                );
             if parsed_signature_result.is_err() {
                 error!(
                     session_identifier=?session_id,
@@ -930,6 +933,68 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
             // since the output is already in the correct format
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value: parsed_signature_result.unwrap(),
+                malicious_parties,
+                private_output,
+            })
+        }
+    }
+}
+
+pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
+    party_id: PartyID,
+    access_structure: &WeightedThresholdAccessStructure,
+    session_id: CommitmentSizedNumber,
+    advance_request: AdvanceRequest<<DKGAndSignParty<P> as mpc::Party>::Message>,
+    public_input: <DKGAndSignParty<P> as mpc::Party>::PublicInput,
+    decryption_key_shares: Option<<DKGAndSignParty<P> as AsynchronouslyAdvanceable>::PrivateInput>,
+    sign_data: &DWalletDKGAndSignData,
+    rng: &mut impl CsRng,
+) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+    let result =
+        mpc::guaranteed_output_delivery::Party::<DKGAndSignParty<P>>::advance_with_guaranteed_output(
+            session_id,
+            party_id,
+            access_structure,
+            advance_request,
+            decryption_key_shares,
+            &public_input,
+            rng,
+        )
+        .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
+
+    match result {
+        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+        }
+        GuaranteedOutputDeliveryRoundResult::Finalize {
+            public_output_value,
+            malicious_parties,
+            private_output,
+        } => {
+            let (dwallet_dkg_output, signature_output) = bcs::from_bytes(&public_output_value)?;
+            let parsed_signature_result: DwalletMPCResult<Vec<u8>> =
+                parse_signature_from_sign_output(
+                    &sign_data.signature_algorithm,
+                    bcs::to_bytes(&signature_output)?,
+                );
+            if parsed_signature_result.is_err() {
+                error!(
+                    session_identifier=?session_id,
+                    ?parsed_signature_result,
+                    ?malicious_parties,
+                    signature_algorithm=?sign_data.signature_algorithm,
+                    should_never_happen = true,
+                    "failed to deserialize sign session result"
+                );
+                return Err(parsed_signature_result.err().unwrap());
+            }
+            // For Sign protocol, we don't need to wrap the output with version like presign does
+            // since the output is already in the correct format
+            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                public_output_value: bcs::to_bytes(&(
+                    bcs::to_bytes(&dwallet_dkg_output)?,
+                    bcs::to_bytes(&parsed_signature_result.unwrap())?,
+                ))?,
                 malicious_parties,
                 private_output,
             })
