@@ -474,13 +474,13 @@ export async function verifySecpSignature(
 /**
  * Create a public key from a DWallet output.
  *
- * @param dWalletOutput - The DWallet output
  * @param curve - The curve to use for key generation
+ * @param dWalletOutput - The DWallet output
  * @returns The public key
  */
 export async function publicKeyFromDWalletOutput(
-	dWalletOutput: Uint8Array,
 	curve: Curve,
+	dWalletOutput: Uint8Array,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(await public_key_from_dwallet_output(curve, dWalletOutput));
 }
