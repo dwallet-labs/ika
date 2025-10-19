@@ -53,7 +53,7 @@ pub struct DWalletDKGData {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
-#[display("dWallet DKG Second Round")]
+#[display("dWallet DKG and Sign")]
 pub struct DWalletDKGAndSignData {
     pub curve: DWalletCurve,
     pub centralized_public_key_share_and_proof: Vec<u8>,
