@@ -15,7 +15,7 @@ use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationPartyPublicInputGenerator, ReconfigurationV1ToV2PartyPublicInputGenerator,
     ReconfigurationV1toV2Party, ReconfigurationV2PartyPublicInputGenerator,
 };
-use crate::dwallet_mpc::sign::{DKGAndSignSignPublicInputByProtocol, SignPublicInputByProtocol};
+use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
     EncryptedShareVerificationData, MakeDWalletUserSecretKeySharesPublicData,
@@ -39,7 +39,7 @@ use std::collections::HashMap;
 pub(crate) enum PublicInput {
     DWalletImportedKeyVerificationRequest(DWalletImportedKeyVerificationPublicInputByCurve),
     DWalletDKG(DWalletDKGPublicInputByCurve),
-    DWalletDKGAndSign(DKGAndSignSignPublicInputByProtocol),
+    DWalletDKGAndSign(DKGAndSignPublicInputByProtocol),
     // Used only for V1 dWallets
     DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
     // Used only for V1 dWallets
@@ -109,14 +109,24 @@ pub(crate) fn session_input_from_request(
         } => {
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
+            let dwallet_dkg_public_input = DWalletDKGPublicInputByCurve::try_new(
+                &data.curve,
+                encryption_key_public_data,
+                &data.centralized_public_key_share_and_proof,
+                BytesCentralizedPartyKeyShareVerification::from(
+                    data.user_secret_key_share.clone(),
+                ),
+            )?;
             Ok((
-                PublicInput::DWalletDKGAndSign(DWalletDKGPublicInputByCurve::try_new(
+                PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
+                    session_id,
                     &data.curve,
                     encryption_key_public_data,
                     &data.centralized_public_key_share_and_proof,
                     BytesCentralizedPartyKeyShareVerification::from(
                         data.user_secret_key_share.clone(),
                     ),
+                    dwallet_dkg_public_input
                 )?),
                 None,
             ))
