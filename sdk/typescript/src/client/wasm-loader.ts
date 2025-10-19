@@ -3,7 +3,7 @@
 
 import type * as WasmModule from '@ika.xyz/ika-wasm';
 
-import { Curve } from './types';
+import type { Curve } from './types.js';
 
 let wasmModule: typeof WasmModule | null = null;
 let initPromise: Promise<void> | null = null;
