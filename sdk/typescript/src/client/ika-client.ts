@@ -768,8 +768,6 @@ export class IkaClient {
 			}
 		}
 
-		console.log('we are generating protocol public parameters for curve', selectedCurve);
-
 		const protocolPublicParameters = !networkEncryptionKey.reconfigurationOutputID
 			? await networkDkgPublicOutputToProtocolPublicParameters(
 					selectedCurve,

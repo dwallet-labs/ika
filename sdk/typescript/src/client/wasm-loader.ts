@@ -83,11 +83,12 @@ export async function create_dkg_centralized_output_v1(
 }
 
 export async function create_dkg_centralized_output_v2(
+	curve: Curve,
 	protocolPublicParameters: Uint8Array,
 	session_id: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array, Uint8Array]> {
 	const wasm = await getWasmModule();
-	return wasm.create_dkg_centralized_output_v2(protocolPublicParameters, session_id);
+	return wasm.create_dkg_centralized_output_v2(curve, protocolPublicParameters, session_id);
 }
 
 export async function create_sign_centralized_party_message(

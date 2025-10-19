@@ -200,6 +200,7 @@ export async function prepareDKG(
 
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] =
 		await create_dkg_centralized_output_v2(
+			curve,
 			protocolPublicParameters,
 			sessionIdentifierDigest(bytesToHash, senderAddressBytes),
 		);
