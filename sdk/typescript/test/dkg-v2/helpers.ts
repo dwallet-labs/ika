@@ -47,6 +47,7 @@ export interface DKGExecuteResult {
 	dWalletID: string;
 	encryptedUserSecretKeyShareId: string;
 	userPublicOutput: number[];
+	signId: string;
 }
 
 export async function setupDKGTest(testName: string, curve: Curve): Promise<DKGTestSetup> {
@@ -240,6 +241,7 @@ export async function executeDKGRequest(
 		dWalletID,
 		encryptedUserSecretKeyShareId: encryptedUserSecretKeyShareId as string,
 		userPublicOutput: parsedDkgEvent.event_data.user_public_output as number[],
+		signId: parsedDkgEvent.event_data.sign_during_dkg_request?.sign_id as string,
 	};
 }
 
@@ -357,6 +359,18 @@ export async function runCompleteDKGFlow(
 		dkgResult.userPublicOutput,
 		awaitingDWallet,
 	);
+
+	// If there was signature we should fetch the sign object and verify the signature
+	if (signDuringDKGOptions) {
+		const signObject = await setup.ikaClient.getSignInParticularState(
+			dkgResult.signId,
+			'Completed',
+			{ timeout: 60000, interval: 1000 },
+		);
+
+		expect(signObject).toBeDefined();
+		expect(signObject.state.$kind).toBe('Completed');
+	}
 }
 
 export async function runCompleteSharedDKGFlow(testName: string, curve: Curve): Promise<void> {

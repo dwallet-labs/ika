@@ -315,34 +315,32 @@ export class IkaClient {
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
 	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
-	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
+	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
+	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
+	 * @param options.signal - AbortSignal to cancel the polling
 	 * @returns Promise resolving to the DWallet object when it reaches the target state
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
-	 * @throws {Error} If timeout is reached before the target state is achieved
+	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
 	async getDWalletInParticularState(
 		dwalletID: string,
 		state: DWalletState,
-		options: { timeout?: number; interval?: number } = {},
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<DWallet> {
-		await this.ensureInitialized();
-
-		const { timeout = 30000, interval = 1000 } = options;
-		const startTime = Date.now();
-
-		while (Date.now() - startTime < timeout) {
-			const dWallet = await this.getDWallet(dwalletID);
-
-			if (dWallet.state.$kind === state) {
-				return dWallet;
-			}
-
-			// Wait for the specified interval before next poll
-			await new Promise((resolve) => setTimeout(resolve, interval));
-		}
-
-		throw new Error(`Timeout waiting for DWallet ${dwalletID} to reach state ${state}`);
+		return this.#pollUntilState(
+			() => this.getDWallet(dwalletID),
+			state,
+			`DWallet ${dwalletID} to reach state ${state}`,
+			options,
+		);
 	}
 
 	/**
@@ -374,33 +372,32 @@ export class IkaClient {
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
 	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
-	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
+	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
+	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
+	 * @param options.signal - AbortSignal to cancel the polling
 	 * @returns Promise resolving to the Presign object when it reaches the target state
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
-	 * @throws {Error} If timeout is reached before the target state is achieved
+	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
 	async getPresignInParticularState(
 		presignID: string,
 		state: PresignState,
-		options: { timeout?: number; interval?: number } = {},
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<Presign> {
-		await this.ensureInitialized();
-
-		const { timeout = 30000, interval = 1000 } = options;
-		const startTime = Date.now();
-
-		while (Date.now() - startTime < timeout) {
-			const presign = await this.getPresign(presignID);
-
-			if (presign.state.$kind === state) {
-				return presign;
-			}
-
-			await new Promise((resolve) => setTimeout(resolve, interval));
-		}
-
-		throw new Error(`Timeout waiting for presign ${presignID} to reach state ${state}`);
+		return this.#pollUntilState(
+			() => this.getPresign(presignID),
+			state,
+			`presign ${presignID} to reach state ${state}`,
+			options,
+		);
 	}
 
 	/**
@@ -433,35 +430,31 @@ export class IkaClient {
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
 	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
-	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
+	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
+	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
+	 * @param options.signal - AbortSignal to cancel the polling
 	 * @returns Promise resolving to the EncryptedUserSecretKeyShare object
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
+	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
 	async getEncryptedUserSecretKeyShareInParticularState(
 		encryptedUserSecretKeyShareID: string,
 		state: EncryptedUserSecretKeyShareState,
-		options: { timeout?: number; interval?: number } = {},
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<EncryptedUserSecretKeyShare> {
-		await this.ensureInitialized();
-
-		const { timeout = 30000, interval = 1000 } = options;
-		const startTime = Date.now();
-
-		while (Date.now() - startTime < timeout) {
-			const encryptedUserSecretKeyShare = await this.getEncryptedUserSecretKeyShare(
-				encryptedUserSecretKeyShareID,
-			);
-
-			if (encryptedUserSecretKeyShare.state.$kind === state) {
-				return encryptedUserSecretKeyShare;
-			}
-
-			await new Promise((resolve) => setTimeout(resolve, interval));
-		}
-
-		throw new Error(
-			`Timeout waiting for encrypted user secret key share ${encryptedUserSecretKeyShareID} to reach state ${state}`,
+		return this.#pollUntilState(
+			() => this.getEncryptedUserSecretKeyShare(encryptedUserSecretKeyShareID),
+			state,
+			`encrypted user secret key share ${encryptedUserSecretKeyShareID} to reach state ${state}`,
+			options,
 		);
 	}
 
@@ -491,27 +484,19 @@ export class IkaClient {
 	async getPartialUserSignatureInParticularState(
 		partialCentralizedSignedMessageID: string,
 		state: PartialUserSignatureState,
-		options: { timeout?: number; interval?: number } = {},
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<PartialUserSignature> {
-		await this.ensureInitialized();
-
-		const { timeout = 30000, interval = 1000 } = options;
-		const startTime = Date.now();
-
-		while (Date.now() - startTime < timeout) {
-			const partialUserSignature = await this.getPartialUserSignature(
-				partialCentralizedSignedMessageID,
-			);
-
-			if (partialUserSignature.state.$kind === state) {
-				return partialUserSignature;
-			}
-
-			await new Promise((resolve) => setTimeout(resolve, interval));
-		}
-
-		throw new Error(
-			`Timeout waiting for partial user signature ${partialCentralizedSignedMessageID} to reach state ${state}`,
+		return this.#pollUntilState(
+			() => this.getPartialUserSignature(partialCentralizedSignedMessageID),
+			state,
+			`partial user signature ${partialCentralizedSignedMessageID} to reach state ${state}`,
+			options,
 		);
 	}
 
@@ -544,33 +529,32 @@ export class IkaClient {
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
 	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
-	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
+	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
+	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
+	 * @param options.signal - AbortSignal to cancel the polling
 	 * @returns Promise resolving to the Sign object when it reaches the target state
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
-	 * @throws {Error} If timeout is reached before the target state is achieved
+	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
 	async getSignInParticularState(
 		signID: string,
 		state: SignState,
-		options: { timeout?: number; interval?: number } = {},
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<Sign> {
-		await this.ensureInitialized();
-
-		const { timeout = 30000, interval = 1000 } = options;
-		const startTime = Date.now();
-
-		while (Date.now() - startTime < timeout) {
-			const sign = await this.getSign(signID);
-
-			if (sign.state.$kind === state) {
-				return sign;
-			}
-
-			await new Promise((resolve) => setTimeout(resolve, interval));
-		}
-
-		throw new Error(`Timeout waiting for sign ${signID} to reach state ${state}`);
+		return this.#pollUntilState(
+			() => this.getSign(signID),
+			state,
+			`sign ${signID} to reach state ${state}`,
+			options,
+		);
 	}
 
 	/**
@@ -1239,5 +1223,112 @@ export class IkaClient {
 		}
 
 		return 'zero-trust';
+	}
+
+	/**
+	 * Generic polling method that waits for an object to meet a specific condition.
+	 * Implements exponential backoff and abort signal support.
+	 *
+	 * @param fetcher - Function that fetches the object
+	 * @param condition - Function that checks if the object meets the desired condition
+	 * @param errorContext - Context string for error messages (e.g., "DWallet X to reach state Y")
+	 * @param options - Optional configuration for polling behavior
+	 * @returns Promise resolving to the object when the condition is met
+	 * @throws {Error} If timeout is reached before condition is met or operation is aborted
+	 * @private
+	 */
+	async #pollUntilCondition<T>(
+		fetcher: () => Promise<T>,
+		condition: (obj: T) => boolean,
+		errorContext: string,
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
+	): Promise<T> {
+		await this.ensureInitialized();
+
+		const {
+			timeout = 30000,
+			interval = 1000,
+			maxInterval = 5000,
+			backoffMultiplier = 1.5,
+			signal,
+		} = options;
+
+		if (signal?.aborted) {
+			throw new Error('Operation aborted');
+		}
+
+		const startTime = Date.now();
+		let currentInterval = interval;
+		let lastError: Error | undefined;
+
+		while (Date.now() - startTime < timeout) {
+			if (signal?.aborted) {
+				throw new Error('Operation aborted');
+			}
+
+			try {
+				const obj = await fetcher();
+
+				if (condition(obj)) {
+					return obj;
+				}
+			} catch (error) {
+				lastError = error as Error;
+			}
+
+			await new Promise((resolve, reject) => {
+				const timeoutId = setTimeout(resolve, currentInterval);
+				signal?.addEventListener('abort', () => {
+					clearTimeout(timeoutId);
+					reject(new Error('Operation aborted'));
+				});
+			});
+
+			currentInterval = Math.min(currentInterval * backoffMultiplier, maxInterval);
+		}
+
+		const errorMessage = lastError
+			? `Timeout waiting for ${errorContext}. Last error: ${lastError.message}`
+			: `Timeout waiting for ${errorContext}`;
+
+		throw new Error(errorMessage);
+	}
+
+	/**
+	 * Specialized polling method that waits for an object to reach a specific state.
+	 * This is a convenience wrapper around #pollUntilCondition for the common case of checking state.$kind.
+	 *
+	 * @param fetcher - Function that fetches the object
+	 * @param state - The state to wait for (compared with obj.state.$kind)
+	 * @param errorContext - Context string for error messages (e.g., "DWallet X to reach state Y")
+	 * @param options - Optional configuration for polling behavior
+	 * @returns Promise resolving to the object when it reaches the desired state
+	 * @throws {Error} If timeout is reached before state is achieved or operation is aborted
+	 * @private
+	 */
+	async #pollUntilState<T extends { state: { $kind: string } }>(
+		fetcher: () => Promise<T>,
+		state: string,
+		errorContext: string,
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
+	): Promise<T> {
+		return this.#pollUntilCondition(
+			fetcher,
+			(obj) => obj.state.$kind === state,
+			errorContext,
+			options,
+		);
 	}
 }

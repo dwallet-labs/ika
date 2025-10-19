@@ -2,14 +2,18 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { bcs } from '@mysten/sui/bcs';
-import { decodeSuiPrivateKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
-import type { Keypair, PublicKey } from '@mysten/sui/cryptography';
+import {
+	decodeSuiPrivateKey,
+	Keypair,
+	PublicKey,
+	SIGNATURE_FLAG_TO_SCHEME,
+} from '@mysten/sui/cryptography';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { randomBytes } from '@noble/hashes/utils.js';
 
 import type { IkaClient } from './ika-client.js';
 import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
-import { Curve } from './types.js';
+import { Curve, PublicKeyBCS } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 import {
@@ -482,7 +486,9 @@ export async function publicKeyFromDWalletOutput(
 	curve: Curve,
 	dWalletOutput: Uint8Array,
 ): Promise<Uint8Array> {
-	return Uint8Array.from(await public_key_from_dwallet_output(curve, dWalletOutput));
+	return Uint8Array.from(
+		PublicKeyBCS.parse(Uint8Array.from(await public_key_from_dwallet_output(curve, dWalletOutput))),
+	);
 }
 
 /**
