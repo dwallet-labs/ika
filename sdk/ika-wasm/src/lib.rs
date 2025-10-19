@@ -9,12 +9,12 @@ use dwallet_mpc_centralized_party::{
     dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
     encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
     network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
-    public_key_from_centralized_dkg_output_by_curve, public_key_from_dwallet_output_by_curve,
-    reconfiguration_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
-    verify_secp_signature_inner, verify_secret_share_v1,
+    parse_signature_from_sign_output_inner, public_key_from_centralized_dkg_output_by_curve,
+    public_key_from_dwallet_output_by_curve, reconfiguration_public_output_to_protocol_pp_inner,
+    sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share_v1,
 };
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub fn create_dkg_centralized_output_v1(
@@ -292,4 +292,14 @@ pub fn create_sign_centralized_party_message_with_centralized_party_dkg_output(
 // since the current From<Error> is generic, and it results in a conflict.
 fn to_js_err(e: anyhow::Error) -> JsError {
     JsError::new(format!("{e}").as_str())
+}
+
+#[wasm_bindgen]
+pub fn parse_signature_from_sign_output(
+    signature_algorithm: u32,
+    signature_output: Vec<u8>,
+) -> Result<JsValue, JsError> {
+    let signature = parse_signature_from_sign_output_inner(signature_algorithm, signature_output)
+        .map_err(to_js_err)?;
+    Ok(serde_wasm_bindgen::to_value(&signature)?)
 }

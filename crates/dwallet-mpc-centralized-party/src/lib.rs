@@ -36,8 +36,10 @@ use crypto_bigint::{Encoding, Uint};
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
-use twopc_mpc::ecdsa::VerifyingKey;
+use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature, VerifyingKey};
+use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
 use twopc_mpc::secp256k1::class_groups::{ProtocolPublicParameters, TaprootProtocol};
+use twopc_mpc::sign::EncodableSignature;
 use twopc_mpc::{curve25519, ristretto, secp256r1};
 
 type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
@@ -1441,4 +1443,32 @@ fn decrypt_user_share_inner<P: twopc_mpc::dkg::Protocol>(
         VersionedDwalletUserSecretShare::V1(bcs::to_bytes(&centralized_party_secret_share)?);
     let secret_share_bytes = bcs::to_bytes(&secret_share_bytes)?;
     Ok(secret_share_bytes)
+}
+
+pub fn parse_signature_from_sign_output_inner(
+    signature_algorithm: u32,
+    signature_output: Vec<u8>,
+) -> anyhow::Result<Vec<u8>> {
+    match DWalletSignatureScheme::try_from(signature_algorithm)? {
+        DWalletSignatureScheme::ECDSASecp256k1 => {
+            let signature: ECDSASecp256k1Signature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.signature()?.to_vec())
+        }
+        DWalletSignatureScheme::ECDSASecp256r1 => {
+            let signature: ECDSASecp256r1Signature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.signature()?.to_vec())
+        }
+        DWalletSignatureScheme::EdDSA => {
+            let signature: EdDSASignature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureScheme::SchnorrkelSubstrate => {
+            let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureScheme::Taproot => {
+            let signature: TaprootSignature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+    }
 }

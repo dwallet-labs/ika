@@ -364,6 +364,7 @@ export async function runCompleteDKGFlow(
 	if (signDuringDKGOptions) {
 		const signObject = await setup.ikaClient.getSignInParticularState(
 			dkgResult.signId,
+			signDuringDKGOptions!.signatureAlgorithm,
 			'Completed',
 			{ timeout: 60000, interval: 1000 },
 		);

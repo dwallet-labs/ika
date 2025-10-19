@@ -12,6 +12,7 @@ import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
 import {
 	networkDkgPublicOutputToProtocolPublicParameters,
+	parseSignatureFromSignOutput,
 	reconfigurationPublicOutputToProtocolPublicParameters,
 } from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
@@ -37,6 +38,7 @@ import type {
 	PresignState,
 	SharedObjectOwner,
 	Sign,
+	SignatureAlgorithm,
 	SignState,
 	SystemInner,
 } from './types.js';
@@ -504,21 +506,31 @@ export class IkaClient {
 	 * Retrieve a sign session object by its ID.
 	 *
 	 * @param signID - The unique identifier of the sign session to retrieve
+	 * @param signatureAlgorithm - The signature algorithm to use for parsing
 	 * @returns Promise resolving to the Sign object
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getSign(signID: string): Promise<Sign> {
+	async getSign(signID: string, signatureAlgorithm: SignatureAlgorithm): Promise<Sign> {
 		await this.ensureInitialized();
 
-		return this.client
-			.getObject({
-				id: signID,
-				options: { showBcs: true },
-			})
-			.then((obj) => {
-				return CoordinatorInnerModule.SignSession.fromBase64(objResToBcs(obj));
-			});
+		const unparsedSign = await this.client.getObject({
+			id: signID,
+			options: { showBcs: true },
+		});
+
+		const sign = CoordinatorInnerModule.SignSession.fromBase64(objResToBcs(unparsedSign));
+
+		if (sign.state.$kind === 'Completed') {
+			sign.state.Completed.signature = Array.from(
+				await parseSignatureFromSignOutput(
+					signatureAlgorithm,
+					Uint8Array.from(sign.state.Completed.signature),
+				),
+			);
+		}
+
+		return sign;
 	}
 
 	/**
@@ -526,6 +538,7 @@ export class IkaClient {
 	 * This method polls the sign until it matches the specified state.
 	 *
 	 * @param signID - The unique identifier of the sign session to retrieve
+	 * @param signatureAlgorithm - The signature algorithm to use for parsing
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
 	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
@@ -540,6 +553,7 @@ export class IkaClient {
 	 */
 	async getSignInParticularState(
 		signID: string,
+		signatureAlgorithm: SignatureAlgorithm,
 		state: SignState,
 		options: {
 			timeout?: number;
@@ -550,7 +564,7 @@ export class IkaClient {
 		} = {},
 	): Promise<Sign> {
 		return this.#pollUntilState(
-			() => this.getSign(signID),
+			() => this.getSign(signID, signatureAlgorithm),
 			state,
 			`sign ${signID} to reach state ${state}`,
 			options,

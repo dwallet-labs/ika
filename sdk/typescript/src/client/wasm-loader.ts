@@ -3,7 +3,7 @@
 
 import type * as WasmModule from '@ika.xyz/ika-wasm';
 
-import { Curve } from './types';
+import { Curve, SignatureAlgorithm } from './types';
 
 let wasmModule: typeof WasmModule | null = null;
 let initPromise: Promise<void> | null = null;
@@ -222,6 +222,14 @@ export async function decrypt_user_share(
 		encryptedShare,
 		protocolPublicParameters,
 	);
+}
+
+export async function parse_signature_from_sign_output(
+	signatureAlgorithm: SignatureAlgorithm,
+	signatureOutput: Uint8Array,
+): Promise<Uint8Array> {
+	const wasm = await getWasmModule();
+	return wasm.parse_signature_from_sign_output(signatureAlgorithm, signatureOutput);
 }
 
 /**

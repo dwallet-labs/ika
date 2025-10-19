@@ -1,6 +1,7 @@
 import { bcs } from '@mysten/sui/bcs';
-import { Secp256k1PublicKey } from '@mysten/sui/keypairs/secp256k1';
 import { Transaction } from '@mysten/sui/transactions';
+import { verifySignature } from '@mysten/sui/verify';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256, sha512 } from '@noble/hashes/sha2';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { describe, expect, it } from 'vitest';
@@ -221,6 +222,7 @@ async function signAndVerifyHash(
 
 	const sign = await ikaClient.getSignInParticularState(
 		signEventData.event_data.sign_id,
+		signatureAlgorithm,
 		'Completed',
 		{ timeout: 60000, interval: 1000 },
 	);
@@ -234,17 +236,16 @@ async function signAndVerifyHash(
 	expect(sign.state.$kind).toBe('Completed');
 	expect(sign.state.Completed?.signature).toBeDefined();
 
+	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
+
 	const pkOutput = await publicKeyFromDWalletOutput(
 		activeDWallet.curve as Curve,
 		Uint8Array.from(dWallet.state.Active?.public_output ?? []),
 	);
 
-	const pk = new Secp256k1PublicKey(pkOutput);
-
-	const verified = await pk.verify(
-		expectedHash,
-		Uint8Array.from(sign.state.Completed?.signature ?? []),
-	);
+	const verified = secp256k1.verify(signature, expectedHash, pkOutput, {
+		prehash: false,
+	});
 
 	expect(verified).toBe(true);
 }
