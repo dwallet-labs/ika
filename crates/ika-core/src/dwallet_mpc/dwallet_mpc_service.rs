@@ -922,12 +922,19 @@ impl DWalletMPCService {
                 dwallet_network_encryption_key_id,
                 ..
             } => {
+                let supported_curves = vec![
+                    DWalletCurve::Secp256k1 as u32,
+                    DWalletCurve::Secp256r1 as u32,
+                    DWalletCurve::Ristretto as u32,
+                    DWalletCurve::Curve25519 as u32,
+                ];
+
                 let slices = if rejected {
                     vec![MPCNetworkDKGOutput {
                         dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                             .to_vec(),
                         public_output: vec![],
-                        supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                        supported_curves: supported_curves.clone(),
                         is_last: true,
                         rejected: true,
                         session_sequence_number: session_request.session_sequence_number,
@@ -939,7 +946,7 @@ impl DWalletMPCService {
                             dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                                 .to_vec(),
                             public_output: public_output_chunk,
-                            supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                            supported_curves: supported_curves.clone(),
                             is_last,
                             rejected: false,
                             session_sequence_number: session_request.session_sequence_number,
@@ -957,12 +964,19 @@ impl DWalletMPCService {
                 dwallet_network_encryption_key_id,
                 ..
             } => {
+                let supported_curves = vec![
+                    DWalletCurve::Secp256k1 as u32,
+                    DWalletCurve::Secp256r1 as u32,
+                    DWalletCurve::Ristretto as u32,
+                    DWalletCurve::Curve25519 as u32,
+                ];
+
                 let slices = if rejected {
                     vec![MPCNetworkReconfigurationOutput {
                         dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                             .to_vec(),
                         public_output: vec![],
-                        supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                        supported_curves: supported_curves.clone(),
                         is_last: true,
                         rejected: true,
                         session_sequence_number: session_request.session_sequence_number,
@@ -975,7 +989,7 @@ impl DWalletMPCService {
                                 .clone()
                                 .to_vec(),
                             public_output: public_output_chunk,
-                            supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                            supported_curves: supported_curves.clone(),
                             is_last,
                             rejected: false,
                             session_sequence_number: session_request.session_sequence_number,
