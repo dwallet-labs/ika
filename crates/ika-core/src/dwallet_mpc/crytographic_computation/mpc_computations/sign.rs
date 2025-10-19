@@ -269,7 +269,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                         &serialized_messages_by_consensus_round,
                     )?;
 
-                    advance_request.map(SignAdvanceRequestByProtocol::Secp256k1ECDSA)
+                    advance_request.map(Self::Secp256k1ECDSA)
                 }
                 DWalletSignatureScheme::Taproot => {
                     let advance_request = mpc_computations::try_ready_to_advance::<
@@ -281,7 +281,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                         &serialized_messages_by_consensus_round,
                     )?;
 
-                    advance_request.map(SignAdvanceRequestByProtocol::Secp256k1Taproot)
+                    advance_request.map(Self::Secp256k1Taproot)
                 }
                 _ => {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
@@ -300,7 +300,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                advance_request.map(SignAdvanceRequestByProtocol::Ristretto)
+                advance_request.map(Self::Ristretto)
             }
             DWalletCurve::Curve25519 => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
@@ -312,7 +312,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                advance_request.map(SignAdvanceRequestByProtocol::Curve25519)
+                advance_request.map(Self::Curve25519)
             }
             DWalletCurve::Secp256r1 => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
@@ -324,7 +324,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                advance_request.map(SignAdvanceRequestByProtocol::Secp256r1)
+                advance_request.map(Self::Secp256r1)
             }
         };
         Ok(advance_request)
