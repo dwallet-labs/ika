@@ -211,12 +211,14 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: Some(data.hash_scheme.clone()),
                 signature_algorithm: Some(data.signature_algorithm.clone()),
             },
-            ProtocolCryptographicData::DWalletDKGAndSign { data, .. } => DWalletSessionRequestMetricData {
-                name: data.to_string(),
-                curve: Some(data.curve.clone()),
-                hash_scheme: Some(data.hash_type.clone()),
-                signature_algorithm: Some(data.signature_algorithm.clone()),
-            },
+            ProtocolCryptographicData::DWalletDKGAndSign { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve.clone()),
+                    hash_scheme: Some(data.hash_type.clone()),
+                    signature_algorithm: Some(data.signature_algorithm.clone()),
+                }
+            }
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 { data, .. } => {
                 // TODO (#1508): Remove the curve label completely from protocols the curve label is irrelevant for
                 DWalletSessionRequestMetricData {

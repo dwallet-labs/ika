@@ -303,24 +303,26 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                 advance_request.map(SignAdvanceRequestByProtocol::Ristretto)
             }
             DWalletCurve::Curve25519 => {
-                let advance_request =
-                    mpc_computations::try_ready_to_advance::<DKGAndSignParty<Curve25519EdDSAProtocol>>(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        &serialized_messages_by_consensus_round,
-                    )?;
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    DKGAndSignParty<Curve25519EdDSAProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    &serialized_messages_by_consensus_round,
+                )?;
 
                 advance_request.map(SignAdvanceRequestByProtocol::Curve25519)
             }
             DWalletCurve::Secp256r1 => {
-                let advance_request =
-                    mpc_computations::try_ready_to_advance::<DKGAndSignParty<Secp256R1ECDSAProtocol>>(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        &serialized_messages_by_consensus_round,
-                    )?;
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    DKGAndSignParty<Secp256R1ECDSAProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    &serialized_messages_by_consensus_round,
+                )?;
 
                 advance_request.map(SignAdvanceRequestByProtocol::Secp256r1)
             }
