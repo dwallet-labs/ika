@@ -971,7 +971,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
             malicious_parties,
             private_output,
         } => {
-            let (dwallet_dkg_output, signature_output) = bcs::from_bytes(&public_output_value)?;
+            let (dwallet_dkg_output, signature_output): <P::DKGSignDecentralizedParty as mpc::Party>::PublicOutput = bcs::from_bytes(&public_output_value)?;
             let parsed_signature_result: DwalletMPCResult<Vec<u8>> =
                 parse_signature_from_sign_output(
                     &sign_data.signature_algorithm,
