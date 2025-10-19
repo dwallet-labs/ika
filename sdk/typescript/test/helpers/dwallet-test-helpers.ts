@@ -205,7 +205,7 @@ export async function createCompleteDWalletV2(
 	const dkgSecondRoundRequestInput = await prepareDKGAsync(
 		ikaClient,
 		userShareEncryptionKeys,
-		sessionIdentifierDigest(Uint8Array.from(parsedEvent.session_identifier_preimage)),
+		sessionIdentifierDigest(Uint8Array.from(parsedEvent.session_identifier_preimage), ),
 	);
 
 	// Step 5: Request DKG second round

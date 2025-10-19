@@ -490,6 +490,7 @@ export async function runSignFullFlowWithV2Dwallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	testName: string,
+	signatureAlgo: SignatureAlgorithm,
 	registerEncryptionKey: boolean = true,
 ) {
 	const {
@@ -504,7 +505,7 @@ export async function runSignFullFlowWithV2Dwallet(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		SignatureAlgorithm.ECDSA,
+		signatureAlgo,
 		signerAddress,
 		testName,
 	);

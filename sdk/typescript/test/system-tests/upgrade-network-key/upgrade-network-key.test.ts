@@ -9,7 +9,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { execa } from 'execa';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { fetchAllDynamicFields, IkaClient } from '../../../src';
+import { fetchAllDynamicFields, IkaClient, SignatureAlgorithm } from '../../../src';
 import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
@@ -166,7 +166,13 @@ describe('system tests', () => {
 
 		console.log('Move contracts upgraded to V2, running sign full flow and verifying it works');
 		ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage = upgradedPackageID;
-		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, testName, false);
+		await runSignFullFlowWithV2Dwallet(
+			ikaClient,
+			suiClient,
+			testName,
+			SignatureAlgorithm.ECDSASecp256k1,
+			false,
+		);
 		console.log('V2 dWallet full flow works, test completed successfully');
 
 		await runSignFullFlowTestWithImportedDwallet(testName, ikaClient, suiClient, false);
