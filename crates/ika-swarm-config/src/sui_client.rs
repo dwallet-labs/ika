@@ -543,10 +543,37 @@ pub async fn set_global_presign_config(
         vec![system_arg, protocol_cap_arg],
     );
 
+    // Define supported curves
+    let curves = vec![
+        DWalletCurve::Secp256k1 as u32,
+        DWalletCurve::Secp256r1 as u32,
+        DWalletCurve::Ristretto as u32,
+        DWalletCurve::Curve25519 as u32,
+    ];
+
+    // All signature algorithms including ECDSA (0) and others (1, 2, 3, 4)
+    let all_signature_algorithms = vec![0u32, 1u32, 2u32, 3u32, 4u32];
+
+    // Non-ECDSA signature algorithms (1, 2, 3, 4) - for imported key
+    let non_ecdsa_signature_algorithms = vec![1u32, 2u32, 3u32, 4u32];
+
+    // For DKG: all curves support all signature algorithms including ECDSA
+    let mut dkg_config = HashMap::new();
+    for curve in &curves {
+        dkg_config.insert(*curve, all_signature_algorithms.clone());
+    }
+
+    // For imported key: all curves support non-ECDSA signature algorithms only
+    let mut imported_key_config = HashMap::new();
+    for curve in &curves {
+        imported_key_config.insert(*curve, non_ecdsa_signature_algorithms.clone());
+    }
+
     let curve_to_signature_algorithms_for_dkg =
-        new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, dkg_config)?;
     let curve_to_signature_algorithms_for_imported_key =
-        new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, imported_key_config)?;
+
     ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
         ident_str!("coordinator").into(),
