@@ -645,6 +645,7 @@ export async function testPresign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
+	curve: Curve,
 	signatureAlgorithm: SignatureAlgorithm,
 	signerAddress: string,
 	testName: string,
@@ -655,7 +656,7 @@ export async function testPresign(
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
 	const unverifiedPresignCap = ikaTransaction.requestGlobalPresign({
-		curve: 0,
+		curve,
 		dwalletNetworkEncryptionKeyId: dWallet.dwallet_network_encryption_key_id,
 		signatureAlgorithm,
 		ikaCoin: emptyIKACoin,
