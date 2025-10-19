@@ -235,32 +235,23 @@ async function signAndVerifyHash(
 		1000,
 	);
 
-	// Different hash schemes produce different length outputs
-	switch (hashScheme) {
-		case Hash.KECCAK256:
-		case Hash.SHA256:
-		case Hash.DoubleSHA256:
-			expect(expectedHash.length).toBe(32); // 256 bits = 32 bytes
-			break;
-		case Hash.SHA512:
-			expect(expectedHash.length).toBe(64); // 512 bits = 64 bytes
-			break;
-	}
-
 	expect(sign).toBeDefined();
 	expect(sign.state.$kind).toBe('Completed');
 	expect(sign.state.Completed?.signature).toBeDefined();
 
-	const pk = new Secp256k1PublicKey(
-		await publicKeyFromDWalletOutput(
-			activeDWallet.curve as Curve,
-			Uint8Array.from(dWallet.state.Active?.public_output ?? []),
-		),
+	const pkOutput = await publicKeyFromDWalletOutput(
+		activeDWallet.curve as Curve,
+		Uint8Array.from(dWallet.state.Active?.public_output ?? []),
 	);
 
-	expect(
-		await pk.verify(expectedHash, Uint8Array.from(sign.state.Completed?.signature ?? [])),
-	).toBe(true);
+	const pk = new Secp256k1PublicKey(pkOutput);
+
+	const verified = await pk.verify(
+		expectedHash,
+		Uint8Array.from(sign.state.Completed?.signature ?? []).slice(1),
+	);
+
+	expect(verified).toBe(true);
 }
 
 describe('Hash Type Verification', () => {

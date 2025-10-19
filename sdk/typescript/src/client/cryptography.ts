@@ -482,7 +482,7 @@ export async function publicKeyFromDWalletOutput(
 	curve: Curve,
 	dWalletOutput: Uint8Array,
 ): Promise<Uint8Array> {
-	return Uint8Array.from(await public_key_from_dwallet_output(curve, dWalletOutput));
+	return Uint8Array.from(await public_key_from_dwallet_output(curve, dWalletOutput)).slice(1);
 }
 
 /**
