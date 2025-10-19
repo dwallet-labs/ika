@@ -7,6 +7,7 @@
 
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::parse_signature_from_sign_output;
+use crate::dwallet_mpc::dwallet_dkg::DWalletDKGPublicInputByCurve;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::request_protocol_data::SignData;
 use class_groups::CiphertextSpaceGroupElement;
@@ -32,12 +33,11 @@ use std::sync::Arc;
 use tracing::error;
 use twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS;
 use twopc_mpc::{dkg, sign};
-use crate::dwallet_mpc::dwallet_dkg::DWalletDKGPublicInputByCurve;
 
 pub(crate) type SignParty<P: twopc_mpc::sign::Protocol> =
-<P as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
+    <P as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
 pub(crate) type DKGAndSignParty<P: twopc_mpc::sign::Protocol> =
-<P as twopc_mpc::sign::Protocol>::DKGSignDecentralizedParty;
+    <P as twopc_mpc::sign::Protocol>::DKGSignDecentralizedParty;
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub(crate) enum SignPublicInputByProtocol {
@@ -404,7 +404,9 @@ impl DKGAndSignPublicInputByProtocol {
                             unreachable!("DKGAndSign does not support V1 presign outputs");
                         }
                         VersionedPresignOutput::V2(presign) => {
-                            let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) = dwallet_dkg_public_input else {
+                            let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) =
+                                dwallet_dkg_public_input
+                            else {
                                 unreachable!("Curve and DKG public input type mismatch");
                             };
                             generate_dkg_and_sign_public_input::<Secp256K1ECDSAProtocol>(
@@ -426,7 +428,9 @@ impl DKGAndSignPublicInputByProtocol {
                     .secp256k1_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
-                let DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input) = dwallet_dkg_public_input else {
+                let DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input) =
+                    dwallet_dkg_public_input
+                else {
                     unreachable!("Curve and DKG public input type mismatch");
                 };
                 let public_input = generate_dkg_and_sign_public_input::<Secp256K1TaprootProtocol>(
@@ -440,14 +444,18 @@ impl DKGAndSignPublicInputByProtocol {
                     hash_scheme,
                 )?;
 
-                Ok(DKGAndSignPublicInputByProtocol::Secp256k1Taproot(public_input))
+                Ok(DKGAndSignPublicInputByProtocol::Secp256k1Taproot(
+                    public_input,
+                ))
             }
             DWalletSignatureScheme::SchnorrkelSubstrate => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .ristretto_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .ristretto_protocol_public_parameters()?;
-                let DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input) = dwallet_dkg_public_input else {
+                let DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input) =
+                    dwallet_dkg_public_input
+                else {
                     unreachable!("Curve and DKG public input type mismatch");
                 };
                 let public_input =
@@ -469,7 +477,9 @@ impl DKGAndSignPublicInputByProtocol {
                     .curve25519_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .curve25519_protocol_public_parameters()?;
-                let DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input) = dwallet_dkg_public_input else {
+                let DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input) =
+                    dwallet_dkg_public_input
+                else {
                     unreachable!("Curve and DKG public input type mismatch");
                 };
                 let public_input = generate_dkg_and_sign_public_input::<Curve25519EdDSAProtocol>(
@@ -490,7 +500,9 @@ impl DKGAndSignPublicInputByProtocol {
                     .secp256r1_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256r1_protocol_public_parameters()?;
-                let DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input) = dwallet_dkg_public_input else {
+                let DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input) =
+                    dwallet_dkg_public_input
+                else {
                     unreachable!("Curve and DKG public input type mismatch");
                 };
                 let public_input = generate_dkg_and_sign_public_input::<Secp256R1ECDSAProtocol>(
@@ -600,10 +612,12 @@ pub(crate) trait SignPartyPublicInputGenerator<P: twopc_mpc::sign::Protocol>: Pa
 ///
 /// This trait is implemented to resolve compiler type ambiguities that arise in the 2PC-MPC library
 /// when accessing [`Party::PublicInput`].
-pub(crate) trait DKGAndSignPartyPublicInputGenerator<P: twopc_mpc::sign::Protocol>: Party {
+pub(crate) trait DKGAndSignPartyPublicInputGenerator<P: twopc_mpc::sign::Protocol>:
+    Party
+{
     fn generate_public_input(
         protocol_public_parameters: P::ProtocolPublicParameters,
-        dwallet_dkg_public_input: P::DKGDecentralizedPartyPublicInput
+        dwallet_dkg_public_input: P::DKGDecentralizedPartyPublicInput,
         message: Vec<u8>,
         presign: &SerializedWrappedMPCPublicOutput,
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
@@ -748,7 +762,7 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
         protocol_public_parameters,
         &mut OsCsRng,
     )
-        .map_err(DwalletMPCError::from)
+    .map_err(DwalletMPCError::from)
 }
 
 pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
@@ -771,7 +785,7 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
             &public_input,
             rng,
         )
-            .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
+        .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
 
     match result {
         GuaranteedOutputDeliveryRoundResult::Advance { message } => {

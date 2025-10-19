@@ -1,7 +1,22 @@
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{dwallet_dkg_and_sign_protocol_data, dwallet_dkg_first_protocol_data, dwallet_dkg_protocol_data, dwallet_dkg_second_protocol_data, encrypted_share_verification_protocol_data, imported_key_verification_protocol_data, make_dwallet_user_secret_key_shares_public_protocol_data, network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data, partial_signature_verification_protocol_data, presign_protocol_data, sign_protocol_data};
+use crate::request_protocol_data::{
+    dwallet_dkg_and_sign_protocol_data, dwallet_dkg_first_protocol_data, dwallet_dkg_protocol_data,
+    dwallet_dkg_second_protocol_data, encrypted_share_verification_protocol_data,
+    imported_key_verification_protocol_data,
+    make_dwallet_user_secret_key_shares_public_protocol_data,
+    network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data,
+    partial_signature_verification_protocol_data, presign_protocol_data, sign_protocol_data,
+};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
-use ika_types::messages_dwallet_mpc::{DWALLET_SESSION_EVENT_STRUCT_NAME, DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent, FutureSignRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent, SESSIONS_MANAGER_MODULE_NAME, SignRequestEvent, UserSecretKeyShareEventType, SignDuringDKGRequestEvent};
+use ika_types::messages_dwallet_mpc::{
+    DWALLET_SESSION_EVENT_STRUCT_NAME, DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent,
+    DWalletDKGSecondRoundRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent,
+    DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent,
+    DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent,
+    FutureSignRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent,
+    PresignRequestEvent, SESSIONS_MANAGER_MODULE_NAME, SignDuringDKGRequestEvent, SignRequestEvent,
+    UserSecretKeyShareEventType,
+};
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;
 use sui_types::dynamic_field::Field;
@@ -81,19 +96,12 @@ pub fn sui_event_into_session_request(
     ) {
         let parsed_event = deserialize_event_contents::<DWalletDKGRequestEvent>(&contents, pulled)?;
         match &parsed_event.event_data.sign_during_dkg_request {
-            None => {
-                dwallet_dkg_session_request(
-                    parsed_event,
-                    pulled,
-                )?
-            }
-            Some(sign_during_dkg_request) => {
-                dwallet_dkg_with_sign_session_request(
-                    parsed_event.clone(),
-                    pulled,
-                    sign_during_dkg_request
-                )?
-            }
+            None => dwallet_dkg_session_request(parsed_event, pulled)?,
+            Some(sign_during_dkg_request) => dwallet_dkg_with_sign_session_request(
+                parsed_event.clone(),
+                pulled,
+                sign_during_dkg_request,
+            )?,
         }
     } else if event_type.to_string().contains(
         &DWalletDKGSecondRoundRequestEvent::type_(packages_config)
@@ -234,7 +242,7 @@ fn dwallet_dkg_with_sign_session_request(
         protocol_data: dwallet_dkg_and_sign_protocol_data(
             deserialized_event.event_data.clone(),
             deserialized_event.event_data.user_secret_key_share,
-            sign_during_dkg_request
+            sign_during_dkg_request,
         )?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,

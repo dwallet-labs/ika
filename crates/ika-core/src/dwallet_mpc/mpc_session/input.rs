@@ -113,9 +113,7 @@ pub(crate) fn session_input_from_request(
                 &data.curve,
                 encryption_key_public_data,
                 &data.centralized_public_key_share_and_proof,
-                BytesCentralizedPartyKeyShareVerification::from(
-                    data.user_secret_key_share.clone(),
-                ),
+                BytesCentralizedPartyKeyShareVerification::from(data.user_secret_key_share.clone()),
             )?;
             Ok((
                 PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
@@ -126,7 +124,7 @@ pub(crate) fn session_input_from_request(
                     BytesCentralizedPartyKeyShareVerification::from(
                         data.user_secret_key_share.clone(),
                     ),
-                    dwallet_dkg_public_input
+                    dwallet_dkg_public_input,
                 )?),
                 None,
             ))
