@@ -732,8 +732,8 @@ pub async fn ika_system_initialize(
         type_params: vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
     }));
 
-    // Secp256k1: supports SHA256 (1) and Keccak256 (0) for signature algorithms
-    let secp256k1_hashes = vec![vec![0u32, 1u32]; all_signature_algorithms.len()];
+    // Secp256k1: supports SHA256 (1), Keccak256 (0), and DoubleSHA256 (2) for signature algorithms
+    let secp256k1_hashes = vec![vec![0u32, 1u32, 2u32]; all_signature_algorithms.len()];
     let secp256k1_sig_algo_keys =
         ptb.input(CallArg::Pure(bcs::to_bytes(&all_signature_algorithms)?))?;
     let secp256k1_hash_values = ptb.input(CallArg::Pure(bcs::to_bytes(&secp256k1_hashes)?))?;
@@ -745,8 +745,8 @@ pub async fn ika_system_initialize(
         vec![secp256k1_sig_algo_keys, secp256k1_hash_values],
     );
 
-    // Secp256r1: supports only SHA256 (1) for signature algorithms
-    let secp256r1_hashes = vec![vec![1u32]; all_signature_algorithms.len()];
+    // Secp256r1: supports SHA256 (1) and DoubleSHA256 (2) for signature algorithms
+    let secp256r1_hashes = vec![vec![1u32, 2u32]; all_signature_algorithms.len()];
     let secp256r1_sig_algo_keys =
         ptb.input(CallArg::Pure(bcs::to_bytes(&all_signature_algorithms)?))?;
     let secp256r1_hash_values = ptb.input(CallArg::Pure(bcs::to_bytes(&secp256r1_hashes)?))?;
