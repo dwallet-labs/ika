@@ -29,12 +29,12 @@ use mpc::Party;
 use mpc::two_party::Round;
 use rand_core::SeedableRng;
 use std::fmt::Debug;
-use twopc_mpc::secp256k1::SCALAR_LIMBS;
+use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput};
+use twopc_mpc::dkg::centralized_party;
 
 use commitment::CommitmentSizedNumber;
 use crypto_bigint::{Encoding, Uint};
 use serde::{Deserialize, Serialize};
-use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput};
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::dkg::decentralized_party::{Output, VersionedOutput};
@@ -63,21 +63,24 @@ pub struct CentralizedDKGWasmResult {
 }
 
 pub fn network_dkg_public_output_to_protocol_pp_inner(
+    curve: u32,
     network_dkg_public_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
-    let public_parameters = protocol_public_parameters(network_dkg_public_output)?;
-    Ok(bcs::to_bytes(&public_parameters)?)
+    let public_parameters = protocol_public_parameters(curve, network_dkg_public_output)?;
+    Ok(public_parameters)
 }
 
 pub fn reconfiguration_public_output_to_protocol_pp_inner(
+    curve: u32,
     reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
     versioned_network_dkg_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
     let public_parameters = protocol_public_parameters_from_reconfiguration_output(
+        curve,
         reconfiguration_dkg_public_output,
         versioned_network_dkg_output,
     )?;
-    Ok(bcs::to_bytes(&public_parameters)?)
+    Ok(public_parameters)
 }
 
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
@@ -310,6 +313,63 @@ pub fn public_key_from_dwallet_output_by_curve(
     }
 }
 
+pub fn public_key_from_centralized_dkg_output_by_curve(
+    curve: u32,
+    centralized_dkg_output: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    match curve.try_into()? {
+        DWalletCurve::Secp256k1 => public_key_from_centralized_dkg_output_inner::<
+            { secp256k1::SCALAR_LIMBS },
+            group::secp256k1::GroupElement,
+        >(centralized_dkg_output),
+        DWalletCurve::Ristretto => public_key_from_centralized_dkg_output_inner::<
+            { ristretto::SCALAR_LIMBS },
+            group::ristretto::GroupElement,
+        >(centralized_dkg_output),
+        DWalletCurve::Curve25519 => public_key_from_centralized_dkg_output_inner::<
+            { curve25519::SCALAR_LIMBS },
+            group::curve25519::GroupElement,
+        >(centralized_dkg_output),
+        DWalletCurve::Secp256r1 => public_key_from_centralized_dkg_output_inner::<
+            { secp256r1::SCALAR_LIMBS },
+            group::secp256r1::GroupElement,
+        >(centralized_dkg_output),
+    }
+}
+
+fn public_key_from_centralized_dkg_output_inner<
+    const SCALAR_LIMBS: usize,
+    GroupElement: group::GroupElement,
+>(
+    centralized_dkg_output: &[u8],
+) -> anyhow::Result<Vec<u8>>
+where
+    Uint<SCALAR_LIMBS>: Encoding,
+{
+    let versioned_centralized_dkg_output: VersionedCentralizedDKGPublicOutput =
+        bcs::from_bytes(&centralized_dkg_output)?;
+
+    let public_key = match versioned_centralized_dkg_output {
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let dkg_output: DKGCentralizedPartyOutput<SCALAR_LIMBS, GroupElement> =
+                bcs::from_bytes(output.as_slice())?;
+            dkg_output.public_key
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => {
+            let dkg_output: DKGCentralizedPartyVersionedOutput<SCALAR_LIMBS, GroupElement> =
+                bcs::from_bytes(output.as_slice())?;
+            match dkg_output {
+                centralized_party::VersionedOutput::TargetedPublicDKGOutput(o) => o.public_key,
+                centralized_party::VersionedOutput::UniversalPublicDKGOutput {
+                    output: o, ..
+                } => o.public_key,
+            }
+        }
+    };
+
+    Ok(bcs::to_bytes(&public_key)?)
+}
+
 pub fn public_key_from_dwallet_output_inner<
     const SCALAR_LIMBS: usize,
     GroupElementValue: Serialize + for<'a> Deserialize<'a> + Clone + Debug + PartialEq + Eq,
@@ -345,29 +405,68 @@ where
 ///
 /// Required usage: when accepting an encrypted user share after DKG before we sign on the network's public output.
 pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
+    curve: u32,
+    centralized_dkg_output: &Vec<u8>,
+    decentralized_dkg_output: &Vec<u8>,
+) -> anyhow::Result<bool> {
+    match curve.try_into()? {
+        DWalletCurve::Secp256k1 => {
+            centralized_and_decentralized_parties_dkg_output_match_by_protocol::<Secp256K1DKGProtocol>(
+                centralized_dkg_output,
+                decentralized_dkg_output,
+            )
+        }
+        DWalletCurve::Ristretto => {
+            centralized_and_decentralized_parties_dkg_output_match_by_protocol::<RistrettoDKGProtocol>(
+                centralized_dkg_output,
+                decentralized_dkg_output,
+            )
+        }
+        DWalletCurve::Curve25519 => {
+            centralized_and_decentralized_parties_dkg_output_match_by_protocol::<
+                Curve25519DKGProtocol,
+            >(centralized_dkg_output, decentralized_dkg_output)
+        }
+        DWalletCurve::Secp256r1 => {
+            centralized_and_decentralized_parties_dkg_output_match_by_protocol::<Secp256R1DKGProtocol>(
+                centralized_dkg_output,
+                decentralized_dkg_output,
+            )
+        }
+    }
+}
+
+fn centralized_and_decentralized_parties_dkg_output_match_by_protocol<
+    P: twopc_mpc::dkg::Protocol,
+>(
     centralized_dkg_output: &Vec<u8>,
     decentralized_dkg_output: &Vec<u8>,
 ) -> anyhow::Result<bool> {
     let versioned_centralized_dkg_output =
         bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(centralized_dkg_output)?;
     let centralized_dkg_output = match versioned_centralized_dkg_output {
-        VersionedCentralizedDKGPublicOutput::V1(output) => bcs::from_bytes::<
-            DKGCentralizedPartyOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
-        >(output.as_slice())?
-        .into(),
-        VersionedCentralizedDKGPublicOutput::V2(output) => bcs::from_bytes::<
-            DKGCentralizedPartyVersionedOutput<SCALAR_LIMBS, group::secp256k1::GroupElement>,
-        >(output.as_slice())?,
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let targeted: P::CentralizedPartyTargetedDKGOutput =
+                bcs::from_bytes(output.as_slice())?;
+            let versioned: P::CentralizedPartyDKGOutput = targeted.into();
+            versioned
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => {
+            bcs::from_bytes::<P::CentralizedPartyDKGOutput>(output.as_slice())?
+        }
     };
 
     let versioned_decentralized_dkg_output =
         bcs::from_bytes::<VersionedDwalletDKGSecondRoundPublicOutput>(decentralized_dkg_output)?;
     let decentralized_dkg_output = match versioned_decentralized_dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-            bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice())?.into()
+            let targeted: P::DecentralizedPartyTargetedDKGOutput =
+                bcs::from_bytes(output.as_slice())?;
+            let versioned: P::DecentralizedPartyDKGOutput = targeted.into();
+            versioned
         }
         VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-            bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(output.as_slice())?
+            bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
         }
     };
 
@@ -375,6 +474,133 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
         decentralized_dkg_output == centralized_dkg_output;
 
     Ok(does_centralized_and_decentralized_parties_dkg_output_match)
+}
+
+/// Executes the centralized phase of the Sign protocol,
+///  the first part of the protocol.
+///
+/// The [`advance_centralized_sign_party`] function is
+/// called by the client (the centralized party).
+pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
+    protocol_pp: Vec<u8>,
+    centralized_party_dkg_public_output: SerializedWrappedMPCPublicOutput,
+    centralized_party_secret_key_share: SerializedWrappedMPCPublicOutput,
+    presign: SerializedWrappedMPCPublicOutput,
+    message: Vec<u8>,
+    hash_type: u32,
+    signature_scheme: u32,
+) -> anyhow::Result<SignedMessage> {
+    let presign = bcs::from_bytes(&presign)?;
+    match presign {
+        VersionedPresignOutput::V1(presign) => {
+            let versioned_centralized_dkg_output: VersionedCentralizedDKGPublicOutput =
+                bcs::from_bytes(&centralized_party_dkg_public_output)?;
+
+            let centralized_dkg_output = match versioned_centralized_dkg_output {
+                VersionedCentralizedDKGPublicOutput::V1(output) => {
+                    let versioned_output: <Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput =
+                        bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyTargetedDKGOutput>(output.as_slice())?
+                            .into();
+                    versioned_output.into()
+                }
+                VersionedCentralizedDKGPublicOutput::V2(output) => bcs::from_bytes::<
+                    <Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput,
+                >(
+                    output.as_slice()
+                )?
+                .into(),
+            };
+
+            let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+                bcs::from_bytes(&centralized_party_secret_key_share)?;
+            let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
+                centralized_party_secret_key_share;
+
+            let presign: <Secp256K1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
+                bcs::from_bytes(&presign)?;
+
+            let centralized_party_public_input =
+                <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+                    message,
+                    HashType::try_from(hash_type)?,
+                    centralized_dkg_output,
+                    presign,
+                    bcs::from_bytes(&protocol_pp)?,
+                ));
+
+            let round_result = SignCentralizedPartyV1::advance(
+                (),
+                &bcs::from_bytes(&centralized_party_secret_key_share)?,
+                &centralized_party_public_input,
+                &mut OsCsRng,
+            )
+            .context("advance() failed on the SignCentralizedParty")?;
+
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        VersionedPresignOutput::V2(presign) => {
+            let signature_scheme = DWalletSignatureScheme::try_from(signature_scheme)?;
+            match signature_scheme {
+                DWalletSignatureScheme::ECDSASecp256k1 => {
+                    advance_sign_by_protocol_with_centralized_party_dkg_output::<
+                        Secp256K1ECDSAProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_type,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureScheme::Taproot => {
+                    advance_sign_by_protocol_with_centralized_party_dkg_output::<TaprootProtocol>(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_type,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureScheme::ECDSASecp256r1 => {
+                    advance_sign_by_protocol_with_centralized_party_dkg_output::<Secp256R1DKGProtocol>(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_type,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureScheme::EdDSA => {
+                    advance_sign_by_protocol_with_centralized_party_dkg_output::<
+                        Curve25519DKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_type,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureScheme::SchnorrkelSubstrate => {
+                    advance_sign_by_protocol_with_centralized_party_dkg_output::<RistrettoDKGProtocol>(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_type,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+            }
+        }
+    }
 }
 
 /// Executes the centralized phase of the Sign protocol,
@@ -442,7 +668,9 @@ pub fn advance_centralized_sign_party(
             let signature_scheme = DWalletSignatureScheme::try_from(signature_scheme)?;
             match signature_scheme {
                 DWalletSignatureScheme::ECDSASecp256k1 => {
-                    advance_sign_by_protocol::<Secp256K1ECDSAProtocol>(
+                    advance_sign_by_protocol_with_decentralized_party_dkg_output::<
+                        Secp256K1ECDSAProtocol,
+                    >(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
@@ -451,16 +679,20 @@ pub fn advance_centralized_sign_party(
                         &protocol_pp,
                     )
                 }
-                DWalletSignatureScheme::Taproot => advance_sign_by_protocol::<TaprootProtocol>(
-                    &centralized_party_secret_key_share,
-                    &presign,
-                    message,
-                    hash_type,
-                    &decentralized_party_dkg_public_output,
-                    &protocol_pp,
-                ),
+                DWalletSignatureScheme::Taproot => {
+                    advance_sign_by_protocol_with_decentralized_party_dkg_output::<TaprootProtocol>(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_type,
+                        &decentralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
                 DWalletSignatureScheme::ECDSASecp256r1 => {
-                    advance_sign_by_protocol::<Secp256R1DKGProtocol>(
+                    advance_sign_by_protocol_with_decentralized_party_dkg_output::<
+                        Secp256R1DKGProtocol,
+                    >(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
@@ -469,16 +701,22 @@ pub fn advance_centralized_sign_party(
                         &protocol_pp,
                     )
                 }
-                DWalletSignatureScheme::EdDSA => advance_sign_by_protocol::<Curve25519DKGProtocol>(
-                    &centralized_party_secret_key_share,
-                    &presign,
-                    message,
-                    hash_type,
-                    &decentralized_party_dkg_public_output,
-                    &protocol_pp,
-                ),
+                DWalletSignatureScheme::EdDSA => {
+                    advance_sign_by_protocol_with_decentralized_party_dkg_output::<
+                        Curve25519DKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_type,
+                        &decentralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
                 DWalletSignatureScheme::SchnorrkelSubstrate => {
-                    advance_sign_by_protocol::<RistrettoDKGProtocol>(
+                    advance_sign_by_protocol_with_decentralized_party_dkg_output::<
+                        RistrettoDKGProtocol,
+                    >(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
@@ -492,7 +730,7 @@ pub fn advance_centralized_sign_party(
     }
 }
 
-fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
+fn advance_sign_by_protocol_with_decentralized_party_dkg_output<P: twopc_mpc::sign::Protocol>(
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],
     message: Vec<u8>,
@@ -503,7 +741,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     let versioned_decentralized_dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
         bcs::from_bytes(&decentralized_party_dkg_public_output)?;
 
-    let centralized_dkg_output = match versioned_decentralized_dkg_output {
+    let centralized_party_dkg_public_output = match versioned_decentralized_dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
             let versioned_output: P::DecentralizedPartyDKGOutput =
                 bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?
@@ -515,6 +753,56 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
         }
     };
 
+    advance_sign_by_protocol::<P>(
+        centralized_party_secret_key_share,
+        presign,
+        message,
+        hash_type,
+        centralized_party_dkg_public_output,
+        protocol_pp,
+    )
+}
+
+fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign::Protocol>(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_type: u32,
+    centralized_party_dkg_public_output: &[u8],
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_centralized_dkg_output: VersionedCentralizedDKGPublicOutput =
+        bcs::from_bytes(&centralized_party_dkg_public_output)?;
+
+    let centralized_party_dkg_public_output = match versioned_centralized_dkg_output {
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let versioned_output: P::CentralizedPartyDKGOutput =
+                bcs::from_bytes::<P::CentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
+            versioned_output.into()
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => {
+            bcs::from_bytes::<P::CentralizedPartyDKGOutput>(output.as_slice())?.into()
+        }
+    };
+
+    advance_sign_by_protocol::<P>(
+        centralized_party_secret_key_share,
+        presign,
+        message,
+        hash_type,
+        centralized_party_dkg_public_output,
+        protocol_pp,
+    )
+}
+
+fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_type: u32,
+    centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput,
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
     let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
         bcs::from_bytes(&centralized_party_secret_key_share)?;
     let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
@@ -528,7 +816,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
         <P as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
             message,
             HashType::try_from(hash_type)?,
-            centralized_dkg_output,
+            centralized_party_dkg_public_output,
             presign,
             bcs::from_bytes(&protocol_pp)?,
         ));
@@ -553,8 +841,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     }
 }
 
-pub(crate) type SignCentralizedParty<P: twopc_mpc::sign::Protocol> =
-    <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
+pub(crate) type SignCentralizedParty<P> = <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
 pub fn network_key_version_inner(
     network_dkg_public_output: SerializedWrappedMPCPublicOutput,
@@ -711,8 +998,9 @@ fn create_imported_dwallet_centralized_step_inner<P: twopc_mpc::dkg::Protocol>(
 }
 
 fn protocol_public_parameters(
+    curve: u32,
     network_dkg_public_output: SerializedWrappedMPCPublicOutput,
-) -> anyhow::Result<ProtocolPublicParameters> {
+) -> anyhow::Result<Vec<u8>> {
     let network_dkg_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(&network_dkg_public_output)?;
 
@@ -759,38 +1047,65 @@ fn protocol_public_parameters(
                 neutral_ciphertext_value,
                 encryption_scheme_public_parameters.clone(),
             );
-            Ok(protocol_public_parameters)
+            Ok(bcs::to_bytes(&protocol_public_parameters)?)
         }
         VersionedNetworkDkgOutput::V2(network_dkg_public_output) => {
             let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
-            Ok(network_dkg_public_output.secp256k1_protocol_public_parameters()?)
+
+            let pp = match DWalletCurve::try_from(curve)? {
+                DWalletCurve::Secp256k1 => bcs::to_bytes(
+                    &network_dkg_public_output.secp256k1_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Ristretto => bcs::to_bytes(
+                    &network_dkg_public_output.ristretto_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Curve25519 => bcs::to_bytes(
+                    &network_dkg_public_output.curve25519_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Secp256r1 => bcs::to_bytes(
+                    &network_dkg_public_output.secp256r1_protocol_public_parameters()?,
+                )?,
+            };
+
+            Ok(pp)
         }
     }
 }
 
 fn protocol_public_parameters_from_reconfiguration_output(
+    curve: u32,
     reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
     versioned_network_dkg_output: SerializedWrappedMPCPublicOutput,
-) -> anyhow::Result<ProtocolPublicParameters> {
+) -> anyhow::Result<Vec<u8>> {
     let reconfiguration_dkg_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(&reconfiguration_dkg_public_output)?;
 
     match &reconfiguration_dkg_public_output {
         // TODO (#1487): Remove temporary support for V1 reconfiguration keys.
         VersionedDecryptionKeyReconfigurationOutput::V1(_) => {
-            protocol_public_parameters(versioned_network_dkg_output)
+            protocol_public_parameters(curve, versioned_network_dkg_output)
         }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
-            // TODO (#1530): Add support for all the curves the network supports.
-            let secp256k1_protocol_public_parameters =
-                twopc_mpc::decentralized_party::reconfiguration::PublicOutput::secp256k1_protocol_public_parameters(
-                    &public_output,
-                )?;
 
-            Ok(secp256k1_protocol_public_parameters)
+            let pp = match DWalletCurve::try_from(curve)? {
+                DWalletCurve::Secp256k1 => {
+                    bcs::to_bytes(&public_output.secp256k1_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Ristretto => {
+                    bcs::to_bytes(&public_output.ristretto_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Curve25519 => {
+                    bcs::to_bytes(&public_output.curve25519_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Secp256r1 => {
+                    bcs::to_bytes(&public_output.secp256r1_protocol_public_parameters()?)?
+                }
+            };
+
+            Ok(pp)
         }
     }
 }

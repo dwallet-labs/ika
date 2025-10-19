@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use dwallet_mpc_centralized_party::{
-    advance_centralized_sign_party, centralized_and_decentralized_parties_dkg_output_match_inner,
-    create_dkg_output_by_curve_v2, create_dkg_output_v1,
-    create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
+    advance_centralized_sign_party,
+    advance_centralized_sign_party_with_centralized_party_dkg_output,
+    centralized_and_decentralized_parties_dkg_output_match_inner, create_dkg_output_by_curve_v2,
+    create_dkg_output_v1, create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
     dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
-    generate_cg_keypair_from_seed,
-    dwallet_version_inner, encrypt_secret_key_share_and_prove_v2,
-    generate_secp256k1_cg_keypair_from_seed_internal,
+    encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
     network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
-    public_key_from_dwallet_output_by_curve, reconfiguration_public_output_to_protocol_pp_inner,
-    sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share_v1,
+    public_key_from_centralized_dkg_output_by_curve, public_key_from_dwallet_output_by_curve,
+    reconfiguration_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
+    verify_secp_signature_inner, verify_secret_share_v1,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
@@ -34,11 +34,13 @@ pub fn create_dkg_centralized_output_v1(
 
 #[wasm_bindgen]
 pub fn create_dkg_centralized_output_v2(
+    curve: u32,
     protocol_pp: Vec<u8>,
     session_identifier: Vec<u8>,
 ) -> Result<JsValue, JsError> {
-    let dkg_centralized_result = &create_dkg_output_by_curve_v2(0, protocol_pp, session_identifier)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+    let dkg_centralized_result =
+        &create_dkg_output_by_curve_v2(curve, protocol_pp, session_identifier)
+            .map_err(|e| JsError::new(&e.to_string()))?;
     serde_wasm_bindgen::to_value(&(
         dkg_centralized_result.public_key_share_and_proof.clone(),
         dkg_centralized_result.public_output.clone(),
@@ -48,9 +50,24 @@ pub fn create_dkg_centralized_output_v2(
 }
 
 #[wasm_bindgen]
-pub fn public_key_from_dwallet_output(curve: u32, dwallet_output: Vec<u8>) -> Result<JsValue, JsError> {
+pub fn public_key_from_dwallet_output(
+    curve: u32,
+    dwallet_output: Vec<u8>,
+) -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(
         &public_key_from_dwallet_output_by_curve(curve, &dwallet_output)
+            .map_err(|e| JsError::new(&e.to_string()))?,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn public_key_from_centralized_dkg_output(
+    curve: u32,
+    centralized_dkg_output: Vec<u8>,
+) -> Result<JsValue, JsError> {
+    serde_wasm_bindgen::to_value(
+        &public_key_from_centralized_dkg_output_by_curve(curve, &centralized_dkg_output)
             .map_err(|e| JsError::new(&e.to_string()))?,
     )
     .map_err(|e| JsError::new(&e.to_string()))
@@ -92,19 +109,23 @@ pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsV
 
 #[wasm_bindgen]
 pub fn network_dkg_public_output_to_protocol_pp(
+    curve: u32,
     network_dkg_public_output: Vec<u8>,
 ) -> Result<JsValue, JsError> {
-    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_dkg_public_output)
-        .map_err(to_js_err)?;
+    let protocol_pp =
+        network_dkg_public_output_to_protocol_pp_inner(curve, network_dkg_public_output)
+            .map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&protocol_pp)?)
 }
 
 #[wasm_bindgen]
 pub fn reconfiguration_public_output_to_protocol_pp(
+    curve: u32,
     reconfig_public_output: Vec<u8>,
     network_dkg_public_output: Vec<u8>,
 ) -> Result<JsValue, JsError> {
     let protocol_pp = reconfiguration_public_output_to_protocol_pp_inner(
+        curve,
         reconfig_public_output,
         network_dkg_public_output,
     )
@@ -114,10 +135,12 @@ pub fn reconfiguration_public_output_to_protocol_pp(
 
 #[wasm_bindgen]
 pub fn centralized_and_decentralized_parties_dkg_output_match(
+    curve: u32,
     centralized_dkg_output: Vec<u8>,
     decentralized_dkg_output: Vec<u8>,
 ) -> Result<JsValue, JsError> {
     let result = centralized_and_decentralized_parties_dkg_output_match_inner(
+        curve,
         &centralized_dkg_output,
         &decentralized_dkg_output,
     )
@@ -230,6 +253,30 @@ pub fn create_sign_centralized_party_message(
     let signed_message = advance_centralized_sign_party(
         protocol_pp,
         decentralized_party_dkg_public_output,
+        centralized_party_dkg_secret_output,
+        presign,
+        message,
+        hash_type,
+        signature_scheme,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))?;
+
+    serde_wasm_bindgen::to_value(&signed_message).map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn create_sign_centralized_party_message_with_centralized_party_dkg_output(
+    protocol_pp: Vec<u8>,
+    centralized_party_dkg_public_output: Vec<u8>,
+    centralized_party_dkg_secret_output: Vec<u8>,
+    presign: Vec<u8>,
+    message: Vec<u8>,
+    hash_type: u32,
+    signature_scheme: u32,
+) -> Result<JsValue, JsError> {
+    let signed_message = advance_centralized_sign_party_with_centralized_party_dkg_output(
+        protocol_pp,
+        centralized_party_dkg_public_output,
         centralized_party_dkg_secret_output,
         presign,
         message,

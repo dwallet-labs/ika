@@ -133,9 +133,9 @@ export type Hash = (typeof Hash)[keyof typeof Hash];
 
 export const Curve = {
 	SECP256K1: 0,
-	SECP256R1: 1,
+	RISTRETTO: 1,
 	ED25519: 2,
-	RISTRETTO: 3,
+	SECP256R1: 3,
 } as const;
 
 export type Curve = (typeof Curve)[keyof typeof Curve];
@@ -182,4 +182,5 @@ export type UserSignatureInputs = {
 	message: Uint8Array;
 	hash: Hash;
 	signatureScheme: SignatureAlgorithm;
+	curve?: Curve;
 };

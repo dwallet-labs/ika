@@ -18,6 +18,7 @@ import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.
 import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
 	CoordinatorInner,
+	Curve,
 	DWallet,
 	DWalletCap,
 	DWalletInternal,
@@ -56,12 +57,13 @@ export class IkaClient {
 	private client: SuiClient;
 	/** Whether to enable caching of network objects and parameters */
 	private cache: boolean;
-	/** Cached network public parameters by encryption key ID to avoid repeated fetching */
+	/** Cached network public parameters by encryption key ID and curve to avoid repeated fetching */
 	private cachedProtocolPublicParameters: Map<
 		string,
 		{
 			networkEncryptionKeyPublicOutputID: string;
 			epoch: number;
+			curve: Curve;
 			protocolPublicParameters: Uint8Array;
 		}
 	> = new Map();
@@ -126,14 +128,24 @@ export class IkaClient {
 	}
 
 	/**
-	 * Invalidate cached protocol public parameters for a specific encryption key.
-	 * If no encryptionKeyID is provided, clears all cached protocol parameters.
+	 * Invalidate cached protocol public parameters for a specific encryption key and/or curve.
+	 * If no parameters are provided, clears all cached protocol parameters.
+	 * If only encryptionKeyID is provided, clears all curves for that key.
+	 * If both are provided, clears only that specific combination.
 	 *
 	 * @param encryptionKeyID - Optional specific encryption key ID to invalidate
+	 * @param curve - Optional specific curve to invalidate
 	 */
-	invalidateProtocolPublicParametersCache(encryptionKeyID?: string): void {
-		if (encryptionKeyID) {
-			this.cachedProtocolPublicParameters.delete(encryptionKeyID);
+	invalidateProtocolPublicParametersCache(encryptionKeyID?: string, curve?: Curve): void {
+		if (encryptionKeyID !== undefined && curve !== undefined) {
+			this.cachedProtocolPublicParameters.delete(this.#getCacheKey(encryptionKeyID, curve));
+		} else if (encryptionKeyID !== undefined) {
+			// Clear all curves for this encryption key
+			for (const key of this.cachedProtocolPublicParameters.keys()) {
+				if (key.startsWith(`${encryptionKeyID}-`)) {
+					this.cachedProtocolPublicParameters.delete(key);
+				}
+			}
 		} else {
 			this.cachedProtocolPublicParameters.clear();
 		}
@@ -634,14 +646,16 @@ export class IkaClient {
 	}
 
 	/**
-	 * Get cached protocol public parameters for a specific encryption key.
+	 * Get cached protocol public parameters for a specific encryption key and curve.
 	 * Returns undefined if not cached or if the cache is invalid.
 	 *
 	 * @param encryptionKeyID - The ID of the encryption key to get cached parameters for
+	 * @param curve - The curve to get cached parameters for
 	 * @returns Cached protocol public parameters or undefined if not cached
 	 */
-	getCachedProtocolPublicParameters(encryptionKeyID: string): Uint8Array | undefined {
-		const cachedParams = this.cachedProtocolPublicParameters.get(encryptionKeyID);
+	getCachedProtocolPublicParameters(encryptionKeyID: string, curve: Curve): Uint8Array | undefined {
+		const cacheKey = this.#getCacheKey(encryptionKeyID, curve);
+		const cachedParams = this.cachedProtocolPublicParameters.get(cacheKey);
 		if (!cachedParams) {
 			return undefined;
 		}
@@ -653,27 +667,29 @@ export class IkaClient {
 			return undefined;
 		}
 
-		// Check if the cached parameters match the current key state
+		// Check if the cached parameters match the current key state and curve
 		if (
 			cachedParams.networkEncryptionKeyPublicOutputID === currentKey.networkDKGOutputID &&
-			cachedParams.epoch === currentKey.epoch
+			cachedParams.epoch === currentKey.epoch &&
+			cachedParams.curve === curve
 		) {
 			return cachedParams.protocolPublicParameters;
 		}
 
 		// Cache is invalid, remove it
-		this.cachedProtocolPublicParameters.delete(encryptionKeyID);
+		this.cachedProtocolPublicParameters.delete(cacheKey);
 		return undefined;
 	}
 
 	/**
-	 * Check if protocol public parameters are cached for a specific encryption key.
+	 * Check if protocol public parameters are cached for a specific encryption key and curve.
 	 *
 	 * @param encryptionKeyID - The ID of the encryption key to check
+	 * @param curve - The curve to check
 	 * @returns True if valid cached parameters exist, false otherwise
 	 */
-	isProtocolPublicParametersCached(encryptionKeyID: string): boolean {
-		return this.getCachedProtocolPublicParameters(encryptionKeyID) !== undefined;
+	isProtocolPublicParametersCached(encryptionKeyID: string, curve: Curve): boolean {
+		return this.getCachedProtocolPublicParameters(encryptionKeyID, curve) !== undefined;
 	}
 
 	/**
@@ -709,12 +725,13 @@ export class IkaClient {
 	 * Retrieve the protocol public parameters used for cryptographic operations.
 	 * These parameters are cached by encryption key ID and only refetched when the epoch or decryption key changes.
 	 *
-	 * @param options - Options for encryption key selection
+	 * @param dWallet - The DWallet to get the protocol public parameters for
+	 * @param curve - The curve to use for key generation
 	 * @returns Promise resolving to the protocol public parameters as bytes
 	 * @throws {ObjectNotFoundError} If the public parameters cannot be found
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getProtocolPublicParameters(dWallet?: DWallet): Promise<Uint8Array> {
+	async getProtocolPublicParameters(dWallet?: DWallet, curve?: Curve): Promise<Uint8Array> {
 		await this.#fetchEncryptionKeysFromNetwork();
 
 		let networkEncryptionKey: NetworkEncryptionKey;
@@ -730,12 +747,22 @@ export class IkaClient {
 		const networkEncryptionKeyPublicOutputID = networkEncryptionKey.networkDKGOutputID;
 		const epoch = networkEncryptionKey.epoch;
 
-		// Check if we have cached parameters for this specific encryption key
-		const cachedParams = this.cachedProtocolPublicParameters.get(encryptionKeyID);
+		let selectedCurve: Curve;
+
+		if (dWallet) {
+			selectedCurve = dWallet.curve as Curve;
+		} else {
+			selectedCurve = curve !== undefined ? curve : (0 as Curve);
+		}
+
+		// Check if we have cached parameters for this specific encryption key and curve
+		const cacheKey = this.#getCacheKey(encryptionKeyID, selectedCurve);
+		const cachedParams = this.cachedProtocolPublicParameters.get(cacheKey);
 		if (cachedParams) {
 			if (
 				cachedParams.networkEncryptionKeyPublicOutputID === networkEncryptionKeyPublicOutputID &&
-				cachedParams.epoch === epoch
+				cachedParams.epoch === epoch &&
+				cachedParams.curve === selectedCurve
 			) {
 				return cachedParams.protocolPublicParameters;
 			}
@@ -743,17 +770,20 @@ export class IkaClient {
 
 		const protocolPublicParameters = !networkEncryptionKey.reconfigurationOutputID
 			? await networkDkgPublicOutputToProtocolPublicParameters(
+					selectedCurve,
 					await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 				)
 			: await reconfigurationPublicOutputToProtocolPublicParameters(
+					selectedCurve,
 					await this.readTableVecAsRawBytes(networkEncryptionKey.reconfigurationOutputID),
 					await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
 				);
 
-		// Cache the parameters by encryption key ID
-		this.cachedProtocolPublicParameters.set(encryptionKeyID, {
+		// Cache the parameters by encryption key ID and curve
+		this.cachedProtocolPublicParameters.set(cacheKey, {
 			networkEncryptionKeyPublicOutputID,
 			epoch,
+			curve: selectedCurve,
 			protocolPublicParameters,
 		});
 
@@ -1181,6 +1211,18 @@ export class IkaClient {
 			}
 			throw new NetworkError('Failed to process batched objects', error as Error);
 		}
+	}
+
+	/**
+	 * Generate a cache key for protocol public parameters based on encryption key ID and curve.
+	 *
+	 * @param encryptionKeyID - The encryption key ID
+	 * @param curve - The curve
+	 * @returns A unique cache key string
+	 * @private
+	 */
+	#getCacheKey(encryptionKeyID: string, curve: Curve): string {
+		return `${encryptionKeyID}-${curve}`;
 	}
 
 	#getDWalletKind(dWallet: DWalletInternal): DWalletKind {

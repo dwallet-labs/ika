@@ -3,6 +3,8 @@
 
 import type * as WasmModule from '@ika.xyz/ika-wasm';
 
+import { Curve } from './types';
+
 let wasmModule: typeof WasmModule | null = null;
 let initPromise: Promise<void> | null = null;
 const isNode = typeof process !== 'undefined' && !!process.versions?.node;
@@ -41,12 +43,18 @@ async function getWasmModule() {
 
 // Export wrapped functions that ensure WASM is initialized
 export async function encrypt_secret_share(
+	curve: Curve,
 	userSecretKeyShare: Uint8Array,
 	encryptionKey: Uint8Array,
 	protocolPublicParameters: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
-	return wasm.encrypt_secret_share(userSecretKeyShare, encryptionKey, protocolPublicParameters);
+	return wasm.encrypt_secret_share(
+		curve,
+		userSecretKeyShare,
+		encryptionKey,
+		protocolPublicParameters,
+	);
 }
 
 export async function verify_user_share(
@@ -59,10 +67,11 @@ export async function verify_user_share(
 }
 
 export async function generate_secp_cg_keypair_from_seed(
+	curve: Curve,
 	seed: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array]> {
 	const wasm = await getWasmModule();
-	return wasm.generate_secp_cg_keypair_from_seed(seed);
+	return wasm.generate_secp_cg_keypair_from_seed(curve, seed);
 }
 
 export async function create_dkg_centralized_output_v1(
@@ -74,11 +83,12 @@ export async function create_dkg_centralized_output_v1(
 }
 
 export async function create_dkg_centralized_output_v2(
+	curve: Curve,
 	protocolPublicParameters: Uint8Array,
 	session_id: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array, Uint8Array]> {
 	const wasm = await getWasmModule();
-	return wasm.create_dkg_centralized_output_v2(protocolPublicParameters, session_id);
+	return wasm.create_dkg_centralized_output_v2(curve, protocolPublicParameters, session_id);
 }
 
 export async function create_sign_centralized_party_message(
@@ -102,11 +112,33 @@ export async function create_sign_centralized_party_message(
 	);
 }
 
+export async function create_sign_centralized_party_message_with_centralized_party_dkg_output(
+	protocolPublicParameters: Uint8Array,
+	centralizedDkgOutput: Uint8Array,
+	userSecretKeyShare: Uint8Array,
+	presign: Uint8Array,
+	message: Uint8Array,
+	hash: number,
+	signatureScheme: number,
+): Promise<Uint8Array> {
+	const wasm = await getWasmModule();
+	return wasm.create_sign_centralized_party_message_with_centralized_party_dkg_output(
+		protocolPublicParameters,
+		centralizedDkgOutput,
+		userSecretKeyShare,
+		presign,
+		message,
+		hash,
+		signatureScheme,
+	);
+}
+
 export async function network_dkg_public_output_to_protocol_pp(
+	curve: Curve,
 	networkDkgPublicOutput: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
-	return wasm.network_dkg_public_output_to_protocol_pp(networkDkgPublicOutput);
+	return wasm.network_dkg_public_output_to_protocol_pp(curve, networkDkgPublicOutput);
 }
 
 export async function verify_secp_signature(
@@ -121,29 +153,42 @@ export async function verify_secp_signature(
 }
 
 export async function public_key_from_dwallet_output(
+	curve: Curve,
 	dWalletOutput: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
-	return wasm.public_key_from_dwallet_output(dWalletOutput);
+	return wasm.public_key_from_dwallet_output(curve, dWalletOutput);
+}
+
+export async function public_key_from_centralized_dkg_output(
+	curve: Curve,
+	centralizedDkgOutput: Uint8Array,
+): Promise<Uint8Array> {
+	const wasm = await getWasmModule();
+	return wasm.public_key_from_centralized_dkg_output(curve, centralizedDkgOutput);
 }
 
 export async function reconfiguration_public_output_to_protocol_pp(
+	curve: Curve,
 	reconfig_public_output: Uint8Array,
 	network_dkg_public_output: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
 	return wasm.reconfiguration_public_output_to_protocol_pp(
+		curve,
 		reconfig_public_output,
 		network_dkg_public_output,
 	);
 }
 
 export async function centralized_and_decentralized_parties_dkg_output_match(
+	curve: Curve,
 	userPublicOutput: Uint8Array,
 	networkDKGOutput: Uint8Array,
 ): Promise<boolean> {
 	const wasm = await getWasmModule();
 	return wasm.centralized_and_decentralized_parties_dkg_output_match(
+		curve,
 		userPublicOutput,
 		networkDKGOutput,
 	);
