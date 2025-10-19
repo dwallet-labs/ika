@@ -20,9 +20,7 @@ use crate::dwallet_mpc::presign::{
 };
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationV1toV2Party;
-use crate::dwallet_mpc::sign::{
-    SignAdvanceRequestByProtocol, SignPublicInputByProtocol, compute_sign,
-};
+use crate::dwallet_mpc::sign::{SignAdvanceRequestByProtocol, SignPublicInputByProtocol, compute_sign, DWalletDKGAndSignAdvanceRequestByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
     NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
@@ -229,6 +227,38 @@ impl ProtocolCryptographicData {
                     .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                 ProtocolCryptographicData::Sign {
+                    data: data.clone(),
+                    public_input: public_input.clone(),
+                    advance_request,
+                    decryption_key_shares: decryption_key_shares.clone(),
+                }
+            }
+            ProtocolData::DWalletDKGAndSign {
+                data,
+                dwallet_network_encryption_key_id,
+                ..
+            } => {
+                let PublicInput::DWalletDKGAndSign(public_input) = public_input else {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                };
+
+                let advance_request_result = DWalletDKGAndSignAdvanceRequestByProtocol::try_new(
+                    &data.curve,
+                    &DWalletSignatureScheme::try_from(data.signature_algorithm)?,
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    serialized_messages_by_consensus_round,
+                )?;
+
+                let Some(advance_request) = advance_request_result else {
+                    return Ok(None);
+                };
+
+                let decryption_key_shares = decryption_key_shares
+                    .decryption_key_shares(dwallet_network_encryption_key_id)?;
+
+                ProtocolCryptographicData::DWalletDKGAndSign {
                     data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,

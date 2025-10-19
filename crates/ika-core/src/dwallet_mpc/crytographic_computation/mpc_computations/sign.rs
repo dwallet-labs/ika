@@ -101,6 +101,40 @@ pub(crate) enum SignAdvanceRequestByProtocol {
     ),
 }
 
+#[derive(strum_macros::Display)]
+pub(crate) enum DWalletDKGAndSignAdvanceRequestByProtocol {
+    #[strum(to_string = "Sign Advance Request - curve: Secp256k1, protocol: ECDSA")]
+    Secp256k1ECDSA(
+        mpc::guaranteed_output_delivery::AdvanceRequest<
+            <DKGAndSignParty<Secp256K1ECDSAProtocol> as mpc::Party>::Message,
+        >,
+    ),
+    #[strum(to_string = "Sign Advance Request - curve: Secp256k1, protocol: Taproot")]
+    Secp256k1Taproot(
+        mpc::guaranteed_output_delivery::AdvanceRequest<
+            <DKGAndSignParty<Secp256K1TaprootProtocol> as mpc::Party>::Message,
+        >,
+    ),
+    #[strum(to_string = "Sign Advance Request - curve: Secp256r1, protocol: ECDSA")]
+    Secp256r1(
+        mpc::guaranteed_output_delivery::AdvanceRequest<
+            <DKGAndSignParty<Secp256R1ECDSAProtocol> as mpc::Party>::Message,
+        >,
+    ),
+    #[strum(to_string = "Sign Advance Request - curve: Curve25519, protocol: EdDSA")]
+    Curve25519(
+        mpc::guaranteed_output_delivery::AdvanceRequest<
+            <DKGAndSignParty<Curve25519EdDSAProtocol> as mpc::Party>::Message,
+        >,
+    ),
+    #[strum(to_string = "Sign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrate")]
+    Ristretto(
+        mpc::guaranteed_output_delivery::AdvanceRequest<
+            <DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::Message,
+        >,
+    ),
+}
+
 /// Deterministically determine the set of expected decrypters for an optimization of the
 /// threshold decryption in the Sign protocol.
 /// Pseudo-randomly samples a subset of size `t + 10% * n`,
@@ -201,6 +235,87 @@ impl SignAdvanceRequestByProtocol {
             DWalletCurve::Secp256r1 => {
                 let advance_request =
                     mpc_computations::try_ready_to_advance::<SignParty<Secp256R1ECDSAProtocol>>(
+                        party_id,
+                        access_structure,
+                        consensus_round,
+                        &serialized_messages_by_consensus_round,
+                    )?;
+
+                advance_request.map(SignAdvanceRequestByProtocol::Secp256r1)
+            }
+        };
+        Ok(advance_request)
+    }
+}
+
+impl DWalletDKGAndSignAdvanceRequestByProtocol {
+    pub fn try_new(
+        curve: &DWalletCurve,
+        protocol: &DWalletSignatureScheme,
+        party_id: PartyID,
+        access_structure: &WeightedThresholdAccessStructure,
+        consensus_round: u64,
+        serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
+    ) -> DwalletMPCResult<Option<Self>> {
+        let advance_request = match curve {
+            DWalletCurve::Secp256k1 => match protocol {
+                DWalletSignatureScheme::ECDSASecp256k1 => {
+                    let advance_request = mpc_computations::try_ready_to_advance::<
+                        DKGAndSignParty<Secp256K1ECDSAProtocol>,
+                    >(
+                        party_id,
+                        access_structure,
+                        consensus_round,
+                        &serialized_messages_by_consensus_round,
+                    )?;
+
+                    advance_request.map(SignAdvanceRequestByProtocol::Secp256k1ECDSA)
+                }
+                DWalletSignatureScheme::Taproot => {
+                    let advance_request = mpc_computations::try_ready_to_advance::<
+                        DKGAndSignParty<Secp256K1TaprootProtocol>,
+                    >(
+                        party_id,
+                        access_structure,
+                        consensus_round,
+                        &serialized_messages_by_consensus_round,
+                    )?;
+
+                    advance_request.map(SignAdvanceRequestByProtocol::Secp256k1Taproot)
+                }
+                _ => {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: curve.clone(),
+                        protocol: protocol.clone(),
+                    });
+                }
+            },
+            DWalletCurve::Ristretto => {
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                advance_request.map(SignAdvanceRequestByProtocol::Ristretto)
+            }
+            DWalletCurve::Curve25519 => {
+                let advance_request =
+                    mpc_computations::try_ready_to_advance::<DKGAndSignParty<Curve25519EdDSAProtocol>>(
+                        party_id,
+                        access_structure,
+                        consensus_round,
+                        &serialized_messages_by_consensus_round,
+                    )?;
+
+                advance_request.map(SignAdvanceRequestByProtocol::Curve25519)
+            }
+            DWalletCurve::Secp256r1 => {
+                let advance_request =
+                    mpc_computations::try_ready_to_advance::<DKGAndSignParty<Secp256R1ECDSAProtocol>>(
                         party_id,
                         access_structure,
                         consensus_round,
