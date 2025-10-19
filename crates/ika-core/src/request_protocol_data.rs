@@ -61,7 +61,7 @@ pub struct DWalletDKGAndSignData {
     pub presign_id: ObjectID,
     pub presign: Vec<u8>,
     pub signature_algorithm: u32,
-    pub hash_scheme: u32,
+    pub hash_type: HashType,
     pub message: Vec<u8>,
     pub message_centralized_signature: Vec<u8>,
 }
@@ -277,7 +277,8 @@ pub fn dwallet_dkg_and_sign_protocol_data(
             presign_id: sign_during_dkg_request.presign_id,
             presign: sign_during_dkg_request.presign.clone(),
             signature_algorithm: sign_during_dkg_request.signature_algorithm,
-            hash_scheme: sign_during_dkg_request.hash_scheme,
+            hash_type: HashType::try_from(sign_during_dkg_request.hash_scheme)
+                .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
             message: sign_during_dkg_request.message.clone(),
             message_centralized_signature: sign_during_dkg_request
                 .message_centralized_signature
@@ -404,6 +405,10 @@ impl ProtocolData {
                 ..
             }
             | ProtocolData::DKGFirst {
+                dwallet_network_encryption_key_id,
+                ..
+            }
+            | ProtocolData::DWalletDKGAndSign {
                 dwallet_network_encryption_key_id,
                 ..
             }
