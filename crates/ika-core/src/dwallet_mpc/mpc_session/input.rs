@@ -23,10 +23,7 @@ use crate::request_protocol_data::{
 };
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{
-    MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty,
-    ReconfigurationV2Party, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
-};
+use dwallet_mpc_types::dwallet_mpc::{DWalletSignatureScheme, MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty, ReconfigurationV2Party, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare};
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
@@ -117,14 +114,15 @@ pub(crate) fn session_input_from_request(
             )?;
             Ok((
                 PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
-                    session_id,
-                    &data.curve,
-                    encryption_key_public_data,
-                    &data.centralized_public_key_share_and_proof,
-                    BytesCentralizedPartyKeyShareVerification::from(
-                        data.user_secret_key_share.clone(),
-                    ),
+                    request.session_identifier,
                     dwallet_dkg_public_input,
+                    data.message.clone(),
+                    &data.presign,
+                    &data.message_centralized_signature,
+                    data.hash_type,
+                    access_structure,
+                    encryption_key_public_data,
+                    DWalletSignatureScheme::try_from(data.signature_algorithm)?,
                 )?),
                 None,
             ))
