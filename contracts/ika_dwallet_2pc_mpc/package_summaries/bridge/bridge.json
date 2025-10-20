@@ -1,0 +1,1892 @@
+{
+  "id": {
+    "address": "bridge",
+    "name": "bridge"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "bridge",
+      "name": "chain_ids"
+    },
+    {
+      "address": "bridge",
+      "name": "committee"
+    },
+    {
+      "address": "bridge",
+      "name": "limiter"
+    },
+    {
+      "address": "bridge",
+      "name": "message"
+    },
+    {
+      "address": "bridge",
+      "name": "message_types"
+    },
+    {
+      "address": "bridge",
+      "name": "treasury"
+    },
+    {
+      "address": "std",
+      "name": "ascii"
+    },
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "sui",
+      "name": "address"
+    },
+    {
+      "address": "sui",
+      "name": "balance"
+    },
+    {
+      "address": "sui",
+      "name": "clock"
+    },
+    {
+      "address": "sui",
+      "name": "coin"
+    },
+    {
+      "address": "sui",
+      "name": "event"
+    },
+    {
+      "address": "sui",
+      "name": "linked_table"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "package"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    },
+    {
+      "address": "sui",
+      "name": "vec_map"
+    },
+    {
+      "address": "sui",
+      "name": "versioned"
+    },
+    {
+      "address": "sui_system",
+      "name": "sui_system"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "UID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "chain_id",
+          "type_": "u8"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "init_bridge_committee": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "active_validator_voting_power",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "vec_map"
+              },
+              "name": "VecMap",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "address"
+                },
+                {
+                  "phantom": false,
+                  "argument": "u64"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "min_stake_participation_percentage",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "committee_registration": {
+      "source_index": 2,
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_state",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "bridge_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "http_rest_url",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_node_url": {
+      "source_index": 3,
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_url",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "register_foreign_token": {
+      "source_index": 4,
+      "index": 4,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "tc",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "coin"
+              },
+              "name": "TreasuryCap",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "uc",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "package"
+              },
+              "name": "UpgradeCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "metadata",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "CoinMetadata",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "send_token": {
+      "source_index": 5,
+      "index": 5,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "target_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "target_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "token",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "coin"
+              },
+              "name": "Coin",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "approve_token_transfer": {
+      "source_index": 6,
+      "index": 6,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "message",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "bridge",
+                "name": "message"
+              },
+              "name": "BridgeMessage",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "signatures",
+          "type_": {
+            "vector": {
+              "vector": "u8"
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "claim_token": {
+      "source_index": 7,
+      "index": 7,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "clock",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "clock"
+                  },
+                  "name": "Clock",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "bridge_seq_num",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "coin"
+            },
+            "name": "Coin",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "NamedTypeParameter": "T"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "claim_and_transfer_token": {
+      "source_index": 8,
+      "index": 8,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "clock",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "clock"
+                  },
+                  "name": "Clock",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "bridge_seq_num",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "execute_system_message": {
+      "source_index": 9,
+      "index": 9,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "message",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "bridge",
+                "name": "message"
+              },
+              "name": "BridgeMessage",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "signatures",
+          "type_": {
+            "vector": {
+              "vector": "u8"
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "get_token_transfer_action_status": {
+      "source_index": 10,
+      "index": 10,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "bridge_seq_num",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "get_token_transfer_action_signatures": {
+      "source_index": 11,
+      "index": 11,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "bridge_seq_num",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "vector": {
+                    "vector": "u8"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "load_inner": {
+      "source_index": 12,
+      "index": 12,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "bridge"
+                },
+                "name": "BridgeInner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "load_inner_mut": {
+      "source_index": 13,
+      "index": 13,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "bridge"
+                },
+                "name": "BridgeInner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "claim_token_internal": {
+      "source_index": 14,
+      "index": 14,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "clock",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "clock"
+                  },
+                  "name": "Clock",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "bridge_seq_num",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "coin"
+                    },
+                    "name": "Coin",
+                    "type_arguments": [
+                      {
+                        "phantom": true,
+                        "argument": {
+                          "NamedTypeParameter": "T"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "address"
+      ]
+    },
+    "execute_emergency_op": {
+      "source_index": 15,
+      "index": 15,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "inner",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "BridgeInner",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payload",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "bridge",
+                "name": "message"
+              },
+              "name": "EmergencyOp",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "execute_update_bridge_limit": {
+      "source_index": 16,
+      "index": 16,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "inner",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "BridgeInner",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payload",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "bridge",
+                "name": "message"
+              },
+              "name": "UpdateBridgeLimit",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "execute_update_asset_price": {
+      "source_index": 17,
+      "index": 17,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "inner",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "BridgeInner",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payload",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "bridge",
+                "name": "message"
+              },
+              "name": "UpdateAssetPrice",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "execute_add_tokens_on_sui": {
+      "source_index": 18,
+      "index": 18,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "inner",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "BridgeInner",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payload",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "bridge",
+                "name": "message"
+              },
+              "name": "AddTokenOnSui",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "get_current_seq_num_and_increment": {
+      "source_index": 19,
+      "index": 19,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "BridgeInner",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "msg_type",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "get_parsed_token_transfer_message": {
+      "source_index": 20,
+      "index": 20,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bridge",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "bridge"
+                  },
+                  "name": "Bridge",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "bridge_seq_num",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "bridge",
+                      "name": "message"
+                    },
+                    "name": "ParsedTokenTransferMessage",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "structs": {
+    "Bridge": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Key"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "inner": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "versioned"
+                },
+                "name": "Versioned",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "BridgeInner": {
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "bridge_version": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "message_version": {
+            "index": 1,
+            "doc": null,
+            "type_": "u8"
+          },
+          "chain_id": {
+            "index": 2,
+            "doc": null,
+            "type_": "u8"
+          },
+          "sequence_nums": {
+            "index": 3,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "vec_map"
+                },
+                "name": "VecMap",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": "u8"
+                  },
+                  {
+                    "phantom": false,
+                    "argument": "u64"
+                  }
+                ]
+              }
+            }
+          },
+          "committee": {
+            "index": 4,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "committee"
+                },
+                "name": "BridgeCommittee",
+                "type_arguments": []
+              }
+            }
+          },
+          "treasury": {
+            "index": 5,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "treasury"
+                },
+                "name": "BridgeTreasury",
+                "type_arguments": []
+              }
+            }
+          },
+          "token_transfer_records": {
+            "index": 6,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "linked_table"
+                },
+                "name": "LinkedTable",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "bridge",
+                          "name": "message"
+                        },
+                        "name": "BridgeMessageKey",
+                        "type_arguments": []
+                      }
+                    }
+                  },
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "bridge",
+                          "name": "bridge"
+                        },
+                        "name": "BridgeRecord",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "limiter": {
+            "index": 7,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "limiter"
+                },
+                "name": "TransferLimiter",
+                "type_arguments": []
+              }
+            }
+          },
+          "paused": {
+            "index": 8,
+            "doc": null,
+            "type_": "bool"
+          }
+        }
+      }
+    },
+    "TokenDepositedEvent": {
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "seq_num": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "source_chain": {
+            "index": 1,
+            "doc": null,
+            "type_": "u8"
+          },
+          "sender_address": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "target_chain": {
+            "index": 3,
+            "doc": null,
+            "type_": "u8"
+          },
+          "target_address": {
+            "index": 4,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "token_type": {
+            "index": 5,
+            "doc": null,
+            "type_": "u8"
+          },
+          "amount": {
+            "index": 6,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "EmergencyOpEvent": {
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "frozen": {
+            "index": 0,
+            "doc": null,
+            "type_": "bool"
+          }
+        }
+      }
+    },
+    "BridgeRecord": {
+      "index": 4,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "message": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "message"
+                },
+                "name": "BridgeMessage",
+                "type_arguments": []
+              }
+            }
+          },
+          "verified_signatures": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "vector": {
+                        "vector": "u8"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "claimed": {
+            "index": 2,
+            "doc": null,
+            "type_": "bool"
+          }
+        }
+      }
+    },
+    "TokenTransferApproved": {
+      "index": 5,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "message_key": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "message"
+                },
+                "name": "BridgeMessageKey",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "TokenTransferClaimed": {
+      "index": 6,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "message_key": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "message"
+                },
+                "name": "BridgeMessageKey",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "TokenTransferAlreadyApproved": {
+      "index": 7,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "message_key": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "message"
+                },
+                "name": "BridgeMessageKey",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "TokenTransferAlreadyClaimed": {
+      "index": 8,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "message_key": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "message"
+                },
+                "name": "BridgeMessageKey",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "TokenTransferLimitExceed": {
+      "index": 9,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "message_key": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "message"
+                },
+                "name": "BridgeMessageKey",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

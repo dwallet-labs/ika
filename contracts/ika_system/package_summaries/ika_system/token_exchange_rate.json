@@ -1,0 +1,179 @@
+{
+  "id": {
+    "address": "ika_system",
+    "name": "token_exchange_rate"
+  },
+  "doc": " A utility module which implements an `ExchangeRate` struct and its methods.\n It stores a fixed point exchange rate between the IKA token and validator shares.",
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "flat": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create an empty exchange rate.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_system",
+              "name": "token_exchange_rate"
+            },
+            "name": "TokenExchangeRate",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "new": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Create a new exchange rate with the given amounts.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "ika_amount",
+          "type_": "u64"
+        },
+        {
+          "name": "share_amount",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_system",
+              "name": "token_exchange_rate"
+            },
+            "name": "TokenExchangeRate",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "convert_to_ika_amount": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Assumptions:\n - amount is at most the amount of shares in the validator",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "exchange_rate",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "token_exchange_rate"
+                  },
+                  "name": "TokenExchangeRate",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "convert_to_share_amount": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Assumptions:\n - amount is at most the amount of IKA in the validator",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "exchange_rate",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "token_exchange_rate"
+                  },
+                  "name": "TokenExchangeRate",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {
+    "TokenExchangeRate": {
+      "index": 0,
+      "doc": " Represents the exchange rate for the staking validator.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "variants": {
+        "Flat": {
+          "index": 0,
+          "doc": null,
+          "fields": {
+            "positional_fields": false,
+            "fields": {}
+          }
+        },
+        "Variable": {
+          "index": 1,
+          "doc": null,
+          "fields": {
+            "positional_fields": false,
+            "fields": {
+              "ika_amount": {
+                "index": 0,
+                "doc": " Amount of staked IKA tokens + rewards.",
+                "type_": "u128"
+              },
+              "share_amount": {
+                "index": 1,
+                "doc": " Amount of total shares in the validator (<= ika_amount, as long as slashing is not\n implemented).",
+                "type_": "u128"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

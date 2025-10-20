@@ -1,0 +1,695 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "table_vec"
+  },
+  "doc": " A basic scalable vector library implemented using `Table`.",
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "table"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "empty": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create an empty TableVec.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "table_vec"
+            },
+            "name": "TableVec",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "singleton": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Return a TableVec of size one containing element `e`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "e",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "table_vec"
+            },
+            "name": "TableVec",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "length": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Return the length of the TableVec.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table_vec"
+                  },
+                  "name": "TableVec",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "is_empty": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Return if the TableVec is empty or not.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table_vec"
+                  },
+                  "name": "TableVec",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "borrow": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Acquire an immutable reference to the `i`th element of the TableVec `t`.\n Aborts if `i` is out of bounds.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "syntax",
+            [
+              {
+                "Name": "index"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table_vec"
+                  },
+                  "name": "TableVec",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "Element"
+            }
+          ]
+        }
+      ]
+    },
+    "push_back": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Add element `e` to the end of the TableVec `t`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table_vec"
+                  },
+                  "name": "TableVec",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "e",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "borrow_mut": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Return a mutable reference to the `i`th element in the TableVec `t`.\n Aborts if `i` is out of bounds.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "syntax",
+            [
+              {
+                "Name": "index"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table_vec"
+                  },
+                  "name": "TableVec",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "Element"
+            }
+          ]
+        }
+      ]
+    },
+    "pop_back": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Pop an element from the end of TableVec `t`.\n Aborts if `t` is empty.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table_vec"
+                  },
+                  "name": "TableVec",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Element"
+        }
+      ]
+    },
+    "destroy_empty": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Destroy the TableVec `t`.\n Aborts if `t` is not empty.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "table_vec"
+              },
+              "name": "TableVec",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "Element"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "drop": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Drop a possibly non-empty TableVec `t`.\n Usable only if the value type `Element` has the `drop` ability",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "table_vec"
+              },
+              "name": "TableVec",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "Element"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "swap": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Swaps the elements at the `i`th and `j`th indices in the TableVec `t`.\n Aborts if `i` or `j` is out of bounds.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table_vec"
+                  },
+                  "name": "TableVec",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        },
+        {
+          "name": "j",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "swap_remove": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Swap the `i`th element of the TableVec `t` with the last element and then pop the TableVec.\n This is O(1), but does not preserve ordering of elements in the TableVec.\n Aborts if `i` is out of bounds.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table_vec"
+                  },
+                  "name": "TableVec",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Element"
+        }
+      ]
+    }
+  },
+  "structs": {
+    "TableVec": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "Element",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "contents": {
+            "index": 0,
+            "doc": " The contents of the table vector.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "table"
+                },
+                "name": "Table",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": "u64"
+                  },
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "NamedTypeParameter": "Element"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

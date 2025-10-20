@@ -1,0 +1,45 @@
+{
+  "id": {
+    "address": "std",
+    "name": "bcs"
+  },
+  "doc": " Utility for converting a Move value to its binary representation in BCS (Binary Canonical\n Serialization). BCS is the binary encoding for Move resources and other non-module values\n published on-chain. See https://github.com/diem/bcs#binary-canonical-serialization-bcs for more\n details on BCS.",
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "to_bytes": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Return the binary representation of `v` in BCS (Binary Canonical Serialization) format",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "MoveValue",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "MoveValue"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

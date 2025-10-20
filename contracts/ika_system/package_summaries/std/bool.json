@@ -1,0 +1,23 @@
+{
+  "id": {
+    "address": "std",
+    "name": "bool"
+  },
+  "doc": null,
+  "immediate_dependencies": [],
+  "attributes": [
+    {
+      "Parameterized": [
+        "defines_primitive",
+        [
+          {
+            "Name": "bool"
+          }
+        ]
+      ]
+    }
+  ],
+  "functions": {},
+  "structs": {},
+  "enums": {}
+}

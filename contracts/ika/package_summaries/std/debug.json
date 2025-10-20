@@ -1,0 +1,52 @@
+{
+  "id": {
+    "address": "std",
+    "name": "debug"
+  },
+  "doc": " Module providing debug functionality.",
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "print": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "T"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "print_stack_trace": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": []
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

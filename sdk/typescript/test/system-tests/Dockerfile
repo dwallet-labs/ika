@@ -55,4 +55,3 @@ COPY --from=builder /opt/ika/target/${PROFILE}/ika-node /usr/local/bin/ika-node
 # Add build metadata.
 LABEL build-date=$BUILD_DATE
 LABEL git-revision=$GIT_REVISION
-

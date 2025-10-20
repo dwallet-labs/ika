@@ -1,0 +1,3694 @@
+{
+  "id": {
+    "address": "ika_system",
+    "name": "system"
+  },
+  "doc": " # Ika System Module\n\n The `ika_system::system` module provides the core system state management for the Ika network.\n It acts as the central coordinator for validators, staking, epochs, and network governance.\n\n ## Overview\n\n The module implements a versioned wrapper pattern around the core system state:\n - `System`: A shared object that serves as the public interface and version manager\n - `SystemInner`: The actual system state implementation containing all business logic\n - `ProtocolCap`: Capability object for privileged system operations\n\n ## Architecture\n\n The system uses a two-layer architecture:\n\n ### System Wrapper Layer\n The `System` struct is a thin wrapper that:\n - Maintains version information for upgrades\n - Stores the package ID for authorization\n - Holds the inner system state as a dynamic field\n - Provides a stable public interface across versions\n\n ### SystemInner Layer\n The `SystemInner` struct contains all the core functionality:\n - Validator set management and operations\n - Epoch progression and timing\n - Staking and delegation logic\n - Protocol treasury and rewards distribution\n - dWallet network coordination\n - System parameter management\n\n ## Key Responsibilities\n\n ### Validator Management\n - Adding/removing validator candidates\n - Managing validator metadata and configuration\n - Handling validator state transitions (PreActive → Active → Withdrawing)\n - Processing validator reports and governance actions\n\n ### Staking Operations\n - Processing stake additions and withdrawals\n - Managing staked IKA tokens and rewards\n - Calculating token exchange rates across epochs\n - Handling delegation to validators\n\n ### Epoch Management\n - Coordinating epoch transitions\n - Processing mid-epoch reconfigurations\n - Managing epoch timing and duration\n - Distributing stake subsidies and rewards\n\n ### dWallet Integration\n - Coordinating with dWallet 2PC MPC system\n - Managing encryption keys and DKG processes\n - Handling pricing and curve configurations\n - Processing dWallet network operations\n\n ### System Governance\n - Managing protocol upgrades via UpgradeCap\n - Processing system parameter changes\n - Handling protocol version transitions\n - Coordinating checkpoint message processing\n\n ## State Management\n\n The system maintains state across multiple components:\n - **ValidatorSet**: Current and pending validator configurations\n - **ProtocolTreasury**: Rewards, subsidies, and fee management\n - **BLS Committee**: Cryptographic committee for consensus\n - **Token Exchange Rates**: Historical staking reward calculations\n - **Pending Values**: Future epoch configuration changes\n\n ## Ika System Upgrade Guide\n `System` is a versioned wrapper around `SystemInner` that provides upgrade capabilities.\n The `SystemInner` object is stored as a dynamic field with the version as the key.\n There are multiple approaches to upgrade the system state:\n\n The simplest approach is to add dynamic fields to the `extra_fields` field of `SystemInner`\n or any of its subtypes. This is useful for rapid changes, small modifications, or experimental features.\n\n To perform a proper type upgrade of `SystemInner`, follow these steps:\n 1. Define a new `SystemInnerV2` type in system_inner.move.\n 2. Create a data migration function that transforms `SystemInner` to `SystemInnerV2`.\n 3. Update the `VERSION` constant to 2 and replace all references to `SystemInner` with `SystemInnerV2`\n    in both system.move and system_inner.move.\n 4. Modify the `migrate` function to handle the version upgrade by:\n    - Removing the old inner object from the dynamic field\n    - Applying the data migration transformation\n    - Adding the new inner object with the updated version\n 5. Update the `inner()` and `inner_mut()` functions to work with the new version.\n\n Along with the Move changes, update the Rust code:\n 1. Define a new `SystemInnerV2` struct that matches the Move type.\n 2. Update the `System` enum to include the new version variant.\n 3. Update relevant system state getter functions to handle the new version.\n\n To upgrade Validator types:\n 1. Define a new Validator version (e.g. ValidatorV2) in validator.move.\n 2. Create migration functions to convert between validator versions.\n 3. Update validator creation and access functions to use the new version.\n 4. Update the validator set and related components to handle the new validator type.\n\n In Rust, add new cases to handle the upgraded validator types in the appropriate getter functions.\n Validator upgrades can be done independently of SystemInner upgrades, but ensure version consistency\n across related components.",
+  "immediate_dependencies": [
+    {
+      "address": "ika",
+      "name": "ika"
+    },
+    {
+      "address": "ika_common",
+      "name": "advance_epoch_approver"
+    },
+    {
+      "address": "ika_common",
+      "name": "bls_committee"
+    },
+    {
+      "address": "ika_common",
+      "name": "protocol_cap"
+    },
+    {
+      "address": "ika_common",
+      "name": "system_current_status_info"
+    },
+    {
+      "address": "ika_common",
+      "name": "system_object_cap"
+    },
+    {
+      "address": "ika_common",
+      "name": "upgrade_package_approver"
+    },
+    {
+      "address": "ika_common",
+      "name": "validator_cap"
+    },
+    {
+      "address": "ika_system",
+      "name": "protocol_treasury"
+    },
+    {
+      "address": "ika_system",
+      "name": "staked_ika"
+    },
+    {
+      "address": "ika_system",
+      "name": "system_inner"
+    },
+    {
+      "address": "ika_system",
+      "name": "token_exchange_rate"
+    },
+    {
+      "address": "ika_system",
+      "name": "validator_metadata"
+    },
+    {
+      "address": "ika_system",
+      "name": "validator_set"
+    },
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "std",
+      "name": "string"
+    },
+    {
+      "address": "sui",
+      "name": "clock"
+    },
+    {
+      "address": "sui",
+      "name": "coin"
+    },
+    {
+      "address": "sui",
+      "name": "dynamic_field"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "package"
+    },
+    {
+      "address": "sui",
+      "name": "table"
+    },
+    {
+      "address": "sui",
+      "name": "table_vec"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create a new System object and make it shared.\n This function will be called only once in init.\n\n Creates the initial system state with the provided validators and parameters,\n then wraps it in a versioned System object and makes it shared for network access.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "package_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "system_object_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_common",
+                "name": "system_object_cap"
+              },
+              "name": "SystemObjectCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "upgrade_caps",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "package"
+                },
+                "name": "UpgradeCap",
+                "type_arguments": []
+              }
+            }
+          }
+        },
+        {
+          "name": "validators",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_system",
+                "name": "validator_set"
+              },
+              "name": "ValidatorSet",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "protocol_version",
+          "type_": "u64"
+        },
+        {
+          "name": "epoch_start_timestamp_ms",
+          "type_": "u64"
+        },
+        {
+          "name": "epoch_duration_ms",
+          "type_": "u64"
+        },
+        {
+          "name": "stake_subsidy_start_epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "protocol_treasury",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_system",
+                "name": "protocol_treasury"
+              },
+              "name": "ProtocolTreasury",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "protocol_cap"
+            },
+            "name": "ProtocolCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "initialize": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "max_validator_change_count",
+          "type_": "u64"
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "ProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "clock",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "clock"
+                  },
+                  "name": "Clock",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "advance_epoch_approver"
+            },
+            "name": "AdvanceEpochApprover",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_add_validator_candidate": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Can be called by anyone who wishes to become a validator candidate and starts accruing delegated\n stakes in their staking pool. Once they have at least `MIN_VALIDATOR_JOINING_STAKE` amount of stake they\n can call `request_add_validator` to officially become an active validator at the next epoch.\n Aborts if the caller is already a pending or active validator, or a validator candidate.\n Note: `proof_of_possession_bytes` MUST be a valid signature using sui_address and protocol_pubkey_bytes.\n To produce a valid PoP, run [fn test_proof_of_possession_bytes].",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "protocol_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "network_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "consensus_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "mpc_data_bytes",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "table_vec"
+              },
+              "name": "TableVec",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "vector": "u8"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "proof_of_possession_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "network_address",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "p2p_address",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "consensus_address",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "commission_rate",
+          "type_": "u16"
+        },
+        {
+          "name": "metadata",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_system",
+                "name": "validator_metadata"
+              },
+              "name": "ValidatorMetadata",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "validator_cap"
+            },
+            "name": "ValidatorCap",
+            "type_arguments": []
+          }
+        },
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "validator_cap"
+            },
+            "name": "ValidatorOperationCap",
+            "type_arguments": []
+          }
+        },
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "validator_cap"
+            },
+            "name": "ValidatorCommissionCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_remove_validator_candidate": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Called by a validator candidate to remove themselves from the candidacy. After this call\n their staking pool becomes deactivate.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_add_validator": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Called by a validator candidate to add themselves to the active validator set beginning next epoch.\n Aborts if the validator is a duplicate with one of the pending or active validators, or if the amount of\n stake the validator has doesn't meet the min threshold, or if the number of new validators for the next\n epoch has already reached the maximum.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_remove_validator": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " A validator can call this function to request a removal in the next epoch.\n We use the sender of `ctx` to look up the validator\n (i.e. sender must match the sui_address in the validator).\n At the end of the epoch, the `validator` object will be returned to the sui_address\n of the validator.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_next_commission": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " A validator can call this function to set a new commission rate, updated at the end of\n the epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_commission_rate",
+          "type_": "u16"
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_add_stake": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Add stake to a validator's staking pool.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "coin"
+              },
+              "name": "Coin",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "ika",
+                        "name": "ika"
+                      },
+                      "name": "IKA",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "validator_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_system",
+              "name": "staked_ika"
+            },
+            "name": "StakedIka",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_withdraw_stake": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Marks the amount as a withdrawal to be processed and removes it from the stake weight of the\n node. Allows the user to call withdraw_stake after the epoch change to the next epoch and\n shard transfer is done.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "staked_ika"
+                  },
+                  "name": "StakedIka",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "withdraw_stake": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Withdraws the staked amount from the staking pool.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_ika",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_system",
+                "name": "staked_ika"
+              },
+              "name": "StakedIka",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "coin"
+            },
+            "name": "Coin",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "ika",
+                      "name": "ika"
+                    },
+                    "name": "IKA",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "report_validator": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Report a validator as a bad or non-performant actor in the system.\n Succeeds if all the following are satisfied:\n 1. both the reporter in `cap` and the input `reportee_id` are active validators.\n 2. reporter and reportee not the same address.\n 3. the cap object is still valid.\n This function is idempotent.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "reportee_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "undo_report_validator": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Undo a `report_validator` action. Aborts if\n 1. the reportee is not a currently active validator or\n 2. the sender has not previously reported the `reportee_id`, or\n 3. the cap is not valid",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "reportee_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "rotate_operation_cap": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Create a new `ValidatorOperationCap` and registers it. The original object is thus revoked.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "validator_cap"
+            },
+            "name": "ValidatorOperationCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "rotate_commission_cap": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Create a new `ValidatorCommissionCap` and registers it. The original object is thus revoked.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "validator_cap"
+            },
+            "name": "ValidatorCommissionCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "collect_commission": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " Withdraws the commission from the validator. Amount is optional, if not provided,\n the full commission is withdrawn.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorCommissionCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u64"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "coin"
+            },
+            "name": "Coin",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "ika",
+                      "name": "ika"
+                    },
+                    "name": "IKA",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "set_validator_name": {
+      "source_index": 15,
+      "index": 15,
+      "doc": " Set a validator's name.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "validator_metadata": {
+      "source_index": 16,
+      "index": 16,
+      "doc": " Get a validator's metadata.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "validator_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_system",
+              "name": "validator_metadata"
+            },
+            "name": "ValidatorMetadata",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "set_validator_metadata": {
+      "source_index": 17,
+      "index": 17,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "metadata",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_system",
+                "name": "validator_metadata"
+              },
+              "name": "ValidatorMetadata",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_next_epoch_network_address": {
+      "source_index": 18,
+      "index": 18,
+      "doc": " Sets a validator's network address.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "network_address",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_next_epoch_p2p_address": {
+      "source_index": 19,
+      "index": 19,
+      "doc": " Sets a validator's p2p address.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "p2p_address",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_next_epoch_consensus_address": {
+      "source_index": 20,
+      "index": 20,
+      "doc": " Sets a validator's consensus address.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "consensus_address",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_next_epoch_protocol_pubkey_bytes": {
+      "source_index": 21,
+      "index": 21,
+      "doc": " Sets a validator's public key of protocol key and proof of possession.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "protocol_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "proof_of_possession_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_next_epoch_network_pubkey_bytes": {
+      "source_index": 22,
+      "index": 22,
+      "doc": " Sets a validator's public key of network key.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "network_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_next_epoch_consensus_pubkey_bytes": {
+      "source_index": 23,
+      "index": 23,
+      "doc": " Sets a validator's public key of worker key.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "consensus_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_next_epoch_mpc_data_bytes": {
+      "source_index": 24,
+      "index": 24,
+      "doc": " Sets a validator's MPC public data.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "mpc_data",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "table_vec"
+              },
+              "name": "TableVec",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "vector": "u8"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "table_vec"
+                    },
+                    "name": "TableVec",
+                    "type_arguments": [
+                      {
+                        "phantom": true,
+                        "argument": {
+                          "vector": "u8"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "token_exchange_rates": {
+      "source_index": 25,
+      "index": 25,
+      "doc": " Get the pool token exchange rate of a validator. Works for both active and inactive pools.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "validator_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "table"
+                },
+                "name": "Table",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": "u64"
+                  },
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "ika_system",
+                          "name": "token_exchange_rate"
+                        },
+                        "name": "TokenExchangeRate",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "active_committee": {
+      "source_index": 26,
+      "index": 26,
+      "doc": " Get the active committee of the current epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "bls_committee"
+            },
+            "name": "BlsCommittee",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "next_epoch_active_committee": {
+      "source_index": 27,
+      "index": 27,
+      "doc": " Get the active committee of the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "ika_common",
+                      "name": "bls_committee"
+                    },
+                    "name": "BlsCommittee",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "initiate_mid_epoch_reconfiguration": {
+      "source_index": 28,
+      "index": 28,
+      "doc": " Locks the committee of the next epoch to allow starting the reconfiguration process.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "clock",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "clock"
+                  },
+                  "name": "Clock",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "create_system_current_status_info": {
+      "source_index": 29,
+      "index": 29,
+      "doc": " Create the system current status info.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "clock",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "clock"
+                  },
+                  "name": "Clock",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "system_current_status_info"
+            },
+            "name": "SystemCurrentStatusInfo",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "initiate_advance_epoch": {
+      "source_index": 30,
+      "index": 30,
+      "doc": " Initiates the advance epoch process.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "clock",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "clock"
+                  },
+                  "name": "Clock",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "advance_epoch_approver"
+            },
+            "name": "AdvanceEpochApprover",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "advance_epoch": {
+      "source_index": 31,
+      "index": 31,
+      "doc": " Advances the epoch to the next epoch.\n Can only be called after all the witnesses have approved the advance epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "advance_epoch_approver",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_common",
+                "name": "advance_epoch_approver"
+              },
+              "name": "AdvanceEpochApprover",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "clock",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "clock"
+                  },
+                  "name": "Clock",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "verify_validator_cap": {
+      "source_index": 32,
+      "index": 32,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "validator_cap"
+            },
+            "name": "VerifiedValidatorCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "verify_operation_cap": {
+      "source_index": 33,
+      "index": 33,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "validator_cap"
+            },
+            "name": "VerifiedValidatorOperationCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "verify_commission_cap": {
+      "source_index": 34,
+      "index": 34,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorCommissionCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "validator_cap"
+            },
+            "name": "VerifiedValidatorCommissionCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "authorize_upgrade": {
+      "source_index": 35,
+      "index": 35,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "package_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "package"
+            },
+            "name": "UpgradeTicket",
+            "type_arguments": []
+          }
+        },
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "upgrade_package_approver"
+            },
+            "name": "UpgradePackageApprover",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "commit_upgrade": {
+      "source_index": 36,
+      "index": 36,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "receipt",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "package"
+              },
+              "name": "UpgradeReceipt",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "upgrade_package_approver",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "upgrade_package_approver"
+                  },
+                  "name": "UpgradePackageApprover",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "finalize_upgrade": {
+      "source_index": 37,
+      "index": 37,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "upgrade_package_approver",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_common",
+                "name": "upgrade_package_approver"
+              },
+              "name": "UpgradePackageApprover",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "process_checkpoint_message_by_quorum": {
+      "source_index": 38,
+      "index": 38,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "signature",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "signers_bitmap",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "message",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "add_upgrade_cap_by_cap": {
+      "source_index": 39,
+      "index": 39,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "upgrade_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "package"
+              },
+              "name": "UpgradeCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "ProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "verify_protocol_cap": {
+      "source_index": 40,
+      "index": 40,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "ProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "protocol_cap"
+            },
+            "name": "VerifiedProtocolCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "process_checkpoint_message_by_cap": {
+      "source_index": 41,
+      "index": 41,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "message",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "ProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_approved_upgrade_by_cap": {
+      "source_index": 42,
+      "index": 42,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "package_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "digest",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "vector": "u8"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "ProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_or_remove_witness_approving_advance_epoch_by_cap": {
+      "source_index": 43,
+      "index": 43,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "witness_type",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "remove",
+          "type_": "bool"
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "ProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "try_migrate_by_cap": {
+      "source_index": 44,
+      "index": 44,
+      "doc": " Try to migrate the system object to the new package id using a cap.\n\n This function sets the new package id and version and can be modified in future versions\n to migrate changes in the `system_inner` object if needed.\n This function can be called immediately after the upgrade is committed.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "ProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "try_migrate": {
+      "source_index": 45,
+      "index": 45,
+      "doc": " Try to migrate the system object to the new package id.\n\n This function sets the new package id and version and can be modified in future versions\n to migrate changes in the `system_inner` object if needed.\n Call this function after the migration epoch is reached.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "try_migrate_impl": {
+      "source_index": 46,
+      "index": 46,
+      "doc": " Try to migrate the system object to the new package id.\n\n This function sets the new package id and version and can be modified in future versions\n to migrate changes in the `system_inner` object if needed.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "version": {
+      "source_index": 47,
+      "index": 47,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "calculate_rewards": {
+      "source_index": 48,
+      "index": 48,
+      "doc": " Calculates the rewards for an amount with value `staked_principal`, staked in the validator with\n the given `validator_id` between `activation_epoch` and `withdraw_epoch`.\n\n This function can be used with `dev_inspect` to calculate the expected rewards for a `StakedIka`\n object or, more generally, the returns provided by a given validator over a given period.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "validator_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "staked_principal",
+          "type_": "u64"
+        },
+        {
+          "name": "activation_epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "withdraw_epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "can_withdraw_staked_ika_early": {
+      "source_index": 49,
+      "index": 49,
+      "doc": " Call `staked_ika::can_withdraw_early` to allow calling this method in applications.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_ika",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "staked_ika"
+                  },
+                  "name": "StakedIka",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "epoch": {
+      "source_index": 50,
+      "index": 50,
+      "doc": " Return the current epoch number. Useful for applications that need a coarse-grained concept of time,\n since epochs are ever-increasing and epoch changes are intended to happen every 24 hours.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "validator_stake_amount": {
+      "source_index": 51,
+      "index": 51,
+      "doc": " Returns the total amount staked with `validator_id`.\n Aborts if `validator_id` is not an active validator.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "validator_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "inner_mut": {
+      "source_index": 52,
+      "index": 52,
+      "doc": " Get a mutable reference to `SystemInnerVX` from the `System`.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "ika_system",
+                  "name": "system_inner"
+                },
+                "name": "SystemInner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "inner": {
+      "source_index": 53,
+      "index": 53,
+      "doc": " Get an immutable reference to `SystemInnerVX` from the `System`.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "ika_system",
+                  "name": "system_inner"
+                },
+                "name": "SystemInner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "inner_without_version_check": {
+      "source_index": 54,
+      "index": 54,
+      "doc": " Get an immutable reference to `SystemInner` from the `System` without checking the version.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "system"
+                  },
+                  "name": "System",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "ika_system",
+                  "name": "system_inner"
+                },
+                "name": "SystemInner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "structs": {
+    "System": {
+      "index": 0,
+      "doc": " The main system state object that coordinates the entire Ika network.\n\n This is a shared object that acts as the central point for all system operations.\n It maintains versioning information and delegates actual functionality to the\n inner system state stored as a dynamic field.\n\n # Fields\n - `id`: Unique identifier for this system object\n - `version`: Current version of the inner system state structure\n - `package_id`: ID of the current system package for upgrade authorization\n - `new_package_id`: ID of the new package during upgrades (if any)\n\n # Design Notes\n The system uses dynamic fields to store the actual state, allowing for\n type-safe upgrades while maintaining a stable object ID. The version field\n ensures that operations are performed against the correct inner state type.\n\n # Access Pattern\n All public functions delegate to `inner()` or `inner_mut()` which retrieve\n the correctly versioned SystemInner from the dynamic field storage.",
+      "attributes": [],
+      "abilities": [
+        "Key"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "version": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          },
+          "package_id": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "new_package_id": {
+            "index": 3,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "object"
+                        },
+                        "name": "ID",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "migration_epoch": {
+            "index": 4,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": "u64"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

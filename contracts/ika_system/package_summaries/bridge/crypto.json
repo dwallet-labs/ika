@@ -1,0 +1,49 @@
+{
+  "id": {
+    "address": "bridge",
+    "name": "crypto"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "ecdsa_k1"
+    },
+    {
+      "address": "sui",
+      "name": "hash"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "ecdsa_pub_key_to_eth_address": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "compressed_pub_key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

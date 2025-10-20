@@ -1,0 +1,1716 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "transfer_policy"
+  },
+  "doc": " Defines the `TransferPolicy` type and the logic to approve `TransferRequest`s.\n\n - TransferPolicy - is a highly customizable primitive, which provides an\n interface for the type owner to set custom transfer rules for every\n deal performed in the `Kiosk` or a similar system that integrates with TP.\n\n - Once a `TransferPolicy<T>` is created for and shared (or frozen), the\n type `T` becomes tradable in `Kiosk`s. On every purchase operation, a\n `TransferRequest` is created and needs to be confirmed by the `TransferPolicy`\n hot potato or transaction will fail.\n\n - Type owner (creator) can set any Rules as long as the ecosystem supports\n them. All of the Rules need to be resolved within a single transaction (eg\n pay royalty and pay fixed commission). Once required actions are performed,\n the `TransferRequest` can be \"confirmed\" via `confirm_request` call.\n\n - `TransferPolicy` aims to be the main interface for creators to control trades\n of their types and collect profits if a fee is required on sales. Custom\n policies can be removed at any moment, and the change will affect all instances\n of the type at once.",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "std",
+      "name": "type_name"
+    },
+    {
+      "address": "sui",
+      "name": "balance"
+    },
+    {
+      "address": "sui",
+      "name": "coin"
+    },
+    {
+      "address": "sui",
+      "name": "dynamic_field"
+    },
+    {
+      "address": "sui",
+      "name": "event"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "package"
+    },
+    {
+      "address": "sui",
+      "name": "sui"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    },
+    {
+      "address": "sui",
+      "name": "vec_set"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "new_request": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Construct a new `TransferRequest` hot potato which requires an\n approving action from the creator to be destroyed / resolved. Once\n created, it must be confirmed in the `confirm_request` call otherwise\n the transaction will fail.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "item",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "paid",
+          "type_": "u64"
+        },
+        {
+          "name": "from",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "transfer_policy"
+            },
+            "name": "TransferRequest",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "NamedTypeParameter": "T"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "new": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Register a type in the Kiosk system and receive a `TransferPolicy` and\n a `TransferPolicyCap` for the type. The `TransferPolicy` is required to\n confirm kiosk deals for the `T`. If there's no `TransferPolicy`\n available for use, the type can not be traded in kiosks.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "pub",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "Publisher",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "transfer_policy"
+            },
+            "name": "TransferPolicy",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "NamedTypeParameter": "T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "transfer_policy"
+            },
+            "name": "TransferPolicyCap",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "NamedTypeParameter": "T"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "default": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Initialize the Transfer Policy in the default scenario: Create and share\n the `TransferPolicy`, transfer `TransferPolicyCap` to the transaction\n sender.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Parameterized": [
+                  "lint",
+                  [
+                    {
+                      "Name": "self_transfer"
+                    }
+                  ]
+                ]
+              },
+              {
+                "Parameterized": [
+                  "lint",
+                  [
+                    {
+                      "Name": "share_owned"
+                    }
+                  ]
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": true,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "pub",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "Publisher",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "withdraw": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Withdraw some amount of profits from the `TransferPolicy`. If amount\n is not specified, all profits are withdrawn.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicyCap",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u64"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "coin"
+            },
+            "name": "Coin",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "destroy_and_withdraw": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Destroy a TransferPolicyCap.\n Can be performed by any party as long as they own it.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "transfer_policy"
+              },
+              "name": "TransferPolicy",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "transfer_policy"
+              },
+              "name": "TransferPolicyCap",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "coin"
+            },
+            "name": "Coin",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "confirm_request": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Allow a `TransferRequest` for the type `T`. The call is protected\n by the type constraint, as only the publisher of the `T` can get\n `TransferPolicy<T>`.\n\n Note: unless there's a policy for `T` to allow transfers,\n Kiosk trades will not be possible.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "request",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "transfer_policy"
+              },
+              "name": "TransferRequest",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "T"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        },
+        "u64",
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "add_rule": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Add a custom Rule to the `TransferPolicy`. Once set, `TransferRequest` must\n receive a confirmation of the rule executed so the hot potato can be unpacked.\n\n - T: the type to which TransferPolicy<T> is applied.\n - Rule: the witness type for the Custom rule\n - Config: a custom configuration for the rule\n\n Config requires `drop` to allow creators to remove any policy at any moment,\n even if graceful unpacking has not been implemented in a \"rule module\".",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        },
+        {
+          "name": "Rule",
+          "constraints": [
+            "Drop"
+          ]
+        },
+        {
+          "name": "Config",
+          "constraints": [
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_",
+          "type_": {
+            "NamedTypeParameter": "Rule"
+          }
+        },
+        {
+          "name": "policy",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicyCap",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cfg",
+          "type_": {
+            "NamedTypeParameter": "Config"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "get_rule": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Get the custom Config for the Rule (can be only one per \"Rule\" type).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        },
+        {
+          "name": "Rule",
+          "constraints": [
+            "Drop"
+          ]
+        },
+        {
+          "name": "Config",
+          "constraints": [
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_",
+          "type_": {
+            "NamedTypeParameter": "Rule"
+          }
+        },
+        {
+          "name": "policy",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "Config"
+            }
+          ]
+        }
+      ]
+    },
+    "add_to_balance": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Add some `SUI` to the balance of a `TransferPolicy`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        },
+        {
+          "name": "Rule",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_",
+          "type_": {
+            "NamedTypeParameter": "Rule"
+          }
+        },
+        {
+          "name": "policy",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "coin",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "coin"
+              },
+              "name": "Coin",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "add_receipt": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Adds a `Receipt` to the `TransferRequest`, unblocking the request and\n confirming that the policy requirements are satisfied.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        },
+        {
+          "name": "Rule",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_",
+          "type_": {
+            "NamedTypeParameter": "Rule"
+          }
+        },
+        {
+          "name": "request",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferRequest",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "has_rule": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Check whether a custom rule has been added to the `TransferPolicy`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        },
+        {
+          "name": "Rule",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "policy",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "remove_rule": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Remove the Rule from the `TransferPolicy`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        },
+        {
+          "name": "Rule",
+          "constraints": [
+            "Drop"
+          ]
+        },
+        {
+          "name": "Config",
+          "constraints": [
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "policy",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicyCap",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "uid": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Allows reading custom attachments to the `TransferPolicy` if there are any.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "uid_mut_as_owner": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Get a mutable reference to the `self.id` to enable custom attachments\n to the `TransferPolicy`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicyCap",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "rules": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " Read the `rules` field from the `TransferPolicy`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "vec_set"
+                },
+                "name": "VecSet",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "type_name"
+                        },
+                        "name": "TypeName",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "item": {
+      "source_index": 15,
+      "index": 15,
+      "doc": " Get the `item` field of the `TransferRequest`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferRequest",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "paid": {
+      "source_index": 16,
+      "index": 16,
+      "doc": " Get the `paid` field of the `TransferRequest`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferRequest",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "from": {
+      "source_index": 17,
+      "index": 17,
+      "doc": " Get the `from` field of the `TransferRequest`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferRequest",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    }
+  },
+  "structs": {
+    "TransferRequest": {
+      "index": 0,
+      "doc": " A \"Hot Potato\" forcing the buyer to get a transfer permission\n from the item type (`T`) owner on purchase attempt.",
+      "attributes": [],
+      "abilities": [],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "item": {
+            "index": 0,
+            "doc": " The ID of the transferred item. Although the `T` has no\n constraints, the main use case for this module is to work\n with Objects.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "paid": {
+            "index": 1,
+            "doc": " Amount of SUI paid for the item. Can be used to\n calculate the fee / transfer policy enforcement.",
+            "type_": "u64"
+          },
+          "from": {
+            "index": 2,
+            "doc": " The ID of the Kiosk / Safe the object is being sold from.\n Can be used by the TransferPolicy implementors.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "receipts": {
+            "index": 3,
+            "doc": " Collected Receipts. Used to verify that all of the rules\n were followed and `TransferRequest` can be confirmed.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "vec_set"
+                },
+                "name": "VecSet",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "type_name"
+                        },
+                        "name": "TypeName",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "TransferPolicy": {
+      "index": 1,
+      "doc": " A unique capability that allows the owner of the `T` to authorize\n transfers. Can only be created with the `Publisher` object. Although\n there's no limitation to how many policies can be created, for most\n of the cases there's no need to create more than one since any of the\n policies can be used to confirm the `TransferRequest`.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "balance": {
+            "index": 1,
+            "doc": " The Balance of the `TransferPolicy` which collects `SUI`.\n By default, transfer policy does not collect anything , and it's\n a matter of an implementation of a specific rule - whether to add\n to balance and how much.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "balance"
+                },
+                "name": "Balance",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "sui"
+                        },
+                        "name": "SUI",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "rules": {
+            "index": 2,
+            "doc": " Set of types of attached rules - used to verify `receipts` when\n a `TransferRequest` is received in `confirm_request` function.\n\n Additionally provides a way to look up currently attached Rules.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "vec_set"
+                },
+                "name": "VecSet",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "type_name"
+                        },
+                        "name": "TypeName",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "TransferPolicyCap": {
+      "index": 2,
+      "doc": " A Capability granting the owner permission to add/remove rules as well\n as to `withdraw` and `destroy_and_withdraw` the `TransferPolicy`.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "policy_id": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "TransferPolicyCreated": {
+      "index": 3,
+      "doc": " Event that is emitted when a publisher creates a new `TransferPolicyCap`\n making the discoverability and tracking the supported types easier.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "TransferPolicyDestroyed": {
+      "index": 4,
+      "doc": " Event that is emitted when a publisher destroys a `TransferPolicyCap`.\n Allows for tracking supported policies.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "RuleKey": {
+      "index": 5,
+      "doc": " Key to store \"Rule\" configuration for a specific `TransferPolicy`.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "dummy_field": {
+            "index": 0,
+            "type_": "bool"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

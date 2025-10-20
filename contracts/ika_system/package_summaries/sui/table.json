@@ -1,0 +1,746 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "table"
+  },
+  "doc": " A table is a map-like collection. But unlike a traditional collection, it's keys and values are\n not stored within the `Table` value, but instead are stored using Sui's object system. The\n `Table` struct acts only as a handle into the object system to retrieve those keys and values.\n Note that this means that `Table` values with exactly the same key-value mapping will not be\n equal, with `==`, at runtime. For example\n ```\n let table1 = table::new<u64, bool>();\n let table2 = table::new<u64, bool>();\n table::add(&mut table1, 0, false);\n table::add(&mut table1, 1, true);\n table::add(&mut table2, 0, false);\n table::add(&mut table2, 1, true);\n // table1 does not equal table2, despite having the same entries\n assert!(&table1 != &table2);\n ```",
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "dynamic_field"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "new": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Creates a new, empty table",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "table"
+            },
+            "name": "Table",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "NamedTypeParameter": "K"
+                }
+              },
+              {
+                "phantom": true,
+                "argument": {
+                  "NamedTypeParameter": "V"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "add": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Adds a key-value pair to the table `table: &mut Table<K, V>`\n Aborts with `sui::dynamic_field::EFieldAlreadyExists` if the table already has an entry with\n that key `k: K`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "table",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table"
+                  },
+                  "name": "Table",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        },
+        {
+          "name": "v",
+          "type_": {
+            "NamedTypeParameter": "V"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "borrow": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Immutable borrows the value associated with the key in the table `table: &Table<K, V>`.\n Aborts with `sui::dynamic_field::EFieldDoesNotExist` if the table does not have an entry with\n that key `k: K`.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "syntax",
+            [
+              {
+                "Name": "index"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "table",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table"
+                  },
+                  "name": "Table",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "V"
+            }
+          ]
+        }
+      ]
+    },
+    "borrow_mut": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Mutably borrows the value associated with the key in the table `table: &mut Table<K, V>`.\n Aborts with `sui::dynamic_field::EFieldDoesNotExist` if the table does not have an entry with\n that key `k: K`.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "syntax",
+            [
+              {
+                "Name": "index"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "table",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table"
+                  },
+                  "name": "Table",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "V"
+            }
+          ]
+        }
+      ]
+    },
+    "remove": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Removes the key-value pair in the table `table: &mut Table<K, V>` and returns the value.\n Aborts with `sui::dynamic_field::EFieldDoesNotExist` if the table does not have an entry with\n that key `k: K`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "table",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table"
+                  },
+                  "name": "Table",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "V"
+        }
+      ]
+    },
+    "contains": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Returns true if there is a value associated with the key `k: K` in table `table: &Table<K, V>`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "table",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table"
+                  },
+                  "name": "Table",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "length": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Returns the size of the table, the number of key-value pairs",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "table",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table"
+                  },
+                  "name": "Table",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "is_empty": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Returns true if the table is empty (if `length` returns `0`)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "table",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "table"
+                  },
+                  "name": "Table",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "destroy_empty": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Destroys an empty table\n Aborts with `ETableNotEmpty` if the table still contains values",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "table",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "table"
+              },
+              "name": "Table",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "K"
+                  }
+                },
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "V"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "drop": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Drop a possibly non-empty table.\n Usable only if the value type `V` has the `drop` ability",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "table",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "table"
+              },
+              "name": "Table",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "K"
+                  }
+                },
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "V"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "Table": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "phantom": true,
+          "name": "V",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": " the ID of this table",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "size": {
+            "index": 1,
+            "doc": " the number of key-value pairs in the table",
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

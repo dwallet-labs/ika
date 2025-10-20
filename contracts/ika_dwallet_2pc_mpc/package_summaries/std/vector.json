@@ -1,0 +1,2071 @@
+{
+  "id": {
+    "address": "std",
+    "name": "vector"
+  },
+  "doc": " A variable-sized container that can hold any type. Indexing is 0-based, and\n vectors are growable. This module has many native functions.",
+  "immediate_dependencies": [],
+  "attributes": [
+    {
+      "Parameterized": [
+        "defines_primitive",
+        [
+          {
+            "Name": "vector"
+          }
+        ]
+      ]
+    }
+  ],
+  "functions": {
+    "empty": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create an empty vector.",
+      "attributes": [
+        {
+          "Name": "bytecode_instruction"
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ]
+    },
+    "length": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Return the length of the vector.",
+      "attributes": [
+        {
+          "Name": "bytecode_instruction"
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "borrow": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Acquire an immutable reference to the `i`th element of the vector `v`.\n Aborts if `i` is out of bounds.",
+      "attributes": [
+        {
+          "Name": "bytecode_instruction"
+        },
+        {
+          "Parameterized": [
+            "syntax",
+            [
+              {
+                "Name": "index"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "Element"
+            }
+          ]
+        }
+      ]
+    },
+    "push_back": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Add element `e` to the end of the vector `v`.",
+      "attributes": [
+        {
+          "Name": "bytecode_instruction"
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "e",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "borrow_mut": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Return a mutable reference to the `i`th element in the vector `v`.\n Aborts if `i` is out of bounds.",
+      "attributes": [
+        {
+          "Name": "bytecode_instruction"
+        },
+        {
+          "Parameterized": [
+            "syntax",
+            [
+              {
+                "Name": "index"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "Element"
+            }
+          ]
+        }
+      ]
+    },
+    "pop_back": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Pop an element from the end of vector `v`.\n Aborts if `v` is empty.",
+      "attributes": [
+        {
+          "Name": "bytecode_instruction"
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Element"
+        }
+      ]
+    },
+    "destroy_empty": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Destroy the vector `v`.\n Aborts if `v` is not empty.",
+      "attributes": [
+        {
+          "Name": "bytecode_instruction"
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "Element"
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "swap": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Swaps the elements at the `i`th and `j`th indices in the vector `v`.\n Aborts if `i` or `j` is out of bounds.",
+      "attributes": [
+        {
+          "Name": "bytecode_instruction"
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        },
+        {
+          "name": "j",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "singleton": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Return an vector of size one containing element `e`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "e",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ]
+    },
+    "reverse": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Reverses the order of the elements in the vector `v` in place.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "append": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Pushes all of the elements of the `other` vector into the `lhs` vector.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "lhs",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "other",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "Element"
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "is_empty": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Return `true` if the vector `v` has no elements and `false` otherwise.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "contains": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Return true if `e` is in the vector `v`.\n Otherwise, returns false.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "e",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "Element"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "index_of": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Return `(true, i)` if `e` is in the vector `v` at index `i`.\n Otherwise, returns `(false, 0)`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "e",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "Element"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool",
+        "u64"
+      ]
+    },
+    "remove": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " Remove the `i`th element of the vector `v`, shifting all subsequent elements.\n This is O(n) and preserves ordering of elements in the vector.\n Aborts if `i` is out of bounds.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Element"
+        }
+      ]
+    },
+    "insert": {
+      "source_index": 15,
+      "index": 15,
+      "doc": " Insert `e` at position `i` in the vector `v`.\n If `i` is in bounds, this shifts the old `v[i]` and all subsequent elements to the right.\n If `i == v.length()`, this adds `e` to the end of the vector.\n This is O(n) and preserves ordering of elements in the vector.\n Aborts if `i > v.length()`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "e",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "swap_remove": {
+      "source_index": 16,
+      "index": 16,
+      "doc": " Swap the `i`th element of the vector `v` with the last element and then pop the vector.\n This is O(1), but does not preserve ordering of elements in the vector.\n Aborts if `i` is out of bounds.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Element"
+        }
+      ]
+    },
+    "flatten": {
+      "source_index": 29,
+      "index": 17,
+      "doc": " Concatenate the vectors of `v` into a single vector, keeping the order of the elements.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "vector": {
+              "vector": {
+                "NamedTypeParameter": "T"
+              }
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "T"
+          }
+        }
+      ]
+    },
+    "all": {
+      "source_index": 31,
+      "index": 18446744073709551615,
+      "doc": " Whether all elements in the vector `v` satisfy the predicate `f`.\n If the vector is empty, returns `true`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "any": {
+      "source_index": 30,
+      "index": 18446744073709551615,
+      "doc": " Whether any element in the vector `v` satisfies the predicate `f`.\n If the vector is empty, returns `false`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "count": {
+      "source_index": 27,
+      "index": 18446744073709551615,
+      "doc": " Count how many elements in the vector `v` satisfy the predicate `f`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "destroy": {
+      "source_index": 18,
+      "index": 18446744073709551615,
+      "doc": " Destroy the vector `v` by calling `f` on each element and then destroying the vector.\n Does not preserve the order of elements in the vector (starts from the end of the vector).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T"
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T"
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "do": {
+      "source_index": 19,
+      "index": 18446744073709551615,
+      "doc": " Destroy the vector `v` by calling `f` on each element and then destroying the vector.\n Preserves the order of elements in the vector.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T"
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T"
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "do_mut": {
+      "source_index": 21,
+      "index": 18446744073709551615,
+      "doc": " Perform an action `f` on each element of the vector `v`.\n The function `f` takes a mutable reference to the element.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "do_ref": {
+      "source_index": 20,
+      "index": 18446744073709551615,
+      "doc": " Perform an action `f` on each element of the vector `v`. The vector is not modified.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "filter": {
+      "source_index": 24,
+      "index": 18446744073709551615,
+      "doc": " Filter the vector `v` by applying the function `f` to each element.\n Return a new vector containing only the elements for which `f` returns `true`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T"
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "$T"
+          }
+        }
+      ]
+    },
+    "find_index": {
+      "source_index": 26,
+      "index": 18446744073709551615,
+      "doc": " Finds the index of first element in the vector `v` that satisfies the predicate `f`.\n Returns `some(index)` if such an element is found, otherwise `none()`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "u64"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "fold": {
+      "source_index": 28,
+      "index": 18446744073709551615,
+      "doc": " Reduce the vector `v` to a single value by applying the function `f` to each element.\n Similar to `fold_left` in Rust and `reduce` in Python and JavaScript.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$Acc",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T"
+            }
+          }
+        },
+        {
+          "name": "$init",
+          "type_": {
+            "NamedTypeParameter": "$Acc"
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$Acc"
+                },
+                {
+                  "NamedTypeParameter": "$T"
+                }
+              ],
+              {
+                "NamedTypeParameter": "$Acc"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "$Acc"
+        }
+      ]
+    },
+    "insertion_sort_by": {
+      "source_index": 38,
+      "index": 18446744073709551615,
+      "doc": " Performs an in-place insertion sort on the vector `v` using the comparison function `le`.\n The sort is stable, meaning that equal elements will maintain their relative order.\n\n Please, note that the comparison function `le` expects less or equal, not less.\n\n Example:\n ```\n let mut v = vector[2, 1, 3];\n v.insertion_sort_by(|a, b| a <= b);\n assert!(v == vector[1, 2, 3]);\n ```\n\n Insertion sort is efficient for small vectors (~30 or less elements), and can\n be faster than merge sort for almost sorted vectors (e.g. when the vector is\n already sorted or nearly sorted).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$le",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                },
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "is_sorted_by": {
+      "source_index": 40,
+      "index": 18446744073709551615,
+      "doc": " Check if the vector `v` is sorted in non-decreasing order according to the comparison\n function `le` (les). Returns `true` if the vector is sorted, `false` otherwise.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$le",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                },
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "map": {
+      "source_index": 22,
+      "index": 18446744073709551615,
+      "doc": " Map the vector `v` to a new vector by applying the function `f` to each element.\n Preserves the order of elements in the vector, first is called first.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$U",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T"
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T"
+                }
+              ],
+              {
+                "NamedTypeParameter": "$U"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "$U"
+          }
+        }
+      ]
+    },
+    "map_ref": {
+      "source_index": 23,
+      "index": 18446744073709551615,
+      "doc": " Map the vector `v` to a new vector by applying the function `f` to each element.\n Preserves the order of elements in the vector, first is called first.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$U",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$U"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "$U"
+          }
+        }
+      ]
+    },
+    "merge_sort_by": {
+      "source_index": 39,
+      "index": 18446744073709551615,
+      "doc": " Performs an in-place merge sort on the vector `v` using the comparison function `le`.\n Merge sort is efficient for large vectors, and is a stable sort.\n\n Please, note that the comparison function `le` expects less or equal, not less.\n\n Example:\n ```\n let mut v = vector[2, 1, 3];\n v.merge_sort_by(|a, b| a <= b);\n assert!(v == vector[1, 2, 3]);\n ```\n\n Merge sort performs better than insertion sort for large vectors (~30 elements or more).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$le",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                },
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "partition": {
+      "source_index": 25,
+      "index": 18446744073709551615,
+      "doc": " Split the vector `v` into two vectors by applying the function `f` to each element.\n Return a tuple containing two vectors: the first containing the elements for which `f` returns `true`,\n and the second containing the elements for which `f` returns `false`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T"
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "$T"
+          }
+        },
+        {
+          "vector": {
+            "NamedTypeParameter": "$T"
+          }
+        }
+      ]
+    },
+    "tabulate": {
+      "source_index": 17,
+      "index": 18446744073709551615,
+      "doc": " Create a vector of length `n` by calling the function `f` on each index.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$n",
+          "type_": "u64"
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                "u64"
+              ],
+              {
+                "NamedTypeParameter": "$T"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "$T"
+          }
+        }
+      ]
+    },
+    "zip_do": {
+      "source_index": 32,
+      "index": 18446744073709551615,
+      "doc": " Destroys two vectors `v1` and `v2` by calling `f` to each pair of elements.\n Aborts if the vectors are not of the same length.\n The order of elements in the vectors is preserved.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T1",
+          "constraints": []
+        },
+        {
+          "name": "$T2",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v1",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T1"
+            }
+          }
+        },
+        {
+          "name": "$v2",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T2"
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T1"
+                },
+                {
+                  "NamedTypeParameter": "$T2"
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "zip_do_mut": {
+      "source_index": 35,
+      "index": 18446744073709551615,
+      "doc": " Iterate through `v1` and `v2` and apply the function `f` to mutable references of each pair\n of elements. The vectors may be modified.\n Aborts if the vectors are not of the same length.\n The order of elements in the vectors is preserved.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T1",
+          "constraints": []
+        },
+        {
+          "name": "$T2",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v1",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T1"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$v2",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T2"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "NamedTypeParameter": "$T1"
+                    }
+                  ]
+                },
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "NamedTypeParameter": "$T2"
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "zip_do_ref": {
+      "source_index": 34,
+      "index": 18446744073709551615,
+      "doc": " Iterate through `v1` and `v2` and apply the function `f` to references of each pair of\n elements. The vectors are not modified.\n Aborts if the vectors are not of the same length.\n The order of elements in the vectors is preserved.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T1",
+          "constraints": []
+        },
+        {
+          "name": "$T2",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v1",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T1"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$v2",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T2"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T1"
+                    }
+                  ]
+                },
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T2"
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "zip_do_reverse": {
+      "source_index": 33,
+      "index": 18446744073709551615,
+      "doc": " Destroys two vectors `v1` and `v2` by calling `f` to each pair of elements.\n Aborts if the vectors are not of the same length.\n Starts from the end of the vectors.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T1",
+          "constraints": []
+        },
+        {
+          "name": "$T2",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v1",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T1"
+            }
+          }
+        },
+        {
+          "name": "$v2",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T2"
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T1"
+                },
+                {
+                  "NamedTypeParameter": "$T2"
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "zip_map": {
+      "source_index": 36,
+      "index": 18446744073709551615,
+      "doc": " Destroys two vectors `v1` and `v2` by applying the function `f` to each pair of elements.\n The returned values are collected into a new vector.\n Aborts if the vectors are not of the same length.\n The order of elements in the vectors is preserved.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T1",
+          "constraints": []
+        },
+        {
+          "name": "$T2",
+          "constraints": []
+        },
+        {
+          "name": "$U",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v1",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T1"
+            }
+          }
+        },
+        {
+          "name": "$v2",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "$T2"
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T1"
+                },
+                {
+                  "NamedTypeParameter": "$T2"
+                }
+              ],
+              {
+                "NamedTypeParameter": "$U"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "$U"
+          }
+        }
+      ]
+    },
+    "zip_map_ref": {
+      "source_index": 37,
+      "index": 18446744073709551615,
+      "doc": " Iterate through `v1` and `v2` and apply the function `f` to references of each pair of\n elements. The returned values are collected into a new vector.\n Aborts if the vectors are not of the same length.\n The order of elements in the vectors is preserved.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T1",
+          "constraints": []
+        },
+        {
+          "name": "$T2",
+          "constraints": []
+        },
+        {
+          "name": "$U",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$v1",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T1"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$v2",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "NamedTypeParameter": "$T2"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T1"
+                    }
+                  ]
+                },
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T2"
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$U"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "$U"
+          }
+        }
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

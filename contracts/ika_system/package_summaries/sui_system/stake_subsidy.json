@@ -1,0 +1,310 @@
+{
+  "id": {
+    "address": "sui_system",
+    "name": "stake_subsidy"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "u64"
+    },
+    {
+      "address": "sui",
+      "name": "bag"
+    },
+    {
+      "address": "sui",
+      "name": "balance"
+    },
+    {
+      "address": "sui",
+      "name": "sui"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "balance",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "initial_distribution_amount",
+          "type_": "u64"
+        },
+        {
+          "name": "stake_subsidy_period_length",
+          "type_": "u64"
+        },
+        {
+          "name": "stake_subsidy_decrease_rate",
+          "type_": "u16"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "stake_subsidy"
+            },
+            "name": "StakeSubsidy",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "advance_epoch": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Advance the epoch counter and draw down the subsidy for the epoch.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "stake_subsidy"
+                  },
+                  "name": "StakeSubsidy",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "current_epoch_subsidy_amount": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Returns the amount of stake subsidy to be added at the end of the current epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "stake_subsidy"
+                  },
+                  "name": "StakeSubsidy",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "get_distribution_counter": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Returns the number of distributions that have occurred.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "stake_subsidy"
+                  },
+                  "name": "StakeSubsidy",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {
+    "StakeSubsidy": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "balance": {
+            "index": 0,
+            "doc": " Balance of SUI set aside for stake subsidies that will be drawn down over time.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "balance"
+                },
+                "name": "Balance",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "sui"
+                        },
+                        "name": "SUI",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "distribution_counter": {
+            "index": 1,
+            "doc": " Count of the number of times stake subsidies have been distributed.",
+            "type_": "u64"
+          },
+          "current_distribution_amount": {
+            "index": 2,
+            "doc": " The amount of stake subsidy to be drawn down per distribution.\n This amount decays and decreases over time.",
+            "type_": "u64"
+          },
+          "stake_subsidy_period_length": {
+            "index": 3,
+            "doc": " Number of distributions to occur before the distribution amount decays.",
+            "type_": "u64"
+          },
+          "stake_subsidy_decrease_rate": {
+            "index": 4,
+            "doc": " The rate at which the distribution amount decays at the end of each\n period. Expressed in basis points.",
+            "type_": "u16"
+          },
+          "extra_fields": {
+            "index": 5,
+            "doc": " Any extra fields that's not defined statically.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

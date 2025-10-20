@@ -1,0 +1,275 @@
+{
+  "id": {
+    "address": "std",
+    "name": "bit_vector"
+  },
+  "doc": null,
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "new": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "length",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "bit_vector"
+            },
+            "name": "BitVector",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "set": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Set the bit at `bit_index` in the `bitvector` regardless of its previous state.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bitvector",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "bit_vector"
+                  },
+                  "name": "BitVector",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "bit_index",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "unset": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Unset the bit at `bit_index` in the `bitvector` regardless of its previous state.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bitvector",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "bit_vector"
+                  },
+                  "name": "BitVector",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "bit_index",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "shift_left": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Shift the `bitvector` left by `amount`. If `amount` is greater than the\n bitvector's length the bitvector will be zeroed out.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bitvector",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "bit_vector"
+                  },
+                  "name": "BitVector",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "is_index_set": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Return the value of the bit at `bit_index` in the `bitvector`. `true`\n represents \"1\" and `false` represents a 0",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bitvector",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "bit_vector"
+                  },
+                  "name": "BitVector",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "bit_index",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "length": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Return the length (number of usable bits) of this bitvector",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bitvector",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "bit_vector"
+                  },
+                  "name": "BitVector",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "longest_set_sequence_starting_at": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Returns the length of the longest sequence of set bits starting at (and\n including) `start_index` in the `bitvector`. If there is no such\n sequence, then `0` is returned.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bitvector",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "bit_vector"
+                  },
+                  "name": "BitVector",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "start_index",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {
+    "BitVector": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "length": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "bit_field": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "vector": "bool"
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

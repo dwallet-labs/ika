@@ -1,0 +1,4443 @@
+{
+  "id": {
+    "address": "sui_system",
+    "name": "validator"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "ascii"
+    },
+    {
+      "address": "std",
+      "name": "bcs"
+    },
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "std",
+      "name": "string"
+    },
+    {
+      "address": "sui",
+      "name": "bag"
+    },
+    {
+      "address": "sui",
+      "name": "balance"
+    },
+    {
+      "address": "sui",
+      "name": "event"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "sui"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    },
+    {
+      "address": "sui",
+      "name": "url"
+    },
+    {
+      "address": "sui_system",
+      "name": "staking_pool"
+    },
+    {
+      "address": "sui_system",
+      "name": "validator_cap"
+    }
+  ],
+  "attributes": [
+    {
+      "Parameterized": [
+        "allow",
+        [
+          {
+            "Name": "unused_const"
+          }
+        ]
+      ]
+    }
+  ],
+  "functions": {
+    "new_metadata": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "sui_address",
+          "type_": "address"
+        },
+        {
+          "name": "protocol_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "network_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "worker_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "proof_of_possession",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "description",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "image_url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "url"
+              },
+              "name": "Url",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "project_url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "url"
+              },
+              "name": "Url",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "net_address",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "p2p_address",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "primary_address",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "worker_address",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "extra_fields",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "bag"
+              },
+              "name": "Bag",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "validator"
+            },
+            "name": "ValidatorMetadata",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "new": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "sui_address",
+          "type_": "address"
+        },
+        {
+          "name": "protocol_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "network_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "worker_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "proof_of_possession",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "description",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "image_url",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "project_url",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "net_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "p2p_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "primary_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "worker_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "gas_price",
+          "type_": "u64"
+        },
+        {
+          "name": "commission_rate",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "validator"
+            },
+            "name": "Validator",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "deactivate": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Mark Validator's `StakingPool` as inactive by setting the `deactivation_epoch`.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "deactivation_epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "activate": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Activate Validator's `StakingPool` by setting the `activation_epoch`.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "activation_epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "adjust_stake_and_gas_price": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Process pending stake and pending withdraws, and update the gas price.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_add_stake": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Request to add stake to the validator's staking pool, processed at the end of the epoch.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "staker_address",
+          "type_": "address"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "StakedSui",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "convert_to_fungible_staked_sui": {
+      "source_index": 6,
+      "index": 6,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "StakedSui",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "FungibleStakedSui",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "redeem_fungible_staked_sui": {
+      "source_index": 7,
+      "index": 7,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "fungible_staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "FungibleStakedSui",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "request_add_stake_at_genesis": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Request to add stake to the validator's staking pool at genesis",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "staker_address",
+          "type_": "address"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_withdraw_stake": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Request to withdraw stake from the validator's staking pool, processed at the end of the epoch.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "StakedSui",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "request_set_gas_price": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Request to set new gas price for the next epoch.\n Need to present a `ValidatorOperationCap`.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "verified_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "validator_cap"
+              },
+              "name": "ValidatorOperationCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "new_price",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "set_candidate_gas_price": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Set new gas price for the candidate validator.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "verified_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "validator_cap"
+              },
+              "name": "ValidatorOperationCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "new_price",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "request_set_commission_rate": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Request to set new commission rate for the next epoch.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_commission_rate",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "set_candidate_commission_rate": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Set new commission rate for the candidate validator.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_commission_rate",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "deposit_stake_rewards": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " Deposit stakes rewards into the validator's staking pool, called at the end of the epoch.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "reward",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "process_pending_stakes_and_withdraws": {
+      "source_index": 15,
+      "index": 15,
+      "doc": " Process pending stakes and withdraws, called at the end of the epoch.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "is_preactive": {
+      "source_index": 16,
+      "index": 16,
+      "doc": " Returns true if the validator is preactive.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "metadata": {
+      "source_index": 17,
+      "index": 17,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "validator"
+                },
+                "name": "ValidatorMetadata",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "sui_address": {
+      "source_index": 18,
+      "index": 18,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    },
+    "name": {
+      "source_index": 19,
+      "index": 19,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "description": {
+      "source_index": 20,
+      "index": 20,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "image_url": {
+      "source_index": 21,
+      "index": 21,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "url"
+                },
+                "name": "Url",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "project_url": {
+      "source_index": 22,
+      "index": 22,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "url"
+                },
+                "name": "Url",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "network_address": {
+      "source_index": 23,
+      "index": 23,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "p2p_address": {
+      "source_index": 24,
+      "index": 24,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "primary_address": {
+      "source_index": 25,
+      "index": 25,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "worker_address": {
+      "source_index": 26,
+      "index": 26,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "protocol_pubkey_bytes": {
+      "source_index": 27,
+      "index": 27,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "vector": "u8"
+            }
+          ]
+        }
+      ]
+    },
+    "proof_of_possession": {
+      "source_index": 28,
+      "index": 28,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "vector": "u8"
+            }
+          ]
+        }
+      ]
+    },
+    "network_pubkey_bytes": {
+      "source_index": 29,
+      "index": 29,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "vector": "u8"
+            }
+          ]
+        }
+      ]
+    },
+    "worker_pubkey_bytes": {
+      "source_index": 30,
+      "index": 30,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "vector": "u8"
+            }
+          ]
+        }
+      ]
+    },
+    "next_epoch_network_address": {
+      "source_index": 31,
+      "index": 31,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "string"
+                        },
+                        "name": "String",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "next_epoch_p2p_address": {
+      "source_index": 32,
+      "index": 32,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "string"
+                        },
+                        "name": "String",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "next_epoch_primary_address": {
+      "source_index": 33,
+      "index": 33,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "string"
+                        },
+                        "name": "String",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "next_epoch_worker_address": {
+      "source_index": 34,
+      "index": 34,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "string"
+                        },
+                        "name": "String",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "next_epoch_protocol_pubkey_bytes": {
+      "source_index": 35,
+      "index": 35,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "vector": "u8"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "next_epoch_proof_of_possession": {
+      "source_index": 36,
+      "index": 36,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "vector": "u8"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "next_epoch_network_pubkey_bytes": {
+      "source_index": 37,
+      "index": 37,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "vector": "u8"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "next_epoch_worker_pubkey_bytes": {
+      "source_index": 38,
+      "index": 38,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "vector": "u8"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "operation_cap_id": {
+      "source_index": 39,
+      "index": 39,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "next_epoch_gas_price": {
+      "source_index": 40,
+      "index": 40,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "total_stake_amount": {
+      "source_index": 41,
+      "index": 41,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "deprecated",
+            [
+              {
+                "Assigned": [
+                  "note",
+                  "Use `total_stake` instead"
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "stake_amount": {
+      "source_index": 42,
+      "index": 42,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "deprecated",
+            [
+              {
+                "Assigned": [
+                  "note",
+                  "Use `total_stake` instead"
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "total_stake": {
+      "source_index": 43,
+      "index": 43,
+      "doc": " Return the total amount staked with this validator",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "voting_power": {
+      "source_index": 44,
+      "index": 44,
+      "doc": " Return the voting power of this validator.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "set_voting_power": {
+      "source_index": 45,
+      "index": 45,
+      "doc": " Set the voting power of this validator, called only from validator_set.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_voting_power",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "pending_stake_amount": {
+      "source_index": 46,
+      "index": 46,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "pending_stake_withdraw_amount": {
+      "source_index": 47,
+      "index": 47,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "gas_price": {
+      "source_index": 48,
+      "index": 48,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "commission_rate": {
+      "source_index": 49,
+      "index": 49,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "pool_token_exchange_rate_at_epoch": {
+      "source_index": 50,
+      "index": 50,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "PoolTokenExchangeRate",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "staking_pool_id": {
+      "source_index": 51,
+      "index": 51,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "is_duplicate": {
+      "source_index": 52,
+      "index": 52,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "other",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "new_unverified_validator_operation_cap_and_transfer": {
+      "source_index": 54,
+      "index": 53,
+      "doc": " Create a new `UnverifiedValidatorOperationCap`, transfer to the validator,\n and registers it, thus revoking the previous cap's permission.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_name": {
+      "source_index": 55,
+      "index": 54,
+      "doc": " Update name of the validator.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_description": {
+      "source_index": 56,
+      "index": 55,
+      "doc": " Update description of the validator.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "description",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_image_url": {
+      "source_index": 57,
+      "index": 56,
+      "doc": " Update image url of the validator.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "image_url",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_project_url": {
+      "source_index": 58,
+      "index": 57,
+      "doc": " Update project url of the validator.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "project_url",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_next_epoch_network_address": {
+      "source_index": 59,
+      "index": 58,
+      "doc": " Update network address of this validator, taking effects from next epoch",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "net_address",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_network_address": {
+      "source_index": 60,
+      "index": 59,
+      "doc": " Update network address of this candidate validator",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "net_address",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_next_epoch_p2p_address": {
+      "source_index": 61,
+      "index": 60,
+      "doc": " Update p2p address of this validator, taking effects from next epoch",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "p2p_address",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_p2p_address": {
+      "source_index": 62,
+      "index": 61,
+      "doc": " Update p2p address of this candidate validator",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "p2p_address",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_next_epoch_primary_address": {
+      "source_index": 63,
+      "index": 62,
+      "doc": " Update primary address of this validator, taking effects from next epoch",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "primary_address",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_primary_address": {
+      "source_index": 64,
+      "index": 63,
+      "doc": " Update primary address of this candidate validator",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "primary_address",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_next_epoch_worker_address": {
+      "source_index": 65,
+      "index": 64,
+      "doc": " Update worker address of this validator, taking effects from next epoch",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "worker_address",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_worker_address": {
+      "source_index": 66,
+      "index": 65,
+      "doc": " Update worker address of this candidate validator",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "worker_address",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_next_epoch_protocol_pubkey": {
+      "source_index": 67,
+      "index": 66,
+      "doc": " Update protocol public key of this validator, taking effects from next epoch",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "protocol_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "proof_of_possession",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_protocol_pubkey": {
+      "source_index": 68,
+      "index": 67,
+      "doc": " Update protocol public key of this candidate validator",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "protocol_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "proof_of_possession",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_next_epoch_network_pubkey": {
+      "source_index": 69,
+      "index": 68,
+      "doc": " Update network public key of this validator, taking effects from next epoch",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "network_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_network_pubkey": {
+      "source_index": 70,
+      "index": 69,
+      "doc": " Update network public key of this candidate validator",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "network_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_next_epoch_worker_pubkey": {
+      "source_index": 71,
+      "index": 70,
+      "doc": " Update Narwhal worker public key of this validator, taking effects from next epoch",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "worker_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_worker_pubkey": {
+      "source_index": 72,
+      "index": 71,
+      "doc": " Update Narwhal worker public key of this candidate validator",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "worker_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "effectuate_staged_metadata": {
+      "source_index": 73,
+      "index": 72,
+      "doc": " Effectutate all staged next epoch metadata for this validator.\n NOTE: this function SHOULD ONLY be called by validator_set when\n advancing an epoch.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "validate_metadata": {
+      "source_index": 75,
+      "index": 73,
+      "doc": " Aborts if validator metadata is valid",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "metadata",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "ValidatorMetadata",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "validate_metadata_bcs": {
+      "source_index": 76,
+      "index": 74,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "metadata",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "get_staking_pool_ref": {
+      "source_index": 77,
+      "index": 75,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator"
+                  },
+                  "name": "Validator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "staking_pool"
+                },
+                "name": "StakingPool",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "new_from_metadata": {
+      "source_index": 78,
+      "index": 76,
+      "doc": " Create a new validator from the given `ValidatorMetadata`, called by both `new` and `new_for_testing`.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "metadata",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "validator"
+              },
+              "name": "ValidatorMetadata",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "gas_price",
+          "type_": "u64"
+        },
+        {
+          "name": "commission_rate",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "validator"
+            },
+            "name": "Validator",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "both_some_and_equal": {
+      "source_index": 53,
+      "index": 18446744073709551615,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$a",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "$T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "$b",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "$T"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "do_extract": {
+      "source_index": 74,
+      "index": 18446744073709551615,
+      "doc": " Helper macro which extracts the value from `Some` and applies `$f` to it.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "$T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T"
+                }
+              ],
+              {
+                "tuple": []
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "ValidatorMetadata": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "sui_address": {
+            "index": 0,
+            "doc": " The Sui Address of the validator. This is the sender that created the Validator object,\n and also the address to send validator/coins to during withdraws.",
+            "type_": "address"
+          },
+          "protocol_pubkey_bytes": {
+            "index": 1,
+            "doc": " The public key bytes corresponding to the private key that the validator\n holds to sign transactions. For now, this is the same as AuthorityName.",
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "network_pubkey_bytes": {
+            "index": 2,
+            "doc": " The public key bytes corresponding to the private key that the validator\n uses to establish TLS connections",
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "worker_pubkey_bytes": {
+            "index": 3,
+            "doc": " The public key bytes correstponding to the Narwhal Worker",
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "proof_of_possession": {
+            "index": 4,
+            "doc": " This is a proof that the validator has ownership of the private key",
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "name": {
+            "index": 5,
+            "doc": " A unique human-readable name of this validator.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          },
+          "description": {
+            "index": 6,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          },
+          "image_url": {
+            "index": 7,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "url"
+                },
+                "name": "Url",
+                "type_arguments": []
+              }
+            }
+          },
+          "project_url": {
+            "index": 8,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "url"
+                },
+                "name": "Url",
+                "type_arguments": []
+              }
+            }
+          },
+          "net_address": {
+            "index": 9,
+            "doc": " The network address of the validator (could also contain extra info such as port, DNS and etc.).",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          },
+          "p2p_address": {
+            "index": 10,
+            "doc": " The address of the validator used for p2p activities such as state sync (could also contain extra info such as port, DNS and etc.).",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          },
+          "primary_address": {
+            "index": 11,
+            "doc": " The address of the narwhal primary",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          },
+          "worker_address": {
+            "index": 12,
+            "doc": " The address of the narwhal worker",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          },
+          "next_epoch_protocol_pubkey_bytes": {
+            "index": 13,
+            "doc": " \"next_epoch\" metadata only takes effects in the next epoch.\n If none, current value will stay unchanged.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "vector": "u8"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "next_epoch_proof_of_possession": {
+            "index": 14,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "vector": "u8"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "next_epoch_network_pubkey_bytes": {
+            "index": 15,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "vector": "u8"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "next_epoch_worker_pubkey_bytes": {
+            "index": 16,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "vector": "u8"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "next_epoch_net_address": {
+            "index": 17,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "string"
+                        },
+                        "name": "String",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "next_epoch_p2p_address": {
+            "index": 18,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "string"
+                        },
+                        "name": "String",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "next_epoch_primary_address": {
+            "index": 19,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "string"
+                        },
+                        "name": "String",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "next_epoch_worker_address": {
+            "index": 20,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "std",
+                          "name": "string"
+                        },
+                        "name": "String",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "extra_fields": {
+            "index": 21,
+            "doc": " Any extra fields that's not defined statically.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "Validator": {
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "metadata": {
+            "index": 0,
+            "doc": " Summary of the validator.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "validator"
+                },
+                "name": "ValidatorMetadata",
+                "type_arguments": []
+              }
+            }
+          },
+          "voting_power": {
+            "index": 1,
+            "doc": " The voting power of this validator, which might be different from its\n stake amount.",
+            "type_": "u64"
+          },
+          "operation_cap_id": {
+            "index": 2,
+            "doc": " The ID of this validator's current valid `UnverifiedValidatorOperationCap`",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "gas_price": {
+            "index": 3,
+            "doc": " Gas price quote, updated only at end of epoch.",
+            "type_": "u64"
+          },
+          "staking_pool": {
+            "index": 4,
+            "doc": " Staking pool for this validator.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "staking_pool"
+                },
+                "name": "StakingPool",
+                "type_arguments": []
+              }
+            }
+          },
+          "commission_rate": {
+            "index": 5,
+            "doc": " Commission rate of the validator, in basis point.",
+            "type_": "u64"
+          },
+          "next_epoch_stake": {
+            "index": 6,
+            "doc": " Total amount of stake that would be active in the next epoch.",
+            "type_": "u64"
+          },
+          "next_epoch_gas_price": {
+            "index": 7,
+            "doc": " This validator's gas price quote for the next epoch.",
+            "type_": "u64"
+          },
+          "next_epoch_commission_rate": {
+            "index": 8,
+            "doc": " The commission rate of the validator starting the next epoch, in basis point.",
+            "type_": "u64"
+          },
+          "extra_fields": {
+            "index": 9,
+            "doc": " Any extra fields that's not defined statically.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "StakingRequestEvent": {
+      "index": 2,
+      "doc": " Event emitted when a new stake request is received.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "pool_id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "validator_address": {
+            "index": 1,
+            "doc": null,
+            "type_": "address"
+          },
+          "staker_address": {
+            "index": 2,
+            "doc": null,
+            "type_": "address"
+          },
+          "epoch": {
+            "index": 3,
+            "doc": null,
+            "type_": "u64"
+          },
+          "amount": {
+            "index": 4,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "UnstakingRequestEvent": {
+      "index": 3,
+      "doc": " Event emitted when a new unstake request is received.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "pool_id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "validator_address": {
+            "index": 1,
+            "doc": null,
+            "type_": "address"
+          },
+          "staker_address": {
+            "index": 2,
+            "doc": null,
+            "type_": "address"
+          },
+          "stake_activation_epoch": {
+            "index": 3,
+            "doc": null,
+            "type_": "u64"
+          },
+          "unstaking_epoch": {
+            "index": 4,
+            "doc": null,
+            "type_": "u64"
+          },
+          "principal_amount": {
+            "index": 5,
+            "doc": null,
+            "type_": "u64"
+          },
+          "reward_amount": {
+            "index": 6,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "ConvertingToFungibleStakedSuiEvent": {
+      "index": 4,
+      "doc": " Event emitted when a staked SUI is converted to a fungible staked SUI.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "pool_id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "stake_activation_epoch": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          },
+          "staked_sui_principal_amount": {
+            "index": 2,
+            "doc": null,
+            "type_": "u64"
+          },
+          "fungible_staked_sui_amount": {
+            "index": 3,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "RedeemingFungibleStakedSuiEvent": {
+      "index": 5,
+      "doc": " Event emitted when a fungible staked SUI is redeemed.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "pool_id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "fungible_staked_sui_amount": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          },
+          "sui_amount": {
+            "index": 2,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

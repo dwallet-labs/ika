@@ -1,0 +1,1398 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "vec_map"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "std",
+      "name": "vector"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "empty": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create an empty `VecMap`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "vec_map"
+            },
+            "name": "VecMap",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "K"
+                }
+              },
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "V"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "insert": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Insert the entry `key` |-> `value` into `self`.\n Aborts if `key` is already bound in `self`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        },
+        {
+          "name": "value",
+          "type_": {
+            "NamedTypeParameter": "V"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "remove": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Remove the entry `key` |-> `value` from self. Aborts if `key` is not bound in `self`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "K"
+        },
+        {
+          "NamedTypeParameter": "V"
+        }
+      ]
+    },
+    "pop": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Pop the most recently inserted entry from the map. Aborts if the map is empty.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "K"
+        },
+        {
+          "NamedTypeParameter": "V"
+        }
+      ]
+    },
+    "get_mut": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Get a mutable reference to the value bound to `key` in `self`.\n Aborts if `key` is not bound in `self`.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "syntax",
+            [
+              {
+                "Name": "index"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "V"
+            }
+          ]
+        }
+      ]
+    },
+    "get": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Get a reference to the value bound to `key` in `self`.\n Aborts if `key` is not bound in `self`.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "syntax",
+            [
+              {
+                "Name": "index"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "V"
+            }
+          ]
+        }
+      ]
+    },
+    "try_get": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Safely try borrow a value bound to `key` in `self`.\n Return Some(V) if the value exists, None otherwise.\n Only works for a \"copyable\" value as references cannot be stored in `vector`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Copy"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "V"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "contains": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Return true if `self` contains an entry for `key`, false otherwise",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "size": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Return the number of entries in `self`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "is_empty": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Return true if `self` has 0 elements, false otherwise",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "destroy_empty": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Destroy an empty map. Aborts if `self` is not empty",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "vec_map"
+              },
+              "name": "VecMap",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "K"
+                  }
+                },
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "V"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "into_keys_values": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Unpack `self` into vectors of its keys and values.\n The output keys and values are stored in insertion order, *not* sorted by key.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "vec_map"
+              },
+              "name": "VecMap",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "K"
+                  }
+                },
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "V"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "K"
+          }
+        },
+        {
+          "vector": {
+            "NamedTypeParameter": "V"
+          }
+        }
+      ]
+    },
+    "from_keys_values": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Construct a new `VecMap` from two vectors, one for keys and one for values.\n The key value pairs are associated via their indices in the vectors, e.g. the key at index i\n in `keys` is associated with the value at index i in `values`.\n The key value pairs are stored in insertion order (the original vectors ordering)\n and are *not* sorted.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "keys",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "K"
+            }
+          }
+        },
+        {
+          "name": "values",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "V"
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "vec_map"
+            },
+            "name": "VecMap",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "K"
+                }
+              },
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "V"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "keys": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Returns a list of keys in the map.\n Do not assume any particular ordering.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ]
+    },
+    "get_idx_opt": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " Find the index of `key` in `self`. Return `None` if `key` is not in `self`.\n Note that map entries are stored in insertion order, *not* sorted by key.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "u64"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "get_idx": {
+      "source_index": 15,
+      "index": 15,
+      "doc": " Find the index of `key` in `self`. Aborts if `key` is not in `self`.\n Note that map entries are stored in insertion order, *not* sorted by key.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "get_entry_by_idx": {
+      "source_index": 16,
+      "index": 16,
+      "doc": " Return a reference to the `idx`th entry of `self`. This gives direct access into the backing array of the map--use with caution.\n Note that map entries are stored in insertion order, *not* sorted by key.\n Aborts if `idx` is greater than or equal to `size(self)`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "idx",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "K"
+            }
+          ]
+        },
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "V"
+            }
+          ]
+        }
+      ]
+    },
+    "get_entry_by_idx_mut": {
+      "source_index": 17,
+      "index": 17,
+      "doc": " Return a mutable reference to the `idx`th entry of `self`. This gives direct access into the backing array of the map--use with caution.\n Note that map entries are stored in insertion order, *not* sorted by key.\n Aborts if `idx` is greater than or equal to `size(self)`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "idx",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "K"
+            }
+          ]
+        },
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "V"
+            }
+          ]
+        }
+      ]
+    },
+    "remove_entry_by_idx": {
+      "source_index": 18,
+      "index": 18,
+      "doc": " Remove the entry at index `idx` from self.\n Aborts if `idx` is greater than or equal to `size(self)`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "VecMap",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "idx",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "K"
+        },
+        {
+          "NamedTypeParameter": "V"
+        }
+      ]
+    }
+  },
+  "structs": {
+    "VecMap": {
+      "index": 0,
+      "doc": " A map data structure backed by a vector. The map is guaranteed not to contain duplicate keys, but entries\n are *not* sorted by key--entries are included in insertion order.\n All operations are O(N) in the size of the map--the intention of this data structure is only to provide\n the convenience of programming against a map API.\n Large maps should use handwritten parent/child relationships instead.\n Maps that need sorted iteration rather than insertion order iteration should also be handwritten.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "phantom": false,
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "contents": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_map"
+                  },
+                  "name": "Entry",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    },
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "V"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Entry": {
+      "index": 1,
+      "doc": " An entry in the map",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "K",
+          "constraints": [
+            "Copy"
+          ]
+        },
+        {
+          "phantom": false,
+          "name": "V",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "key": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "NamedTypeParameter": "K"
+            }
+          },
+          "value": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "NamedTypeParameter": "V"
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

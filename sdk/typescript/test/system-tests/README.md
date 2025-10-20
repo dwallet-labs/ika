@@ -7,6 +7,19 @@ This test configures the network, deploys it, and performs all necessary steps t
 
 IMPORTANT: Set a relatively short EPOCH_DURATION_TIME_MS in the `.env` file so the test completes in a reasonable time.
 
+### Run the system upgrade test
+Run the `run system upgrade test - upgrade validators from v1 to v2 binary` test from the `./system.test.ts` file.
+This test:
+1. Starts all validators with the v1 binary (target/release/ika-node_v1)
+2. After a random delay between 60-180 seconds, each validator is upgraded to the v2 binary (target/release/ika-node)
+3. Verifies that the network continues to work after all upgrades
+
+IMPORTANT: Set the following environment variables in your `.env` file:
+- `DOCKER_TAG`: Docker image tag for v1 binary
+- `DOCKER_TAG_V2`: Docker image tag for v2 binary (optional, defaults to DOCKER_TAG if not set)
+- `VALIDATOR_NUM`: Number of validators in the network
+- `EPOCH_DURATION_TIME_MS`: Epoch duration in milliseconds
+
 ### Run a custom Ika network on k8s 
 
 ### 1. Create Genesis files

@@ -1,0 +1,251 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "derived_object"
+  },
+  "doc": " Enables the creation of objects with deterministic addresses derived from a parent object's UID.\n This module provides a way to generate objects with predictable addresses based on a parent UID\n and a key, creating a namespace that ensures uniqueness for each parent-key combination,\n which is usually how registries are built.\n\n Key features:\n - Deterministic address generation based on parent object UID and key\n - Derived objects can exist and operate independently of their parent\n\n The derived UIDs, once created, are independent and do not require sequencing on the parent\n object. They can be used without affecting the parent. The parent only maintains a record of\n which derived addresses have been claimed to prevent duplicates.",
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "dynamic_field"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "claim": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Claim a deterministic UID, using the parent's UID & any key.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "UID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "exists": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Checks if a provided `key` has been claimed for the given parent.\n Note: If the UID has been deleted through `object::delete`, this will always return true.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "derive_address": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Given an ID and a Key, it calculates the derived address.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    }
+  },
+  "structs": {
+    "Claimed": {
+      "index": 0,
+      "doc": " Added as a DF to the parent's UID, to mark an ID as claimed.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": true,
+        "fields": {
+          "pos0": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "DerivedObjectKey": {
+      "index": 1,
+      "doc": " An internal key to protect from generating the same UID twice (e.g. collide with DFs)",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": true,
+        "fields": {
+          "pos0": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "NamedTypeParameter": "K"
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {
+    "ClaimedStatus": {
+      "index": 0,
+      "doc": " The possible values of a claimed UID.\n We make it an enum to make upgradeability easier in the future.",
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "variants": {
+        "Reserved": {
+          "index": 0,
+          "doc": " The UID has been claimed and cannot be re-claimed or used.",
+          "fields": {
+            "positional_fields": false,
+            "fields": {}
+          }
+        }
+      }
+    }
+  }
+}

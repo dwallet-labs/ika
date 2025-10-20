@@ -1,0 +1,336 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "borrow"
+  },
+  "doc": " A simple library that enables hot-potato-locked borrow mechanics.\n\n With Programmable transactions, it is possible to borrow a value within\n a transaction, use it and put back in the end. Hot-potato `Borrow` makes\n sure the object is returned and was not swapped for another one.",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "new": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create a new `Referent` struct",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "value",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "borrow"
+            },
+            "name": "Referent",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "T"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "borrow": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Borrow the `T` from the `Referent` receiving the `T` and a `Borrow`\n hot potato.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "borrow"
+                  },
+                  "name": "Referent",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "T"
+        },
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "borrow"
+            },
+            "name": "Borrow",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "put_back": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Put an object and the `Borrow` hot potato back.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "borrow"
+                  },
+                  "name": "Referent",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "value",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "borrow",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "borrow"
+              },
+              "name": "Borrow",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "destroy": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Unpack the `Referent` struct and return the value.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "borrow"
+              },
+              "name": "Referent",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "T"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "T"
+        }
+      ]
+    }
+  },
+  "structs": {
+    "Referent": {
+      "index": 0,
+      "doc": " An object wrapping a `T` and providing the borrow API.",
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": "address"
+          },
+          "value": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "NamedTypeParameter": "T"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "Borrow": {
+      "index": 1,
+      "doc": " A hot potato making sure the object is put back once borrowed.",
+      "attributes": [],
+      "abilities": [],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "ref": {
+            "index": 0,
+            "doc": null,
+            "type_": "address"
+          },
+          "obj": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

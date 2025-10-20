@@ -1,0 +1,39 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "event"
+  },
+  "doc": " Events module. Defines the `sui::event::emit` function which\n creates and sends a custom MoveEvent as a part of the effects\n certificate of the transaction.\n\n Every MoveEvent has the following properties:\n  - sender\n  - type signature (`T`)\n  - event data (the value of `T`)\n  - timestamp (local to a node)\n  - transaction digest\n\n Example:\n ```\n module my::marketplace {\n    use sui::event;\n    /* ... */\n    struct ItemPurchased has copy, drop {\n      item_id: ID, buyer: address\n    }\n    entry fun buy(/* .... */) {\n       /* ... */\n       event::emit(ItemPurchased { item_id: ..., buyer: .... })\n    }\n }\n ```",
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "emit": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Emit a custom Move event, sending the data offchain.\n\n Used for creating custom indexes and tracking onchain\n activity in a way that suits a specific application the most.\n\n The type `T` is the main way to index the event, and can contain\n phantom parameters, eg `emit(MyEvent<phantom T>)`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "event",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

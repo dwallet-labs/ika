@@ -1,0 +1,303 @@
+{
+  "id": {
+    "address": "std",
+    "name": "type_name"
+  },
+  "doc": " Functionality for converting Move types into values. Use with care!",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "address"
+    },
+    {
+      "address": "std",
+      "name": "ascii"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "get": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Return a value representation of the type `T`.  Package IDs\n that appear in fully qualified type names in the output from\n this function are defining IDs (the ID of the package in\n storage that first introduced the type).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "type_name"
+            },
+            "name": "TypeName",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "get_with_original_ids": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Return a value representation of the type `T`.  Package IDs\n that appear in fully qualified type names in the output from\n this function are original IDs (the ID of the first version of\n the package, even if the type in question was introduced in a\n later upgrade).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "type_name"
+            },
+            "name": "TypeName",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "is_primitive": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Returns true iff the TypeName represents a primitive type, i.e. one of\n u8, u16, u32, u64, u128, u256, bool, address, vector.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "type_name"
+                  },
+                  "name": "TypeName",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "borrow_string": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Get the String representation of `self`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "type_name"
+                  },
+                  "name": "TypeName",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "ascii"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "get_address": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Get Address string (Base16 encoded), first part of the TypeName.\n Aborts if given a primitive type.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "type_name"
+                  },
+                  "name": "TypeName",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "get_module": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Get name of the module.\n Aborts if given a primitive type.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "type_name"
+                  },
+                  "name": "TypeName",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "into_string": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Convert `self` into its inner String",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "type_name"
+              },
+              "name": "TypeName",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    }
+  },
+  "structs": {
+    "TypeName": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "name": {
+            "index": 0,
+            "doc": " String representation of the type. All types are represented\n using their source syntax:\n \"u8\", \"u64\", \"bool\", \"address\", \"vector\", and so on for primitive types.\n Struct types are represented as fully qualified type names; e.g.\n `00000000000000000000000000000001::string::String` or\n `0000000000000000000000000000000a::module_name1::type_name1<0000000000000000000000000000000a::module_name2::type_name2<u64>>`\n Addresses are hex-encoded lowercase values of length ADDRESS_LENGTH (16, 20, or 32 depending on the Move platform)",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "ascii"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

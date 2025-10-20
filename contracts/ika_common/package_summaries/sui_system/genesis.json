@@ -1,0 +1,544 @@
+{
+  "id": {
+    "address": "sui_system",
+    "name": "genesis"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "std",
+      "name": "vector"
+    },
+    {
+      "address": "sui",
+      "name": "balance"
+    },
+    {
+      "address": "sui",
+      "name": "coin"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "sui"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    },
+    {
+      "address": "sui_system",
+      "name": "stake_subsidy"
+    },
+    {
+      "address": "sui_system",
+      "name": "sui_system"
+    },
+    {
+      "address": "sui_system",
+      "name": "sui_system_state_inner"
+    },
+    {
+      "address": "sui_system",
+      "name": "validator"
+    },
+    {
+      "address": "sui_system",
+      "name": "validator_set"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " This function will be explicitly called once at genesis.\n It will create a singleton SuiSystemState object, which contains\n all the information we need in the system.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "sui_system_state_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "UID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "sui_supply",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "genesis_chain_parameters",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "genesis"
+              },
+              "name": "GenesisChainParameters",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "genesis_validators",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "genesis"
+                },
+                "name": "GenesisValidatorMetadata",
+                "type_arguments": []
+              }
+            }
+          }
+        },
+        {
+          "name": "token_distribution_schedule",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "genesis"
+              },
+              "name": "TokenDistributionSchedule",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "allocate_tokens": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "sui_supply",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "allocations",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "genesis"
+                },
+                "name": "TokenAllocation",
+                "type_arguments": []
+              }
+            }
+          }
+        },
+        {
+          "name": "validators",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui_system",
+                      "name": "validator"
+                    },
+                    "name": "Validator",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "GenesisValidatorMetadata": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "name": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "description": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "image_url": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "project_url": {
+            "index": 3,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "sui_address": {
+            "index": 4,
+            "doc": null,
+            "type_": "address"
+          },
+          "gas_price": {
+            "index": 5,
+            "doc": null,
+            "type_": "u64"
+          },
+          "commission_rate": {
+            "index": 6,
+            "doc": null,
+            "type_": "u64"
+          },
+          "protocol_public_key": {
+            "index": 7,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "proof_of_possession": {
+            "index": 8,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "network_public_key": {
+            "index": 9,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "worker_public_key": {
+            "index": 10,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "network_address": {
+            "index": 11,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "p2p_address": {
+            "index": 12,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "primary_address": {
+            "index": 13,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "worker_address": {
+            "index": 14,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    },
+    "GenesisChainParameters": {
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "protocol_version": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "chain_start_timestamp_ms": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          },
+          "epoch_duration_ms": {
+            "index": 2,
+            "doc": null,
+            "type_": "u64"
+          },
+          "stake_subsidy_start_epoch": {
+            "index": 3,
+            "doc": " Stake Subsidy parameters",
+            "type_": "u64"
+          },
+          "stake_subsidy_initial_distribution_amount": {
+            "index": 4,
+            "doc": null,
+            "type_": "u64"
+          },
+          "stake_subsidy_period_length": {
+            "index": 5,
+            "doc": null,
+            "type_": "u64"
+          },
+          "stake_subsidy_decrease_rate": {
+            "index": 6,
+            "doc": null,
+            "type_": "u16"
+          },
+          "max_validator_count": {
+            "index": 7,
+            "doc": " Validator committee parameters",
+            "type_": "u64"
+          },
+          "min_validator_joining_stake": {
+            "index": 8,
+            "doc": null,
+            "type_": "u64"
+          },
+          "validator_low_stake_threshold": {
+            "index": 9,
+            "doc": null,
+            "type_": "u64"
+          },
+          "validator_very_low_stake_threshold": {
+            "index": 10,
+            "doc": null,
+            "type_": "u64"
+          },
+          "validator_low_stake_grace_period": {
+            "index": 11,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "TokenDistributionSchedule": {
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "abilities": [],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "stake_subsidy_fund_mist": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "allocations": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "vector": {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "genesis"
+                  },
+                  "name": "TokenAllocation",
+                  "type_arguments": []
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "TokenAllocation": {
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "abilities": [],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "recipient_address": {
+            "index": 0,
+            "doc": null,
+            "type_": "address"
+          },
+          "amount_mist": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          },
+          "staked_with_validator": {
+            "index": 2,
+            "doc": " Indicates if this allocation should be staked at genesis and with which validator",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": "address"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

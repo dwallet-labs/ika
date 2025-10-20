@@ -1,0 +1,72 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "poseidon"
+  },
+  "doc": " Module which defines instances of the poseidon hash functions. Available in Devnet only.",
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "bcs"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "poseidon_bn254": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " @param data: Vector of BN254 field elements to hash.\n\n Hash the inputs using poseidon_bn254 and returns a BN254 field element.\n\n Each element has to be a BN254 field element in canonical representation so it must be smaller than the BN254\n scalar field size which is 21888242871839275222246405745257275088548364400416034343698204186575808495617.\n\n This function is currently only enabled on Devnet.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "data",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u256"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u256"
+      ]
+    },
+    "poseidon_bn254_internal": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " @param data: Vector of BN254 field elements in little-endian representation.\n\n Hash the inputs using poseidon_bn254 and returns a BN254 field element in little-endian representation.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "data",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "vector": "u8"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

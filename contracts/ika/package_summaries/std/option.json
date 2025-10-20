@@ -1,0 +1,1736 @@
+{
+  "id": {
+    "address": "std",
+    "name": "option"
+  },
+  "doc": " This module defines the Option type and its methods to represent and handle an optional value.",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "vector"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "none": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Return an empty `Option`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "some": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Return an `Option` containing `e`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "e",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "is_none": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Return true if `t` does not hold a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "is_some": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Return true if `t` holds a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "contains": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Return true if the value in `t` is equal to `e_ref`\n Always returns `false` if `t` does not hold a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "e_ref",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "Element"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "borrow": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Return an immutable reference to the value inside `t`\n Aborts if `t` does not hold a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "Element"
+            }
+          ]
+        }
+      ]
+    },
+    "borrow_with_default": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Return a reference to the value inside `t` if it holds one\n Return `default_ref` if `t` does not hold a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "default_ref",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "Element"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "Element"
+            }
+          ]
+        }
+      ]
+    },
+    "get_with_default": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Return the value inside `t` if it holds one\n Return `default` if `t` does not hold a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "default",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Element"
+        }
+      ]
+    },
+    "fill": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Convert the none option `t` to a some option by adding `e`.\n Aborts if `t` already holds a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "e",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "extract": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Convert a `some` option to a `none` by removing and returning the value stored inside `t`\n Aborts if `t` does not hold a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Element"
+        }
+      ]
+    },
+    "borrow_mut": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Return a mutable reference to the value inside `t`\n Aborts if `t` does not hold a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "Element"
+            }
+          ]
+        }
+      ]
+    },
+    "swap": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Swap the old value inside `t` with `e` and return the old value\n Aborts if `t` does not hold a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "e",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Element"
+        }
+      ]
+    },
+    "swap_or_fill": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Swap the old value inside `t` with `e` and return the old value;\n or if there is no old value, fill it with `e`.\n Different from swap(), swap_or_fill() allows for `t` not holding a value.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "Element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "e",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Element"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "destroy_with_default": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Destroys `t.` If `t` holds a value, return it. Returns `default` otherwise",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "Element"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "default",
+          "type_": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Element"
+        }
+      ]
+    },
+    "destroy_some": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " Unpack `t` and return its contents\n Aborts if `t` does not hold a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "Element"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Element"
+        }
+      ]
+    },
+    "destroy_none": {
+      "source_index": 15,
+      "index": 15,
+      "doc": " Unpack `t`\n Aborts if `t` holds a value",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "Element"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "to_vec": {
+      "source_index": 16,
+      "index": 16,
+      "doc": " Convert `t` into a vector of length 1 if it is `Some`,\n and an empty vector otherwise",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "t",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "Element"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "Element"
+          }
+        }
+      ]
+    },
+    "and": {
+      "source_index": 22,
+      "index": 18446744073709551615,
+      "doc": " If the value is `Some`, call the closure `f` on it. Otherwise, return `None`.\n Equivalent to Rust's `t.and_then(f)`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$U",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "$T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T"
+                }
+              ],
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "$U"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "$U"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "and_ref": {
+      "source_index": 23,
+      "index": 18446744073709551615,
+      "doc": " If the value is `Some`, call the closure `f` on it. Otherwise, return `None`.\n Equivalent to Rust's `t.and_then(f)`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$U",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "$T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "$U"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "$U"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "destroy": {
+      "source_index": 17,
+      "index": 18446744073709551615,
+      "doc": " Destroy `Option<T>` and call the closure `f` on the value inside if it holds one.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "$T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T"
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "destroy_or": {
+      "source_index": 28,
+      "index": 18446744073709551615,
+      "doc": " Destroy `Option<T>` and return the value inside if it holds one, or `default` otherwise.\n Equivalent to Rust's `t.unwrap_or(default)`.\n\n Note: this function is a more efficient version of `destroy_with_default`, as it does not\n evaluate the default value unless necessary. The `destroy_with_default` function should be\n deprecated in favor of this function.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "$T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "$default",
+          "type_": {
+            "NamedTypeParameter": "$T"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "$T"
+        }
+      ]
+    },
+    "do": {
+      "source_index": 18,
+      "index": 18446744073709551615,
+      "doc": " Destroy `Option<T>` and call the closure `f` on the value inside if it holds one.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "$T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T"
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "do_mut": {
+      "source_index": 20,
+      "index": 18446744073709551615,
+      "doc": " Execute a closure on the mutable reference to the value inside `t` if it holds one.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "$T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "do_ref": {
+      "source_index": 19,
+      "index": 18446744073709551615,
+      "doc": " Execute a closure on the value inside `t` if it holds one.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "$T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "filter": {
+      "source_index": 26,
+      "index": 18446744073709551615,
+      "doc": " Return `None` if the value is `None`, otherwise return `Option<T>` if the predicate `f` returns true.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "$T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "is_some_and": {
+      "source_index": 27,
+      "index": 18446744073709551615,
+      "doc": " Return `false` if the value is `None`, otherwise return the result of the predicate `f`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "$T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              "bool"
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "map": {
+      "source_index": 24,
+      "index": 18446744073709551615,
+      "doc": " Map an `Option<T>` to `Option<U>` by applying a function to a contained value.\n Equivalent to Rust's `t.map(f)`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$U",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "$T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "NamedTypeParameter": "$T"
+                }
+              ],
+              {
+                "NamedTypeParameter": "$U"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "$U"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "map_ref": {
+      "source_index": 25,
+      "index": 18446744073709551615,
+      "doc": " Map an `Option<T>` value to `Option<U>` by applying a function to a contained value by reference.\n Original `Option<T>` is preserved.\n Equivalent to Rust's `t.map(f)`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        },
+        {
+          "name": "$U",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "option"
+                  },
+                  "name": "Option",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "$T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    false,
+                    {
+                      "NamedTypeParameter": "$T"
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$U"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "$U"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "or": {
+      "source_index": 21,
+      "index": 18446744073709551615,
+      "doc": " Select the first `Some` value from the two options, or `None` if both are `None`.\n Equivalent to Rust's `a.or(b)`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$o",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "$T"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "$default",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "$T"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "$T"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "structs": {
+    "Option": {
+      "index": 0,
+      "doc": " Abstraction of a value that may or may not be present. Implemented with a vector of size\n zero or one because Move bytecode does not have ADTs.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "Element",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "vec": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": {
+                "NamedTypeParameter": "Element"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

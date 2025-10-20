@@ -1,0 +1,784 @@
+{
+  "id": {
+    "address": "std",
+    "name": "ascii"
+  },
+  "doc": " The `ASCII` module defines basic string and char newtypes in Move that verify\n that characters are valid ASCII, and that strings consist of only valid ASCII characters.",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "std",
+      "name": "vector"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "char": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Convert a `byte` into a `Char` that is checked to make sure it is valid ASCII.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "byte",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "Char",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "string": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Convert a vector of bytes `bytes` into an `String`. Aborts if\n `bytes` contains non-ASCII characters.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "try_string": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Convert a vector of bytes `bytes` into an `String`. Returns\n `Some(<ascii_string>)` if the `bytes` contains all valid ASCII\n characters. Otherwise returns `None`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "std",
+                      "name": "ascii"
+                    },
+                    "name": "String",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "all_characters_printable": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Returns `true` if all characters in `string` are printable characters\n Returns `false` otherwise. Not all `String`s are printable strings.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "push_char": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Push a `Char` to the end of the `string`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "char",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "ascii"
+              },
+              "name": "Char",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "pop_char": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Pop a `Char` from the end of the `string`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "Char",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "length": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Returns the length of the `string` in bytes.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "append": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Append the `other` string to the end of `string`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "other",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "ascii"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "insert": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Insert the `other` string at the `at` index of `string`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "s",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "at",
+          "type_": "u64"
+        },
+        {
+          "name": "o",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "ascii"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "substring": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Copy the slice of the `string` from `i` to `j` into a new `String`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        },
+        {
+          "name": "j",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "as_bytes": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Get the inner bytes of the `string` as a reference",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "vector": "u8"
+            }
+          ]
+        }
+      ]
+    },
+    "into_bytes": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Unpack the `string` to get its backing bytes",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "ascii"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "byte": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Unpack the `char` into its underlying bytes.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "char",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "ascii"
+              },
+              "name": "Char",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "is_valid_char": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Returns `true` if `b` is a valid ASCII character.\n Returns `false` otherwise.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "b",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "is_printable_char": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " Returns `true` if `byte` is a printable ASCII character.\n Returns `false` otherwise.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "byte",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "is_empty": {
+      "source_index": 15,
+      "index": 15,
+      "doc": " Returns `true` if `string` is empty.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "to_uppercase": {
+      "source_index": 16,
+      "index": 16,
+      "doc": " Convert a `string` to its uppercase equivalent.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "to_lowercase": {
+      "source_index": 17,
+      "index": 17,
+      "doc": " Convert a `string` to its lowercase equivalent.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "index_of": {
+      "source_index": 18,
+      "index": 18,
+      "doc": " Computes the index of the first occurrence of the `substr` in the `string`.\n Returns the length of the `string` if the `substr` is not found.\n Returns 0 if the `substr` is empty.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "string",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "substr",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "char_to_uppercase": {
+      "source_index": 19,
+      "index": 19,
+      "doc": " Convert a `char` to its lowercase equivalent.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "byte",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "char_to_lowercase": {
+      "source_index": 20,
+      "index": 20,
+      "doc": " Convert a `char` to its lowercase equivalent.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "byte",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    }
+  },
+  "structs": {
+    "String": {
+      "index": 0,
+      "doc": " The `String` struct holds a vector of bytes that all represent\n valid ASCII characters. Note that these ASCII characters may not all\n be printable. To determine if a `String` contains only \"printable\"\n characters you should use the `all_characters_printable` predicate\n defined in this module.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "bytes": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    },
+    "Char": {
+      "index": 1,
+      "doc": " An ASCII character.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "byte": {
+            "index": 0,
+            "doc": null,
+            "type_": "u8"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

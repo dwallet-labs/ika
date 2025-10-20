@@ -1,0 +1,1067 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "random"
+  },
+  "doc": " This module provides functionality for generating secure randomness.",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "bcs"
+    },
+    {
+      "address": "std",
+      "name": "vector"
+    },
+    {
+      "address": "sui",
+      "name": "address"
+    },
+    {
+      "address": "sui",
+      "name": "hmac"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    },
+    {
+      "address": "sui",
+      "name": "versioned"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create and share the Random object. This function is called exactly once, when\n the Random object is first created.\n Can only be called by genesis or change_epoch transactions.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "load_inner_mut": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "Random",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "random"
+                },
+                "name": "RandomInner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "load_inner": {
+      "source_index": 2,
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "Random",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "random"
+                },
+                "name": "RandomInner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "update_randomness_state": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Record new randomness. Called when executing the RandomnessStateUpdate system\n transaction.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "Random",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_round",
+          "type_": "u64"
+        },
+        {
+          "name": "new_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "new_generator": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Create a generator. Can be used to derive up to MAX_U16 * 32 random bytes.\n\n Using randomness can be error-prone if you don't observe the subtleties in its correct use, for example, randomness\n dependent code might be exploitable to attacks that carefully set the gas budget\n in a way that breaks security. For more information, see:\n https://docs.sui.io/guides/developer/advanced/randomness-onchain",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "r",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "Random",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "random"
+            },
+            "name": "RandomGenerator",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "derive_next_block": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Get the next block of 32 random bytes.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "generate_bytes": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Generate n random bytes.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "num_of_bytes",
+          "type_": "u16"
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "generate_u256": {
+      "source_index": 8,
+      "index": 7,
+      "doc": " Generate a u256.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u256"
+      ]
+    },
+    "generate_u128": {
+      "source_index": 9,
+      "index": 8,
+      "doc": " Generate a u128.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u128"
+      ]
+    },
+    "generate_u64": {
+      "source_index": 10,
+      "index": 9,
+      "doc": " Generate a u64.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "generate_u32": {
+      "source_index": 11,
+      "index": 10,
+      "doc": " Generate a u32.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u32"
+      ]
+    },
+    "generate_u16": {
+      "source_index": 12,
+      "index": 11,
+      "doc": " Generate a u16.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u16"
+      ]
+    },
+    "generate_u8": {
+      "source_index": 13,
+      "index": 12,
+      "doc": " Generate a u8.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "generate_bool": {
+      "source_index": 14,
+      "index": 13,
+      "doc": " Generate a boolean.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "generate_u128_in_range": {
+      "source_index": 16,
+      "index": 14,
+      "doc": " Generate a random u128 in [min, max] (with a bias of 2^{-64}).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "min",
+          "type_": "u128"
+        },
+        {
+          "name": "max",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        "u128"
+      ]
+    },
+    "generate_u64_in_range": {
+      "source_index": 17,
+      "index": 15,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "min",
+          "type_": "u64"
+        },
+        {
+          "name": "max",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "generate_u32_in_range": {
+      "source_index": 18,
+      "index": 16,
+      "doc": " Generate a random u32 in [min, max] (with a bias of 2^{-64}).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "min",
+          "type_": "u32"
+        },
+        {
+          "name": "max",
+          "type_": "u32"
+        }
+      ],
+      "return_": [
+        "u32"
+      ]
+    },
+    "generate_u16_in_range": {
+      "source_index": 19,
+      "index": 17,
+      "doc": " Generate a random u16 in [min, max] (with a bias of 2^{-64}).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "min",
+          "type_": "u16"
+        },
+        {
+          "name": "max",
+          "type_": "u16"
+        }
+      ],
+      "return_": [
+        "u16"
+      ]
+    },
+    "generate_u8_in_range": {
+      "source_index": 20,
+      "index": 18,
+      "doc": " Generate a random u8 in [min, max] (with a bias of 2^{-64}).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "min",
+          "type_": "u8"
+        },
+        {
+          "name": "max",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "shuffle": {
+      "source_index": 21,
+      "index": 19,
+      "doc": " Shuffle a vector using the random generator (Fisher–Yates/Knuth shuffle).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "NamedTypeParameter": "T"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "uint_from_bytes": {
+      "source_index": 7,
+      "index": 18446744073709551615,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$num_of_bytes",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "$T"
+        }
+      ]
+    },
+    "uint_in_range": {
+      "source_index": 15,
+      "index": 18446744073709551615,
+      "doc": " Helper macro to generate a random uint in [min, max] using a random number with num_of_bytes bytes.\n Assumes that the caller verified the inputs, and uses num_of_bytes to control the bias (e.g., 8 bytes larger\n than the actual type used by the caller function to limit the bias by 2^{-64}).",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$g",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "random"
+                  },
+                  "name": "RandomGenerator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$min",
+          "type_": {
+            "NamedTypeParameter": "$T"
+          }
+        },
+        {
+          "name": "$max",
+          "type_": {
+            "NamedTypeParameter": "$T"
+          }
+        },
+        {
+          "name": "$num_of_bytes",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "$T"
+        }
+      ]
+    }
+  },
+  "structs": {
+    "Random": {
+      "index": 0,
+      "doc": " Singleton shared object which stores the global randomness state.\n The actual state is stored in a versioned inner field.",
+      "attributes": [],
+      "abilities": [
+        "Key"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "inner": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "versioned"
+                },
+                "name": "Versioned",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "RandomInner": {
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "version": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "epoch": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          },
+          "randomness_round": {
+            "index": 2,
+            "doc": null,
+            "type_": "u64"
+          },
+          "random_bytes": {
+            "index": 3,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    },
+    "RandomGenerator": {
+      "index": 2,
+      "doc": " Unique randomness generator, derived from the global randomness.",
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "seed": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "counter": {
+            "index": 1,
+            "doc": null,
+            "type_": "u16"
+          },
+          "buffer": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

@@ -1,0 +1,60 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "ed25519"
+  },
+  "doc": null,
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "ed25519_verify": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " @param signature: 32-byte signature that is a point on the Ed25519 elliptic curve.\n @param public_key: 32-byte signature that is a point on the Ed25519 elliptic curve.\n @param msg: The message that we test the signature against.\n\n If the signature is a valid Ed25519 signature of the message and public key, return true.\n Otherwise, return false.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "signature",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "public_key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "msg",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

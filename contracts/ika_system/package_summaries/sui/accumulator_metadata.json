@@ -1,0 +1,552 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "accumulator_metadata"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "accumulator"
+    },
+    {
+      "address": "sui",
+      "name": "bag"
+    },
+    {
+      "address": "sui",
+      "name": "dynamic_field"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "accumulator_root_owner_exists": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " === Owner functions ===\n Check if there is an owner field attached to the accumulator root.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "accumulator_root",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "accumulator"
+                  },
+                  "name": "AccumulatorRoot",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "accumulator_root_borrow_owner_mut": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Borrow an owner field mutably.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "accumulator_root",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "accumulator"
+                  },
+                  "name": "AccumulatorRoot",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "accumulator_metadata"
+                },
+                "name": "Owner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "accumulator_root_attach_owner": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Attach an owner field to the accumulator root.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "accumulator_root",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "accumulator"
+                  },
+                  "name": "AccumulatorRoot",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "accumulator_metadata"
+              },
+              "name": "Owner",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "accumulator_root_detach_owner": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Detach an owner field from the accumulator root.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "accumulator_root",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "accumulator"
+                  },
+                  "name": "AccumulatorRoot",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "accumulator_metadata"
+            },
+            "name": "Owner",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "create_accumulator_metadata": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " === Metadata functions ===\n Create a metadata field for a new balance field with type T.\n The metadata will be attached to the owner field `owner`.\n If the owner field does not exist, it will be created.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "accumulator_root",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "accumulator"
+                  },
+                  "name": "AccumulatorRoot",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "type_": "address"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "remove_accumulator_metadata": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Remove the metadata field for a balance field with type T.\n The metadata will be detached from the owner field `owner`.\n If there are no more balance fields attached to the owner field,\n the owner field will be destroyed.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "accumulator_root",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "accumulator"
+                  },
+                  "name": "AccumulatorRoot",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "type_": "address"
+        }
+      ],
+      "return_": []
+    },
+    "accumulator_owner_attach_metadata": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Attach a metadata field for type T to the owner field.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "accumulator_metadata"
+                  },
+                  "name": "Owner",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "metadata",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "accumulator_metadata"
+              },
+              "name": "Metadata",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "T"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "accumulator_owner_detach_metadata": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Detach a metadata field for type T from the owner field.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "accumulator_metadata"
+                  },
+                  "name": "Owner",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "accumulator_metadata"
+            },
+            "name": "Metadata",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "NamedTypeParameter": "T"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "accumulator_owner_destroy": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Destroy an owner field.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "this",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "accumulator_metadata"
+              },
+              "name": "Owner",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "OwnerKey": {
+      "index": 0,
+      "doc": " === Accumulator metadata ===\n\n Accumulator metadata is organized as follows:\n - Each address that holds at least one type of accumulator has an owner field attached\n   to the accumulator root.\n - For each type of accumulator held by that address, there is an AccumulatorMetadata field\n   attached to the owner field.\n - When the value of an accumulator drops to zero, the metadata field is removed.\n - If the owner field has no more accumulator metadata field attached to it, it is removed\n   as well.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "owner": {
+            "index": 0,
+            "doc": null,
+            "type_": "address"
+          }
+        }
+      }
+    },
+    "Owner": {
+      "index": 1,
+      "doc": " An owner field, to which all AccumulatorMetadata fields for the owner are\n attached.",
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "balances": {
+            "index": 0,
+            "doc": " The individual balances owned by the owner.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          },
+          "owner": {
+            "index": 1,
+            "doc": null,
+            "type_": "address"
+          }
+        }
+      }
+    },
+    "MetadataKey": {
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": true,
+        "fields": {
+          "dummy_field": {
+            "index": 0,
+            "type_": "bool"
+          }
+        }
+      }
+    },
+    "Metadata": {
+      "index": 3,
+      "doc": " A metadata field for a balance field with type T.",
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "fields": {
+            "index": 0,
+            "doc": " Any per-balance fields we wish to add in the future.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

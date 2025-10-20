@@ -1,0 +1,1904 @@
+{
+  "id": {
+    "address": "ika_dwallet_2pc_mpc",
+    "name": "sessions_manager"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "ika",
+      "name": "ika"
+    },
+    {
+      "address": "ika_dwallet_2pc_mpc",
+      "name": "pricing"
+    },
+    {
+      "address": "std",
+      "name": "u64"
+    },
+    {
+      "address": "sui",
+      "name": "address"
+    },
+    {
+      "address": "sui",
+      "name": "bag"
+    },
+    {
+      "address": "sui",
+      "name": "balance"
+    },
+    {
+      "address": "sui",
+      "name": "coin"
+    },
+    {
+      "address": "sui",
+      "name": "event"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "object_table"
+    },
+    {
+      "address": "sui",
+      "name": "sui"
+    },
+    {
+      "address": "sui",
+      "name": "table"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Creates a new SessionsManager instance.\n\n Initializes all internal data structures with default values.\n\n ### Parameters\n - `ctx`: Transaction context for object creation\n",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "sessions_manager"
+            },
+            "name": "SessionsManager",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "lock_last_user_initiated_session_to_complete_in_current_epoch": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Locks the last active user-initiated session sequence number to prevent further updates.\n\n ### Parameters\n - `self`: Mutable reference to the session manager\n\n ### Effects\n - Prevents further updates to `last_user_initiated_session_to_complete_in_current_epoch`\n - Ensures session completion targets remain stable during epoch transitions",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsManager",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "register_session_identifier": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Registers a new session identifier.\n\n ### Parameters\n - `self`: Mutable reference to the session manager.\n - `identifier_preimage`: The preimage bytes for creating the session identifier.\n - `ctx`: Transaction context for object creation.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsManager",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "identifier_preimage",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "sessions_manager"
+            },
+            "name": "SessionIdentifier",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "advance_epoch": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Advances the epoch by ensuring all current epoch sessions are completed.\n\n ### Parameters\n - `self`: Mutable reference to the session manager\n\n ### Effects\n - Asserts that all current epoch sessions are completed\n - Unlocks the last active user-initiated session sequence number\n - Updates the last active user-initiated session sequence number to the latest session sequence number",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsManager",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "create_success_status_event": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Creates a success status event for a dWallet session.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Success",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Rejected",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "event_data",
+          "type_": {
+            "NamedTypeParameter": "Success"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "sessions_manager"
+            },
+            "name": "DWalletSessionStatusEvent",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Success"
+                }
+              },
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Rejected"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "create_rejected_status_event": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Creates a rejected status event for a dWallet session.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Success",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Rejected",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "event_data",
+          "type_": {
+            "NamedTypeParameter": "Rejected"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "sessions_manager"
+            },
+            "name": "DWalletSessionStatusEvent",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Success"
+                }
+              },
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Rejected"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "initiate_user_session": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Initiates a user-initiated session.\n\n ### Parameters\n - `self`: Mutable reference to the session manager\n - `epoch`: The epoch number\n - `session_identifier`: The session identifier\n - `dwallet_network_encryption_key_id`: The ID of the dWallet network encryption key\n - `pricing_value`: The pricing value for the session\n - `payment_ika`: The payment for the session in IKA\n - `payment_sui`: The payment for the session in SUI\n - `event_data`: The event data for the session\n - `ctx`: The transaction context\n\n ### Returns\n The amount of SUI paid for gas reimbursement for system calls",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "E",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsManager",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "dwallet_network_encryption_key_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "pricing_value",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "pricing"
+              },
+              "name": "PricingInfoValue",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_data",
+          "type_": {
+            "NamedTypeParameter": "E"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "complete_user_session": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Completes a user-initiated session.\n\n ### Parameters\n - `self`: Mutable reference to the session manager\n - `session_sequence_number`: The sequence number of the session\n - `status`: The status of the session\n\n ### Returns\n A tuple containing the amount of IKA fees paid and SUI for gas reimbursement for the session",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "E",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Success",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Rejected",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsManager",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "session_sequence_number",
+          "type_": "u64"
+        },
+        {
+          "name": "status",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "DWalletSessionStatusEvent",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "Success"
+                  }
+                },
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "Rejected"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "ika",
+                      "name": "ika"
+                    },
+                    "name": "IKA",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "initiate_system_session": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Initiates a system-initiated session.\n\n ### Parameters\n - `self`: Mutable reference to the session manager\n - `epoch`: The epoch number\n - `dwallet_network_encryption_key_id`: The ID of the dWallet network encryption key\n - `event_data`: The event data for the session\n - `ctx`: The transaction context\n\n ### Effects\n - Creates a new system-initiated session\n - Emits a session event",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "E",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsManager",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "dwallet_network_encryption_key_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "event_data",
+          "type_": {
+            "NamedTypeParameter": "E"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "complete_system_session": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Completes a system-initiated session.\n\n ### Parameters\n - `self`: Mutable reference to the session manager\n - `session_sequence_number`: The sequence number of the session\n - `status`: The status of the session\n\n ### Returns\n A tuple containing the amount of IKA fees paid and SUI for gas reimbursement for the session",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "E",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Success",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Rejected",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsManager",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "session_sequence_number",
+          "type_": "u64"
+        },
+        {
+          "name": "status",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "DWalletSessionStatusEvent",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "Success"
+                  }
+                },
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "Rejected"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_max_active_sessions_buffer": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Sets the maximum number of active sessions buffer.\n\n ### Parameters\n - `self`: Mutable reference to the session manager\n - `max_active_sessions_buffer`: The new maximum number of active sessions buffer\n",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsManager",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "max_active_sessions_buffer",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "initiate_session": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Initiates a session.\n\n ### Parameters\n - `self`: Mutable reference to the session keeper\n - `epoch`: The epoch number\n - `session_identifier`: The session identifier\n - `dwallet_network_encryption_key_id`: The ID of the dWallet network encryption key\n - `session_type`: The type of session\n - `event_data`: The event data for the session\n - `fee_charged_ika`: The amount of IKA fees paid\n - `gas_fee_reimbursement_sui`: The amount of SUI for gas reimbursement\n - `ctx`: The transaction context\n\n ### Effects\n - Creates a new session\n - Emits a session event",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "E",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsKeeper",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "dwallet_network_encryption_key_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "session_type",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionType",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "event_data",
+          "type_": {
+            "NamedTypeParameter": "E"
+          }
+        },
+        {
+          "name": "fee_charged_ika",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "ika",
+                        "name": "ika"
+                      },
+                      "name": "IKA",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "gas_fee_reimbursement_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "complete_session": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Completes a session.\n\n ### Parameters\n - `self`: Mutable reference to the session keeper\n - `session_sequence_number`: The sequence number of the session\n - `status`: The status of the session\n\n ### Returns\n A tuple containing the amount of IKA fees paid and SUI for gas reimbursement for the session",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "E",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Success",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Rejected",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsKeeper",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "session_sequence_number",
+          "type_": "u64"
+        },
+        {
+          "name": "status",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "DWalletSessionStatusEvent",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "Success"
+                  }
+                },
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "Rejected"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "ika",
+                      "name": "ika"
+                    },
+                    "name": "IKA",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "all_current_epoch_sessions_completed": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Checks if all current epoch sessions are completed.\n\n ### Parameters\n - `self`: Reference to the session manager\n\n ### Returns\n `true` if all current epoch sessions are completed, `false` otherwise",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsManager",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "update_last_user_initiated_session_to_complete_in_current_epoch": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " Updates the last user-initiated session to complete in the current epoch.\n\n ### Parameters\n - `self`: Mutable reference to the session manager\n\n ### Effects\n - Updates the last user-initiated session to complete in the current epoch",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "sessions_manager"
+                  },
+                  "name": "SessionsManager",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "SessionsKeeper": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "sessions": {
+            "index": 0,
+            "doc": " Active sessions indexed by sequence number",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object_table"
+                },
+                "name": "ObjectTable",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": "u64"
+                  },
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "ika_dwallet_2pc_mpc",
+                          "name": "sessions_manager"
+                        },
+                        "name": "DWalletSession",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "session_events": {
+            "index": 1,
+            "doc": " Events for sessions, keyed by session ID",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          },
+          "started_sessions_count": {
+            "index": 2,
+            "doc": " Count of started sessions",
+            "type_": "u64"
+          },
+          "completed_sessions_count": {
+            "index": 3,
+            "doc": " Count of completed sessions",
+            "type_": "u64"
+          },
+          "next_session_sequence_number": {
+            "index": 4,
+            "doc": " The sequence number to assign to the next session.\n Initialized to `1` and incremented at every new session creation.",
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "SessionsManager": {
+      "index": 1,
+      "doc": " Session management data for the dWallet coordinator.",
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "registered_user_session_identifiers": {
+            "index": 0,
+            "doc": " Registered user session identifiers, keyed by the session identifier bytes -> to session object ID",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "table"
+                },
+                "name": "Table",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "vector": "u8"
+                    }
+                  },
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "object"
+                        },
+                        "name": "ID",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "user_sessions_keeper": {
+            "index": 1,
+            "doc": " Holds the data for user-initiated sessions",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "sessions_manager"
+                },
+                "name": "SessionsKeeper",
+                "type_arguments": []
+              }
+            }
+          },
+          "system_sessions_keeper": {
+            "index": 2,
+            "doc": " Holds the data for system-initiated sessions",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "sessions_manager"
+                },
+                "name": "SessionsKeeper",
+                "type_arguments": []
+              }
+            }
+          },
+          "last_user_initiated_session_to_complete_in_current_epoch": {
+            "index": 3,
+            "doc": " The last MPC session to process in the current epoch.\n The validators of the Ika network must always begin sessions,\n when they become available to them, so long their sequence number is lesser or equal to this value.\n Initialized to `0`, as when the system is initialized no user-requested session exists so none should be started\n and we shouldn't wait for any to complete before advancing epoch (until the first session is created),\n and updated at every new session creation or completion, and when advancing epochs,\n to the latest session whilst assuring a maximum of `max_active_sessions_buffer` sessions to be completed in the current epoch.\n Validators should complete every session they start before switching epochs.",
+            "type_": "u64"
+          },
+          "locked_last_user_initiated_session_to_complete_in_current_epoch": {
+            "index": 4,
+            "doc": " Denotes whether the `last_user_initiated_session_to_complete_in_current_epoch` field is locked or not.\n This field gets locked before performing the epoch switch.",
+            "type_": "bool"
+          },
+          "max_active_sessions_buffer": {
+            "index": 5,
+            "doc": " The maximum number of active MPC sessions Ika nodes may run during an epoch.\n Validators should complete every session they start before switching epochs.",
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "DWalletSession": {
+      "index": 2,
+      "doc": " Represents an active MPC session in the Ika network.\n\n Each session tracks fees and is associated with a network encryption key.\n Sessions are sequentially numbered for epoch management.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "session_identifier": {
+            "index": 1,
+            "doc": " Session identifier",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "sessions_manager"
+                },
+                "name": "SessionIdentifier",
+                "type_arguments": []
+              }
+            }
+          },
+          "session_sequence_number": {
+            "index": 2,
+            "doc": " Sequential number for session ordering",
+            "type_": "u64"
+          },
+          "dwallet_network_encryption_key_id": {
+            "index": 3,
+            "doc": " Associated network encryption key",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "fee_charged_ika": {
+            "index": 4,
+            "doc": " IKA fees for the session",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "balance"
+                },
+                "name": "Balance",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "ika",
+                          "name": "ika"
+                        },
+                        "name": "IKA",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "gas_fee_reimbursement_sui": {
+            "index": 5,
+            "doc": " SUI balance for gas reimbursement",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "balance"
+                },
+                "name": "Balance",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "sui"
+                        },
+                        "name": "SUI",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "SessionIdentifier": {
+      "index": 3,
+      "doc": " The preimage is used to create the session identifier.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "identifier_preimage": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    },
+    "UserSessionIdentifierRegisteredEvent": {
+      "index": 4,
+      "doc": " Event emitted when a user session identifier is registered.\n\n This event signals that a new user session identifier has been registered and is\n ready for use in the dWallet system.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "session_object_id": {
+            "index": 0,
+            "doc": " ID of the session object",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "session_identifier_preimage": {
+            "index": 1,
+            "doc": " Unique session identifier",
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    },
+    "DWalletSessionEvent": {
+      "index": 5,
+      "doc": " Generic wrapper for dWallet-related events with session context.\n\n Provides standardized metadata for all dWallet operations including\n epoch information, session type, and session ID for tracking and debugging.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "E",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "epoch": {
+            "index": 0,
+            "doc": " Epoch when the event occurred",
+            "type_": "u64"
+          },
+          "session_object_id": {
+            "index": 1,
+            "doc": " ID of the session object",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "session_type": {
+            "index": 2,
+            "doc": " Type of session (User or System)",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "sessions_manager"
+                },
+                "name": "SessionType",
+                "type_arguments": []
+              }
+            }
+          },
+          "session_sequence_number": {
+            "index": 3,
+            "doc": " Sequential number for session ordering",
+            "type_": "u64"
+          },
+          "session_identifier_preimage": {
+            "index": 4,
+            "doc": " Unique session identifier",
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "event_data": {
+            "index": 5,
+            "doc": " Event-specific data",
+            "type_": {
+              "NamedTypeParameter": "E"
+            }
+          }
+        }
+      }
+    },
+    "DWalletSessionResultEvent": {
+      "index": 6,
+      "doc": " Event emitted when a dWallet session result is completed.\n\n This event signals that a dWallet session has been completed and provides\n the status of the session (success or rejection) along with the event-specific\n data for each case.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "E",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "phantom": false,
+          "name": "Success",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "phantom": false,
+          "name": "Rejected",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "epoch": {
+            "index": 0,
+            "doc": " Epoch when the event occurred",
+            "type_": "u64"
+          },
+          "event_initiated_at_epoch": {
+            "index": 1,
+            "doc": " Epoch when the event was initiated",
+            "type_": "u64"
+          },
+          "session_object_id": {
+            "index": 2,
+            "doc": " ID of the session object",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "session_type": {
+            "index": 3,
+            "doc": " Type of session (User or System)",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "sessions_manager"
+                },
+                "name": "SessionType",
+                "type_arguments": []
+              }
+            }
+          },
+          "session_sequence_number": {
+            "index": 4,
+            "doc": " Sequential number for session ordering",
+            "type_": "u64"
+          },
+          "session_identifier_preimage": {
+            "index": 5,
+            "doc": " The identifier of the session",
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "session_initiator_event_data": {
+            "index": 6,
+            "doc": " Event-specific data of the session initiator",
+            "type_": {
+              "NamedTypeParameter": "E"
+            }
+          },
+          "status": {
+            "index": 7,
+            "doc": " The status of the event",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "sessions_manager"
+                },
+                "name": "DWalletSessionStatusEvent",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "NamedTypeParameter": "Success"
+                    }
+                  },
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "NamedTypeParameter": "Rejected"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {
+    "SessionType": {
+      "index": 0,
+      "doc": " Type of dWallet MPC session for scheduling and epoch management.\n\n User-initiated sessions have sequence numbers for multi-epoch completion scheduling.\n System sessions are guaranteed to complete within their creation epoch.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "variants": {
+        "User": {
+          "index": 0,
+          "doc": " User-initiated session (across epochs scheduling)",
+          "fields": {
+            "positional_fields": false,
+            "fields": {}
+          }
+        },
+        "System": {
+          "index": 1,
+          "doc": " System-initiated session (always completes in current epoch)",
+          "fields": {
+            "positional_fields": false,
+            "fields": {}
+          }
+        }
+      }
+    },
+    "DWalletSessionStatusEvent": {
+      "index": 1,
+      "doc": " The status of a dWallet session result event.\n\n This enum represents the possible outcomes of a dWallet session event.\n It can either be successful or rejected, with event-specific data for each case.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "Success",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "phantom": false,
+          "name": "Rejected",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "variants": {
+        "Success": {
+          "index": 0,
+          "doc": " The event was successful",
+          "fields": {
+            "positional_fields": true,
+            "fields": {
+              "pos0": {
+                "index": 0,
+                "doc": null,
+                "type_": {
+                  "NamedTypeParameter": "Success"
+                }
+              }
+            }
+          }
+        },
+        "Rejected": {
+          "index": 1,
+          "doc": " The event was rejected",
+          "fields": {
+            "positional_fields": true,
+            "fields": {
+              "pos0": {
+                "index": 0,
+                "doc": null,
+                "type_": {
+                  "NamedTypeParameter": "Rejected"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

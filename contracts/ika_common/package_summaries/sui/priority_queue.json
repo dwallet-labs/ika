@@ -1,0 +1,514 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "priority_queue"
+  },
+  "doc": " Priority queue implemented using a max heap.",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "vector"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "new": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create a new priority queue from the input entry vectors.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "entries",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "priority_queue"
+                },
+                "name": "Entry",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "NamedTypeParameter": "T"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "priority_queue"
+            },
+            "name": "PriorityQueue",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "T"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "pop_max": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Pop the entry with the highest priority value.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "pq",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "priority_queue"
+                  },
+                  "name": "PriorityQueue",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64",
+        {
+          "NamedTypeParameter": "T"
+        }
+      ]
+    },
+    "insert": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Insert a new entry into the queue.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "pq",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "priority_queue"
+                  },
+                  "name": "PriorityQueue",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "priority",
+          "type_": "u64"
+        },
+        {
+          "name": "value",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "new_entry": {
+      "source_index": 3,
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "priority",
+          "type_": "u64"
+        },
+        {
+          "name": "value",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "priority_queue"
+            },
+            "name": "Entry",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "T"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "create_entries": {
+      "source_index": 4,
+      "index": 4,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "p",
+          "type_": {
+            "vector": "u64"
+          }
+        },
+        {
+          "name": "v",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "T"
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "priority_queue"
+              },
+              "name": "Entry",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "T"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "restore_heap_recursive": {
+      "source_index": 5,
+      "index": 5,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "priority_queue"
+                    },
+                    "name": "Entry",
+                    "type_arguments": [
+                      {
+                        "phantom": false,
+                        "argument": {
+                          "NamedTypeParameter": "T"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "max_heapify_recursive": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Max heapify the subtree whose root is at index `i`. That means after this function\n finishes, the subtree should have the property that the parent node has higher priority\n than both child nodes.\n This function assumes that all the other nodes in the subtree (nodes other than the root)\n do satisfy the max heap property.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "priority_queue"
+                    },
+                    "name": "Entry",
+                    "type_arguments": [
+                      {
+                        "phantom": false,
+                        "argument": {
+                          "NamedTypeParameter": "T"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "len",
+          "type_": "u64"
+        },
+        {
+          "name": "i",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "priorities": {
+      "source_index": 7,
+      "index": 7,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "pq",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "priority_queue"
+                  },
+                  "name": "PriorityQueue",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u64"
+        }
+      ]
+    }
+  },
+  "structs": {
+    "PriorityQueue": {
+      "index": 0,
+      "doc": " Struct representing a priority queue. The `entries` vector represents a max\n heap structure, where entries[0] is the root, entries[1] and entries[2] are the\n left child and right child of the root, etc. More generally, the children of\n entries[i] are at i * 2 + 1 and i * 2 + 2. The max heap should have the invariant\n that the parent node's priority is always higher than its child nodes' priorities.",
+      "attributes": [],
+      "abilities": [
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "entries": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "priority_queue"
+                  },
+                  "name": "Entry",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Entry": {
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "priority": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "value": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "NamedTypeParameter": "T"
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

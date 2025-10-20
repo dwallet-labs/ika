@@ -1,0 +1,517 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "tx_context"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "sender": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Return the address of the user that signed the current\n transaction",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "_self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    },
+    "native_sender": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "address"
+      ]
+    },
+    "digest": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Return the transaction digest (hash of transaction inputs).\n Please do not use as a source of randomness.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "vector": "u8"
+            }
+          ]
+        }
+      ]
+    },
+    "epoch": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Return the current epoch",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "_self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "native_epoch": {
+      "source_index": 4,
+      "index": 4,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u64"
+      ]
+    },
+    "epoch_timestamp_ms": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Return the epoch start time as a unix timestamp in milliseconds.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "_self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "native_epoch_timestamp_ms": {
+      "source_index": 6,
+      "index": 6,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u64"
+      ]
+    },
+    "sponsor": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Return the adress of the transaction sponsor or `None` if there was no sponsor.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "_self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "address"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "fresh_object_address": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Create an `address` that has not been used. As it is an object address, it will never\n occur as the address for a user.\n In other words, the generated address is a globally unique object ID.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "_ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    },
+    "fresh_id": {
+      "source_index": 9,
+      "index": 9,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "address"
+      ]
+    },
+    "ids_created": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Return the number of id's created by the current transaction.\n Hidden for now, but may expose later",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "_self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "native_ids_created": {
+      "source_index": 11,
+      "index": 11,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u64"
+      ]
+    },
+    "native_gas_price": {
+      "source_index": 12,
+      "index": 12,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u64"
+      ]
+    },
+    "native_gas_budget": {
+      "source_index": 13,
+      "index": 13,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u64"
+      ]
+    },
+    "option_sponsor": {
+      "source_index": 14,
+      "index": 14,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "address"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "native_sponsor": {
+      "source_index": 15,
+      "index": 15,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        {
+          "vector": "address"
+        }
+      ]
+    },
+    "derive_id": {
+      "source_index": 16,
+      "index": 16,
+      "doc": " Native function for deriving an ID via hash(tx_hash || ids_created)",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "tx_hash",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ids_created",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    }
+  },
+  "structs": {
+    "TxContext": {
+      "index": 0,
+      "doc": " Information about the transaction currently being executed.\n This cannot be constructed by a transaction--it is a privileged object created by\n the VM and passed in to the entrypoint of the transaction as `&mut TxContext`.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_field"
+              }
+            ]
+          ]
+        }
+      ],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "sender": {
+            "index": 0,
+            "doc": " The address of the user that signed the current transaction",
+            "type_": "address"
+          },
+          "tx_hash": {
+            "index": 1,
+            "doc": " Hash of the current transaction",
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "epoch": {
+            "index": 2,
+            "doc": " The current epoch number",
+            "type_": "u64"
+          },
+          "epoch_timestamp_ms": {
+            "index": 3,
+            "doc": " Timestamp that the epoch started at",
+            "type_": "u64"
+          },
+          "ids_created": {
+            "index": 4,
+            "doc": " Counter recording the number of fresh id's created while executing\n this transaction. Always 0 at the start of a transaction",
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

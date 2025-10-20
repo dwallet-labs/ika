@@ -1,0 +1,732 @@
+{
+  "id": {
+    "address": "ika_common",
+    "name": "bls_committee"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "u64"
+    },
+    {
+      "address": "std",
+      "name": "vector"
+    },
+    {
+      "address": "sui",
+      "name": "bls12381"
+    },
+    {
+      "address": "sui",
+      "name": "event"
+    },
+    {
+      "address": "sui",
+      "name": "group_ops"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "total_voting_power": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Returns the total voting power (number of members in the committee)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommittee",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "quorum_threshold": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Returns the quorum threshold (2n/3 + 1) for the committee",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommittee",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "validity_threshold": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Returns the validity threshold (n/3 + 1) for the committee",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommittee",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "new_bls_committee_member": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Creates a new BLS committee member with the given validator ID and protocol public key",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "validator_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "protocol_pubkey",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "group_ops"
+              },
+              "name": "Element",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "bls12381"
+                      },
+                      "name": "UncompressedG1",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "bls_committee"
+            },
+            "name": "BlsCommitteeMember",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "validator_id": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Returns the validator ID of the committee member",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "member",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommitteeMember",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "new_bls_committee": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Creates a new BLS committee from a vector of members\n Each member has equal voting power of 1, total voting power equals number of members\n Calculates quorum threshold (2n/3 + 1) and validity threshold (n/3 + 1)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "members",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_common",
+                  "name": "bls_committee"
+                },
+                "name": "BlsCommitteeMember",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "bls_committee"
+            },
+            "name": "BlsCommittee",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "empty": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Creates an empty committee with zero thresholds\n Only relevant for initialization phase",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "bls_committee"
+            },
+            "name": "BlsCommittee",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "members": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Returns an immutable reference to committee members",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommittee",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "vector": {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommitteeMember",
+                  "type_arguments": []
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "validator_ids": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Returns a vector of all validator IDs in the committee",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommittee",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ]
+    },
+    "contains": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Checks if the committee contains a specific validator ID",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommittee",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "validator_id",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "ID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "verify_certificate": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Verifies an aggregate BLS signature is a certificate in the epoch\n The `signers_bitmap` represents which validators signed the certificate\n Returns successfully if signature is valid and meets quorum threshold, otherwise aborts",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommittee",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "signature",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signers_bitmap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "intent_bytes",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "is_quorum_threshold": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Returns true if the voting power meets or exceeds the quorum threshold",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommittee",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer_count",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "is_validity_threshold": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Returns true if the voting power meets or exceeds the validity threshold",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommittee",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer_count",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    }
+  },
+  "structs": {
+    "BlsCommitteeMember": {
+      "index": 0,
+      "doc": " Represents a single member of the BLS committee with their validator ID and protocol public key",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "validator_id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "protocol_pubkey": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "group_ops"
+                },
+                "name": "Element",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "bls12381"
+                        },
+                        "name": "UncompressedG1",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "BlsCommittee": {
+      "index": 1,
+      "doc": " Represents the current committee in the system with aggregated public keys and voting thresholds",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "members": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "bls_committee"
+                  },
+                  "name": "BlsCommitteeMember",
+                  "type_arguments": []
+                }
+              }
+            }
+          },
+          "aggregated_protocol_pubkey": {
+            "index": 1,
+            "doc": " The aggregation of public keys for all members of the committee",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "group_ops"
+                },
+                "name": "Element",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "bls12381"
+                        },
+                        "name": "G1",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "quorum_threshold": {
+            "index": 2,
+            "doc": " Minimum signatures required for quorum (2n/3 + 1)",
+            "type_": "u64"
+          },
+          "validity_threshold": {
+            "index": 3,
+            "doc": " Minimum signatures required for validity (n/3 + 1)",
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "CommitteeQuorumVerifiedEvent": {
+      "index": 2,
+      "doc": " Event emitted after verifying quorum of signature",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "epoch": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "signer_count": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

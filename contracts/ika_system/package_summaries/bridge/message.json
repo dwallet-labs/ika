@@ -1,0 +1,1828 @@
+{
+  "id": {
+    "address": "bridge",
+    "name": "message"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "bridge",
+      "name": "chain_ids"
+    },
+    {
+      "address": "bridge",
+      "name": "message_types"
+    },
+    {
+      "address": "std",
+      "name": "ascii"
+    },
+    {
+      "address": "std",
+      "name": "vector"
+    },
+    {
+      "address": "sui",
+      "name": "bcs"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "extract_token_bridge_payload": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "message",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "TokenTransferPayload",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "extract_emergency_op_payload": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Emergency op payload is just a single byte",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "message",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "EmergencyOp",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "extract_blocklist_payload": {
+      "source_index": 2,
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "message",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "Blocklist",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "extract_update_bridge_limit": {
+      "source_index": 3,
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "message",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "UpdateBridgeLimit",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "extract_update_asset_price": {
+      "source_index": 4,
+      "index": 4,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "message",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "UpdateAssetPrice",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "extract_add_tokens_on_sui": {
+      "source_index": 5,
+      "index": 5,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "message",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "AddTokenOnSui",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "serialize_message": {
+      "source_index": 6,
+      "index": 6,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "message",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "bridge",
+                "name": "message"
+              },
+              "name": "BridgeMessage",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "create_token_bridge_message": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Token Transfer Message Format:\n [message_type: u8]\n [version:u8]\n [nonce:u64]\n [source_chain: u8]\n [sender_address_length:u8]\n [sender_address: byte[]]\n [target_chain:u8]\n [target_address_length:u8]\n [target_address: byte[]]\n [token_type:u8]\n [amount:u64]",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "seq_num",
+          "type_": "u64"
+        },
+        {
+          "name": "sender_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "target_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "target_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "token_type",
+          "type_": "u8"
+        },
+        {
+          "name": "amount",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "BridgeMessage",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "create_emergency_op_message": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Emergency Op Message Format:\n [message_type: u8]\n [version:u8]\n [nonce:u64]\n [chain_id: u8]\n [op_type: u8]",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "seq_num",
+          "type_": "u64"
+        },
+        {
+          "name": "op_type",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "BridgeMessage",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "create_blocklist_message": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Blocklist Message Format:\n [message_type: u8]\n [version:u8]\n [nonce:u64]\n [chain_id: u8]\n [blocklist_type: u8]\n [validator_length: u8]\n [validator_ecdsa_addresses: byte[][]]",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "seq_num",
+          "type_": "u64"
+        },
+        {
+          "name": "blocklist_type",
+          "type_": "u8"
+        },
+        {
+          "name": "validator_ecdsa_addresses",
+          "type_": {
+            "vector": {
+              "vector": "u8"
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "BridgeMessage",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "create_update_bridge_limit_message": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Update bridge limit Message Format:\n [message_type: u8]\n [version:u8]\n [nonce:u64]\n [receiving_chain_id: u8]\n [sending_chain_id: u8]\n [new_limit: u64]",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "receiving_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "seq_num",
+          "type_": "u64"
+        },
+        {
+          "name": "sending_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "new_limit",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "BridgeMessage",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "create_update_asset_price_message": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Update asset price message\n [message_type: u8]\n [version:u8]\n [nonce:u64]\n [chain_id: u8]\n [token_id: u8]\n [new_price:u64]",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "token_id",
+          "type_": "u8"
+        },
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "seq_num",
+          "type_": "u64"
+        },
+        {
+          "name": "new_price",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "BridgeMessage",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "create_add_tokens_on_sui_message": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Update Sui token message\n [message_type:u8]\n [version:u8]\n [nonce:u64]\n [chain_id: u8]\n [native_token:bool]\n [token_ids:vector<u8>]\n [token_type_name:vector<String>]\n [token_prices:vector<u64>]",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "seq_num",
+          "type_": "u64"
+        },
+        {
+          "name": "native_token",
+          "type_": "bool"
+        },
+        {
+          "name": "token_ids",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "type_names",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "ascii"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          }
+        },
+        {
+          "name": "token_prices",
+          "type_": {
+            "vector": "u64"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "BridgeMessage",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "create_key": {
+      "source_index": 13,
+      "index": 13,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "source_chain",
+          "type_": "u8"
+        },
+        {
+          "name": "message_type",
+          "type_": "u8"
+        },
+        {
+          "name": "bridge_seq_num",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "BridgeMessageKey",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "key": {
+      "source_index": 14,
+      "index": 14,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "BridgeMessageKey",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "message_version": {
+      "source_index": 15,
+      "index": 15,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "message_type": {
+      "source_index": 16,
+      "index": 16,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "seq_num": {
+      "source_index": 17,
+      "index": 17,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "source_chain": {
+      "source_index": 18,
+      "index": 18,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "payload": {
+      "source_index": 19,
+      "index": 19,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "token_target_chain": {
+      "source_index": 20,
+      "index": 20,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "TokenTransferPayload",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "token_target_address": {
+      "source_index": 21,
+      "index": 21,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "TokenTransferPayload",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "token_type": {
+      "source_index": 22,
+      "index": 22,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "TokenTransferPayload",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "token_amount": {
+      "source_index": 23,
+      "index": 23,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "TokenTransferPayload",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "emergency_op_type": {
+      "source_index": 24,
+      "index": 24,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "EmergencyOp",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "blocklist_type": {
+      "source_index": 25,
+      "index": 25,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "Blocklist",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "blocklist_validator_addresses": {
+      "source_index": 26,
+      "index": 26,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "Blocklist",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "vector": {
+                "vector": "u8"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "update_bridge_limit_payload_sending_chain": {
+      "source_index": 27,
+      "index": 27,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "UpdateBridgeLimit",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "update_bridge_limit_payload_receiving_chain": {
+      "source_index": 28,
+      "index": 28,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "UpdateBridgeLimit",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "update_bridge_limit_payload_limit": {
+      "source_index": 29,
+      "index": 29,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "UpdateBridgeLimit",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "update_asset_price_payload_token_id": {
+      "source_index": 30,
+      "index": 30,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "UpdateAssetPrice",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "update_asset_price_payload_new_price": {
+      "source_index": 31,
+      "index": 31,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "UpdateAssetPrice",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "is_native": {
+      "source_index": 32,
+      "index": 32,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "AddTokenOnSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "token_ids": {
+      "source_index": 33,
+      "index": 33,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "AddTokenOnSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "token_type_names": {
+      "source_index": 34,
+      "index": 34,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "AddTokenOnSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "ascii"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        }
+      ]
+    },
+    "token_prices": {
+      "source_index": 35,
+      "index": 35,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "AddTokenOnSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u64"
+        }
+      ]
+    },
+    "emergency_op_pause": {
+      "source_index": 36,
+      "index": 36,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u8"
+      ]
+    },
+    "emergency_op_unpause": {
+      "source_index": 37,
+      "index": 37,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u8"
+      ]
+    },
+    "required_voting_power": {
+      "source_index": 38,
+      "index": 38,
+      "doc": " Return the required signature threshold for the message, values are voting power in the scale of 10000",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "to_parsed_token_transfer_message": {
+      "source_index": 39,
+      "index": 39,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "message",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "bridge",
+                    "name": "message"
+                  },
+                  "name": "BridgeMessage",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "bridge",
+              "name": "message"
+            },
+            "name": "ParsedTokenTransferMessage",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "reverse_bytes": {
+      "source_index": 40,
+      "index": 40,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "peel_u64_be": {
+      "source_index": 41,
+      "index": 41,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bcs",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "bcs"
+                  },
+                  "name": "BCS",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {
+    "BridgeMessage": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "message_type": {
+            "index": 0,
+            "doc": null,
+            "type_": "u8"
+          },
+          "message_version": {
+            "index": 1,
+            "doc": null,
+            "type_": "u8"
+          },
+          "seq_num": {
+            "index": 2,
+            "doc": null,
+            "type_": "u64"
+          },
+          "source_chain": {
+            "index": 3,
+            "doc": null,
+            "type_": "u8"
+          },
+          "payload": {
+            "index": 4,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    },
+    "BridgeMessageKey": {
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "source_chain": {
+            "index": 0,
+            "doc": null,
+            "type_": "u8"
+          },
+          "message_type": {
+            "index": 1,
+            "doc": null,
+            "type_": "u8"
+          },
+          "bridge_seq_num": {
+            "index": 2,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "TokenTransferPayload": {
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "sender_address": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "target_chain": {
+            "index": 1,
+            "doc": null,
+            "type_": "u8"
+          },
+          "target_address": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "token_type": {
+            "index": 3,
+            "doc": null,
+            "type_": "u8"
+          },
+          "amount": {
+            "index": 4,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "EmergencyOp": {
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "op_type": {
+            "index": 0,
+            "doc": null,
+            "type_": "u8"
+          }
+        }
+      }
+    },
+    "Blocklist": {
+      "index": 4,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "blocklist_type": {
+            "index": 0,
+            "doc": null,
+            "type_": "u8"
+          },
+          "validator_eth_addresses": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "vector": {
+                "vector": "u8"
+              }
+            }
+          }
+        }
+      }
+    },
+    "UpdateBridgeLimit": {
+      "index": 5,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "receiving_chain": {
+            "index": 0,
+            "doc": null,
+            "type_": "u8"
+          },
+          "sending_chain": {
+            "index": 1,
+            "doc": null,
+            "type_": "u8"
+          },
+          "limit": {
+            "index": 2,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "UpdateAssetPrice": {
+      "index": 6,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "token_id": {
+            "index": 0,
+            "doc": null,
+            "type_": "u8"
+          },
+          "new_price": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "AddTokenOnSui": {
+      "index": 7,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "native_token": {
+            "index": 0,
+            "doc": null,
+            "type_": "bool"
+          },
+          "token_ids": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "token_type_names": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "vector": {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "ascii"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            }
+          },
+          "token_prices": {
+            "index": 3,
+            "doc": null,
+            "type_": {
+              "vector": "u64"
+            }
+          }
+        }
+      }
+    },
+    "ParsedTokenTransferMessage": {
+      "index": 8,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "message_version": {
+            "index": 0,
+            "doc": null,
+            "type_": "u8"
+          },
+          "seq_num": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          },
+          "source_chain": {
+            "index": 2,
+            "doc": null,
+            "type_": "u8"
+          },
+          "payload": {
+            "index": 3,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "parsed_payload": {
+            "index": 4,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "bridge",
+                  "name": "message"
+                },
+                "name": "TokenTransferPayload",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

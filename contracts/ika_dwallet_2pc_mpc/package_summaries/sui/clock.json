@@ -1,0 +1,196 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "clock"
+  },
+  "doc": " APIs for accessing time from move calls, via the `Clock`: a unique\n shared object that is created at 0x6 during genesis.",
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "timestamp_ms": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " The `clock`'s current timestamp as a running total of\n milliseconds since an arbitrary point in the past.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "clock",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "clock"
+                  },
+                  "name": "Clock",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "create": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Create and share the singleton Clock -- this function is\n called exactly once, during genesis.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "consensus_commit_prologue": {
+      "source_index": 2,
+      "index": 2,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "clock",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "clock"
+                  },
+                  "name": "Clock",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "timestamp_ms",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "Clock": {
+      "index": 0,
+      "doc": " Singleton shared object that exposes time to Move calls.  This\n object is found at address 0x6, and can only be read (accessed\n via an immutable reference) by entry functions.\n\n Entry Functions that attempt to accept `Clock` by mutable\n reference or value will fail to verify, and honest validators\n will not sign or execute transactions that use `Clock` as an\n input parameter, unless it is passed by immutable reference.",
+      "attributes": [],
+      "abilities": [
+        "Key"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "timestamp_ms": {
+            "index": 1,
+            "doc": " The clock's timestamp, which is set automatically by a\n system transaction every time consensus commits a\n schedule, or by `sui::clock::increment_for_testing` during\n testing.",
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

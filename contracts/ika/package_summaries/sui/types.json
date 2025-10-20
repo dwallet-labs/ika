@@ -1,0 +1,45 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "types"
+  },
+  "doc": " Sui types helpers and utilities",
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "is_one_time_witness": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Tests if the argument type is a one-time witness, that is a type with only one instantiation\n across the entire code base.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "T"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

@@ -1,0 +1,26 @@
+{
+  "id": {
+    "address": "std",
+    "name": "address"
+  },
+  "doc": " Provides a way to get address length since it's a\n platform-specific parameter.",
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "length": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Should be converted to a native function.\n Current implementation only works for Sui.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

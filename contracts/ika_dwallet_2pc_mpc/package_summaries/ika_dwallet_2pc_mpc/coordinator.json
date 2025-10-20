@@ -1,0 +1,5250 @@
+{
+  "id": {
+    "address": "ika_dwallet_2pc_mpc",
+    "name": "coordinator"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "ika",
+      "name": "ika"
+    },
+    {
+      "address": "ika_common",
+      "name": "advance_epoch_approver"
+    },
+    {
+      "address": "ika_common",
+      "name": "protocol_cap"
+    },
+    {
+      "address": "ika_common",
+      "name": "system_current_status_info"
+    },
+    {
+      "address": "ika_common",
+      "name": "upgrade_package_approver"
+    },
+    {
+      "address": "ika_common",
+      "name": "validator_cap"
+    },
+    {
+      "address": "ika_dwallet_2pc_mpc",
+      "name": "coordinator_inner"
+    },
+    {
+      "address": "ika_dwallet_2pc_mpc",
+      "name": "pricing"
+    },
+    {
+      "address": "ika_dwallet_2pc_mpc",
+      "name": "sessions_manager"
+    },
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "sui",
+      "name": "coin"
+    },
+    {
+      "address": "sui",
+      "name": "dynamic_field"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "sui"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    },
+    {
+      "address": "sui",
+      "name": "vec_map"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create a new System object and make it shared.\n This function will be called only once in init.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "package_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "advance_epoch_approver",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "advance_epoch_approver"
+                  },
+                  "name": "AdvanceEpochApprover",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_current_status_info",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "system_current_status_info"
+                  },
+                  "name": "SystemCurrentStatusInfo",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "pricing",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "pricing"
+              },
+              "name": "PricingInfo",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "supported_curves_to_signature_algorithms_to_hash_schemes",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "vec_map"
+              },
+              "name": "VecMap",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u32"
+                },
+                {
+                  "phantom": false,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "vec_map"
+                      },
+                      "name": "VecMap",
+                      "type_arguments": [
+                        {
+                          "phantom": false,
+                          "argument": "u32"
+                        },
+                        {
+                          "phantom": false,
+                          "argument": {
+                            "vector": "u32"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "process_checkpoint_message_by_quorum": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Being called by the Ika network to store outputs of completed MPC sessions to Sui.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "dwallet_2pc_mpc_coordinator",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "signature",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "signers_bitmap",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "message",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "coin"
+            },
+            "name": "Coin",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "initiate_mid_epoch_reconfiguration": {
+      "source_index": 2,
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_current_status_info",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "system_current_status_info"
+                  },
+                  "name": "SystemCurrentStatusInfo",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_network_encryption_key_mid_epoch_reconfiguration": {
+      "source_index": 3,
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_network_encryption_key_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "advance_epoch": {
+      "source_index": 4,
+      "index": 4,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "advance_epoch_approver",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "advance_epoch_approver"
+                  },
+                  "name": "AdvanceEpochApprover",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_dwallet_network_encryption_key_dkg_by_cap": {
+      "source_index": 5,
+      "index": 5,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "params_for_network",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "VerifiedProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "process_checkpoint_message_by_cap": {
+      "source_index": 6,
+      "index": 6,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "message",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "VerifiedProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "coin"
+            },
+            "name": "Coin",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "set_gas_fee_reimbursement_sui_system_call_value_by_cap": {
+      "source_index": 7,
+      "index": 7,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "gas_fee_reimbursement_sui_system_call_value",
+          "type_": "u64"
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "VerifiedProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_supported_and_pricing": {
+      "source_index": 8,
+      "index": 8,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "default_pricing",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "pricing"
+              },
+              "name": "PricingInfo",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "supported_curves_to_signature_algorithms_to_hash_schemes",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "vec_map"
+              },
+              "name": "VecMap",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u32"
+                },
+                {
+                  "phantom": false,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "vec_map"
+                      },
+                      "name": "VecMap",
+                      "type_arguments": [
+                        {
+                          "phantom": false,
+                          "argument": "u32"
+                        },
+                        {
+                          "phantom": false,
+                          "argument": {
+                            "vector": "u32"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "VerifiedProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_paused_curves_and_signature_algorithms": {
+      "source_index": 9,
+      "index": 9,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "paused_curves",
+          "type_": {
+            "vector": "u32"
+          }
+        },
+        {
+          "name": "paused_signature_algorithms",
+          "type_": {
+            "vector": "u32"
+          }
+        },
+        {
+          "name": "paused_hash_schemes",
+          "type_": {
+            "vector": "u32"
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "VerifiedProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_lock_epoch_sessions": {
+      "source_index": 10,
+      "index": 10,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_current_status_info",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "system_current_status_info"
+                  },
+                  "name": "SystemCurrentStatusInfo",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_pricing_vote": {
+      "source_index": 11,
+      "index": 11,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "pricing",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "pricing"
+              },
+              "name": "PricingInfo",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "validator_cap"
+                  },
+                  "name": "VerifiedValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "register_session_identifier": {
+      "source_index": 12,
+      "index": 12,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "identifier",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "sessions_manager"
+            },
+            "name": "SessionIdentifier",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "get_active_encryption_key": {
+      "source_index": 13,
+      "index": 13,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "address",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "register_encryption_key": {
+      "source_index": 14,
+      "index": 14,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "curve",
+          "type_": "u32"
+        },
+        {
+          "name": "encryption_key",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "encryption_key_signature",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "signer_public_key",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "approve_message": {
+      "source_index": 15,
+      "index": 15,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator_inner"
+                  },
+                  "name": "DWalletCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "signature_algorithm",
+          "type_": "u32"
+        },
+        {
+          "name": "hash_scheme",
+          "type_": "u32"
+        },
+        {
+          "name": "message",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "coordinator_inner"
+            },
+            "name": "MessageApproval",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "approve_imported_key_message": {
+      "source_index": 16,
+      "index": 16,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "imported_key_dwallet_cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator_inner"
+                  },
+                  "name": "ImportedKeyDWalletCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "signature_algorithm",
+          "type_": "u32"
+        },
+        {
+          "name": "hash_scheme",
+          "type_": "u32"
+        },
+        {
+          "name": "message",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "coordinator_inner"
+            },
+            "name": "ImportedKeyMessageApproval",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_dwallet_dkg_first_round": {
+      "source_index": 17,
+      "index": 17,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "deprecated",
+            [
+              {
+                "Assigned": [
+                  "note",
+                  "Function `request_dwallet_dkg_first_round` is deprecated. Please use `request_dwallet_dkg` instead."
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "_self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_dwallet_network_encryption_key_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "_curve",
+          "type_": "u32"
+        },
+        {
+          "name": "_session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "_payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "coordinator_inner"
+            },
+            "name": "DWalletCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_dwallet_dkg_second_round": {
+      "source_index": 18,
+      "index": 18,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "deprecated",
+            [
+              {
+                "Assigned": [
+                  "note",
+                  "Function `request_dwallet_dkg_second_round` is deprecated. Please use `request_dwallet_dkg` instead."
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "_self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_dwallet_cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator_inner"
+                  },
+                  "name": "DWalletCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_centralized_public_key_share_and_proof",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "_encrypted_centralized_secret_share_and_proof",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "_encryption_key_address",
+          "type_": "address"
+        },
+        {
+          "name": "_user_public_output",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "_singer_public_key",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "_session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "_payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_dwallet_dkg": {
+      "source_index": 19,
+      "index": 19,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_network_encryption_key_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "curve",
+          "type_": "u32"
+        },
+        {
+          "name": "centralized_public_key_share_and_proof",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "encrypted_centralized_secret_share_and_proof",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "encryption_key_address",
+          "type_": "address"
+        },
+        {
+          "name": "user_public_output",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "singer_public_key",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "coordinator_inner"
+            },
+            "name": "DWalletCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "calculate_pricing_votes": {
+      "source_index": 20,
+      "index": 20,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "curve",
+          "type_": "u32"
+        },
+        {
+          "name": "signature_algorithm",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u32"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "protocol",
+          "type_": "u32"
+        }
+      ],
+      "return_": []
+    },
+    "request_imported_key_dwallet_verification": {
+      "source_index": 21,
+      "index": 21,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_network_encryption_key_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "curve",
+          "type_": "u32"
+        },
+        {
+          "name": "centralized_party_message",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "encrypted_centralized_secret_share_and_proof",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "encryption_key_address",
+          "type_": "address"
+        },
+        {
+          "name": "user_public_output",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "signer_public_key",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "coordinator_inner"
+            },
+            "name": "ImportedKeyDWalletCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_make_dwallet_user_secret_key_shares_public": {
+      "source_index": 22,
+      "index": 22,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "public_user_secret_key_shares",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_re_encrypt_user_share_for": {
+      "source_index": 23,
+      "index": 23,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "destination_encryption_key_address",
+          "type_": "address"
+        },
+        {
+          "name": "encrypted_centralized_secret_share_and_proof",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "source_encrypted_user_secret_key_share_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "accept_encrypted_user_share": {
+      "source_index": 24,
+      "index": 24,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "encrypted_user_secret_key_share_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "user_output_signature",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_presign": {
+      "source_index": 25,
+      "index": 25,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "signature_algorithm",
+          "type_": "u32"
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "coordinator_inner"
+            },
+            "name": "UnverifiedPresignCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_global_presign": {
+      "source_index": 26,
+      "index": 26,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_network_encryption_key_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "curve",
+          "type_": "u32"
+        },
+        {
+          "name": "signature_algorithm",
+          "type_": "u32"
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "coordinator_inner"
+            },
+            "name": "UnverifiedPresignCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "is_presign_valid": {
+      "source_index": 27,
+      "index": 27,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "presign_cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator_inner"
+                  },
+                  "name": "UnverifiedPresignCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "verify_presign_cap": {
+      "source_index": 28,
+      "index": 28,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "UnverifiedPresignCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "coordinator_inner"
+            },
+            "name": "VerifiedPresignCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_sign": {
+      "source_index": 29,
+      "index": 29,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "presign_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "VerifiedPresignCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_approval",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "MessageApproval",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_centralized_signature",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_sign_and_return_id": {
+      "source_index": 30,
+      "index": 30,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "presign_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "VerifiedPresignCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_approval",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "MessageApproval",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_centralized_signature",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_imported_key_sign": {
+      "source_index": 31,
+      "index": 31,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "presign_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "VerifiedPresignCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_approval",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "ImportedKeyMessageApproval",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_centralized_signature",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_imported_key_sign_and_return_id": {
+      "source_index": 32,
+      "index": 32,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "presign_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "VerifiedPresignCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_approval",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "ImportedKeyMessageApproval",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_centralized_signature",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_future_sign": {
+      "source_index": 33,
+      "index": 33,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "presign_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "VerifiedPresignCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "hash_scheme",
+          "type_": "u32"
+        },
+        {
+          "name": "message_centralized_signature",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "coordinator_inner"
+            },
+            "name": "UnverifiedPartialUserSignatureCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "is_partial_user_signature_valid": {
+      "source_index": 34,
+      "index": 34,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator_inner"
+                  },
+                  "name": "UnverifiedPartialUserSignatureCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "verify_partial_user_signature_cap": {
+      "source_index": 35,
+      "index": 35,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "UnverifiedPartialUserSignatureCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "coordinator_inner"
+            },
+            "name": "VerifiedPartialUserSignatureCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_sign_with_partial_user_signature": {
+      "source_index": 36,
+      "index": 36,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "partial_user_signature_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "VerifiedPartialUserSignatureCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_approval",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "MessageApproval",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_sign_with_partial_user_signature_and_return_id": {
+      "source_index": 37,
+      "index": 37,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "partial_user_signature_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "VerifiedPartialUserSignatureCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_approval",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "MessageApproval",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_imported_key_sign_with_partial_user_signature": {
+      "source_index": 38,
+      "index": 38,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "partial_user_signature_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "VerifiedPartialUserSignatureCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_approval",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "ImportedKeyMessageApproval",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_imported_key_sign_with_partial_user_signature_and_return_id": {
+      "source_index": 39,
+      "index": 39,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "partial_user_signature_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "VerifiedPartialUserSignatureCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "message_approval",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "coordinator_inner"
+              },
+              "name": "ImportedKeyMessageApproval",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "session_identifier",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "sessions_manager"
+              },
+              "name": "SessionIdentifier",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "payment_ika",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "ika",
+                            "name": "ika"
+                          },
+                          "name": "IKA",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "payment_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "coin"
+                  },
+                  "name": "Coin",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "Datatype": {
+                          "module": {
+                            "address": "sui",
+                            "name": "sui"
+                          },
+                          "name": "SUI",
+                          "type_arguments": []
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "match_partial_user_signature_with_message_approval": {
+      "source_index": 40,
+      "index": 40,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "partial_user_signature_cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator_inner"
+                  },
+                  "name": "VerifiedPartialUserSignatureCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "message_approval",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator_inner"
+                  },
+                  "name": "MessageApproval",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "match_partial_user_signature_with_imported_key_message_approval": {
+      "source_index": 41,
+      "index": 41,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "partial_user_signature_cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator_inner"
+                  },
+                  "name": "VerifiedPartialUserSignatureCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "message_approval",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator_inner"
+                  },
+                  "name": "ImportedKeyMessageApproval",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "has_dwallet": {
+      "source_index": 42,
+      "index": 42,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "get_dwallet": {
+      "source_index": 43,
+      "index": 43,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "dwallet_id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "coordinator_inner"
+                },
+                "name": "DWallet",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "current_pricing": {
+      "source_index": 44,
+      "index": 44,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "pricing"
+            },
+            "name": "PricingInfo",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "subsidize_coordinator_with_sui": {
+      "source_index": 45,
+      "index": 45,
+      "doc": " Fund the coordinator with SUI - this let you subsidize the protocol.\n IMPORTANT: YOU WON'T BE ABLE TO WITHDRAW THE FUNDS OR GET ANYTHING IN RETURN.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "coin"
+              },
+              "name": "Coin",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "subsidize_coordinator_with_ika": {
+      "source_index": 46,
+      "index": 46,
+      "doc": " Fund the coordinator with IKA - this let you subsidize the protocol.\n IMPORTANT: YOU WON'T BE ABLE TO WITHDRAW THE FUNDS OR GET ANYTHING IN RETURN.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ika",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "coin"
+              },
+              "name": "Coin",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "ika",
+                        "name": "ika"
+                      },
+                      "name": "IKA",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "commit_upgrade": {
+      "source_index": 47,
+      "index": 47,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "upgrade_package_approver",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "upgrade_package_approver"
+                  },
+                  "name": "UpgradePackageApprover",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "try_migrate_by_cap": {
+      "source_index": 48,
+      "index": 48,
+      "doc": " Try to migrate the coordinator object to the new package id using a cap.\n\n This function sets the new package id and version and can be modified in future versions\n to migrate changes in the `coordinator_inner` object if needed.\n This function can be called immediately after the upgrade is committed.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "protocol_cap"
+                  },
+                  "name": "VerifiedProtocolCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "try_migrate": {
+      "source_index": 49,
+      "index": 49,
+      "doc": " Try to migrate the coordinator object to the new package id.\n\n This function sets the new package id and version and can be modified in future versions\n to migrate changes in the `coordinator_inner` object if needed.\n Call this function after the migration epoch is reached.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "try_migrate_impl": {
+      "source_index": 50,
+      "index": 50,
+      "doc": " Migrate the coordinator object to the new package id.\n\n This function sets the new package id and version and can be modified in future versions\n to migrate changes in the `coordinator_inner` object if needed.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "version": {
+      "source_index": 51,
+      "index": 51,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "inner_mut": {
+      "source_index": 52,
+      "index": 52,
+      "doc": " Get a mutable reference to `DWalletCoordinatorInnerVX` from the `DWalletCoordinator`.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "coordinator_inner"
+                },
+                "name": "DWalletCoordinatorInner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "inner": {
+      "source_index": 53,
+      "index": 53,
+      "doc": " Get an immutable reference to `DWalletCoordinatorVX` from the `DWalletCoordinator`.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "coordinator_inner"
+                },
+                "name": "DWalletCoordinatorInner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "inner_without_version_check": {
+      "source_index": 54,
+      "index": 54,
+      "doc": " Get an immutable reference to `DWalletCoordinatorInner` from the `DWalletCoordinator` without checking the version.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "coordinator"
+                  },
+                  "name": "DWalletCoordinator",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "coordinator_inner"
+                },
+                "name": "DWalletCoordinatorInner",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "structs": {
+    "DWalletCoordinator": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Key"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "version": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          },
+          "package_id": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "new_package_id": {
+            "index": 3,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "object"
+                        },
+                        "name": "ID",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "migration_epoch": {
+            "index": 4,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": "u64"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

@@ -1,0 +1,169 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "vdf"
+  },
+  "doc": null,
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "hash_to_input": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Hash an arbitrary binary `message` to a class group element to be used as input for `vdf_verify`.\n\n This function is currently only enabled on Devnet.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "message",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "hash_to_input_internal": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " The internal functions for `hash_to_input`.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "message",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "vdf_verify": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Verify the output and proof of a VDF with the given number of iterations. The `input`, `output` and `proof`\n are all class group elements represented by triples `(a,b,c)` such that `b^2 - 4ac = discriminant`. The are expected\n to be encoded as a BCS encoding of a triple of byte arrays, each being the big-endian twos-complement encoding of\n a, b and c in that order.\n\n This uses Wesolowski's VDF construction over imaginary class groups as described in Wesolowski (2020),\n 'Efficient Verifiable Delay Functions.', J. Cryptol. 33, and is compatible with the VDF implementation in\n fastcrypto.\n\n The discriminant for the class group is pre-computed and fixed. See how this was generated in the fastcrypto-vdf\n crate. The final selection of the discriminant for Mainnet will be computed and announced under a nothing-up-my-sleeve\n process.\n\n This function is currently only enabled on Devnet.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "input",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "output",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proof",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "iterations",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "vdf_verify_internal": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " The internal functions for `vdf_verify_internal`.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "input",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "output",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proof",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "iterations",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

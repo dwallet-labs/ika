@@ -1,0 +1,253 @@
+{
+  "id": {
+    "address": "sui_system",
+    "name": "validator_wrapper"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "tx_context"
+    },
+    {
+      "address": "sui",
+      "name": "versioned"
+    },
+    {
+      "address": "sui_system",
+      "name": "validator"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create_v1": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "validator",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "validator"
+              },
+              "name": "Validator",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "validator_wrapper"
+            },
+            "name": "ValidatorWrapper",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "load_validator_maybe_upgrade": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " This function should always return the latest supported version.\n If the inner version is old, we upgrade it lazily in-place.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator_wrapper"
+                  },
+                  "name": "ValidatorWrapper",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "validator"
+                },
+                "name": "Validator",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "destroy": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Destroy the wrapper and retrieve the inner validator object.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "validator_wrapper"
+              },
+              "name": "ValidatorWrapper",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "validator"
+            },
+            "name": "Validator",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "upgrade_to_latest": {
+      "source_index": 3,
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator_wrapper"
+                  },
+                  "name": "ValidatorWrapper",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "version": {
+      "source_index": 4,
+      "index": 4,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator_wrapper"
+                  },
+                  "name": "ValidatorWrapper",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {
+    "ValidatorWrapper": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "inner": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "versioned"
+                },
+                "name": "Versioned",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

@@ -1,0 +1,624 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "object_bag"
+  },
+  "doc": " Similar to `sui::bag`, an `ObjectBag` is a heterogeneous map-like collection. But unlike\n `sui::bag`, the values bound to these dynamic fields _must_ be objects themselves. This allows\n for the objects to still exist in storage, which may be important for external tools.\n The difference is otherwise not observable from within Move.",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "sui",
+      "name": "dynamic_object_field"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "new": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Creates a new, empty bag",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object_bag"
+            },
+            "name": "ObjectBag",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "add": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Adds a key-value pair to the bag `bag: &mut ObjectBag`\n Aborts with `sui::dynamic_field::EFieldAlreadyExists` if the bag already has an entry with\n that key `k: K`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bag",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object_bag"
+                  },
+                  "name": "ObjectBag",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        },
+        {
+          "name": "v",
+          "type_": {
+            "NamedTypeParameter": "V"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "borrow": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Immutably borrows the value associated with the key in the bag `bag: &ObjectBag`.\n Aborts with `sui::dynamic_field::EFieldDoesNotExist` if the bag does not have an entry with\n that key `k: K`.\n Aborts with `sui::dynamic_field::EFieldTypeMismatch` if the bag has an entry for the key, but\n the value does not have the specified type.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "syntax",
+            [
+              {
+                "Name": "index"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bag",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object_bag"
+                  },
+                  "name": "ObjectBag",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "V"
+            }
+          ]
+        }
+      ]
+    },
+    "borrow_mut": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Mutably borrows the value associated with the key in the bag `bag: &mut ObjectBag`.\n Aborts with `sui::dynamic_field::EFieldDoesNotExist` if the bag does not have an entry with\n that key `k: K`.\n Aborts with `sui::dynamic_field::EFieldTypeMismatch` if the bag has an entry for the key, but\n the value does not have the specified type.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "syntax",
+            [
+              {
+                "Name": "index"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bag",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object_bag"
+                  },
+                  "name": "ObjectBag",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "V"
+            }
+          ]
+        }
+      ]
+    },
+    "remove": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Mutably borrows the key-value pair in the bag `bag: &mut ObjectBag` and returns the value.\n Aborts with `sui::dynamic_field::EFieldDoesNotExist` if the bag does not have an entry with\n that key `k: K`.\n Aborts with `sui::dynamic_field::EFieldTypeMismatch` if the bag has an entry for the key, but\n the value does not have the specified type.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bag",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object_bag"
+                  },
+                  "name": "ObjectBag",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "V"
+        }
+      ]
+    },
+    "contains": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Returns true iff there is an value associated with the key `k: K` in the bag `bag: &ObjectBag`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bag",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object_bag"
+                  },
+                  "name": "ObjectBag",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "contains_with_type": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Returns true iff there is an value associated with the key `k: K` in the bag `bag: &ObjectBag`\n with an assigned value of type `V`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "V",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bag",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object_bag"
+                  },
+                  "name": "ObjectBag",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "length": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Returns the size of the bag, the number of key-value pairs",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bag",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object_bag"
+                  },
+                  "name": "ObjectBag",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "is_empty": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Returns true iff the bag is empty (if `length` returns `0`)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bag",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object_bag"
+                  },
+                  "name": "ObjectBag",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "destroy_empty": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Destroys an empty bag\n Aborts with `EBagNotEmpty` if the bag still contains values",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bag",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object_bag"
+              },
+              "name": "ObjectBag",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "value_id": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Returns the ID of the object associated with the key if the bag has an entry with key `k: K`\n Returns none otherwise",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bag",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object_bag"
+                  },
+                  "name": "ObjectBag",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "object"
+                    },
+                    "name": "ID",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "structs": {
+    "ObjectBag": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": " the ID of this bag",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "size": {
+            "index": 1,
+            "doc": " the number of key-value pairs in the bag",
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

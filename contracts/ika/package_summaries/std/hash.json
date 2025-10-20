@@ -1,0 +1,57 @@
+{
+  "id": {
+    "address": "std",
+    "name": "hash"
+  },
+  "doc": " Module which defines SHA hashes for byte vectors.\n\n The functions in this module are natively declared both in the Move runtime\n as in the Move prover's prelude.",
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "sha2_256": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "data",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "sha3_256": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "data",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

@@ -1,0 +1,106 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "ecdsa_r1"
+  },
+  "doc": null,
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "secp256r1_ecrecover": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " @param signature: A 65-bytes signature in form (r, s, v) that is signed using\n Secp256r1. Reference implementation on signature generation using RFC6979:\n https://github.com/MystenLabs/fastcrypto/blob/74aec4886e62122a5b769464c2bea5f803cf8ecc/fastcrypto/src/secp256r1/mod.rs\n The accepted v values are {0, 1, 2, 3}.\n @param msg: The message that the signature is signed against, this is raw message without hashing.\n @param hash: The u8 representing the name of hash function used to hash the message when signing.\n\n If the signature is valid, return the corresponding recovered Secpk256r1 public\n key, otherwise throw error. This is similar to ecrecover in Ethereum, can only be\n applied to Secp256r1 signatures. May fail with `EFailToRecoverPubKey` or `EInvalidSignature`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "signature",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "msg",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hash",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "secp256r1_verify": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " @param signature: A 64-bytes signature in form (r, s) that is signed using\n Secp256r1. This is an non-recoverable signature without recovery id.\n Reference implementation on signature generation using RFC6979:\n https://github.com/MystenLabs/fastcrypto/blob/74aec4886e62122a5b769464c2bea5f803cf8ecc/fastcrypto/src/secp256r1/mod.rs\n @param public_key: The public key to verify the signature against\n @param msg: The message that the signature is signed against, this is raw message without hashing.\n @param hash: The u8 representing the name of hash function used to hash the message when signing.\n\n If the signature is valid to the pubkey and hashed message, return true. Else false.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "signature",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "public_key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "msg",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hash",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

@@ -1,0 +1,655 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "transfer"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "party"
+    }
+  ],
+  "attributes": [
+    {
+      "Parameterized": [
+        "allow",
+        [
+          {
+            "Name": "unused_const"
+          }
+        ]
+      ]
+    }
+  ],
+  "functions": {
+    "transfer": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Transfer ownership of `obj` to `recipient`. `obj` must have the `key` attribute,\n which (in turn) ensures that `obj` has a globally unique ID. Note that if the recipient\n address represents an object ID, the `obj` sent will be inaccessible after the transfer\n (though they will be retrievable at a future date once new features are added).\n This function has custom rules performed by the Sui Move bytecode verifier that ensures\n that `T` is an object defined in the module where `transfer` is invoked. Use\n `public_transfer` to transfer an object with `store` outside of its module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "recipient",
+          "type_": "address"
+        }
+      ],
+      "return_": []
+    },
+    "public_transfer": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Transfer ownership of `obj` to `recipient`. `obj` must have the `key` attribute,\n which (in turn) ensures that `obj` has a globally unique ID. Note that if the recipient\n address represents an object ID, the `obj` sent will be inaccessible after the transfer\n (though they will be retrievable at a future date once new features are added).\n The object must have `store` to be transferred outside of its module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "recipient",
+          "type_": "address"
+        }
+      ],
+      "return_": []
+    },
+    "party_transfer": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " NOT YET SUPPORTED. The function will abort with `ENotSupported` if used on a network,\n e.g. mainnet, where party objects are not yet supported.\n Transfer ownership of `obj` to the `party`. This transfer behaves similar to both\n `transfer` and `share_object`. It is similar to `transfer` in that the object be authenticated\n only by the recipient(s), in this case the `party`. This means that only the members\n can use the object as an input to a transaction. It is similar to `share_object` two ways. One\n in that the object can potentially be used by anyone, as defined by the `default` permissions of\n the `Party` value. The other in that the object must be used in consensus and cannot be\n used in the fast path.\n This function has custom rules performed by the Sui Move bytecode verifier that ensures that `T`\n is an object defined in the module where `transfer` is invoked. Use `public_party_transfer`\n to transfer an object with `store` outside of its module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "party",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "party"
+              },
+              "name": "Party",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "public_party_transfer": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " NOT YET SUPPORTED. The function will abort with `ENotSupported` if used on a network,\n e.g. mainnet, where party objects are not yet supported.\n Transfer ownership of `obj` to the `party`. This transfer behaves similar to both\n `transfer` and `share_object`. It is similar to `transfer` in that the object be authenticated\n only by the recipient(s), in this case the `party`. This means that only the members\n can use the object as an input to a transaction. It is similar to `share_object` two ways. One\n in that the object can potentially be used by anyone, as defined by the `default` permissions of\n the `Party` value. The other in that the object must be used in consensus and cannot be\n used in the fast path.\n The object must have `store` to be transferred outside of its module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "party",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "party"
+              },
+              "name": "Party",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "freeze_object": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Freeze `obj`. After freezing `obj` becomes immutable and can no longer be transferred or\n mutated.\n This function has custom rules performed by the Sui Move bytecode verifier that ensures\n that `T` is an object defined in the module where `freeze_object` is invoked. Use\n `public_freeze_object` to freeze an object with `store` outside of its module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "public_freeze_object": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Freeze `obj`. After freezing `obj` becomes immutable and can no longer be transferred or\n mutated.\n The object must have `store` to be frozen outside of its module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "share_object": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Turn the given object into a mutable shared object that everyone can access and mutate.\n This is irreversible, i.e. once an object is shared, it will stay shared forever.\n Aborts with `ESharedNonNewObject` of the object being shared was not created in this\n transaction. This restriction may be relaxed in the future.\n This function has custom rules performed by the Sui Move bytecode verifier that ensures\n that `T` is an object defined in the module where `share_object` is invoked. Use\n `public_share_object` to share an object with `store` outside of its module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "public_share_object": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Turn the given object into a mutable shared object that everyone can access and mutate.\n This is irreversible, i.e. once an object is shared, it will stay shared forever.\n Aborts with `ESharedNonNewObject` of the object being shared was not created in this\n transaction. This restriction may be relaxed in the future.\n The object must have `store` to be shared outside of its module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "receive": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Given mutable (i.e., locked) access to the `parent` and a `Receiving` argument\n referencing an object of type `T` owned by `parent` use the `to_receive`\n argument to receive and return the referenced owned object of type `T`.\n This function has custom rules performed by the Sui Move bytecode verifier that ensures\n that `T` is an object defined in the module where `receive` is invoked. Use\n `public_receive` to receivne an object with `store` outside of its module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "to_receive",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "transfer"
+              },
+              "name": "Receiving",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "T"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "T"
+        }
+      ]
+    },
+    "public_receive": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Given mutable (i.e., locked) access to the `parent` and a `Receiving` argument\n referencing an object of type `T` owned by `parent` use the `to_receive`\n argument to receive and return the referenced owned object of type `T`.\n The object must have `store` to be received outside of its defining module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "to_receive",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "transfer"
+              },
+              "name": "Receiving",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "T"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "T"
+        }
+      ]
+    },
+    "receiving_object_id": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Return the object ID that the given `Receiving` argument references.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "receiving",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer"
+                  },
+                  "name": "Receiving",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "freeze_object_impl": {
+      "source_index": 11,
+      "index": 11,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "share_object_impl": {
+      "source_index": 12,
+      "index": 12,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "party_transfer_impl": {
+      "source_index": 13,
+      "index": 13,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "default_permissions",
+          "type_": "u64"
+        },
+        {
+          "name": "addresses",
+          "type_": {
+            "vector": "address"
+          }
+        },
+        {
+          "name": "permissions",
+          "type_": {
+            "vector": "u64"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "transfer_impl": {
+      "source_index": 14,
+      "index": 14,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "obj",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "recipient",
+          "type_": "address"
+        }
+      ],
+      "return_": []
+    },
+    "receive_impl": {
+      "source_index": 15,
+      "index": 15,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": "address"
+        },
+        {
+          "name": "to_receive",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "version",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "T"
+        }
+      ]
+    }
+  },
+  "structs": {
+    "Receiving": {
+      "index": 0,
+      "doc": " This represents the ability to `receive` an object of type `T`.\n This type is ephemeral per-transaction and cannot be stored on-chain.\n This does not represent the obligation to receive the object that it\n references, but simply the ability to receive the object with object ID\n `id` at version `version` if you can prove mutable access to the parent\n object during the transaction.\n Internals of this struct are opaque outside this module.",
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "version": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

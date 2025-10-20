@@ -1,0 +1,2356 @@
+{
+  "id": {
+    "address": "sui_system",
+    "name": "staking_pool"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "std",
+      "name": "u64"
+    },
+    {
+      "address": "sui",
+      "name": "bag"
+    },
+    {
+      "address": "sui",
+      "name": "balance"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "sui"
+    },
+    {
+      "address": "sui",
+      "name": "table"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [
+    {
+      "Parameterized": [
+        "allow",
+        [
+          {
+            "Name": "unused_const"
+          }
+        ]
+      ]
+    }
+  ],
+  "functions": {
+    "new": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create a new, empty staking pool.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "StakingPool",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_add_stake": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Request to stake to a staking pool. The stake starts counting at the beginning of the next epoch,",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "stake_activation_epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "StakedSui",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_withdraw_stake": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Request to withdraw the given stake plus rewards from a staking pool.\n Both the principal and corresponding rewards in SUI are withdrawn.\n A proportional amount of pool token withdraw is recorded and processed at epoch change time.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "StakedSui",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "redeem_fungible_staked_sui": {
+      "source_index": 3,
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "fungible_staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "FungibleStakedSui",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "calculate_fungible_staked_sui_withdraw_amount": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " written in separate function so i can test with random values\n returns (principal_withdraw_amount, rewards_withdraw_amount)",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "latest_exchange_rate",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "PoolTokenExchangeRate",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "fungible_staked_sui_value",
+          "type_": "u64"
+        },
+        {
+          "name": "fungible_staked_sui_data_principal_amount",
+          "type_": "u64"
+        },
+        {
+          "name": "fungible_staked_sui_data_total_supply",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64",
+        "u64"
+      ]
+    },
+    "convert_to_fungible_staked_sui": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Convert the given staked SUI to an FungibleStakedSui object",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "StakedSui",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "FungibleStakedSui",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "withdraw_from_principal": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Withdraw the principal SUI stored in the StakedSui object, and calculate the corresponding amount of pool\n tokens using exchange rate at staking epoch.\n Returns values are amount of pool tokens withdrawn and withdrawn principal portion of SUI.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "StakedSui",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        "u64",
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "unwrap_staked_sui": {
+      "source_index": 7,
+      "index": 7,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "StakedSui",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "deposit_rewards": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Called at epoch advancement times to add rewards (in SUI) to the staking pool.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "rewards",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "process_pending_stakes_and_withdraws": {
+      "source_index": 9,
+      "index": 9,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "process_pending_stake_withdraw": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Called at epoch boundaries to process pending stake withdraws requested during the epoch.\n Also called immediately upon withdrawal if the pool is inactive.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "process_pending_stake": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Called at epoch boundaries to process the pending stake.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "withdraw_rewards": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " This function does the following:\n     1. Calculates the total amount of SUI (including principal and rewards) that the provided pool tokens represent\n        at the current exchange rate.\n     2. Using the above number and the given `principal_withdraw_amount`, calculates the rewards portion of the\n        stake we should withdraw.\n     3. Withdraws the rewards portion from the rewards pool at the current exchange rate. We only withdraw the rewards\n        portion because the principal portion was already taken out of the staker's self custodied StakedSui.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "principal_withdraw_amount",
+          "type_": "u64"
+        },
+        {
+          "name": "pool_token_withdraw_amount",
+          "type_": "u64"
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "activate_staking_pool": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Called by `validator` module to activate a staking pool.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "activation_epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "deactivate_staking_pool": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " Deactivate a staking pool by setting the `deactivation_epoch`. After\n this pool deactivation, the pool stops earning rewards. Only stake\n withdraws can be made to the pool.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "deactivation_epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "sui_balance": {
+      "source_index": 15,
+      "index": 15,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "pool_id": {
+      "source_index": 16,
+      "index": 16,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "fungible_staked_sui_pool_id": {
+      "source_index": 17,
+      "index": 17,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "fungible_staked_sui",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "FungibleStakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "staked_sui_amount": {
+      "source_index": 18,
+      "index": 18,
+      "doc": " Returns the principal amount of `StakedSui`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "stake_activation_epoch": {
+      "source_index": 19,
+      "index": 19,
+      "doc": " Returns the activation epoch of `StakedSui`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "is_preactive": {
+      "source_index": 20,
+      "index": 20,
+      "doc": " Returns true if the input staking pool is preactive.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "activation_epoch": {
+      "source_index": 21,
+      "index": 21,
+      "doc": " Returns the activation epoch of the `StakingPool`. For validator candidates,\n or pending validators, the value returned is `None`. For active validators,\n the value is the epoch before the validator was activated.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "u64"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "is_inactive": {
+      "source_index": 22,
+      "index": 22,
+      "doc": " Returns true if the input staking pool is inactive.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "fungible_staked_sui_value": {
+      "source_index": 23,
+      "index": 23,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "fungible_staked_sui",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "FungibleStakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "split_fungible_staked_sui": {
+      "source_index": 24,
+      "index": 24,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "fungible_staked_sui",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "FungibleStakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "split_amount",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "FungibleStakedSui",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "join_fungible_staked_sui": {
+      "source_index": 25,
+      "index": 25,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "FungibleStakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "other",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "FungibleStakedSui",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "split": {
+      "source_index": 26,
+      "index": 26,
+      "doc": " Split StakedSui `self` to two parts, one with principal `split_amount`,\n and the remaining principal is left in `self`.\n All the other parameters of the StakedSui like `stake_activation_epoch` or `pool_id` remain the same.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "split_amount",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "StakedSui",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "split_staked_sui": {
+      "source_index": 27,
+      "index": 27,
+      "doc": " Split the given StakedSui to the two parts, one with principal `split_amount`,\n transfer the newly split part to the sender address.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "stake",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "split_amount",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "join_staked_sui": {
+      "source_index": 28,
+      "index": 28,
+      "doc": " Consume the staked sui `other` and add its value to `self`.\n Aborts if some of the staking parameters are incompatible (pool id, stake activation epoch, etc.)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "other",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "StakedSui",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "is_equal_staking_metadata": {
+      "source_index": 29,
+      "index": 29,
+      "doc": " Returns true if all the staking parameters of the staked sui except the principal are identical",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "other",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakedSui",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "pool_token_exchange_rate_at_epoch": {
+      "source_index": 30,
+      "index": 30,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "PoolTokenExchangeRate",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "pending_stake_amount": {
+      "source_index": 31,
+      "index": 31,
+      "doc": " Returns the total value of the pending staking requests for this staking pool.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "staking_pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "pending_stake_withdraw_amount": {
+      "source_index": 32,
+      "index": 32,
+      "doc": " Returns the total withdrawal from the staking pool this epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "staking_pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "exchange_rates": {
+      "source_index": 33,
+      "index": 33,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "table"
+                },
+                "name": "Table",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": "u64"
+                  },
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui_system",
+                          "name": "staking_pool"
+                        },
+                        "name": "PoolTokenExchangeRate",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "sui_amount": {
+      "source_index": 34,
+      "index": 34,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "exchange_rate",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "PoolTokenExchangeRate",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "pool_token_amount": {
+      "source_index": 35,
+      "index": 35,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "exchange_rate",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "PoolTokenExchangeRate",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "is_preactive_at_epoch": {
+      "source_index": 36,
+      "index": 36,
+      "doc": " Returns true if the provided staking pool is preactive at the provided epoch.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "get_sui_amount": {
+      "source_index": 37,
+      "index": 37,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "exchange_rate",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "PoolTokenExchangeRate",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_amount",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "get_token_amount": {
+      "source_index": 38,
+      "index": 38,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "exchange_rate",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "PoolTokenExchangeRate",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "sui_amount",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "initial_exchange_rate": {
+      "source_index": 39,
+      "index": 39,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "PoolTokenExchangeRate",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "check_balance_invariants": {
+      "source_index": 40,
+      "index": 40,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pool",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "staking_pool"
+                  },
+                  "name": "StakingPool",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "mul_div": {
+      "source_index": 41,
+      "index": 18446744073709551615,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "$a",
+          "type_": "u64"
+        },
+        {
+          "name": "$b",
+          "type_": "u64"
+        },
+        {
+          "name": "$c",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {
+    "StakingPool": {
+      "index": 0,
+      "doc": " A staking pool embedded in each validator struct in the system state object.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "activation_epoch": {
+            "index": 1,
+            "doc": " The epoch at which this pool became active.\n The value is `None` if the pool is pre-active and `Some(<epoch_number>)` if active or inactive.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": "u64"
+                  }
+                ]
+              }
+            }
+          },
+          "deactivation_epoch": {
+            "index": 2,
+            "doc": " The epoch at which this staking pool ceased to be active. `None` = {pre-active, active},\n `Some(<epoch_number>)` if in-active, and it was de-activated at epoch `<epoch_number>`.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": "u64"
+                  }
+                ]
+              }
+            }
+          },
+          "sui_balance": {
+            "index": 3,
+            "doc": " The total number of SUI tokens in this pool, including the SUI in the rewards_pool, as well as in all the principal\n in the `StakedSui` object, updated at epoch boundaries.",
+            "type_": "u64"
+          },
+          "rewards_pool": {
+            "index": 4,
+            "doc": " The epoch stake rewards will be added here at the end of each epoch.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "balance"
+                },
+                "name": "Balance",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "sui"
+                        },
+                        "name": "SUI",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "pool_token_balance": {
+            "index": 5,
+            "doc": " Total number of pool tokens issued by the pool.",
+            "type_": "u64"
+          },
+          "exchange_rates": {
+            "index": 6,
+            "doc": " Exchange rate history of previous epochs. Key is the epoch number.\n The entries start from the `activation_epoch` of this pool and contains exchange rates at the beginning of each epoch,\n i.e., right after the rewards for the previous epoch have been deposited into the pool.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "table"
+                },
+                "name": "Table",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": "u64"
+                  },
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui_system",
+                          "name": "staking_pool"
+                        },
+                        "name": "PoolTokenExchangeRate",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "pending_stake": {
+            "index": 7,
+            "doc": " Pending stake amount for this epoch, emptied at epoch boundaries.",
+            "type_": "u64"
+          },
+          "pending_total_sui_withdraw": {
+            "index": 8,
+            "doc": " Pending stake withdrawn during the current epoch, emptied at epoch boundaries.\n This includes both the principal and rewards SUI withdrawn.",
+            "type_": "u64"
+          },
+          "pending_pool_token_withdraw": {
+            "index": 9,
+            "doc": " Pending pool token withdrawn during the current epoch, emptied at epoch boundaries.",
+            "type_": "u64"
+          },
+          "extra_fields": {
+            "index": 10,
+            "doc": " Any extra fields that's not defined statically.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "PoolTokenExchangeRate": {
+      "index": 1,
+      "doc": " Struct representing the exchange rate of the stake pool token to SUI.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "sui_amount": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "pool_token_amount": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "StakedSui": {
+      "index": 2,
+      "doc": " A self-custodial object holding the staked SUI tokens.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "pool_id": {
+            "index": 1,
+            "doc": " ID of the staking pool we are staking with.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "stake_activation_epoch": {
+            "index": 2,
+            "doc": " The epoch at which the stake becomes active.",
+            "type_": "u64"
+          },
+          "principal": {
+            "index": 3,
+            "doc": " The staked SUI tokens.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "balance"
+                },
+                "name": "Balance",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "sui"
+                        },
+                        "name": "SUI",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "FungibleStakedSui": {
+      "index": 3,
+      "doc": " An alternative to `StakedSui` that holds the pool token amount instead of the SUI balance.\n StakedSui objects can be converted to FungibleStakedSuis after the initial warmup period.\n The advantage of this is that you can now merge multiple StakedSui objects from different\n activation epochs into a single FungibleStakedSui object.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "pool_id": {
+            "index": 1,
+            "doc": " ID of the staking pool we are staking with.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "value": {
+            "index": 2,
+            "doc": " The pool token amount.",
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "FungibleStakedSuiData": {
+      "index": 4,
+      "doc": " Holds useful information",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "total_supply": {
+            "index": 1,
+            "doc": " fungible_staked_sui supply",
+            "type_": "u64"
+          },
+          "principal": {
+            "index": 2,
+            "doc": " principal balance. Rewards are withdrawn from the reward pool",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "balance"
+                },
+                "name": "Balance",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "sui"
+                        },
+                        "name": "SUI",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "FungibleStakedSuiDataKey": {
+      "index": 5,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "dummy_field": {
+            "index": 0,
+            "type_": "bool"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

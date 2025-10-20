@@ -1,0 +1,71 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "ecvrf"
+  },
+  "doc": null,
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "ecvrf_verify": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " @param hash: The hash/output from a ECVRF to be verified.\n @param alpha_string: Input/seed to the ECVRF used to generate the output.\n @param public_key: The public key corresponding to the private key used to generate the output.\n @param proof: The proof of validity of the output.\n Verify a proof for a Ristretto ECVRF. Returns true if the proof is valid and corresponds to the given output. May abort with `EInvalidHashLength`, `EInvalidPublicKeyEncoding` or `EInvalidProofEncoding`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "hash",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "alpha_string",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "public_key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proof",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

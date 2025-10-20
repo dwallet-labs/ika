@@ -1,0 +1,1098 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "package"
+  },
+  "doc": " Functions for operating on Move packages from within Move:\n - Creating proof-of-publish objects from one-time witnesses\n - Administering package upgrades through upgrade policies.",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "ascii"
+    },
+    {
+      "address": "std",
+      "name": "type_name"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    },
+    {
+      "address": "sui",
+      "name": "types"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "claim": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Claim a Publisher object.\n Requires a One-Time-Witness to prove ownership. Due to this\n constraint there can be only one Publisher object per module\n but multiple per package (!).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "OTW",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "otw",
+          "type_": {
+            "NamedTypeParameter": "OTW"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "package"
+            },
+            "name": "Publisher",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "claim_and_keep": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Claim a Publisher object and send it to transaction sender.\n Since this function can only be called in the module initializer,\n the sender is the publisher.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Parameterized": [
+                  "lint",
+                  [
+                    {
+                      "Name": "self_transfer"
+                    }
+                  ]
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "OTW",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "otw",
+          "type_": {
+            "NamedTypeParameter": "OTW"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "burn_publisher": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Destroy a Publisher object effectively removing all privileges\n associated with it.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "package"
+              },
+              "name": "Publisher",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "from_package": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Check whether type belongs to the same package as the publisher object.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "Publisher",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "from_module": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Check whether a type belongs to the same module as the publisher object.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "Publisher",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "published_module": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Read the name of the module.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "Publisher",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "ascii"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "published_package": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Read the package address string.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "Publisher",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "ascii"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "upgrade_package": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " The ID of the package that this cap authorizes upgrades for.\n Can be `0x0` if the cap cannot currently authorize an upgrade\n because there is already a pending upgrade in the transaction.\n Otherwise guaranteed to be the latest version of any given\n package.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "version": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " The most recent version of the package, increments by one for each\n successfully applied upgrade.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "upgrade_policy": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " The most permissive kind of upgrade currently supported by this\n `cap`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "ticket_package": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " The package that this ticket is authorized to upgrade",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "ticket",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeTicket",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "ticket_policy": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " The kind of upgrade that this ticket authorizes.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "ticket",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeTicket",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "receipt_cap": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " ID of the `UpgradeCap` that this `receipt` should be used to\n update.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "receipt",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeReceipt",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "receipt_package": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " ID of the package that was upgraded to: the latest version of\n the package, as of the upgrade represented by this `receipt`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "receipt",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeReceipt",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "ticket_digest": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " A hash of the package contents for the new version of the\n package.  This ticket only authorizes an upgrade to a package\n that matches this digest.  A package's contents are identified\n by two things:\n\n  - modules: [[u8]]       a list of the package's module contents\n  - deps:    [[u8; 32]]   a list of 32 byte ObjectIDs of the\n                          package's transitive dependencies\n\n A package's digest is calculated as:\n\n   sha3_256(sort(modules ++ deps))",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "ticket",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeTicket",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "vector": "u8"
+            }
+          ]
+        }
+      ]
+    },
+    "compatible_policy": {
+      "source_index": 15,
+      "index": 15,
+      "doc": " Expose the constants representing various upgrade policies",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u8"
+      ]
+    },
+    "additive_policy": {
+      "source_index": 16,
+      "index": 16,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u8"
+      ]
+    },
+    "dep_only_policy": {
+      "source_index": 17,
+      "index": 17,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u8"
+      ]
+    },
+    "only_additive_upgrades": {
+      "source_index": 18,
+      "index": 18,
+      "doc": " Restrict upgrades through this upgrade `cap` to just add code, or\n change dependencies.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "only_dep_upgrades": {
+      "source_index": 19,
+      "index": 19,
+      "doc": " Restrict upgrades through this upgrade `cap` to just change\n dependencies.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "make_immutable": {
+      "source_index": 20,
+      "index": 20,
+      "doc": " Discard the `UpgradeCap` to make a package immutable.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "package"
+              },
+              "name": "UpgradeCap",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "authorize_upgrade": {
+      "source_index": 21,
+      "index": 21,
+      "doc": " Issue a ticket authorizing an upgrade to a particular new bytecode\n (identified by its digest).  A ticket will only be issued if one has\n not already been issued, and if the `policy` requested is at least as\n restrictive as the policy set out by the `cap`.\n\n The `digest` supplied and the `policy` will both be checked by\n validators when running the upgrade.  I.e. the bytecode supplied in\n the upgrade must have a matching digest, and the changes relative to\n the parent package must be compatible with the policy in the ticket\n for the upgrade to succeed.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "policy",
+          "type_": "u8"
+        },
+        {
+          "name": "digest",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "package"
+            },
+            "name": "UpgradeTicket",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "commit_upgrade": {
+      "source_index": 22,
+      "index": 22,
+      "doc": " Consume an `UpgradeReceipt` to update its `UpgradeCap`, finalizing\n the upgrade.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "receipt",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "package"
+              },
+              "name": "UpgradeReceipt",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "restrict": {
+      "source_index": 23,
+      "index": 23,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "package"
+                  },
+                  "name": "UpgradeCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "policy",
+          "type_": "u8"
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "Publisher": {
+      "index": 0,
+      "doc": " This type can only be created in the transaction that\n generates a module, by consuming its one-time witness, so it\n can be used to identify the address that published the package\n a type originated from.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "package": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "ascii"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          },
+          "module_name": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "ascii"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "UpgradeCap": {
+      "index": 1,
+      "doc": " Capability controlling the ability to upgrade a package.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "package": {
+            "index": 1,
+            "doc": " (Mutable) ID of the package that can be upgraded.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "version": {
+            "index": 2,
+            "doc": " (Mutable) The number of upgrades that have been applied\n successively to the original package.  Initially 0.",
+            "type_": "u64"
+          },
+          "policy": {
+            "index": 3,
+            "doc": " What kind of upgrades are allowed.",
+            "type_": "u8"
+          }
+        }
+      }
+    },
+    "UpgradeTicket": {
+      "index": 2,
+      "doc": " Permission to perform a particular upgrade (for a fixed version of\n the package, bytecode to upgrade with and transitive dependencies to\n depend against).\n\n An `UpgradeCap` can only issue one ticket at a time, to prevent races\n between concurrent updates or a change in its upgrade policy after\n issuing a ticket, so the ticket is a \"Hot Potato\" to preserve forward\n progress.",
+      "attributes": [],
+      "abilities": [],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "cap": {
+            "index": 0,
+            "doc": " (Immutable) ID of the `UpgradeCap` this originated from.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "package": {
+            "index": 1,
+            "doc": " (Immutable) ID of the package that can be upgraded.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "policy": {
+            "index": 2,
+            "doc": " (Immutable) The policy regarding what kind of upgrade this ticket\n permits.",
+            "type_": "u8"
+          },
+          "digest": {
+            "index": 3,
+            "doc": " (Immutable) SHA256 digest of the bytecode and transitive\n dependencies that will be used in the upgrade.",
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    },
+    "UpgradeReceipt": {
+      "index": 3,
+      "doc": " Issued as a result of a successful upgrade, containing the\n information to be used to update the `UpgradeCap`.  This is a \"Hot\n Potato\" to ensure that it is used to update its `UpgradeCap` before\n the end of the transaction that performed the upgrade.",
+      "attributes": [],
+      "abilities": [],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "cap": {
+            "index": 0,
+            "doc": " (Immutable) ID of the `UpgradeCap` this originated from.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "package": {
+            "index": 1,
+            "doc": " (Immutable) ID of the package after it was upgraded.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

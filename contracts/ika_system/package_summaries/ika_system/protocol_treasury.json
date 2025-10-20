@@ -1,0 +1,423 @@
+{
+  "id": {
+    "address": "ika_system",
+    "name": "protocol_treasury"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "ika",
+      "name": "ika"
+    },
+    {
+      "address": "sui",
+      "name": "bag"
+    },
+    {
+      "address": "sui",
+      "name": "balance"
+    },
+    {
+      "address": "sui",
+      "name": "coin"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "treasury_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "coin"
+              },
+              "name": "TreasuryCap",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "ika",
+                        "name": "ika"
+                      },
+                      "name": "IKA",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "stake_subsidy_rate",
+          "type_": "u16"
+        },
+        {
+          "name": "stake_subsidy_period_length",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_system",
+              "name": "protocol_treasury"
+            },
+            "name": "ProtocolTreasury",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "stake_subsidy_for_distribution": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Advance the distribution counter and return the stake subsidy.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "protocol_treasury"
+                  },
+                  "name": "ProtocolTreasury",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "ika",
+                      "name": "ika"
+                    },
+                    "name": "IKA",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "set_stake_subsidy_rate": {
+      "source_index": 2,
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "protocol_treasury"
+                  },
+                  "name": "ProtocolTreasury",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake_subsidy_rate",
+          "type_": "u16"
+        }
+      ],
+      "return_": []
+    },
+    "set_stake_subsidy_period_length": {
+      "source_index": 3,
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "protocol_treasury"
+                  },
+                  "name": "ProtocolTreasury",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake_subsidy_period_length",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "stake_subsidy_amount_per_distribution": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Returns the stake subsidy amount per distribution.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "protocol_treasury"
+                  },
+                  "name": "ProtocolTreasury",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "get_stake_subsidy_distribution_counter": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Returns the number of distributions that have occurred.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_system",
+                    "name": "protocol_treasury"
+                  },
+                  "name": "ProtocolTreasury",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "calculate_stake_subsidy_amount_per_distribution": {
+      "source_index": 6,
+      "index": 6,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "total_supply_at_period_start",
+          "type_": "u64"
+        },
+        {
+          "name": "stake_subsidy_rate",
+          "type_": "u16"
+        },
+        {
+          "name": "stake_subsidy_period_length",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {
+    "ProtocolTreasury": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "treasury_cap": {
+            "index": 0,
+            "doc": " TreasuryCap of IKA tokens.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "coin"
+                },
+                "name": "TreasuryCap",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "ika",
+                          "name": "ika"
+                        },
+                        "name": "IKA",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "stake_subsidy_distribution_counter": {
+            "index": 1,
+            "doc": " Count of the number of times stake subsidies have been distributed.",
+            "type_": "u64"
+          },
+          "stake_subsidy_rate": {
+            "index": 2,
+            "doc": " The rate at which the amount per distribution is calculated based on\n period nad total supply. Expressed in basis points.",
+            "type_": "u16"
+          },
+          "stake_subsidy_amount_per_distribution": {
+            "index": 3,
+            "doc": " The amount of stake subsidy to be destructured per distribution.\n This amount changes based on `stake_subsidy_rate`.",
+            "type_": "u64"
+          },
+          "stake_subsidy_period_length": {
+            "index": 4,
+            "doc": " Number of distributions to occur before the amount per distribution will be recalculated.",
+            "type_": "u64"
+          },
+          "total_supply_at_period_start": {
+            "index": 5,
+            "doc": " The total supply of IKA tokens at the start of the current period.",
+            "type_": "u64"
+          },
+          "extra_fields": {
+            "index": 6,
+            "doc": " Any extra fields that's not defined statically.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

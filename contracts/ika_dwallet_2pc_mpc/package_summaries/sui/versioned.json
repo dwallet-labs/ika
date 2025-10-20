@@ -1,0 +1,421 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "versioned"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "dynamic_field"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create a new Versioned object that contains a initial value of type `T` with an initial version.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "init_version",
+          "type_": "u64"
+        },
+        {
+          "name": "init_value",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "versioned"
+            },
+            "name": "Versioned",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "version": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Get the current version of the inner type.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "versioned"
+                  },
+                  "name": "Versioned",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "load_value": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Load the inner value based on the current version. Caller specifies an expected type T.\n If the type mismatch, the load will fail.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "versioned"
+                  },
+                  "name": "Versioned",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "T"
+            }
+          ]
+        }
+      ]
+    },
+    "load_value_mut": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Similar to load_value, but return a mutable reference.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "versioned"
+                  },
+                  "name": "Versioned",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "T"
+            }
+          ]
+        }
+      ]
+    },
+    "remove_value_for_upgrade": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Take the inner object out for upgrade. To ensure we always upgrade properly, a capability object is returned\n and must be used when we upgrade.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "versioned"
+                  },
+                  "name": "Versioned",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "T"
+        },
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "versioned"
+            },
+            "name": "VersionChangeCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "upgrade": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Upgrade the inner object with a new version and new value. Must use the capability returned\n by calling remove_value_for_upgrade.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "versioned"
+                  },
+                  "name": "Versioned",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_version",
+          "type_": "u64"
+        },
+        {
+          "name": "new_value",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "versioned"
+              },
+              "name": "VersionChangeCap",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "destroy": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Destroy this Versioned container, and return the inner object.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "versioned"
+              },
+              "name": "Versioned",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "T"
+        }
+      ]
+    }
+  },
+  "structs": {
+    "Versioned": {
+      "index": 0,
+      "doc": " A wrapper type that supports versioning of the inner type.\n The inner type is a dynamic field of the Versioned object, and is keyed using version.\n User of this type could load the inner object using corresponding type based on the version.\n You can also upgrade the inner object to a new type version.\n If you want to support lazy upgrade of the inner type, one caveat is that all APIs would have\n to use mutable reference even if it's a read-only API.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "version": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "VersionChangeCap": {
+      "index": 1,
+      "doc": " Represents a hot potato object generated when we take out the dynamic field.\n This is to make sure that we always put a new value back.",
+      "attributes": [],
+      "abilities": [],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "versioned_id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "ID",
+                "type_arguments": []
+              }
+            }
+          },
+          "old_version": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

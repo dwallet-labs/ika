@@ -1,0 +1,893 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "kiosk_extension"
+  },
+  "doc": " This module implements the Kiosk Extensions functionality. It allows\n exposing previously protected (only-owner) methods to third-party apps.\n\n A Kiosk Extension is a module that implements any functionality on top of\n the `Kiosk` without discarding nor blocking the base. Given that `Kiosk`\n itself is a trading primitive, most of the extensions are expected to be\n related to trading. However, there's no limit to what can be built using the\n `kiosk_extension` module, as it gives certain benefits such as using `Kiosk`\n as the storage for any type of data / assets.\n\n ### Flow:\n - An extension can only be installed by the Kiosk Owner and requires an\n authorization via the `KioskOwnerCap`.\n - When installed, the extension is given a permission bitmap that allows it\n to perform certain protected actions (eg `place`, `lock`). However, it is\n possible to install an extension that does not have any permissions.\n - Kiosk Owner can `disable` the extension at any time, which prevents it\n from performing any protected actions. The storage is still available to the\n extension until it is completely removed.\n - A disabled extension can be `enable`d at any time giving the permissions\n back to the extension.\n - An extension permissions follow the all-or-nothing policy. Either all of\n the requested permissions are granted or none of them (can't install).\n\n ### Examples:\n - An Auction extension can utilize the storage to store Auction-related data\n while utilizing the same `Kiosk` object that the items are stored in.\n - A Marketplace extension that implements custom events and fees for the\n default trading functionality.\n\n ### Notes:\n - Trading functionality can utilize the `PurchaseCap` to build a custom\n logic around the purchase flow. However, it should be carefully managed to\n prevent asset locking.\n - `kiosk_extension` is a friend module to `kiosk` and has access to its\n internal functions (such as `place_internal` and `lock_internal` to\n implement custom authorization scheme for `place` and `lock` respectively).",
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "bag"
+    },
+    {
+      "address": "sui",
+      "name": "dynamic_field"
+    },
+    {
+      "address": "sui",
+      "name": "kiosk"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "transfer_policy"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "add": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Add an extension to the Kiosk. Can only be performed by the owner. The\n extension witness is required to allow extensions define their set of\n permissions in the custom `add` call.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_ext",
+          "type_": {
+            "NamedTypeParameter": "Ext"
+          }
+        },
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "KioskOwnerCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "permissions",
+          "type_": "u128"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "disable": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Revoke permissions from the extension. While it does not remove the\n extension completely, it keeps it from performing any protected actions.\n The storage is still available to the extension (until it's removed).",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "KioskOwnerCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "enable": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Re-enable the extension allowing it to call protected actions (eg\n `place`, `lock`). By default, all added extensions are enabled. Kiosk\n owner can disable them via `disable` call.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "KioskOwnerCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "remove": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Remove an extension from the Kiosk. Can only be performed by the owner,\n the extension storage must be empty for the transaction to succeed.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "KioskOwnerCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "storage": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Get immutable access to the extension storage. Can only be performed by\n the extension as long as the extension is installed.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_ext",
+          "type_": {
+            "NamedTypeParameter": "Ext"
+          }
+        },
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "storage_mut": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Get mutable access to the extension storage. Can only be performed by\n the extension as long as the extension is installed. Disabling the\n extension does not prevent it from accessing the storage.\n\n Potentially dangerous: extension developer can keep data in a Bag\n therefore never really allowing the KioskOwner to remove the extension.\n However, it is the case with any other solution (1) and this way we\n prevent intentional extension freeze when the owner wants to ruin a\n trade (2) - eg locking extension while an auction is in progress.\n\n Extensions should be crafted carefully, and the KioskOwner should be\n aware of the risks.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_ext",
+          "type_": {
+            "NamedTypeParameter": "Ext"
+          }
+        },
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "place": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Protected action: place an item into the Kiosk. Can be performed by an\n authorized extension. The extension must have the `place` permission or\n a `lock` permission.\n\n To prevent non-tradable items from being placed into `Kiosk` the method\n requires a `TransferPolicy` for the placed type to exist.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        },
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_ext",
+          "type_": {
+            "NamedTypeParameter": "Ext"
+          }
+        },
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "item",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "_policy",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "lock": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Protected action: lock an item in the Kiosk. Can be performed by an\n authorized extension. The extension must have the `lock` permission.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        },
+        {
+          "name": "T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_ext",
+          "type_": {
+            "NamedTypeParameter": "Ext"
+          }
+        },
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "item",
+          "type_": {
+            "NamedTypeParameter": "T"
+          }
+        },
+        {
+          "name": "_policy",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "transfer_policy"
+                  },
+                  "name": "TransferPolicy",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "T"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "is_installed": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Check whether an extension of type `Ext` is installed.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "is_enabled": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Check whether an extension of type `Ext` is enabled.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "can_place": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Check whether an extension of type `Ext` can `place` into Kiosk.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "can_lock": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Check whether an extension of type `Ext` can `lock` items in Kiosk.\n Locking also enables `place`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "extension": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Internal: get a read-only access to the Extension.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "kiosk_extension"
+                },
+                "name": "Extension",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "extension_mut": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Internal: get a mutable access to the Extension.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Ext",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "kiosk"
+                  },
+                  "name": "Kiosk",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "kiosk_extension"
+                },
+                "name": "Extension",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "structs": {
+    "Extension": {
+      "index": 0,
+      "doc": " The Extension struct contains the data used by the extension and the\n configuration for this extension. Stored under the `ExtensionKey`\n dynamic field.",
+      "attributes": [],
+      "abilities": [
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "storage": {
+            "index": 0,
+            "doc": " Storage for the extension, an isolated Bag. By putting the extension\n into a single dynamic field, we reduce the amount of fields on the\n top level (eg items / listings) while giving extension developers\n the ability to store any data they want.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "bag"
+                },
+                "name": "Bag",
+                "type_arguments": []
+              }
+            }
+          },
+          "permissions": {
+            "index": 1,
+            "doc": " Bitmap of permissions that the extension has (can be revoked any\n moment). It's all or nothing policy - either the extension has the\n required permissions or no permissions at all.\n\n 1st bit - `place` - allows to place items for sale\n 2nd bit - `lock` and `place` - allows to lock items (and place)\n\n For example:\n - `10` - allows to place items and lock them.\n - `11` - allows to place items and lock them (`lock` includes `place`).\n - `01` - allows to place items, but not lock them.\n - `00` - no permissions.",
+            "type_": "u128"
+          },
+          "is_enabled": {
+            "index": 2,
+            "doc": " Whether the extension can call protected actions. By default, all\n extensions are enabled (on `add` call), however the Kiosk\n owner can disable them at any time.\n\n Disabling the extension does not limit its access to the storage.",
+            "type_": "bool"
+          }
+        }
+      }
+    },
+    "ExtensionKey": {
+      "index": 1,
+      "doc": " The `ExtensionKey` is a typed dynamic field key used to store the\n extension configuration and data. `Ext` is a phantom type that is used\n to identify the extension witness.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "Ext",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "dummy_field": {
+            "index": 0,
+            "type_": "bool"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

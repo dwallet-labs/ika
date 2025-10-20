@@ -1,0 +1,899 @@
+{
+  "id": {
+    "address": "ika_dwallet_2pc_mpc",
+    "name": "pricing"
+  },
+  "doc": " This module provides structures and functions for managing pricing information for a dWallet.\n Each operation (e.g., DKG, re-encrypt user share, ECDSA presign, etc.) has its own pricing data,\n represented by a `PricingPerOperation`. Each `PricingPerOperation` holds three values:\n   - **fee_ika**: The IKA fee for the operation.\n   - **gas_fee_reimbursement_sui**: The SUI reimbursement.\n   - **gas_fee_reimbursement_sui_for_system_calls**: The SUI reimbursement for system calls.\n\n The main struct, `PricingInfo`, now holds one `PricingPerOperation` per operation.\n The DKG operation is split into two separate rounds:\n   - `dkg_first_round`\n   - `dkg_second_round`",
+  "immediate_dependencies": [
+    {
+      "address": "ika_common",
+      "name": "bls_committee"
+    },
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "priority_queue"
+    },
+    {
+      "address": "sui",
+      "name": "vec_map"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "empty": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Creates a new [`PricingInfo`] object.\n\n Initializes the table with the given pricing values for each operation.\n\n # Parameters\n\n - `ctx`: The transaction context.\n\n # Returns\n\n A newly created instance of `PricingInfo`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "pricing"
+            },
+            "name": "PricingInfo",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "insert_or_update_pricing": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Inserts pricing information for a specific operation into the [`PricingInfo`] table.\n\n # Parameters\n\n - `self`: The [`PricingInfo`] object.\n - `key`: The key for the operation.\n - `value`: The pricing information for the operation.\n\n # Returns\n\n The [`PricingInfo`] object.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "pricing"
+                  },
+                  "name": "PricingInfo",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "curve",
+          "type_": "u32"
+        },
+        {
+          "name": "signature_algorithm",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u32"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "protocol",
+          "type_": "u32"
+        },
+        {
+          "name": "fee_ika",
+          "type_": "u64"
+        },
+        {
+          "name": "gas_fee_reimbursement_sui",
+          "type_": "u64"
+        },
+        {
+          "name": "gas_fee_reimbursement_sui_for_system_calls",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "try_get_pricing_value": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Returns the pricing information for a specific operation from the [`PricingInfo`] table.\n\n # Parameters\n\n - `self`: The [`PricingInfo`] object.\n - `key`: The key for the operation.\n\n # Returns\n\n The pricing information for the operation.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "pricing"
+                  },
+                  "name": "PricingInfo",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "curve",
+          "type_": "u32"
+        },
+        {
+          "name": "signature_algorithm",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u32"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "protocol",
+          "type_": "u32"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "ika_dwallet_2pc_mpc",
+                      "name": "pricing"
+                    },
+                    "name": "PricingInfoValue",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "fee_ika": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Getter for the fee_ika field of a PricingInfoValue.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "pricing"
+                  },
+                  "name": "PricingInfoValue",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "gas_fee_reimbursement_sui": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Getter for the gas_fee_reimbursement_sui field of a PricingInfoValue.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "pricing"
+                  },
+                  "name": "PricingInfoValue",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "gas_fee_reimbursement_sui_for_system_calls": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Getter for the gas_fee_reimbursement_sui_for_system_calls field of a PricingInfoValue.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "pricing"
+                  },
+                  "name": "PricingInfoValue",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "new_pricing_calculation": {
+      "source_index": 6,
+      "index": 6,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bls_committee",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_common",
+                "name": "bls_committee"
+              },
+              "name": "BlsCommittee",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "default_pricing",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "pricing"
+              },
+              "name": "PricingInfo",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "pricing"
+            },
+            "name": "PricingInfoCalculationVotes",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "committee_members_for_pricing_calculation_votes": {
+      "source_index": 7,
+      "index": 7,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "calculation",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "pricing"
+                  },
+                  "name": "PricingInfoCalculationVotes",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        }
+      ]
+    },
+    "calculate_pricing_quorum_below": {
+      "source_index": 8,
+      "index": 8,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "calculation",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "pricing"
+                  },
+                  "name": "PricingInfoCalculationVotes",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "pricing",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "pricing"
+                },
+                "name": "PricingInfo",
+                "type_arguments": []
+              }
+            }
+          }
+        },
+        {
+          "name": "curve",
+          "type_": "u32"
+        },
+        {
+          "name": "signature_algorithm",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u32"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "protocol",
+          "type_": "u32"
+        }
+      ],
+      "return_": []
+    },
+    "pricing_value_quorum_below": {
+      "source_index": 9,
+      "index": 9,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bls_committee",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_common",
+                "name": "bls_committee"
+              },
+              "name": "BlsCommittee",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "values",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "pricing"
+                },
+                "name": "PricingInfoValue",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "pricing"
+            },
+            "name": "PricingInfoValue",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "is_calculation_completed": {
+      "source_index": 10,
+      "index": 10,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "calculation",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "pricing"
+                  },
+                  "name": "PricingInfoCalculationVotes",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "calculated_pricing": {
+      "source_index": 11,
+      "index": 11,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "calculation",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "pricing"
+                  },
+                  "name": "PricingInfoCalculationVotes",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_dwallet_2pc_mpc",
+              "name": "pricing"
+            },
+            "name": "PricingInfo",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "insert_or_update_pricing_value": {
+      "source_index": 12,
+      "index": 12,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_dwallet_2pc_mpc",
+                    "name": "pricing"
+                  },
+                  "name": "PricingInfo",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "curve",
+          "type_": "u32"
+        },
+        {
+          "name": "signature_algorithm",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u32"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "protocol",
+          "type_": "u32"
+        },
+        {
+          "name": "value",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "pricing"
+              },
+              "name": "PricingInfoValue",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "quorum_below": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Take the lowest value, s.t. a quorum  (2f + 1) voted for a value lower or equal to this.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bls_committee",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_common",
+                "name": "bls_committee"
+              },
+              "name": "BlsCommittee",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "vote_queue",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "priority_queue"
+                  },
+                  "name": "PriorityQueue",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": "u64"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {
+    "PricingInfo": {
+      "index": 0,
+      "doc": " Holds pricing information for a dWallet.\n The vector is indexed by the curve and signature algorithm and protocol.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "pricing_map": {
+            "index": 0,
+            "doc": " The pricing for each curve and signature algorithm and protocol.\n The first key is the curve, the second is the signature algorithm, the third is the protocol.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "vec_map"
+                },
+                "name": "VecMap",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "ika_dwallet_2pc_mpc",
+                          "name": "pricing"
+                        },
+                        "name": "PricingInfoKey",
+                        "type_arguments": []
+                      }
+                    }
+                  },
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "ika_dwallet_2pc_mpc",
+                          "name": "pricing"
+                        },
+                        "name": "PricingInfoValue",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "PricingInfoKey": {
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "curve": {
+            "index": 0,
+            "doc": null,
+            "type_": "u32"
+          },
+          "signature_algorithm": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": "u32"
+                  }
+                ]
+              }
+            }
+          },
+          "protocol": {
+            "index": 2,
+            "doc": null,
+            "type_": "u32"
+          }
+        }
+      }
+    },
+    "PricingInfoValue": {
+      "index": 2,
+      "doc": " Holds pricing information for a single operation.\n The fields are ordered so that the consensus validation price is first.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "fee_ika": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "gas_fee_reimbursement_sui": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          },
+          "gas_fee_reimbursement_sui_for_system_calls": {
+            "index": 2,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "PricingInfoCalculationVotes": {
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "bls_committee": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_common",
+                  "name": "bls_committee"
+                },
+                "name": "BlsCommittee",
+                "type_arguments": []
+              }
+            }
+          },
+          "default_pricing": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "pricing"
+                },
+                "name": "PricingInfo",
+                "type_arguments": []
+              }
+            }
+          },
+          "working_pricing": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "ika_dwallet_2pc_mpc",
+                  "name": "pricing"
+                },
+                "name": "PricingInfo",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

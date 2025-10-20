@@ -1,0 +1,240 @@
+{
+  "id": {
+    "address": "sui_system",
+    "name": "validator_cap"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "unverified_operation_cap_address": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator_cap"
+                  },
+                  "name": "UnverifiedValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            "address"
+          ]
+        }
+      ]
+    },
+    "verified_operation_cap_address": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator_cap"
+                  },
+                  "name": "ValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            "address"
+          ]
+        }
+      ]
+    },
+    "new_unverified_validator_operation_cap_and_transfer": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Should be only called by the friend modules when adding a `Validator`\n or rotating an existing validaotr's `operation_cap_id`.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "validator_address",
+          "type_": "address"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "object"
+            },
+            "name": "ID",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "into_verified": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Convert an `UnverifiedValidatorOperationCap` to `ValidatorOperationCap`.\n Should only be called by `validator_set` module AFTER verification.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator_cap"
+                  },
+                  "name": "UnverifiedValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "validator_cap"
+            },
+            "name": "ValidatorOperationCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    }
+  },
+  "structs": {
+    "UnverifiedValidatorOperationCap": {
+      "index": 0,
+      "doc": " The capability object is created when creating a new `Validator` or when the\n validator explicitly creates a new capability object for rotation/revocation.\n The holder address of this object can perform some validator operations on behalf of\n the authorizer validator. Thus, if a validator wants to separate the keys for operation\n (such as reference gas price setting or tallying rule reporting) from fund/staking, it\n could transfer this capability object to another address.\n To facilitate rotating/revocation, `Validator` stores the ID of currently valid\n `UnverifiedValidatorOperationCap`. Thus, before converting `UnverifiedValidatorOperationCap`\n to `ValidatorOperationCap`, verification needs to be done to make sure\n the cap object is still valid.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "authorizer_validator_address": {
+            "index": 1,
+            "doc": null,
+            "type_": "address"
+          }
+        }
+      }
+    },
+    "ValidatorOperationCap": {
+      "index": 1,
+      "doc": " Privileged operations require `ValidatorOperationCap` for permission check.\n This is only constructed after successful verification.",
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "authorizer_validator_address": {
+            "index": 0,
+            "doc": null,
+            "type_": "address"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

@@ -1,0 +1,312 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "zklogin_verified_issuer"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "string"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [
+    {
+      "Parameterized": [
+        "allow",
+        [
+          {
+            "Name": "unused_const"
+          }
+        ]
+      ]
+    }
+  ],
+  "functions": {
+    "owner": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Returns the address associated with the given VerifiedIssuer",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "verified_issuer",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "zklogin_verified_issuer"
+                  },
+                  "name": "VerifiedIssuer",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    },
+    "issuer": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Returns the issuer associated with the given VerifiedIssuer",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "verified_issuer",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "zklogin_verified_issuer"
+                  },
+                  "name": "VerifiedIssuer",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "delete": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Delete a VerifiedIssuer",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "verified_issuer",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "zklogin_verified_issuer"
+              },
+              "name": "VerifiedIssuer",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "verify_zklogin_issuer": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Verify that the caller's address was created using zklogin with the given issuer. If so, a VerifiedIssuer object\n with the issuers id transferred to the caller.\n\n Aborts with `EInvalidProof` if the verification fails.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "address_seed",
+          "type_": "u256"
+        },
+        {
+          "name": "issuer",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "check_zklogin_issuer": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Returns true if `address` was created using zklogin with the given issuer and address seed.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "address",
+          "type_": "address"
+        },
+        {
+          "name": "address_seed",
+          "type_": "u256"
+        },
+        {
+          "name": "issuer",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "std",
+                    "name": "string"
+                  },
+                  "name": "String",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "check_zklogin_issuer_internal": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Returns true if `address` was created using zklogin with the given issuer and address seed.\n\n Aborts with `EInvalidInput` if the `iss` input is not a valid UTF-8 string.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "address",
+          "type_": "address"
+        },
+        {
+          "name": "address_seed",
+          "type_": "u256"
+        },
+        {
+          "name": "issuer",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    }
+  },
+  "structs": {
+    "VerifiedIssuer": {
+      "index": 0,
+      "doc": " Possession of a VerifiedIssuer proves that the user's address was created using zklogin and with the given issuer\n (identity provider).",
+      "attributes": [],
+      "abilities": [
+        "Key"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": " The ID of this VerifiedIssuer",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "owner": {
+            "index": 1,
+            "doc": " The address this VerifiedID is associated with",
+            "type_": "address"
+          },
+          "issuer": {
+            "index": 2,
+            "doc": " The issuer",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "string"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

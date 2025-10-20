@@ -1,0 +1,862 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "dynamic_field"
+  },
+  "doc": " In addition to the fields declared in its type definition, a Sui object can have dynamic fields\n that can be added after the object has been constructed. Unlike ordinary field names\n (which are always statically declared identifiers) a dynamic field name can be any value with\n the `copy`, `drop`, and `store` abilities, e.g. an integer, a boolean, or a string.\n This gives Sui programmers the flexibility to extend objects on-the-fly, and it also serves as a\n building block for core collection types",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    }
+  ],
+  "attributes": [
+    {
+      "Parameterized": [
+        "allow",
+        [
+          {
+            "Name": "unused_const"
+          }
+        ]
+      ]
+    }
+  ],
+  "functions": {
+    "add": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Adds a dynamic field to the object `object: &mut UID` at field specified by `name: Name`.\n Aborts with `EFieldAlreadyExists` if the object already has that field with that name.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        },
+        {
+          "name": "value",
+          "type_": {
+            "NamedTypeParameter": "Value"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "borrow": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Immutably borrows the `object`s dynamic field with the name specified by `name: Name`.\n Aborts with `EFieldDoesNotExist` if the object does not have a field with that name.\n Aborts with `EFieldTypeMismatch` if the field exists, but the value does not have the specified\n type.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "Value"
+            }
+          ]
+        }
+      ]
+    },
+    "borrow_mut": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Mutably borrows the `object`s dynamic field with the name specified by `name: Name`.\n Aborts with `EFieldDoesNotExist` if the object does not have a field with that name.\n Aborts with `EFieldTypeMismatch` if the field exists, but the value does not have the specified\n type.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "Value"
+            }
+          ]
+        }
+      ]
+    },
+    "remove": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Removes the `object`s dynamic field with the name specified by `name: Name` and returns the\n bound value.\n Aborts with `EFieldDoesNotExist` if the object does not have a field with that name.\n Aborts with `EFieldTypeMismatch` if the field exists, but the value does not have the specified\n type.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Value"
+        }
+      ]
+    },
+    "exists_": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Returns true if and only if the `object` has a dynamic field with the name specified by\n `name: Name` but without specifying the `Value` type",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "remove_if_exists": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Removes the dynamic field if it exists. Returns the `some(Value)` if it exists or none otherwise.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Value"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "exists_with_type": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Returns true if and only if the `object` has a dynamic field with the name specified by\n `name: Name` with an assigned value of type `Value`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "field_info": {
+      "source_index": 7,
+      "index": 7,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          ]
+        },
+        "address"
+      ]
+    },
+    "field_info_mut": {
+      "source_index": 8,
+      "index": 8,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          ]
+        },
+        "address"
+      ]
+    },
+    "hash_type_and_key": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " May abort with `EBCSSerializationFailure`.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": "address"
+        },
+        {
+          "name": "k",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    },
+    "add_child_object": {
+      "source_index": 10,
+      "index": 10,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Child",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": "address"
+        },
+        {
+          "name": "child",
+          "type_": {
+            "NamedTypeParameter": "Child"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "borrow_child_object": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " throws `EFieldDoesNotExist` if a child does not exist with that ID\n or throws `EFieldTypeMismatch` if the type does not match,\n and may also abort with `EBCSSerializationFailure`\n we need two versions to return a reference or a mutable reference",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Child",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "id",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "NamedTypeParameter": "Child"
+            }
+          ]
+        }
+      ]
+    },
+    "borrow_child_object_mut": {
+      "source_index": 12,
+      "index": 12,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Child",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "object",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "UID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "id",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "Child"
+            }
+          ]
+        }
+      ]
+    },
+    "remove_child_object": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " throws `EFieldDoesNotExist` if a child does not exist with that ID\n or throws `EFieldTypeMismatch` if the type does not match,\n and may also abort with `EBCSSerializationFailure`.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Child",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": "address"
+        },
+        {
+          "name": "id",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        {
+          "NamedTypeParameter": "Child"
+        }
+      ]
+    },
+    "has_child_object": {
+      "source_index": 14,
+      "index": 14,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": "address"
+        },
+        {
+          "name": "id",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "has_child_object_with_ty": {
+      "source_index": 15,
+      "index": 15,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Child",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parent",
+          "type_": "address"
+        },
+        {
+          "name": "id",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    }
+  },
+  "structs": {
+    "Field": {
+      "index": 0,
+      "doc": " Internal object used for storing the field and value",
+      "attributes": [],
+      "abilities": [
+        "Key"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "phantom": false,
+          "name": "Value",
+          "constraints": [
+            "Store"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": " Determined by the hash of the object ID, the field name value and it's type,\n i.e. hash(parent.id || name || Name)",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "name": {
+            "index": 1,
+            "doc": " The value for the name of this field",
+            "type_": {
+              "NamedTypeParameter": "Name"
+            }
+          },
+          "value": {
+            "index": 2,
+            "doc": " The value bound to this field",
+            "type_": {
+              "NamedTypeParameter": "Value"
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

@@ -1,0 +1,133 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "ecdsa_k1"
+  },
+  "doc": null,
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "secp256k1_ecrecover": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " @param signature: A 65-bytes signature in form (r, s, v) that is signed using\n Secp256k1. Reference implementation on signature generation using RFC6979:\n https://github.com/MystenLabs/narwhal/blob/5d6f6df8ccee94446ff88786c0dbbc98be7cfc09/crypto/src/secp256k1.rs\n The accepted v values are {0, 1, 2, 3}.\n @param msg: The message that the signature is signed against, this is raw message without hashing.\n @param hash: The hash function used to hash the message when signing.\n\n If the signature is valid, return the corresponding recovered Secpk256k1 public\n key, otherwise throw error. This is similar to ecrecover in Ethereum, can only be\n applied to Secp256k1 signatures. May abort with `EFailToRecoverPubKey` or `EInvalidSignature`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "signature",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "msg",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hash",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "decompress_pubkey": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " @param pubkey: A 33-bytes compressed public key, a prefix either 0x02 or 0x03 and a 256-bit integer.\n\n If the compressed public key is valid, return the 65-bytes uncompressed public key,\n otherwise throw error. May abort with `EInvalidPubKey`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pubkey",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "secp256k1_verify": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " @param signature: A 64-bytes signature in form (r, s) that is signed using\n Secp256k1. This is an non-recoverable signature without recovery id.\n Reference implementation on signature generation using RFC6979:\n https://github.com/MystenLabs/fastcrypto/blob/74aec4886e62122a5b769464c2bea5f803cf8ecc/fastcrypto/src/secp256k1/mod.rs#L193\n @param public_key: The public key to verify the signature against\n @param msg: The message that the signature is signed against, this is raw message without hashing.\n @param hash: The hash function used to hash the message when signing.\n\n If the signature is valid to the pubkey and hashed message, return true. Else false.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "signature",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "public_key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "msg",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hash",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

@@ -1,0 +1,356 @@
+{
+  "id": {
+    "address": "ika_system",
+    "name": "init"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "ika",
+      "name": "ika"
+    },
+    {
+      "address": "ika_common",
+      "name": "protocol_cap"
+    },
+    {
+      "address": "ika_common",
+      "name": "system_object_cap"
+    },
+    {
+      "address": "ika_system",
+      "name": "display"
+    },
+    {
+      "address": "ika_system",
+      "name": "protocol_treasury"
+    },
+    {
+      "address": "ika_system",
+      "name": "system"
+    },
+    {
+      "address": "ika_system",
+      "name": "validator_set"
+    },
+    {
+      "address": "std",
+      "name": "ascii"
+    },
+    {
+      "address": "std",
+      "name": "string"
+    },
+    {
+      "address": "std",
+      "name": "type_name"
+    },
+    {
+      "address": "sui",
+      "name": "address"
+    },
+    {
+      "address": "sui",
+      "name": "coin"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "package"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "init": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Init function, creates an init cap and transfers it to the sender.\n This allows the sender to call the function to actually initialize the system\n with the corresponding parameters. Once that function is called, the cap is destroyed.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "otw",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_system",
+                "name": "init"
+              },
+              "name": "INIT",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "initialize": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Function to initialize ika and share the system object.\n This can only be called once, after which the `InitCap` is destroyed.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "init_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_system",
+                "name": "init"
+              },
+              "name": "InitCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "system_object_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_common",
+                "name": "system_object_cap"
+              },
+              "name": "SystemObjectCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ika_upgrade_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "package"
+              },
+              "name": "UpgradeCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ika_system_upgrade_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "package"
+              },
+              "name": "UpgradeCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "protocol_treasury_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "coin"
+              },
+              "name": "TreasuryCap",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "ika",
+                        "name": "ika"
+                      },
+                      "name": "IKA",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "protocol_version",
+          "type_": "u64"
+        },
+        {
+          "name": "chain_start_timestamp_ms",
+          "type_": "u64"
+        },
+        {
+          "name": "epoch_duration_ms",
+          "type_": "u64"
+        },
+        {
+          "name": "stake_subsidy_start_epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "stake_subsidy_rate",
+          "type_": "u16"
+        },
+        {
+          "name": "stake_subsidy_period_length",
+          "type_": "u64"
+        },
+        {
+          "name": "min_validator_count",
+          "type_": "u64"
+        },
+        {
+          "name": "max_validator_count",
+          "type_": "u64"
+        },
+        {
+          "name": "min_validator_joining_stake",
+          "type_": "u64"
+        },
+        {
+          "name": "reward_slashing_rate",
+          "type_": "u16"
+        },
+        {
+          "name": "staked_ika_image_url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "ika_common",
+              "name": "protocol_cap"
+            },
+            "name": "ProtocolCap",
+            "type_arguments": []
+          }
+        }
+      ]
+    }
+  },
+  "structs": {
+    "INIT": {
+      "index": 0,
+      "doc": " The OTW to create `Publisher` and `Display` objects.",
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "dummy_field": {
+            "index": 0,
+            "type_": "bool"
+          }
+        }
+      }
+    },
+    "InitCap": {
+      "index": 1,
+      "doc": " Must only be created by `init`.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "publisher": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "package"
+                },
+                "name": "Publisher",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

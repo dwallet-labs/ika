@@ -1,0 +1,1468 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "config"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "sui",
+      "name": "dynamic_field"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "new": {
+      "source_index": 0,
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "WriteCap",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "_cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "NamedTypeParameter": "WriteCap"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "config"
+            },
+            "name": "Config",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "NamedTypeParameter": "WriteCap"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "share": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Parameterized": [
+                  "lint",
+                  [
+                    {
+                      "Name": "share_owned"
+                    }
+                  ]
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "WriteCap",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "config",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "config"
+              },
+              "name": "Config",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "WriteCap"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "transfer": {
+      "source_index": 2,
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "WriteCap",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "config",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "config"
+              },
+              "name": "Config",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "NamedTypeParameter": "WriteCap"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "owner",
+          "type_": "address"
+        }
+      ],
+      "return_": []
+    },
+    "add_for_next_epoch": {
+      "source_index": 3,
+      "index": 3,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_mut_parameter"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "WriteCap",
+          "constraints": []
+        },
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "config",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "config"
+                  },
+                  "name": "Config",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "WriteCap"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "NamedTypeParameter": "WriteCap"
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        },
+        {
+          "name": "value",
+          "type_": {
+            "NamedTypeParameter": "Value"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Value"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "remove_for_next_epoch": {
+      "source_index": 4,
+      "index": 4,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_mut_parameter"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "WriteCap",
+          "constraints": []
+        },
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "config",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "config"
+                  },
+                  "name": "Config",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "WriteCap"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "NamedTypeParameter": "WriteCap"
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Value"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "exists_with_type": {
+      "source_index": 5,
+      "index": 5,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "WriteCap",
+          "constraints": []
+        },
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "config",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "config"
+                  },
+                  "name": "Config",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "WriteCap"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "exists_with_type_for_next_epoch": {
+      "source_index": 6,
+      "index": 6,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_mut_parameter"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "WriteCap",
+          "constraints": []
+        },
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "config",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "config"
+                  },
+                  "name": "Config",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "WriteCap"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "borrow_for_next_epoch_mut": {
+      "source_index": 7,
+      "index": 7,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_mut_parameter"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "WriteCap",
+          "constraints": []
+        },
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "config",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "config"
+                  },
+                  "name": "Config",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "WriteCap"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "_cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "NamedTypeParameter": "WriteCap"
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "Value"
+            }
+          ]
+        }
+      ]
+    },
+    "read_setting_for_next_epoch": {
+      "source_index": 8,
+      "index": 8,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "WriteCap",
+          "constraints": []
+        },
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "config",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "config"
+                  },
+                  "name": "Config",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "WriteCap"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Value"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "read_setting": {
+      "source_index": 11,
+      "index": 9,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "config",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "ID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "NamedTypeParameter": "Name"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Value"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "read_setting_impl": {
+      "source_index": 12,
+      "index": 10,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "FieldSettingValue",
+          "constraints": [
+            "Key"
+          ]
+        },
+        {
+          "name": "SettingValue",
+          "constraints": [
+            "Store"
+          ]
+        },
+        {
+          "name": "SettingDataValue",
+          "constraints": [
+            "Store"
+          ]
+        },
+        {
+          "name": "Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "config",
+          "type_": "address"
+        },
+        {
+          "name": "name",
+          "type_": "address"
+        },
+        {
+          "name": "current_epoch",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "Value"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "entry": {
+      "source_index": 9,
+      "index": 18446744073709551615,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$WriteCap",
+          "constraints": []
+        },
+        {
+          "name": "$Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "$Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$config",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "config"
+                  },
+                  "name": "Config",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "$WriteCap"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "NamedTypeParameter": "$WriteCap"
+              }
+            ]
+          }
+        },
+        {
+          "name": "$name",
+          "type_": {
+            "NamedTypeParameter": "$Name"
+          }
+        },
+        {
+          "name": "$initial_for_next_epoch",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "config"
+                        },
+                        "name": "Config",
+                        "type_arguments": [
+                          {
+                            "phantom": true,
+                            "argument": {
+                              "NamedTypeParameter": "$WriteCap"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "NamedTypeParameter": "$WriteCap"
+                    }
+                  ]
+                },
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "tx_context"
+                        },
+                        "name": "TxContext",
+                        "type_arguments": []
+                      }
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$Value"
+              }
+            ]
+          }
+        },
+        {
+          "name": "$ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "NamedTypeParameter": "$Value"
+            }
+          ]
+        }
+      ]
+    },
+    "update": {
+      "source_index": 10,
+      "index": 18446744073709551615,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$WriteCap",
+          "constraints": []
+        },
+        {
+          "name": "$Name",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        },
+        {
+          "name": "$Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$config",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "config"
+                  },
+                  "name": "Config",
+                  "type_arguments": [
+                    {
+                      "phantom": true,
+                      "argument": {
+                        "NamedTypeParameter": "$WriteCap"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "$cap",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "NamedTypeParameter": "$WriteCap"
+              }
+            ]
+          }
+        },
+        {
+          "name": "$name",
+          "type_": {
+            "NamedTypeParameter": "$Name"
+          }
+        },
+        {
+          "name": "$initial_for_next_epoch",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "config"
+                        },
+                        "name": "Config",
+                        "type_arguments": [
+                          {
+                            "phantom": true,
+                            "argument": {
+                              "NamedTypeParameter": "$WriteCap"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "NamedTypeParameter": "$WriteCap"
+                    }
+                  ]
+                },
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "tx_context"
+                        },
+                        "name": "TxContext",
+                        "type_arguments": []
+                      }
+                    }
+                  ]
+                }
+              ],
+              {
+                "NamedTypeParameter": "$Value"
+              }
+            ]
+          }
+        },
+        {
+          "name": "$update_for_next_epoch",
+          "type_": {
+            "fun": [
+              [
+                {
+                  "Datatype": {
+                    "module": {
+                      "address": "std",
+                      "name": "option"
+                    },
+                    "name": "Option",
+                    "type_arguments": [
+                      {
+                        "phantom": false,
+                        "argument": {
+                          "NamedTypeParameter": "$Value"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "Reference": [
+                    true,
+                    {
+                      "NamedTypeParameter": "$Value"
+                    }
+                  ]
+                }
+              ],
+              {
+                "tuple": []
+              }
+            ]
+          }
+        },
+        {
+          "name": "$ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "Config": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Key"
+      ],
+      "type_parameters": [
+        {
+          "phantom": true,
+          "name": "WriteCap",
+          "constraints": []
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "Setting": {
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "data": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "config"
+                        },
+                        "name": "SettingData",
+                        "type_arguments": [
+                          {
+                            "phantom": false,
+                            "argument": {
+                              "NamedTypeParameter": "Value"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "SettingData": {
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "Value",
+          "constraints": [
+            "Copy",
+            "Drop",
+            "Store"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "newer_value_epoch": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "newer_value": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "NamedTypeParameter": "Value"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "older_value_opt": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "option"
+                },
+                "name": "Option",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "NamedTypeParameter": "Value"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

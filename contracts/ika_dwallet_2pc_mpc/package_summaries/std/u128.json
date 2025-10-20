@@ -1,0 +1,508 @@
+{
+  "id": {
+    "address": "std",
+    "name": "u128"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "std",
+      "name": "string"
+    },
+    {
+      "address": "std",
+      "name": "vector"
+    }
+  ],
+  "attributes": [
+    {
+      "Parameterized": [
+        "defines_primitive",
+        [
+          {
+            "Name": "u128"
+          }
+        ]
+      ]
+    }
+  ],
+  "functions": {
+    "bitwise_not": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Returns the bitwise not of the value.\n Each bit that is 1 becomes 0. Each bit that is 0 becomes 1.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        "u128"
+      ]
+    },
+    "max": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Return the larger of `x` and `y`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        },
+        {
+          "name": "y",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        "u128"
+      ]
+    },
+    "min": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Return the smaller of `x` and `y`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        },
+        {
+          "name": "y",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        "u128"
+      ]
+    },
+    "diff": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Return the absolute value of x - y",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        },
+        {
+          "name": "y",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        "u128"
+      ]
+    },
+    "divide_and_round_up": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Calculate x / y, but round up the result.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        },
+        {
+          "name": "y",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        "u128"
+      ]
+    },
+    "pow": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Return the value of a base raised to a power",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "base",
+          "type_": "u128"
+        },
+        {
+          "name": "exponent",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "u128"
+      ]
+    },
+    "sqrt": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Get a nearest lower integer Square Root for `x`. Given that this\n function can only operate with integers, it is impossible\n to get perfect (or precise) integer square root for some numbers.\n\n Example:\n ```\n math::sqrt(9) => 3\n math::sqrt(8) => 2 // the nearest lower square root is 4;\n ```\n\n In integer math, one of the possible ways to get results with more\n precision is to use higher values or temporarily multiply the\n value by some bigger number. Ideally if this is a square of 10 or 100.\n\n Example:\n ```\n math::sqrt(8) => 2;\n math::sqrt(8 * 10000) => 282;\n // now we can use this value as if it was 2.82;\n // but to get the actual result, this value needs\n // to be divided by 100 (because sqrt(10000)).\n\n\n math::sqrt(8 * 1000000) => 2828; // same as above, 2828 / 1000 (2.828)\n ```",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        "u128"
+      ]
+    },
+    "try_as_u8": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Try to convert a `u128` to a `u8`. Returns `None` if the value is too large.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "u8"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "try_as_u16": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Try to convert a `u128` to a `u16`. Returns `None` if the value is too large.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "u16"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "try_as_u32": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Try to convert a `u128` to a `u32`. Returns `None` if the value is too large.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "u32"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "try_as_u64": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Try to convert a `u128` to a `u64`. Returns `None` if the value is too large.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "u64"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "to_string": {
+      "source_index": 11,
+      "index": 11,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "x",
+          "type_": "u128"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "string"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "do": {
+      "source_index": 15,
+      "index": 18446744073709551615,
+      "doc": " Loops applying `$f` to each number from `0` to `$stop` (exclusive)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$stop",
+          "type_": "u128"
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                "u128"
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "do_eq": {
+      "source_index": 16,
+      "index": 18446744073709551615,
+      "doc": " Loops applying `$f` to each number from `0` to `$stop` (inclusive)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$stop",
+          "type_": "u128"
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                "u128"
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "max_value": {
+      "source_index": 12,
+      "index": 18446744073709551615,
+      "doc": " Maximum value for a `u128`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u128"
+      ]
+    },
+    "range_do": {
+      "source_index": 13,
+      "index": 18446744073709551615,
+      "doc": " Loops applying `$f` to each number from `$start` to `$stop` (exclusive)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$start",
+          "type_": "u128"
+        },
+        {
+          "name": "$stop",
+          "type_": "u128"
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                "u128"
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "range_do_eq": {
+      "source_index": 14,
+      "index": 18446744073709551615,
+      "doc": " Loops applying `$f` to each number from `$start` to `$stop` (inclusive)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$R",
+          "constraints": [
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$start",
+          "type_": "u128"
+        },
+        {
+          "name": "$stop",
+          "type_": "u128"
+        },
+        {
+          "name": "$f",
+          "type_": {
+            "fun": [
+              [
+                "u128"
+              ],
+              {
+                "NamedTypeParameter": "$R"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

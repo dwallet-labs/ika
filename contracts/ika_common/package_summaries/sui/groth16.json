@@ -1,0 +1,565 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "groth16"
+  },
+  "doc": null,
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "bls12381": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Return the `Curve` value indicating that the BLS12-381 construction should be used in a given function.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "groth16"
+            },
+            "name": "Curve",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "bn254": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Return the `Curve` value indicating that the BN254 construction should be used in a given function.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "groth16"
+            },
+            "name": "Curve",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "pvk_from_bytes": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Creates a `PreparedVerifyingKey` from bytes.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "vk_gamma_abc_g1_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "alpha_g1_beta_g2_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "gamma_g2_neg_pc_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "delta_g2_neg_pc_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "groth16"
+            },
+            "name": "PreparedVerifyingKey",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "pvk_to_bytes": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Returns bytes of the four components of the `PreparedVerifyingKey`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "pvk",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "groth16"
+              },
+              "name": "PreparedVerifyingKey",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "vector": "u8"
+          }
+        }
+      ]
+    },
+    "public_proof_inputs_from_bytes": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Creates a `PublicProofInputs` wrapper from bytes. The `bytes` parameter should be a concatenation of a number of\n 32 bytes scalar field elements to be used as public inputs in little-endian format to a circuit.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "groth16"
+            },
+            "name": "PublicProofInputs",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "proof_points_from_bytes": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Creates a Groth16 `ProofPoints` from bytes.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "groth16"
+            },
+            "name": "ProofPoints",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "prepare_verifying_key": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " @param curve: What elliptic curve construction to use. See `bls12381` and `bn254`.\n @param verifying_key: An Arkworks canonical compressed serialization of a verifying key.\n\n Returns four vectors of bytes representing the four components of a prepared verifying key.\n This step computes one pairing e(P, Q), and binds the verification to one particular proof statement.\n This can be used as inputs for the `verify_groth16_proof` function.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "curve",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "groth16"
+                  },
+                  "name": "Curve",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "verifying_key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "groth16"
+            },
+            "name": "PreparedVerifyingKey",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "prepare_verifying_key_internal": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Native functions that flattens the inputs into an array and passes to the Rust native function. May abort with `EInvalidVerifyingKey` or `EInvalidCurve`.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "curve",
+          "type_": "u8"
+        },
+        {
+          "name": "verifying_key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "groth16"
+            },
+            "name": "PreparedVerifyingKey",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "verify_groth16_proof": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " @param curve: What elliptic curve construction to use. See the `bls12381` and `bn254` functions.\n @param prepared_verifying_key: Consists of four vectors of bytes representing the four components of a prepared verifying key.\n @param public_proof_inputs: Represent inputs that are public.\n @param proof_points: Represent three proof points.\n\n Returns a boolean indicating whether the proof is valid.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "curve",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "groth16"
+                  },
+                  "name": "Curve",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "prepared_verifying_key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "groth16"
+                  },
+                  "name": "PreparedVerifyingKey",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "public_proof_inputs",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "groth16"
+                  },
+                  "name": "PublicProofInputs",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "proof_points",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "groth16"
+                  },
+                  "name": "ProofPoints",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "verify_groth16_proof_internal": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Native functions that flattens the inputs into arrays of vectors and passed to the Rust native function. May abort with `EInvalidCurve` or `ETooManyPublicInputs`.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "curve",
+          "type_": "u8"
+        },
+        {
+          "name": "vk_gamma_abc_g1_bytes",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "alpha_g1_beta_g2_bytes",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "gamma_g2_neg_pc_bytes",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "delta_g2_neg_pc_bytes",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "public_proof_inputs",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proof_points",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    }
+  },
+  "structs": {
+    "Curve": {
+      "index": 0,
+      "doc": " Represents an elliptic curve construction to be used in the verifier. Currently we support BLS12-381 and BN254.\n This should be given as the first parameter to `prepare_verifying_key` or `verify_groth16_proof`.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": "u8"
+          }
+        }
+      }
+    },
+    "PreparedVerifyingKey": {
+      "index": 1,
+      "doc": " A `PreparedVerifyingKey` consisting of four components in serialized form.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "vk_gamma_abc_g1_bytes": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "alpha_g1_beta_g2_bytes": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "gamma_g2_neg_pc_bytes": {
+            "index": 2,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          },
+          "delta_g2_neg_pc_bytes": {
+            "index": 3,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    },
+    "PublicProofInputs": {
+      "index": 2,
+      "doc": " A `PublicProofInputs` wrapper around its serialized bytes.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "bytes": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    },
+    "ProofPoints": {
+      "index": 3,
+      "doc": " A `ProofPoints` wrapper around the serialized form of three proof points.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "bytes": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": "u8"
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

@@ -1,0 +1,344 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "party"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "vector"
+    },
+    {
+      "address": "sui",
+      "name": "vec_map"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "single_owner": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Creates a `Party` value with a single \"owner\" that has all permissions. No other party\n has any permissions. And there are no default permissions.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "owner",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "party"
+            },
+            "name": "Party",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "empty": {
+      "source_index": 3,
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "party"
+            },
+            "name": "Party",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "set_permissions": {
+      "source_index": 4,
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "p",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "party"
+                  },
+                  "name": "Party",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "address",
+          "type_": "address"
+        },
+        {
+          "name": "permissions",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "party"
+              },
+              "name": "Permissions",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "is_single_owner": {
+      "source_index": 5,
+      "index": 3,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "p",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "party"
+                  },
+                  "name": "Party",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "into_native": {
+      "source_index": 6,
+      "index": 4,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "p",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "party"
+              },
+              "name": "Party",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        "u64",
+        {
+          "vector": "address"
+        },
+        {
+          "vector": "u64"
+        }
+      ]
+    },
+    "public_transfer": {
+      "source_index": 2,
+      "index": 18446744073709551615,
+      "doc": " A helper `macro` that calls `sui::transfer::public_party_transfer`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": [
+            "Key",
+            "Store"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "party"
+              },
+              "name": "Party",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "$obj",
+          "type_": {
+            "NamedTypeParameter": "$T"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "transfer": {
+      "source_index": 1,
+      "index": 18446744073709551615,
+      "doc": " A helper `macro` that calls `sui::transfer::party_transfer`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "macro_": true,
+      "type_parameters": [
+        {
+          "name": "$T",
+          "constraints": [
+            "Key"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "$self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "party"
+              },
+              "name": "Party",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "$obj",
+          "type_": {
+            "NamedTypeParameter": "$T"
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "Party": {
+      "index": 0,
+      "doc": " The permissions that apply to a party object. If the transaction sender has an entry in\n the `members` map, the permissions in that entry apply. Otherwise, the `default` permissions\n are used.\n If the party has the `READ` permission, the object can be taken as an immutable input.\n If the party has the `WRITE`, `DELETE`, or `TRANSFER` permissions, the object can be taken as\n a mutable input. Additional restrictions pertaining to each permission are checked at the end\n of transaction execution.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "default": {
+            "index": 0,
+            "doc": " The permissions that apply if no specific permissions are set in the `members` map.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "party"
+                },
+                "name": "Permissions",
+                "type_arguments": []
+              }
+            }
+          },
+          "members": {
+            "index": 1,
+            "doc": " The permissions per transaction sender.",
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "vec_map"
+                },
+                "name": "VecMap",
+                "type_arguments": [
+                  {
+                    "phantom": false,
+                    "argument": "address"
+                  },
+                  {
+                    "phantom": false,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "party"
+                        },
+                        "name": "Permissions",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "Permissions": {
+      "index": 1,
+      "doc": " The permissions that a party has. The permissions are a bitset of the `READ`, `WRITE`,\n `DELETE`, and `TRANSFER` constants.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": true,
+        "fields": {
+          "pos0": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

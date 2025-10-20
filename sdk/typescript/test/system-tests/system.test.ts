@@ -94,4 +94,79 @@ describe('system tests', () => {
 
 		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, `system-test-full-flow`);
 	}, 3_600_000);
+
+	it('run system upgrade test - upgrade validators from v1 to v2 binary', async () => {
+		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
+
+		const numOfValidators = Number(process.env.VALIDATOR_NUM);
+		console.log(`Starting system upgrade test with ${numOfValidators} validators`);
+
+		// ------------ Create Ika Genesis ------------
+		await createIkaGenesis();
+		console.log('Ika genesis created, deploying ika network with v1 binaries');
+
+		// Deploy network with v1 binaries
+		await deployIkaNetwork();
+		console.log('Ika network deployed with v1 binaries, waiting for epoch switch');
+
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+		await waitForEpochSwitch(ikaClient);
+		console.log('Epoch switched, network is running with v1 binaries');
+
+		// Verify network works with v1
+		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, `system-test-upgrade-v1`);
+		console.log('V1 network verified, starting upgrade process');
+
+		const kc = new KubeConfig();
+		kc.loadFromDefault();
+
+		// Create upgrade function that kills and recreates a validator with v2 binary
+		const upgradeValidator = async (validatorID: number) => {
+			console.log(`Upgrading validator ${validatorID} to v2 binary`);
+			await killValidatorPod(kc, NAMESPACE_NAME, validatorID);
+
+			// Wait a bit for the pod to be fully terminated
+			await delay(5);
+
+			// Create new pod with v2 binary (assuming DOCKER_TAG_V2 is set in .env)
+			const originalDockerTag = process.env.DOCKER_TAG;
+			process.env.DOCKER_TAG = process.env.DOCKER_TAG_V2 || process.env.DOCKER_TAG;
+
+			await createValidatorPod(kc, NAMESPACE_NAME, validatorID);
+
+			// Restore original docker tag
+			process.env.DOCKER_TAG = originalDockerTag;
+
+			console.log(`Validator ${validatorID} upgraded to v2 binary`);
+		};
+
+		// Upgrade validators with random delays between 60-180 seconds
+		const upgradePromises: Promise<void>[] = [];
+		for (let i = 1; i <= numOfValidators; i++) {
+			const randomDelay = Math.floor(Math.random() * 120) + 60; // 60-180 seconds
+			console.log(`Validator ${i} will be upgraded in ${randomDelay} seconds`);
+
+			const upgradePromise = (async () => {
+				await delay(randomDelay);
+				await upgradeValidator(i);
+			})();
+
+			upgradePromises.push(upgradePromise);
+		}
+
+		// Wait for all upgrades to complete
+		console.log('Waiting for all validators to be upgraded...');
+		await Promise.all(upgradePromises);
+		console.log('All validators upgraded to v2 binaries');
+
+		// Wait for network to stabilize after upgrades
+		await delay(60);
+		console.log('Network stabilized, verifying v2 network functionality');
+
+		// Verify network still works after upgrade
+		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, `system-test-upgrade-v2`);
+		console.log('System upgrade test completed successfully');
+	}, 3_600_000);
 });

@@ -1,0 +1,675 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "vec_set"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "std",
+      "name": "vector"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "empty": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create an empty `VecSet`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "vec_set"
+            },
+            "name": "VecSet",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "K"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "singleton": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Create a singleton `VecSet` that only contains one element.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "key",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "vec_set"
+            },
+            "name": "VecSet",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "K"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "insert": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Insert a `key` into self.\n Aborts if `key` is already present in `self`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_set"
+                  },
+                  "name": "VecSet",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ],
+      "return_": []
+    },
+    "remove": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Remove the entry `key` from self. Aborts if `key` is not present in `self`.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_set"
+                  },
+                  "name": "VecSet",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "contains": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Return true if `self` contains an entry for `key`, false otherwise",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_set"
+                  },
+                  "name": "VecSet",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "size": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Return the number of entries in `self`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_set"
+                  },
+                  "name": "VecSet",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "is_empty": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Return true if `self` has 0 elements, false otherwise",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_set"
+                  },
+                  "name": "VecSet",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "bool"
+      ]
+    },
+    "into_keys": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Unpack `self` into vectors of keys.\n The output keys are stored in insertion order, *not* sorted.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "vec_set"
+              },
+              "name": "VecSet",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": {
+                    "NamedTypeParameter": "K"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "NamedTypeParameter": "K"
+          }
+        }
+      ]
+    },
+    "from_keys": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Construct a new `VecSet` from a vector of keys.\n The keys are stored in insertion order (the original `keys` ordering)\n and are *not* sorted.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "keys",
+          "type_": {
+            "vector": {
+              "NamedTypeParameter": "K"
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "vec_set"
+            },
+            "name": "VecSet",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": {
+                  "NamedTypeParameter": "K"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "keys": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Borrow the `contents` of the `VecSet` to access content by index\n without unpacking. The contents are stored in insertion order,\n *not* sorted.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_set"
+                  },
+                  "name": "VecSet",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "vector": {
+                "NamedTypeParameter": "K"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "get_idx_opt": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " Find the index of `key` in `self`. Return `None` if `key` is not in `self`.\n Note that keys are stored in insertion order, *not* sorted.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_set"
+                  },
+                  "name": "VecSet",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "option"
+            },
+            "name": "Option",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "u64"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "get_idx": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Find the index of `key` in `self`. Aborts if `key` is not in `self`.\n Note that map entries are stored in insertion order, *not* sorted.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "vec_set"
+                  },
+                  "name": "VecSet",
+                  "type_arguments": [
+                    {
+                      "phantom": false,
+                      "argument": {
+                        "NamedTypeParameter": "K"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "key",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "NamedTypeParameter": "K"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {
+    "VecSet": {
+      "index": 0,
+      "doc": " A set data structure backed by a vector. The set is guaranteed not to\n contain duplicate keys. All operations are O(N) in the size of the set\n - the intention of this data structure is only to provide the convenience\n of programming against a set API. Sets that need sorted iteration rather\n than insertion order iteration should be handwritten.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [
+        {
+          "phantom": false,
+          "name": "K",
+          "constraints": [
+            "Copy",
+            "Drop"
+          ]
+        }
+      ],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "contents": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "vector": {
+                "NamedTypeParameter": "K"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

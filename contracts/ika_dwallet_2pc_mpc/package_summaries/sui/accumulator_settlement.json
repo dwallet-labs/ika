@@ -1,0 +1,183 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "accumulator_settlement"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "sui",
+      "name": "accumulator"
+    },
+    {
+      "address": "sui",
+      "name": "accumulator_metadata"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "settlement_prologue": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Called by settlement transactions to ensure that the settlement transaction has a unique\n digest.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "_epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "_checkpoint_height",
+          "type_": "u64"
+        },
+        {
+          "name": "_idx",
+          "type_": "u64"
+        },
+        {
+          "name": "input_sui",
+          "type_": "u64"
+        },
+        {
+          "name": "output_sui",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "settle_u128": {
+      "source_index": 1,
+      "index": 1,
+      "doc": null,
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [
+        {
+          "name": "T",
+          "constraints": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "accumulator_root",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "accumulator"
+                  },
+                  "name": "AccumulatorRoot",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "type_": "address"
+        },
+        {
+          "name": "merge",
+          "type_": "u128"
+        },
+        {
+          "name": "split",
+          "type_": "u128"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "record_settlement_sui_conservation": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Called by the settlement transaction to track conservation of SUI.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "input_sui",
+          "type_": "u64"
+        },
+        {
+          "name": "output_sui",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

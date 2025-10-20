@@ -1,0 +1,67 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "hash"
+  },
+  "doc": " Module which defines hash functions. Note that Sha-256 and Sha3-256 is available in the std::hash module in the\n standard library.",
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {
+    "blake2b256": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " @param data: Arbitrary binary data to hash\n Hash the input bytes using Blake2b-256 and returns 32 bytes.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "data",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "keccak256": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " @param data: Arbitrary binary data to hash\n Hash the input bytes using keccak256 and returns 32 bytes.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "data",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

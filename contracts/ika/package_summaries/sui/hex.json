@@ -1,0 +1,80 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "hex"
+  },
+  "doc": " HEX (Base16) encoding utility.",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "vector"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "encode": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Encode `bytes` in lowercase hex",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "decode": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Decode hex into `bytes`\n Takes a hex string (no 0x prefix) (e.g. b\"0f3a\")\n Returns vector of `bytes` that represents the hex string (e.g. x\"0f3a\")\n Hex string can be case insensitive (e.g. b\"0F3A\" and b\"0f3a\" both return x\"0f3a\")\n Aborts if the hex string does not have an even number of characters (as each hex character is 2 characters long)\n Aborts if the hex string contains non-valid hex characters (valid characters are 0 - 9, a - f, A - F)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "hex",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "decode_byte": {
+      "source_index": 2,
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "hex",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}

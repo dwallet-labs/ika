@@ -1,0 +1,12 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "prover"
+  },
+  "doc": null,
+  "immediate_dependencies": [],
+  "attributes": [],
+  "functions": {},
+  "structs": {},
+  "enums": {}
+}

@@ -1,0 +1,397 @@
+{
+  "id": {
+    "address": "sui_system",
+    "name": "voting_power"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "std",
+      "name": "u64"
+    },
+    {
+      "address": "std",
+      "name": "vector"
+    },
+    {
+      "address": "sui_system",
+      "name": "validator"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "set_voting_power": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Set the voting power of all validators.\n Each validator's voting power is initialized using their stake. We then attempt to cap their voting power\n at `MAX_VOTING_POWER`. If `MAX_VOTING_POWER` is not a feasible cap, we pick the lowest possible cap.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "validators",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui_system",
+                      "name": "validator"
+                    },
+                    "name": "Validator",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "total_stake",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "init_voting_power_info": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Create the initial voting power of each validator, set using their stake, but capped using threshold.\n We also perform insertion sort while creating the voting power list, by maintaining the list in\n descending order using voting power.\n Anything beyond the threshold is added to the remaining_power, which is also returned.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "validators",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui_system",
+                      "name": "validator"
+                    },
+                    "name": "Validator",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "threshold",
+          "type_": "u64"
+        },
+        {
+          "name": "total_stake",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        {
+          "vector": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "voting_power"
+              },
+              "name": "VotingPowerInfoV2",
+              "type_arguments": []
+            }
+          }
+        },
+        "u64"
+      ]
+    },
+    "derive_raw_voting_power": {
+      "source_index": 2,
+      "index": 2,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "stake",
+          "type_": "u64"
+        },
+        {
+          "name": "total_stake",
+          "type_": "u64"
+        }
+      ],
+      "return_": [
+        "u64"
+      ]
+    },
+    "insert": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Insert `new_info` to `info_list` as part of insertion sort, such that `info_list` is always sorted\n using stake, in descending order.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "info_list",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui_system",
+                      "name": "voting_power"
+                    },
+                    "name": "VotingPowerInfoV2",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_info",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "voting_power"
+              },
+              "name": "VotingPowerInfoV2",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "adjust_voting_power": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Distribute remaining_power to validators that are not capped at threshold.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "info_list",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui_system",
+                      "name": "voting_power"
+                    },
+                    "name": "VotingPowerInfoV2",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "threshold",
+          "type_": "u64"
+        },
+        {
+          "name": "remaining_power",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "update_voting_power": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Update validators with the decided voting power.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "validators",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "vector": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui_system",
+                      "name": "validator"
+                    },
+                    "name": "Validator",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "info_list",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "voting_power"
+                },
+                "name": "VotingPowerInfoV2",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      ],
+      "return_": []
+    },
+    "check_invariants": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Check a few invariants that must hold after setting the voting power.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "v",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui_system",
+                      "name": "validator"
+                    },
+                    "name": "Validator",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "total_voting_power": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " Return the (constant) total voting power",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u64"
+      ]
+    },
+    "quorum_threshold": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Return the (constant) quorum threshold",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u64"
+      ]
+    }
+  },
+  "structs": {
+    "VotingPowerInfo": {
+      "index": 0,
+      "doc": " Deprecated. Use VotingPowerInfoV2 instead.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_field"
+              }
+            ]
+          ]
+        }
+      ],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "validator_index": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "voting_power": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    },
+    "VotingPowerInfoV2": {
+      "index": 1,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "validator_index": {
+            "index": 0,
+            "doc": null,
+            "type_": "u64"
+          },
+          "voting_power": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          },
+          "stake": {
+            "index": 2,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

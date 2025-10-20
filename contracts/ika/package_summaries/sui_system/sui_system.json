@@ -1,0 +1,2994 @@
+{
+  "id": {
+    "address": "sui_system",
+    "name": "sui_system"
+  },
+  "doc": " Sui System State Type Upgrade Guide\n `SuiSystemState` is a thin wrapper around `SuiSystemStateInner` that provides a versioned interface.\n The `SuiSystemState` object has a fixed ID 0x5, and the `SuiSystemStateInner` object is stored as a dynamic field.\n There are a few different ways to upgrade the `SuiSystemStateInner` type:\n\n The simplest and one that doesn't involve a real upgrade is to just add dynamic fields to the `extra_fields` field\n of `SuiSystemStateInner` or any of its sub type. This is useful when we are in a rush, or making a small change,\n or still experimenting a new field.\n\n To properly upgrade the `SuiSystemStateInner` type, we need to ship a new framework that does the following:\n 1. Define a new `SuiSystemStateInner`type (e.g. `SuiSystemStateInnerV2`).\n 2. Define a data migration function that migrates the old `SuiSystemStateInner` to the new one (i.e. SuiSystemStateInnerV2).\n 3. Replace all uses of `SuiSystemStateInner` with `SuiSystemStateInnerV2` in both sui_system.move and sui_system_state_inner.move,\n    with the exception of the `sui_system_state_inner::create` function, which should always return the genesis type.\n 4. Inside `load_inner_maybe_upgrade` function, check the current version in the wrapper, and if it's not the latest version,\n   call the data migration function to upgrade the inner object. Make sure to also update the version in the wrapper.\n A detailed example can be found in sui/tests/framework_upgrades/mock_sui_systems/shallow_upgrade.\n Along with the Move change, we also need to update the Rust code to support the new type. This includes:\n 1. Define a new `SuiSystemStateInner` struct type that matches the new Move type, and implement the SuiSystemStateTrait.\n 2. Update the `SuiSystemState` struct to include the new version as a new enum variant.\n 3. Update the `get_sui_system_state` function to handle the new version.\n To test that the upgrade will be successful, we need to modify `sui_system_state_production_upgrade_test` test in\n protocol_version_tests and trigger a real upgrade using the new framework. We will need to keep this directory as old version,\n put the new framework in a new directory, and run the test to exercise the upgrade.\n\n To upgrade Validator type, besides everything above, we also need to:\n 1. Define a new Validator type (e.g. ValidatorV2).\n 2. Define a data migration function that migrates the old Validator to the new one (i.e. ValidatorV2).\n 3. Replace all uses of Validator with ValidatorV2 except the genesis creation function.\n 4. In validator_wrapper::upgrade_to_latest, check the current version in the wrapper, and if it's not the latest version,\n  call the data migration function to upgrade it.\n In Rust, we also need to add a new case in `get_validator_from_table`.\n Note that it is possible to upgrade SuiSystemStateInner without upgrading Validator, but not the other way around.\n And when we only upgrade SuiSystemStateInner, the version of Validator in the wrapper will not be updated, and hence may become\n inconsistent with the version of SuiSystemStateInner. This is fine as long as we don't use the Validator version to determine\n the SuiSystemStateInner version, or vice versa.",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "option"
+    },
+    {
+      "address": "sui",
+      "name": "balance"
+    },
+    {
+      "address": "sui",
+      "name": "coin"
+    },
+    {
+      "address": "sui",
+      "name": "dynamic_field"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "sui"
+    },
+    {
+      "address": "sui",
+      "name": "table"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    },
+    {
+      "address": "sui",
+      "name": "vec_map"
+    },
+    {
+      "address": "sui_system",
+      "name": "stake_subsidy"
+    },
+    {
+      "address": "sui_system",
+      "name": "staking_pool"
+    },
+    {
+      "address": "sui_system",
+      "name": "sui_system_state_inner"
+    },
+    {
+      "address": "sui_system",
+      "name": "validator"
+    },
+    {
+      "address": "sui_system",
+      "name": "validator_cap"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "create": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create a new SuiSystemState object and make it shared.\n This function will be called only once in genesis.",
+      "attributes": [],
+      "visibility": "Package",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "id",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "object"
+              },
+              "name": "UID",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "validators",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "validator"
+                },
+                "name": "Validator",
+                "type_arguments": []
+              }
+            }
+          }
+        },
+        {
+          "name": "storage_fund",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "protocol_version",
+          "type_": "u64"
+        },
+        {
+          "name": "epoch_start_timestamp_ms",
+          "type_": "u64"
+        },
+        {
+          "name": "parameters",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "sui_system_state_inner"
+              },
+              "name": "SystemParameters",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "stake_subsidy",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "stake_subsidy"
+              },
+              "name": "StakeSubsidy",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_add_validator_candidate": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Can be called by anyone who wishes to become a validator candidate and starts accruing delegated\n stakes in their staking pool. Once they have at least `MIN_VALIDATOR_JOINING_STAKE` amount of stake they\n can call `request_add_validator` to officially become an active validator at the next epoch.\n Aborts if the caller is already a pending or active validator, or a validator candidate.\n Note: `proof_of_possession` MUST be a valid signature using sui_address and protocol_pubkey_bytes.\n To produce a valid PoP, run [fn test_proof_of_possession].",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "network_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "worker_pubkey_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "proof_of_possession",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "description",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "image_url",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "project_url",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "net_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "p2p_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "primary_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "worker_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "gas_price",
+          "type_": "u64"
+        },
+        {
+          "name": "commission_rate",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_remove_validator_candidate": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Called by a validator candidate to remove themselves from the candidacy. After this call\n their staking pool becomes deactivate.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_add_validator": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Called by a validator candidate to add themselves to the active validator set beginning next epoch.\n Aborts if the validator is a duplicate with one of the pending or active validators, or if the amount of\n stake the validator has doesn't meet the min threshold, or if the number of new validators for the next\n epoch has already reached the maximum.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_remove_validator": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " A validator can call this function to request a removal in the next epoch.\n We use the sender of `ctx` to look up the validator\n (i.e. sender must match the sui_address in the validator).\n At the end of the epoch, the `validator` object will be returned to the sui_address\n of the validator.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_set_gas_price": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " A validator can call this entry function to submit a new gas price quote, to be\n used for the reference gas price calculation at the end of the epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator_cap"
+                  },
+                  "name": "UnverifiedValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_gas_price",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "set_candidate_validator_gas_price": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " This entry function is used to set new gas price for candidate validators",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator_cap"
+                  },
+                  "name": "UnverifiedValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_gas_price",
+          "type_": "u64"
+        }
+      ],
+      "return_": []
+    },
+    "request_set_commission_rate": {
+      "source_index": 7,
+      "index": 7,
+      "doc": " A validator can call this entry function to set a new commission rate, updated at the end of\n the epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_commission_rate",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "set_candidate_validator_commission_rate": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " This entry function is used to set new commission rate for candidate validators",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_commission_rate",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_add_stake": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Add stake to a validator's staking pool.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "coin"
+              },
+              "name": "Coin",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "validator_address",
+          "type_": "address"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_add_stake_non_entry": {
+      "source_index": 10,
+      "index": 10,
+      "doc": " The non-entry version of `request_add_stake`, which returns the staked SUI instead of transferring it to the sender.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "coin"
+              },
+              "name": "Coin",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "validator_address",
+          "type_": "address"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "StakedSui",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "request_add_stake_mul_coin": {
+      "source_index": 11,
+      "index": 11,
+      "doc": " Add stake to a validator's staking pool using multiple coins.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "stakes",
+          "type_": {
+            "vector": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "coin"
+                },
+                "name": "Coin",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui",
+                          "name": "sui"
+                        },
+                        "name": "SUI",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "name": "stake_amount",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "option"
+              },
+              "name": "Option",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u64"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "validator_address",
+          "type_": "address"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "request_withdraw_stake": {
+      "source_index": 12,
+      "index": 12,
+      "doc": " Withdraw stake from a validator's staking pool.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "StakedSui",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "convert_to_fungible_staked_sui": {
+      "source_index": 13,
+      "index": 13,
+      "doc": " Convert StakedSui into a FungibleStakedSui object.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "StakedSui",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui_system",
+              "name": "staking_pool"
+            },
+            "name": "FungibleStakedSui",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "redeem_fungible_staked_sui": {
+      "source_index": 14,
+      "index": 14,
+      "doc": " Convert FungibleStakedSui into a StakedSui object.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "fungible_staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "FungibleStakedSui",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "request_withdraw_stake_non_entry": {
+      "source_index": 15,
+      "index": 15,
+      "doc": " Non-entry version of `request_withdraw_stake` that returns the withdrawn SUI instead of transferring it to the sender.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_sui",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui_system",
+                "name": "staking_pool"
+              },
+              "name": "StakedSui",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "report_validator": {
+      "source_index": 16,
+      "index": 16,
+      "doc": " Report a validator as a bad or non-performant actor in the system.\n Succeeds if all the following are satisfied:\n 1. both the reporter in `cap` and the input `reportee_addr` are active validators.\n 2. reporter and reportee not the same address.\n 3. the cap object is still valid.\n This function is idempotent.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator_cap"
+                  },
+                  "name": "UnverifiedValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "reportee_addr",
+          "type_": "address"
+        }
+      ],
+      "return_": []
+    },
+    "undo_report_validator": {
+      "source_index": 17,
+      "index": 17,
+      "doc": " Undo a `report_validator` action. Aborts if\n 1. the reportee is not a currently active validator or\n 2. the sender has not previously reported the `reportee_addr`, or\n 3. the cap is not valid",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "cap",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "validator_cap"
+                  },
+                  "name": "UnverifiedValidatorOperationCap",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "reportee_addr",
+          "type_": "address"
+        }
+      ],
+      "return_": []
+    },
+    "rotate_operation_cap": {
+      "source_index": 18,
+      "index": 18,
+      "doc": " Create a new `UnverifiedValidatorOperationCap`, transfer it to the\n validator and registers it. The original object is thus revoked.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_name": {
+      "source_index": 19,
+      "index": 19,
+      "doc": " Update a validator's name.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_description": {
+      "source_index": 20,
+      "index": 20,
+      "doc": " Update a validator's description",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "description",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_image_url": {
+      "source_index": 21,
+      "index": 21,
+      "doc": " Update a validator's image url",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "image_url",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_project_url": {
+      "source_index": 22,
+      "index": 22,
+      "doc": " Update a validator's project url",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "project_url",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_next_epoch_network_address": {
+      "source_index": 23,
+      "index": 23,
+      "doc": " Update a validator's network address.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "network_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_validator_network_address": {
+      "source_index": 24,
+      "index": 24,
+      "doc": " Update candidate validator's network address.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "network_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_next_epoch_p2p_address": {
+      "source_index": 25,
+      "index": 25,
+      "doc": " Update a validator's p2p address.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "p2p_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_validator_p2p_address": {
+      "source_index": 26,
+      "index": 26,
+      "doc": " Update candidate validator's p2p address.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "p2p_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_next_epoch_primary_address": {
+      "source_index": 27,
+      "index": 27,
+      "doc": " Update a validator's narwhal primary address.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "primary_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_validator_primary_address": {
+      "source_index": 28,
+      "index": 28,
+      "doc": " Update candidate validator's narwhal primary address.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "primary_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_next_epoch_worker_address": {
+      "source_index": 29,
+      "index": 29,
+      "doc": " Update a validator's narwhal worker address.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "worker_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_validator_worker_address": {
+      "source_index": 30,
+      "index": 30,
+      "doc": " Update candidate validator's narwhal worker address.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "worker_address",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_next_epoch_protocol_pubkey": {
+      "source_index": 31,
+      "index": 31,
+      "doc": " Update a validator's public key of protocol key and proof of possession.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "protocol_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "proof_of_possession",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_validator_protocol_pubkey": {
+      "source_index": 32,
+      "index": 32,
+      "doc": " Update candidate validator's public key of protocol key and proof of possession.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "protocol_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "proof_of_possession",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_next_epoch_worker_pubkey": {
+      "source_index": 33,
+      "index": 33,
+      "doc": " Update a validator's public key of worker key.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "worker_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_validator_worker_pubkey": {
+      "source_index": 34,
+      "index": 34,
+      "doc": " Update candidate validator's public key of worker key.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "worker_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_validator_next_epoch_network_pubkey": {
+      "source_index": 35,
+      "index": 35,
+      "doc": " Update a validator's public key of network key.\n The change will only take effects starting from the next epoch.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "network_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "update_candidate_validator_network_pubkey": {
+      "source_index": 36,
+      "index": 36,
+      "doc": " Update candidate validator's public key of network key.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": true,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "network_pubkey",
+          "type_": {
+            "vector": "u8"
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "validator_address_by_pool_id": {
+      "source_index": 37,
+      "index": 37,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_id",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "ID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    },
+    "pool_exchange_rates": {
+      "source_index": 38,
+      "index": 38,
+      "doc": " Getter of the pool token exchange rate of a staking pool. Works for both active and inactive pools.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_id",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "object"
+                  },
+                  "name": "ID",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "table"
+                },
+                "name": "Table",
+                "type_arguments": [
+                  {
+                    "phantom": true,
+                    "argument": "u64"
+                  },
+                  {
+                    "phantom": true,
+                    "argument": {
+                      "Datatype": {
+                        "module": {
+                          "address": "sui_system",
+                          "name": "staking_pool"
+                        },
+                        "name": "PoolTokenExchangeRate",
+                        "type_arguments": []
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "active_validator_addresses": {
+      "source_index": 39,
+      "index": 39,
+      "doc": " Getter returning addresses of the currently active validators.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "vector": "address"
+        }
+      ]
+    },
+    "advance_epoch": {
+      "source_index": 40,
+      "index": 40,
+      "doc": " This function should be called at the end of an epoch, and advances the system to the next epoch.\n It does the following things:\n 1. Add storage charge to the storage fund.\n 2. Burn the storage rebates from the storage fund. These are already refunded to transaction sender's\n    gas coins.\n 3. Distribute computation charge to validator stake.\n 4. Update all validators.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "storage_reward",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "computation_reward",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "balance"
+              },
+              "name": "Balance",
+              "type_arguments": [
+                {
+                  "phantom": true,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "sui"
+                      },
+                      "name": "SUI",
+                      "type_arguments": []
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_epoch",
+          "type_": "u64"
+        },
+        {
+          "name": "next_protocol_version",
+          "type_": "u64"
+        },
+        {
+          "name": "storage_rebate",
+          "type_": "u64"
+        },
+        {
+          "name": "non_refundable_storage_fee",
+          "type_": "u64"
+        },
+        {
+          "name": "storage_fund_reinvest_rate",
+          "type_": "u64"
+        },
+        {
+          "name": "reward_slashing_rate",
+          "type_": "u64"
+        },
+        {
+          "name": "epoch_start_timestamp_ms",
+          "type_": "u64"
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "balance"
+            },
+            "name": "Balance",
+            "type_arguments": [
+              {
+                "phantom": true,
+                "argument": {
+                  "Datatype": {
+                    "module": {
+                      "address": "sui",
+                      "name": "sui"
+                    },
+                    "name": "SUI",
+                    "type_arguments": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "load_system_state": {
+      "source_index": 41,
+      "index": 41,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            false,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "sui_system_state_inner"
+                },
+                "name": "SuiSystemStateInnerV2",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "load_system_state_mut": {
+      "source_index": 42,
+      "index": 42,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "sui_system_state_inner"
+                },
+                "name": "SuiSystemStateInnerV2",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "load_inner_maybe_upgrade": {
+      "source_index": 43,
+      "index": 43,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Reference": [
+            true,
+            {
+              "Datatype": {
+                "module": {
+                  "address": "sui_system",
+                  "name": "sui_system_state_inner"
+                },
+                "name": "SuiSystemStateInnerV2",
+                "type_arguments": []
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "validator_voting_powers": {
+      "source_index": 44,
+      "index": 44,
+      "doc": " Returns the voting power of the active validators, values are voting power in the scale of 10000.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "vec_map"
+            },
+            "name": "VecMap",
+            "type_arguments": [
+              {
+                "phantom": false,
+                "argument": "address"
+              },
+              {
+                "phantom": false,
+                "argument": "u64"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "store_execution_time_estimates": {
+      "source_index": 45,
+      "index": 45,
+      "doc": " Saves the given execution time estimate blob to the SuiSystemState object, for system use\n at the start of the next epoch.",
+      "attributes": [
+        {
+          "Parameterized": [
+            "allow",
+            [
+              {
+                "Name": "unused_function"
+              }
+            ]
+          ]
+        }
+      ],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "wrapper",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui_system",
+                    "name": "sui_system"
+                  },
+                  "name": "SuiSystemState",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "estimates_bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "SuiSystemState": {
+      "index": 0,
+      "doc": null,
+      "attributes": [],
+      "abilities": [
+        "Key"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "version": {
+            "index": 1,
+            "doc": null,
+            "type_": "u64"
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

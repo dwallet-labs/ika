@@ -1,0 +1,198 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "url"
+  },
+  "doc": " URL: standard Uniform Resource Locator string",
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "ascii"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "new_unsafe": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Create a `Url`, with no validation",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "ascii"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "url"
+            },
+            "name": "Url",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "new_unsafe_from_bytes": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Create a `Url` with no validation from bytes\n Note: this will abort if `bytes` is not valid ASCII",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "sui",
+              "name": "url"
+            },
+            "name": "Url",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "inner_url": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Get inner URL",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "url"
+                  },
+                  "name": "Url",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "update": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Update the inner URL",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "self",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "url"
+                  },
+                  "name": "Url",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "ascii"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "Url": {
+      "index": 0,
+      "doc": " Standard Uniform Resource Locator (URL) string.",
+      "attributes": [],
+      "abilities": [
+        "Copy",
+        "Drop",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "url": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "std",
+                  "name": "ascii"
+                },
+                "name": "String",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

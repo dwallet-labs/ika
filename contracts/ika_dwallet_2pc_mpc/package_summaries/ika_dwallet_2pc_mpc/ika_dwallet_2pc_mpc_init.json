@@ -1,0 +1,387 @@
+{
+  "id": {
+    "address": "ika_dwallet_2pc_mpc",
+    "name": "ika_dwallet_2pc_mpc_init"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "ika_common",
+      "name": "advance_epoch_approver"
+    },
+    {
+      "address": "ika_common",
+      "name": "system_current_status_info"
+    },
+    {
+      "address": "ika_dwallet_2pc_mpc",
+      "name": "coordinator"
+    },
+    {
+      "address": "ika_dwallet_2pc_mpc",
+      "name": "ika_dwallet_2pc_mpc_display"
+    },
+    {
+      "address": "ika_dwallet_2pc_mpc",
+      "name": "pricing"
+    },
+    {
+      "address": "std",
+      "name": "ascii"
+    },
+    {
+      "address": "std",
+      "name": "string"
+    },
+    {
+      "address": "std",
+      "name": "type_name"
+    },
+    {
+      "address": "sui",
+      "name": "address"
+    },
+    {
+      "address": "sui",
+      "name": "object"
+    },
+    {
+      "address": "sui",
+      "name": "package"
+    },
+    {
+      "address": "sui",
+      "name": "transfer"
+    },
+    {
+      "address": "sui",
+      "name": "tx_context"
+    },
+    {
+      "address": "sui",
+      "name": "vec_map"
+    }
+  ],
+  "attributes": [],
+  "functions": {
+    "init": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Init function, creates an init cap and transfers it to the sender.\n This allows the sender to call the function to actually initialize the system\n with the corresponding parameters. Once that function is called, the cap is destroyed.",
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "otw",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "ika_dwallet_2pc_mpc_init"
+              },
+              "name": "IKA_DWALLET_2PC_MPC_INIT",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    },
+    "initialize": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Function to initialize ika and share the system object.\n This can only be called once, after which the `InitCap` is destroyed.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "init_cap",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "ika_dwallet_2pc_mpc_init"
+              },
+              "name": "InitCap",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "advance_epoch_approver",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "advance_epoch_approver"
+                  },
+                  "name": "AdvanceEpochApprover",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_current_status_info",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "ika_common",
+                    "name": "system_current_status_info"
+                  },
+                  "name": "SystemCurrentStatusInfo",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "pricing",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "ika_dwallet_2pc_mpc",
+                "name": "pricing"
+              },
+              "name": "PricingInfo",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "supported_curves_to_signature_algorithms_to_hash_schemes",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "sui",
+                "name": "vec_map"
+              },
+              "name": "VecMap",
+              "type_arguments": [
+                {
+                  "phantom": false,
+                  "argument": "u32"
+                },
+                {
+                  "phantom": false,
+                  "argument": {
+                    "Datatype": {
+                      "module": {
+                        "address": "sui",
+                        "name": "vec_map"
+                      },
+                      "name": "VecMap",
+                      "type_arguments": [
+                        {
+                          "phantom": false,
+                          "argument": "u32"
+                        },
+                        {
+                          "phantom": false,
+                          "argument": {
+                            "vector": "u32"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "dwallet_cap_image_url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "imported_key_dwallet_cap_image_url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "unverified_presign_cap_image_url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "verified_presign_cap_image_url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "unverified_partial_user_signature_cap_image_url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "verified_partial_user_signature_cap_image_url",
+          "type_": {
+            "Datatype": {
+              "module": {
+                "address": "std",
+                "name": "string"
+              },
+              "name": "String",
+              "type_arguments": []
+            }
+          }
+        },
+        {
+          "name": "ctx",
+          "type_": {
+            "Reference": [
+              true,
+              {
+                "Datatype": {
+                  "module": {
+                    "address": "sui",
+                    "name": "tx_context"
+                  },
+                  "name": "TxContext",
+                  "type_arguments": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "return_": []
+    }
+  },
+  "structs": {
+    "IKA_DWALLET_2PC_MPC_INIT": {
+      "index": 0,
+      "doc": " The OTW to create `Publisher` and `Display` objects.",
+      "attributes": [],
+      "abilities": [
+        "Drop"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "dummy_field": {
+            "index": 0,
+            "type_": "bool"
+          }
+        }
+      }
+    },
+    "InitCap": {
+      "index": 1,
+      "doc": " Must only be created by `init`.",
+      "attributes": [],
+      "abilities": [
+        "Key",
+        "Store"
+      ],
+      "type_parameters": [],
+      "fields": {
+        "positional_fields": false,
+        "fields": {
+          "id": {
+            "index": 0,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "object"
+                },
+                "name": "UID",
+                "type_arguments": []
+              }
+            }
+          },
+          "publisher": {
+            "index": 1,
+            "doc": null,
+            "type_": {
+              "Datatype": {
+                "module": {
+                  "address": "sui",
+                  "name": "package"
+                },
+                "name": "Publisher",
+                "type_arguments": []
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enums": {}
+}

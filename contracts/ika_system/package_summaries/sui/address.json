@@ -1,0 +1,240 @@
+{
+  "id": {
+    "address": "sui",
+    "name": "address"
+  },
+  "doc": null,
+  "immediate_dependencies": [
+    {
+      "address": "std",
+      "name": "ascii"
+    },
+    {
+      "address": "std",
+      "name": "bcs"
+    },
+    {
+      "address": "std",
+      "name": "string"
+    },
+    {
+      "address": "sui",
+      "name": "hex"
+    }
+  ],
+  "attributes": [
+    {
+      "Parameterized": [
+        "defines_primitive",
+        [
+          {
+            "Name": "address"
+          }
+        ]
+      ]
+    }
+  ],
+  "functions": {
+    "to_u256": {
+      "source_index": 0,
+      "index": 0,
+      "doc": " Convert `a` into a u256 by interpreting `a` as the bytes of a big-endian integer\n (e.g., `to_u256(0x1) == 1`)",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "a",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        "u256"
+      ]
+    },
+    "from_u256": {
+      "source_index": 1,
+      "index": 1,
+      "doc": " Convert `n` into an address by encoding it as a big-endian integer (e.g., `from_u256(1) = @0x1`)\n Aborts if `n` > `MAX_ADDRESS`",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "n",
+          "type_": "u256"
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    },
+    "from_bytes": {
+      "source_index": 2,
+      "index": 2,
+      "doc": " Convert `bytes` into an address.\n Aborts with `EAddressParseError` if the length of `bytes` is not 32",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bytes",
+          "type_": {
+            "vector": "u8"
+          }
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    },
+    "to_bytes": {
+      "source_index": 3,
+      "index": 3,
+      "doc": " Convert `a` into BCS-encoded bytes.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "a",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        {
+          "vector": "u8"
+        }
+      ]
+    },
+    "to_ascii_string": {
+      "source_index": 4,
+      "index": 4,
+      "doc": " Convert `a` to a hex-encoded ASCII string",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "a",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "ascii"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "to_string": {
+      "source_index": 5,
+      "index": 5,
+      "doc": " Convert `a` to a hex-encoded string",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "a",
+          "type_": "address"
+        }
+      ],
+      "return_": [
+        {
+          "Datatype": {
+            "module": {
+              "address": "std",
+              "name": "string"
+            },
+            "name": "String",
+            "type_arguments": []
+          }
+        }
+      ]
+    },
+    "from_ascii_bytes": {
+      "source_index": 6,
+      "index": 6,
+      "doc": " Converts an ASCII string to an address, taking the numerical value for each character. The\n string must be Base16 encoded, and thus exactly 64 characters long.\n For example, the string \"00000000000000000000000000000000000000000000000000000000DEADB33F\"\n will be converted to the address @0xDEADB33F.\n Aborts with `EAddressParseError` if the length of `s` is not 64,\n or if an invalid character is encountered.",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "bytes",
+          "type_": {
+            "Reference": [
+              false,
+              {
+                "vector": "u8"
+              }
+            ]
+          }
+        }
+      ],
+      "return_": [
+        "address"
+      ]
+    },
+    "hex_char_value": {
+      "source_index": 7,
+      "index": 7,
+      "doc": null,
+      "attributes": [],
+      "visibility": "Private",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [
+        {
+          "name": "c",
+          "type_": "u8"
+        }
+      ],
+      "return_": [
+        "u8"
+      ]
+    },
+    "length": {
+      "source_index": 8,
+      "index": 8,
+      "doc": " Length of a Sui address in bytes",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u64"
+      ]
+    },
+    "max": {
+      "source_index": 9,
+      "index": 9,
+      "doc": " Largest possible address",
+      "attributes": [],
+      "visibility": "Public",
+      "entry": false,
+      "type_parameters": [],
+      "parameters": [],
+      "return_": [
+        "u256"
+      ]
+    }
+  },
+  "structs": {},
+  "enums": {}
+}
