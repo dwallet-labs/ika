@@ -867,7 +867,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     match round_result {
         Ok(round_result) => {
             let signed_message =
-                VersionedUserSignedMessage::V2(bcs::to_bytes(&round_result.outgoing_message)?);
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
             let signed_message = bcs::to_bytes(&signed_message)?;
             Ok(signed_message)
         }
