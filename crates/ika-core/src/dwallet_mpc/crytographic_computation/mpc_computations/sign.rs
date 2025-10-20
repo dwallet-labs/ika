@@ -823,9 +823,6 @@ impl<P: twopc_mpc::sign::Protocol> DKGAndSignPartyPublicInputGenerator<P> for DK
             VersionedUserSignedMessage::V1(centralized_signed_message) => {
                 centralized_signed_message
             }
-            VersionedUserSignedMessage::V2(centralized_signed_message) => {
-                centralized_signed_message
-            }
         };
 
         let public_input = <DKGAndSignParty<P> as Party>::PublicInput::from((
