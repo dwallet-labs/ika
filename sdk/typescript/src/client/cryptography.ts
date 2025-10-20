@@ -2,12 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { bcs } from '@mysten/sui/bcs';
-import {
-	decodeSuiPrivateKey,
-	Keypair,
-	PublicKey,
-	SIGNATURE_FLAG_TO_SCHEME,
-} from '@mysten/sui/cryptography';
+import { PublicKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { randomBytes } from '@noble/hashes/utils.js';
 
@@ -293,12 +288,8 @@ export async function prepareImportedKeyDWalletVerification(
 	bytesToHash: Uint8Array,
 	senderAddress: string,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
-	keypair: Keypair,
+	privateKey: Uint8Array,
 ): Promise<ImportDWalletVerificationRequestInput> {
-	if (keypair.getKeyScheme() !== 'Secp256k1' && curve !== Curve.SECP256K1) {
-		throw new Error('Only Secp256k1 keypairs are supported for now');
-	}
-
 	const senderAddressBytes = bcs.Address.serialize(senderAddress).toBytes();
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters(undefined, curve);
 
@@ -306,10 +297,7 @@ export async function prepareImportedKeyDWalletVerification(
 		await create_imported_dwallet_user_output(
 			protocolPublicParameters,
 			sessionIdentifierDigest(bytesToHash, senderAddressBytes),
-			bcs
-				.vector(bcs.u8())
-				.serialize(decodeSuiPrivateKey(keypair.getSecretKey()).secretKey)
-				.toBytes(),
+			bcs.vector(bcs.u8()).serialize(privateKey).toBytes(),
 		);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(

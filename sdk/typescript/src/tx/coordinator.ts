@@ -467,7 +467,7 @@ export function requestImportedKeyDwalletVerification(
 	encryptionKeyAddress: string,
 	userPublicOutput: Uint8Array,
 	signerPublicKey: Uint8Array,
-	sessionIdentifier: string,
+	sessionIdentifier: TransactionObjectArgument,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,

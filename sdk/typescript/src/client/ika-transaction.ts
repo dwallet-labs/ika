@@ -1558,7 +1558,7 @@ export class IkaTransaction {
 		importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput;
 		curve: Curve;
 		signerPublicKey: Uint8Array;
-		sessionIdentifier: string;
+		sessionIdentifier: TransactionObjectArgument;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<TransactionObjectArgument> {
@@ -2192,7 +2192,7 @@ export class IkaTransaction {
 		importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput;
 		curve: Curve;
 		signerPublicKey: Uint8Array;
-		sessionIdentifier: string;
+		sessionIdentifier: TransactionObjectArgument;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
