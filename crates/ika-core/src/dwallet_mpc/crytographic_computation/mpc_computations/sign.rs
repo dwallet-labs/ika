@@ -210,6 +210,12 @@ impl SignAdvanceRequestByProtocol {
                 }
             },
             DWalletCurve::Ristretto => {
+                if protocol != &DWalletSignatureScheme::SchnorrkelSubstrate {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: curve.clone(),
+                        protocol: protocol.clone(),
+                    });
+                }
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     SignParty<RistrettoSchnorrkelSubstrateProtocol>,
                 >(
@@ -222,6 +228,12 @@ impl SignAdvanceRequestByProtocol {
                 advance_request.map(SignAdvanceRequestByProtocol::Ristretto)
             }
             DWalletCurve::Curve25519 => {
+                if protocol != &DWalletSignatureScheme::EdDSA {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: curve.clone(),
+                        protocol: protocol.clone(),
+                    });
+                }
                 let advance_request =
                     mpc_computations::try_ready_to_advance::<SignParty<Curve25519EdDSAProtocol>>(
                         party_id,
@@ -233,6 +245,12 @@ impl SignAdvanceRequestByProtocol {
                 advance_request.map(SignAdvanceRequestByProtocol::Curve25519)
             }
             DWalletCurve::Secp256r1 => {
+                if protocol != &DWalletSignatureScheme::ECDSASecp256r1 {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: curve.clone(),
+                        protocol: protocol.clone(),
+                    });
+                }
                 let advance_request =
                     mpc_computations::try_ready_to_advance::<SignParty<Secp256R1ECDSAProtocol>>(
                         party_id,
