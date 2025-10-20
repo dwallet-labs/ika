@@ -13,7 +13,7 @@ import { randomBytes } from '@noble/hashes/utils.js';
 
 import type { IkaClient } from './ika-client.js';
 import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
-import { Curve, PublicKeyBCS } from './types.js';
+import { Curve, PublicKeyBCS, SignatureAlgorithm } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 import {
@@ -26,6 +26,7 @@ import {
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
 	network_dkg_public_output_to_protocol_pp,
+	parse_signature_from_sign_output,
 	public_key_from_centralized_dkg_output,
 	public_key_from_dwallet_output,
 	reconfiguration_public_output_to_protocol_pp,
@@ -442,17 +443,19 @@ export async function reconfigurationPublicOutputToProtocolPublicParameters(
 /**
  * Verify a user's secret key share.
  *
+ * @param curve - The curve to use for key generation
  * @param userSecretKeyShare - The user's unencrypted secret key share
  * @param userDKGOutput - The user's DKG output
  * @param networkDkgPublicOutput - The network DKG public output
  * @returns True if the user's secret key share is valid, false otherwise
  */
 export async function verifyUserShare(
+	curve: Curve,
 	userSecretKeyShare: Uint8Array,
 	userDKGOutput: Uint8Array,
 	networkDkgPublicOutput: Uint8Array,
 ): Promise<boolean> {
-	return await verify_user_share(userSecretKeyShare, userDKGOutput, networkDkgPublicOutput);
+	return await verify_user_share(curve, userSecretKeyShare, userDKGOutput, networkDkgPublicOutput);
 }
 
 /**
@@ -572,6 +575,22 @@ export async function userAndNetworkDKGOutputMatch(
 		curve,
 		userPublicOutput,
 		networkDKGOutput,
+	);
+}
+
+/**
+ * Parse a signature from a sign output.
+ *
+ * @param signatureAlgorithm - The signature algorithm
+ * @param signatureOutput - The signature output
+ * @returns The parsed signature
+ */
+export async function parseSignatureFromSignOutput(
+	signatureAlgorithm: SignatureAlgorithm,
+	signatureOutput: Uint8Array,
+): Promise<Uint8Array> {
+	return Uint8Array.from(
+		await parse_signature_from_sign_output(signatureAlgorithm, signatureOutput),
 	);
 }
 

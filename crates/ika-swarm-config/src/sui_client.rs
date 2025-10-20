@@ -1,6 +1,6 @@
 use crate::validator_initialization_config::ValidatorInitializationConfig;
 use anyhow::bail;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, VersionedMPCData};
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureScheme, VersionedMPCData};
 use fastcrypto::traits::ToFromBytes;
 use ika_config::Config;
 use ika_config::initiation::{InitiationParameters, MIN_VALIDATOR_JOINING_STAKE_INKU};
@@ -543,10 +543,65 @@ pub async fn set_global_presign_config(
         vec![system_arg, protocol_cap_arg],
     );
 
+    // For DKG: each curve supports specific signature algorithms including ECDSA
+    let mut dkg_config = HashMap::new();
+
+    // secp256k1 supports ECDSASecp256k1 and Taproot
+    dkg_config.insert(
+        DWalletCurve::Secp256k1 as u32,
+        vec![
+            DWalletSignatureScheme::ECDSASecp256k1 as u32,
+            DWalletSignatureScheme::Taproot as u32,
+        ],
+    );
+
+    // secp256r1 supports ECDSASecp256r1
+    dkg_config.insert(
+        DWalletCurve::Secp256r1 as u32,
+        vec![DWalletSignatureScheme::ECDSASecp256r1 as u32],
+    );
+
+    // ristretto supports SchnorrkelSubstrate
+    dkg_config.insert(
+        DWalletCurve::Ristretto as u32,
+        vec![DWalletSignatureScheme::SchnorrkelSubstrate as u32],
+    );
+
+    // curve25519 supports EdDSA
+    dkg_config.insert(
+        DWalletCurve::Curve25519 as u32,
+        vec![DWalletSignatureScheme::EdDSA as u32],
+    );
+
+    // For imported key: each curve supports specific non-ECDSA signature algorithms only
+    let mut imported_key_config = HashMap::new();
+
+    // secp256k1 supports Taproot (non-ECDSA)
+    imported_key_config.insert(
+        DWalletCurve::Secp256k1 as u32,
+        vec![DWalletSignatureScheme::Taproot as u32],
+    );
+
+    // secp256r1 supports no non-ECDSA algorithms (empty vector)
+    imported_key_config.insert(DWalletCurve::Secp256r1 as u32, vec![]);
+
+    // ristretto supports SchnorrkelSubstrate
+    imported_key_config.insert(
+        DWalletCurve::Ristretto as u32,
+        vec![DWalletSignatureScheme::SchnorrkelSubstrate as u32],
+    );
+
+    // curve25519 supports EdDSA
+    imported_key_config.insert(
+        DWalletCurve::Curve25519 as u32,
+        vec![DWalletSignatureScheme::EdDSA as u32],
+    );
+
     let curve_to_signature_algorithms_for_dkg =
-        new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, dkg_config)?;
     let curve_to_signature_algorithms_for_imported_key =
-        new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, imported_key_config)?;
+
     ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
         ident_str!("coordinator").into(),
@@ -609,7 +664,6 @@ pub async fn ika_system_initialize(
     let all_signature_algorithms = vec![0u32, 1u32, 2u32, 3u32, 4u32];
 
     // Hash types: Keccak256=0, SHA256=1, DoubleSHA256=2, SHA512=3, Merlin=4
-    let all_hashes = vec![0u32, 1u32, 2u32, 3u32, 4u32];
 
     let dkg_first_round_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
         &DKG_FIRST_ROUND_PROTOCOL_FLAG,
@@ -725,21 +779,7 @@ pub async fn ika_system_initialize(
         }
     }
 
-    // Create a VecMap<SignatureAlgorithm, Vec<Hash>> for each curve
-    // All signature algorithms support all hash schemes
-    let hash_values_per_sig_algo = vec![all_hashes.clone(); all_signature_algorithms.len()];
-    let sig_algo_keys = ptb.input(CallArg::Pure(bcs::to_bytes(&all_signature_algorithms)?))?;
-    let hash_values = ptb.input(CallArg::Pure(bcs::to_bytes(&hash_values_per_sig_algo)?))?;
-
-    let signature_algorithms_to_hash_schemes = ptb.programmable_move_call(
-        SUI_FRAMEWORK_PACKAGE_ID,
-        ident_str!("vec_map").into(),
-        ident_str!("from_keys_values").into(),
-        vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
-        vec![sig_algo_keys, hash_values],
-    );
-
-    // Create a vector with a single VecMap using singleton
+    // Create a VecMap<SignatureAlgorithm, Vec<Hash>> for each curve with specific supported hashes
     let vec_map_type = TypeTag::Struct(Box::new(StructTag {
         address: SUI_FRAMEWORK_PACKAGE_ID.into(),
         module: ident_str!("vec_map").into(),
@@ -747,33 +787,100 @@ pub async fn ika_system_initialize(
         type_params: vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
     }));
 
-    let singleton_vec = ptb.programmable_move_call(
+    // Secp256k1: supports SHA256 (1), Keccak256 (0), and DoubleSHA256 (2) for signature algorithms
+    let secp256k1_hashes = vec![vec![0u32, 1u32, 2u32]; all_signature_algorithms.len()];
+    let secp256k1_sig_algo_keys =
+        ptb.input(CallArg::Pure(bcs::to_bytes(&all_signature_algorithms)?))?;
+    let secp256k1_hash_values = ptb.input(CallArg::Pure(bcs::to_bytes(&secp256k1_hashes)?))?;
+    let secp256k1_map = ptb.programmable_move_call(
+        SUI_FRAMEWORK_PACKAGE_ID,
+        ident_str!("vec_map").into(),
+        ident_str!("from_keys_values").into(),
+        vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+        vec![secp256k1_sig_algo_keys, secp256k1_hash_values],
+    );
+
+    // Secp256r1: supports SHA256 (1) and DoubleSHA256 (2) for signature algorithms
+    let secp256r1_hashes = vec![vec![1u32, 2u32]; all_signature_algorithms.len()];
+    let secp256r1_sig_algo_keys =
+        ptb.input(CallArg::Pure(bcs::to_bytes(&all_signature_algorithms)?))?;
+    let secp256r1_hash_values = ptb.input(CallArg::Pure(bcs::to_bytes(&secp256r1_hashes)?))?;
+    let secp256r1_map = ptb.programmable_move_call(
+        SUI_FRAMEWORK_PACKAGE_ID,
+        ident_str!("vec_map").into(),
+        ident_str!("from_keys_values").into(),
+        vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+        vec![secp256r1_sig_algo_keys, secp256r1_hash_values],
+    );
+
+    // Ristretto: supports Merlin (4) for signature algorithms
+    let ristretto_hashes = vec![vec![4u32]; all_signature_algorithms.len()];
+    let ristretto_sig_algo_keys =
+        ptb.input(CallArg::Pure(bcs::to_bytes(&all_signature_algorithms)?))?;
+    let ristretto_hash_values = ptb.input(CallArg::Pure(bcs::to_bytes(&ristretto_hashes)?))?;
+    let ristretto_map = ptb.programmable_move_call(
+        SUI_FRAMEWORK_PACKAGE_ID,
+        ident_str!("vec_map").into(),
+        ident_str!("from_keys_values").into(),
+        vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+        vec![ristretto_sig_algo_keys, ristretto_hash_values],
+    );
+
+    // Curve25519 (EdDSA): supports SHA512 (3) for signature algorithms
+    let curve25519_hashes = vec![vec![3u32]; all_signature_algorithms.len()];
+    let curve25519_sig_algo_keys =
+        ptb.input(CallArg::Pure(bcs::to_bytes(&all_signature_algorithms)?))?;
+    let curve25519_hash_values = ptb.input(CallArg::Pure(bcs::to_bytes(&curve25519_hashes)?))?;
+    let curve25519_map = ptb.programmable_move_call(
+        SUI_FRAMEWORK_PACKAGE_ID,
+        ident_str!("vec_map").into(),
+        ident_str!("from_keys_values").into(),
+        vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+        vec![curve25519_sig_algo_keys, curve25519_hash_values],
+    );
+
+    // Create vector of VecMaps in order: Secp256k1, Secp256r1, Ristretto, Curve25519
+    let vec_of_maps = ptb.programmable_move_call(
         MOVE_STDLIB_PACKAGE_ID,
         ident_str!("vector").into(),
         ident_str!("singleton").into(),
         vec![vec_map_type.clone()],
-        vec![signature_algorithms_to_hash_schemes],
+        vec![secp256k1_map],
+    );
+
+    ptb.programmable_move_call(
+        MOVE_STDLIB_PACKAGE_ID,
+        ident_str!("vector").into(),
+        ident_str!("push_back").into(),
+        vec![vec_map_type.clone()],
+        vec![vec_of_maps, secp256r1_map],
+    );
+
+    ptb.programmable_move_call(
+        MOVE_STDLIB_PACKAGE_ID,
+        ident_str!("vector").into(),
+        ident_str!("push_back").into(),
+        vec![vec_map_type.clone()],
+        vec![vec_of_maps, ristretto_map],
+    );
+
+    ptb.programmable_move_call(
+        MOVE_STDLIB_PACKAGE_ID,
+        ident_str!("vector").into(),
+        ident_str!("push_back").into(),
+        vec![vec_map_type.clone()],
+        vec![vec_of_maps, curve25519_map],
     );
 
     // Create VecMap<Curve, VecMap<SignatureAlgorithm, Vec<Hash>>>
     let curve_keys = ptb.input(CallArg::Pure(bcs::to_bytes(&curves)?))?;
-
-    for _ in 1..curves.len() {
-        ptb.programmable_move_call(
-            MOVE_STDLIB_PACKAGE_ID,
-            ident_str!("vector").into(),
-            ident_str!("push_back").into(),
-            vec![vec_map_type.clone()],
-            vec![singleton_vec, signature_algorithms_to_hash_schemes],
-        );
-    }
 
     let supported_curves_to_signature_algorithms_to_hash_schemes = ptb.programmable_move_call(
         SUI_FRAMEWORK_PACKAGE_ID,
         ident_str!("vec_map").into(),
         ident_str!("from_keys_values").into(),
         vec![TypeTag::U32, vec_map_type],
-        vec![curve_keys, singleton_vec],
+        vec![curve_keys, vec_of_maps],
     );
 
     let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(

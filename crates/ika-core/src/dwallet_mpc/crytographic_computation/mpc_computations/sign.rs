@@ -399,7 +399,7 @@ impl SignPublicInputByProtocol {
 
                             public_input
                         }
-                        VersionedPresignOutput::V2(presign) => {
+                        VersionedPresignOutput::V2(_) => {
                             generate_sign_public_input::<Secp256K1ECDSAProtocol>(
                                 protocol_public_parameters,
                                 dwallet_decentralized_public_output,
@@ -745,12 +745,18 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
         protocol_public_parameters: P::ProtocolPublicParameters,
         dkg_output: &SerializedWrappedMPCPublicOutput,
         message: Vec<u8>,
-        presign: &MPCPublicOutput,
+        presign: &SerializedWrappedMPCPublicOutput,
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: P::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
         hash_scheme: HashType,
     ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
+        let presign = match bcs::from_bytes(&presign)? {
+            VersionedPresignOutput::V1(_) => {
+                unreachable!("Presign V1 should have been handled separately")
+            }
+            VersionedPresignOutput::V2(presign) => presign,
+        };
         let dkg_output = bcs::from_bytes(dkg_output)?;
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
         let decentralized_dkg_output = match dkg_output {
