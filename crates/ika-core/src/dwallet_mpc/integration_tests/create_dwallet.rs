@@ -12,12 +12,12 @@ use crate::request_protocol_data::{
 use dwallet_mpc_centralized_party::{
     create_imported_dwallet_centralized_step_inner_v1,
     create_imported_dwallet_centralized_step_inner_v2, encrypt_secret_key_share_and_prove_v1,
-    encrypt_secret_key_share_and_prove_v2, generate_secp256k1_cg_keypair_from_seed_internal,
+    encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
     network_dkg_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
 };
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
-use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGOutput};
+use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGSecondRoundOutput};
 use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletImportedKeyVerificationRequestEvent,
@@ -81,7 +81,7 @@ async fn dwallet_dkg_first_round() {
 
 pub(crate) struct DWalletTestResult {
     pub(crate) flow_completion_consensus_round: Round,
-    pub(crate) dkg_second_round_output: DWalletDKGOutput,
+    pub(crate) dkg_second_round_output: DWalletDKGSecondRoundOutput,
     pub(crate) dwallet_secret_key_share: Vec<u8>,
     pub(crate) class_groups_encryption_key: Vec<u8>,
     pub(crate) class_groups_decryption_key: Vec<u8>,
@@ -234,8 +234,7 @@ async fn create_imported_dwallet() {
             &dwallet_secret_key,
         )
         .unwrap();
-    let (encryption_key, decryption_key) =
-        generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
+    let (encryption_key, decryption_key) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
     let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v1(
         user_secret_share,
         encryption_key.clone(),
@@ -317,8 +316,7 @@ async fn create_imported_dwallet_v2() {
             &dwallet_secret_key,
         )
         .unwrap();
-    let (encryption_key, decryption_key) =
-        generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
+    let (encryption_key, decryption_key) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
     let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v2(
         0,
         user_secret_share,
@@ -392,8 +390,7 @@ pub(crate) async fn create_dwallet_test(
         dwallet_dkg_first_round_output.output.clone(),
     )
     .unwrap();
-    let (encryption_key, decryption_key) =
-        generate_secp256k1_cg_keypair_from_seed_internal([1; 32]).unwrap();
+    let (encryption_key, decryption_key) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
     let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v1(
         centralized_dwallet_dkg_result
             .centralized_secret_output

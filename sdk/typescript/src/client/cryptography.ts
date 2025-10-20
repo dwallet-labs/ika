@@ -147,8 +147,7 @@ export async function encryptSecretShare(
 }
 
 /**
- * Prepare all cryptographic data needed for the second round of DKG.
- * This function combines the DKG output generation and secret share encryption.
+ * @deprecated Use prepareDKG instead
  *
  * @param protocolPublicParameters - The protocol public parameters
  * @param dWallet - The DWallet object containing first round output
@@ -190,12 +189,11 @@ export async function prepareDKGSecondRound(
 }
 
 /**
- * Prepare all cryptographic data needed for the second round of DKG.
- * This function combines the DKG output generation and secret share encryption.
+ * Prepare all cryptographic data needed for DKG.
  *
  * @param protocolPublicParameters - The protocol public parameters
  * @param encryptionKey - The user's public encryption key
- * @param session_id
+ * @param session_id - The session identifier
  * @returns Complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available in the DWallet
  *
@@ -224,8 +222,7 @@ export async function prepareDKG(
 }
 
 /**
- * Asynchronously prepare all cryptographic data needed for the second round of DKG.
- * This function fetches network parameters automatically and prepares the second round data.
+ * @deprecated Use prepareDKGAsync instead
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param dWallet - The DWallet object containing first round output
@@ -250,12 +247,11 @@ export async function prepareDKGSecondRoundAsync(
 }
 
 /**
- * Asynchronously prepare all cryptographic data needed for the second round of DKG.
- * This function fetches network parameters automatically and prepares the second round data.
+ * Prepare all cryptographic data needed for DKG.
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
- * @param sessionId
+ * @param sessionId - The session identifier
  * @returns Promise resolving to complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available or network parameters cannot be fetched
  *

@@ -37,12 +37,13 @@ use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::{
     DKGFirstRoundOutput, DWalletCheckpointMessageKind, DWalletDKGOutput,
-    DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput, MPCNetworkDKGOutput,
-    MPCNetworkReconfigurationOutput, MakeDWalletUserSecretKeySharesPublicOutput,
-    PartialSignatureVerificationOutput, PresignOutput, SignOutput,
+    DWalletDKGSecondRoundOutput, DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput,
+    MPCNetworkDKGOutput, MPCNetworkReconfigurationOutput,
+    MakeDWalletUserSecretKeySharesPublicOutput, PartialSignatureVerificationOutput, PresignOutput,
+    SignOutput,
 };
 use ika_types::messages_consensus::ConsensusTransaction;
-use ika_types::messages_dwallet_mpc::SessionIdentifier;
+use ika_types::messages_dwallet_mpc::{SessionIdentifier, UserSecretKeyShareEventType};
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
@@ -808,14 +809,20 @@ impl DWalletMPCService {
         );
         match &session_request.protocol_data {
             ProtocolData::DWalletDKG {
-                dwallet_id,
-                encrypted_secret_share_id,
-                ..
+                dwallet_id, data, ..
             } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
                     output,
                     dwallet_id: dwallet_id.to_vec(),
-                    encrypted_secret_share_id: encrypted_secret_share_id.to_vec(),
+                    encrypted_secret_share_id: match data.user_secret_key_share {
+                        UserSecretKeyShareEventType::Encrypted {
+                            encrypted_user_secret_key_share_id,
+                            ..
+                        } => Some(encrypted_user_secret_key_share_id.to_vec()),
+                        UserSecretKeyShareEventType::Public { .. } => None,
+                    },
+                    sign_id: None,
+                    signature: vec![],
                     rejected,
                     session_sequence_number: session_request.session_sequence_number,
                 });
@@ -838,7 +845,7 @@ impl DWalletMPCService {
                 ..
             } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(
-                    DWalletDKGOutput {
+                    DWalletDKGSecondRoundOutput {
                         output,
                         dwallet_id: dwallet_id.to_vec(),
                         encrypted_secret_share_id: encrypted_secret_share_id.to_vec(),

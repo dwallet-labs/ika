@@ -28,6 +28,7 @@ use sui::sui::SUI;
 use sui::vec_map::VecMap;
 use ika_common::upgrade_package_approver::UpgradePackageApprover;
 use ika_dwallet_2pc_mpc::coordinator_inner::DWallet;
+use ika_dwallet_2pc_mpc::coordinator_inner::SignDuringDKGRequest;
 
 // === Errors ===
 
@@ -181,6 +182,19 @@ public fun set_paused_curves_and_signature_algorithms(
         );
 }
 
+public fun set_global_presign_config(
+    self: &mut DWalletCoordinator,
+    curve_to_signature_algorithms_for_dkg: VecMap<u32, vector<u32>>,
+    curve_to_signature_algorithms_for_imported_key: VecMap<u32, vector<u32>>,
+    cap: &VerifiedProtocolCap,
+) {
+    self.inner_mut().set_global_presign_config(
+        curve_to_signature_algorithms_for_dkg,
+        curve_to_signature_algorithms_for_imported_key,
+        cap,
+    );
+}
+
 public fun request_lock_epoch_sessions(
     self: &mut DWalletCoordinator,
     system_current_status_info: &SystemCurrentStatusInfo,
@@ -198,10 +212,10 @@ public fun set_pricing_vote(
 
 public fun register_session_identifier(
     self: &mut DWalletCoordinator,
-    identifier: vector<u8>,
+    bytes: vector<u8>,
     ctx: &mut TxContext,
 ): SessionIdentifier {
-    self.inner_mut().register_session_identifier(identifier, ctx)
+    self.inner_mut().register_session_identifier(bytes, ctx)
 }
 
 public fun get_active_encryption_key(self: &DWalletCoordinator, address: address): ID {
@@ -282,13 +296,30 @@ public fun request_dwallet_dkg_second_round(
     _encrypted_centralized_secret_share_and_proof: vector<u8>,
     _encryption_key_address: address,
     _user_public_output: vector<u8>,
-    _singer_public_key: vector<u8>,
+    _signer_public_key: vector<u8>,
     _session_identifier: SessionIdentifier,
     _payment_ika: &mut Coin<IKA>,
     _payment_sui: &mut Coin<SUI>,
     _ctx: &mut TxContext,
 ) {
     abort EDeprecatedFunction
+}
+
+public fun sign_during_dkg_request(
+    self: &mut DWalletCoordinator,
+    presign_cap: VerifiedPresignCap,
+    hash_scheme: u32,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+): SignDuringDKGRequest {
+    self
+        .inner_mut()
+        .sign_during_dkg_request(
+            presign_cap,
+            hash_scheme, 
+            message,
+            message_centralized_signature,
+        )
 }
 
 public fun request_dwallet_dkg(
@@ -299,12 +330,13 @@ public fun request_dwallet_dkg(
     encrypted_centralized_secret_share_and_proof: vector<u8>,
     encryption_key_address: address,
     user_public_output: vector<u8>,
-    singer_public_key: vector<u8>,
+    signer_public_key: vector<u8>,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
     session_identifier: SessionIdentifier,
     payment_ika: &mut Coin<IKA>,
     payment_sui: &mut Coin<SUI>,
     ctx: &mut TxContext,
-): DWalletCap {
+): (DWalletCap, Option<ID>) {
     self
         .inner_mut()
         .request_dwallet_dkg(
@@ -314,7 +346,37 @@ public fun request_dwallet_dkg(
             encrypted_centralized_secret_share_and_proof,
             encryption_key_address,
             user_public_output,
-            singer_public_key,
+            signer_public_key,
+            sign_during_dkg_request,
+            session_identifier,
+            payment_ika,
+            payment_sui,
+            ctx,
+        )
+}
+
+public fun request_dwallet_dkg_with_public_user_secret_key_share(
+    self: &mut DWalletCoordinator,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    centralized_public_key_share_and_proof: vector<u8>,
+    user_public_output: vector<u8>,
+    public_user_secret_key_share: vector<u8>,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): (DWalletCap, Option<ID>) {
+    self
+        .inner_mut()
+        .request_dwallet_dkg_with_public_user_secret_key_share(
+            dwallet_network_encryption_key_id,
+            curve,
+            centralized_public_key_share_and_proof,
+            user_public_output,
+            public_user_secret_key_share,
+            sign_during_dkg_request,
             session_identifier,
             payment_ika,
             payment_sui,
@@ -771,8 +833,8 @@ public fun commit_upgrade(self: &mut DWalletCoordinator, upgrade_package_approve
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
 /// This function can be called immediately after the upgrade is committed.
-public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtocolCap) {
-    self.try_migrate_impl();
+public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtocolCap, ctx: &mut TxContext) {
+    self.try_migrate_impl(ctx);
 }
 
 /// Try to migrate the coordinator object to the new package id.
@@ -780,22 +842,24 @@ public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtoco
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
 /// Call this function after the migration epoch is reached.
-public fun try_migrate(self: &mut DWalletCoordinator) {
+public fun try_migrate(self: &mut DWalletCoordinator, ctx: &mut TxContext) {
     assert!(self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e), EInvalidMigration);
-    self.try_migrate_impl();
+    self.try_migrate_impl(ctx);
 }
 
 /// Migrate the coordinator object to the new package id.
 ///
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
-fun try_migrate_impl(self: &mut DWalletCoordinator) {
+fun try_migrate_impl(self: &mut DWalletCoordinator, _ctx: &mut TxContext) {
     assert!(self.version < VERSION, EInvalidMigration);
     assert!(self.new_package_id.is_some(), EInvalidMigration);
     // Move the old coordinator inner to the new version.
     let coordinator_inner: DWalletCoordinatorInner = dynamic_field::remove(&mut self.id, self.version);
     dynamic_field::add(&mut self.id, VERSION, coordinator_inner);
     self.version = VERSION;
+
+    self.inner_mut().migrate();
 
     self.package_id = self.new_package_id.extract();
     // empty the migration epoch

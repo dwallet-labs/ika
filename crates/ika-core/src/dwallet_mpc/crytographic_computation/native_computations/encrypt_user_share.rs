@@ -3,8 +3,8 @@
 
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyOutputSecp256k1, MPCPublicOutput, SerializedWrappedMPCPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedEncryptedUserShare,
+    MPCPublicOutput, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    VersionedEncryptedUserShare,
 };
 use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -26,15 +26,9 @@ pub(crate) fn verify_encrypted_share(
     protocol_public_parameters: ProtocolPublicParametersByCurve,
 ) -> DwalletMPCResult<()> {
     let encrypted_centralized_secret_share_and_proof: VersionedEncryptedUserShare =
-        bcs::from_bytes(encrypted_centralized_secret_share_and_proof).map_err(|e| {
-            DwalletMPCError::BcsError(bcs::Error::Custom("Invalid encrypted user share".into()))
-        })?;
+        bcs::from_bytes(encrypted_centralized_secret_share_and_proof)?;
     let decentralized_public_output: VersionedDwalletDKGSecondRoundPublicOutput =
-        bcs::from_bytes(decentralized_public_output).map_err(|e| {
-            DwalletMPCError::BcsError(bcs::Error::Custom(
-                "Invalid decentralized public dkg output".into(),
-            ))
-        })?;
+        bcs::from_bytes(decentralized_public_output)?;
 
     match (
         encrypted_centralized_secret_share_and_proof,
@@ -69,14 +63,13 @@ fn verify_centralized_secret_key_share_proof_v1(
     encryption_key: &[u8],
     protocol_public_parameters: ProtocolPublicParametersByCurve,
 ) -> anyhow::Result<()> {
-    let protocol_public_parameters = match protocol_public_parameters {
-        ProtocolPublicParametersByCurve::Secp256k1(pp) => pp,
-        _ => {
-            return anyhow::bail!(
-                "Secret key share proof verification for the given curve is not implemented for v1 {}",
-                protocol_public_parameters
-            );
-        }
+    let ProtocolPublicParametersByCurve::Secp256k1(protocol_public_parameters) =
+        protocol_public_parameters
+    else {
+        return anyhow::bail!(
+            "Secret key share proof verification for the given curve is not implemented for v1 {}",
+            protocol_public_parameters.to_string()
+        );
     };
 
     let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyTargetedDKGOutput = bcs::from_bytes(&dkg_public_output).map_err(|e| anyhow::anyhow!("Failed to deserialize dkg public output: {}", e))?;
