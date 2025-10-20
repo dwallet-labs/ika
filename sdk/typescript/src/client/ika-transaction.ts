@@ -21,7 +21,7 @@ import {
 	type ValidHashForSignature,
 } from './hash-signature-validation.js';
 import type { IkaClient } from './ika-client.js';
-import type {
+import {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
@@ -31,10 +31,10 @@ import type {
 	ImportedSharedDWallet,
 	Presign,
 	SharedDWallet,
+	SignatureAlgorithm,
 	UserSignatureInputs,
 	ZeroTrustDWallet,
 } from './types.js';
-import { SignatureAlgorithm } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import {
 	create_sign_centralized_party_message as create_sign,
@@ -502,6 +502,9 @@ export class IkaTransaction {
 	 * Request a presign operation for a DWallet.
 	 * Presigning allows for faster signature generation by pre-computing part of the signature.
 	 *
+	 * If you are using ecdsa(k1,r1) and imported key dwallet, you must call this function always
+	 * If you are using schnor, schnorrkell, eddsa, taproot, call requestGlobalPresign instead
+	 *
 	 * @param params.dWallet - The DWallet to create the presign for
 	 * @param params.signatureAlgorithm - The signature algorithm identifier to use
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
@@ -519,6 +522,23 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): TransactionObjectArgument {
+		if (!dWallet.state.Active?.public_output) throw new Error('DWallet is not active');
+
+		const dWalletVersion = dWallet.state.Active.public_output[0];
+
+		if (dWalletVersion === 1 && signatureAlgorithm !== Curve.SECP256K1) {
+			// In version 1, you must use ecdsa(k1) only
+			throw new Error(
+				'You can call this fn if this is imported key dwallet(ecdsa) or the version is 1',
+			);
+		}
+
+		if (dWalletVersion === 2 && dWallet.is_imported_key_dwallet) {
+			if (signatureAlgorithm !== Curve.SECP256K1 && signatureAlgorithm !== Curve.SECP256R1) {
+				throw new Error('On version 2, you must use ecdsa(k1,r1) and imported key dwallet');
+			}
+		}
+
 		const unverifiedPresignCap = this.#requestPresign({
 			dWallet,
 			signatureAlgorithm,
@@ -531,6 +551,8 @@ export class IkaTransaction {
 
 	/**
 	 * Request a global presign operation.
+	 * If you are using ecdsa(k1,r1) and imported key dwallet, instead call requestPresign
+	 * If you are using schnor, schnorrkell, eddsa, taproot, call this function always
 	 *
 	 * @param params.dwalletNetworkEncryptionKeyId - The network encryption key ID to use for the presign
 	 * @param params.curve - The curve to use for the presign

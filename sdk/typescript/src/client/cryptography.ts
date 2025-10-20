@@ -298,7 +298,7 @@ export async function prepareImportedKeyDWalletVerification(
 			curve,
 			protocolPublicParameters,
 			sessionIdentifierDigest(bytesToHash, senderAddressBytes),
-			bcs.vector(bcs.u8()).serialize(privateKey).toBytes(),
+			privateKey,
 		);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(

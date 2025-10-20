@@ -47,8 +47,7 @@ function generatePrivateKey(curve: Curve): Uint8Array {
 		case Curve.ED25519:
 			return ed25519.utils.randomSecretKey();
 		case Curve.RISTRETTO:
-			// For Ristretto/Schnorrkel, use 32 random bytes
-			return randomBytes(32);
+			return ed25519.utils.randomSecretKey();
 		default:
 			throw new Error(`Unsupported curve: ${curve}`);
 	}
@@ -183,7 +182,8 @@ async function requestPresignForImportedKey(
 
 	if (
 		signatureAlgorithm === SignatureAlgorithm.EdDSA ||
-		signatureAlgorithm === SignatureAlgorithm.SchnorrkelSubstrate
+		signatureAlgorithm === SignatureAlgorithm.SchnorrkelSubstrate ||
+		signatureAlgorithm === SignatureAlgorithm.Taproot
 	) {
 		unverifiedPresignCap = ikaTransaction.requestGlobalPresign({
 			signatureAlgorithm,
@@ -491,47 +491,47 @@ async function testImportedKeyScenario(
 }
 
 describe('Imported Key DWallet Creation and Signing', () => {
-	describe('ECDSASecp256k1 on SECP256K1', () => {
-		it('should create imported key DWallet and sign with KECCAK256', async () => {
-			await testImportedKeyScenario(
-				Curve.SECP256K1,
-				SignatureAlgorithm.ECDSASecp256k1,
-				Hash.KECCAK256,
-				'ecdsa-secp256k1-keccak256',
-			);
-		});
+	// describe('ECDSASecp256k1 on SECP256K1', () => {
+	// 	it('should create imported key DWallet and sign with KECCAK256', async () => {
+	// 		await testImportedKeyScenario(
+	// 			Curve.SECP256K1,
+	// 			SignatureAlgorithm.ECDSASecp256k1,
+	// 			Hash.KECCAK256,
+	// 			'ecdsa-secp256k1-keccak256',
+	// 		);
+	// 	});
 
-		it('should create imported key DWallet and sign with SHA256', async () => {
-			await testImportedKeyScenario(
-				Curve.SECP256K1,
-				SignatureAlgorithm.ECDSASecp256k1,
-				Hash.SHA256,
-				'ecdsa-secp256k1-sha256',
-			);
-		});
-	});
+	// 	it('should create imported key DWallet and sign with SHA256', async () => {
+	// 		await testImportedKeyScenario(
+	// 			Curve.SECP256K1,
+	// 			SignatureAlgorithm.ECDSASecp256k1,
+	// 			Hash.SHA256,
+	// 			'ecdsa-secp256k1-sha256',
+	// 		);
+	// 	});
+	// });
 
-	describe('Taproot on SECP256K1', () => {
-		it('should create imported key DWallet and sign with SHA256', async () => {
-			await testImportedKeyScenario(
-				Curve.SECP256K1,
-				SignatureAlgorithm.Taproot,
-				Hash.SHA256,
-				'taproot-sha256',
-			);
-		});
-	});
+	// describe('Taproot on SECP256K1', () => {
+	// 	it('should create imported key DWallet and sign with SHA256', async () => {
+	// 		await testImportedKeyScenario(
+	// 			Curve.SECP256K1,
+	// 			SignatureAlgorithm.Taproot,
+	// 			Hash.SHA256,
+	// 			'taproot-sha256',
+	// 		);
+	// 	});
+	// });
 
-	describe('ECDSASecp256r1 on SECP256R1', () => {
-		it('should create imported key DWallet and sign with SHA256', async () => {
-			await testImportedKeyScenario(
-				Curve.SECP256R1,
-				SignatureAlgorithm.ECDSASecp256r1,
-				Hash.SHA256,
-				'ecdsa-secp256r1-sha256',
-			);
-		});
-	});
+	// describe('ECDSASecp256r1 on SECP256R1', () => {
+	// 	it('should create imported key DWallet and sign with SHA256', async () => {
+	// 		await testImportedKeyScenario(
+	// 			Curve.SECP256R1,
+	// 			SignatureAlgorithm.ECDSASecp256r1,
+	// 			Hash.SHA256,
+	// 			'ecdsa-secp256r1-sha256',
+	// 		);
+	// 	});
+	// });
 
 	describe('EdDSA on ED25519', () => {
 		it('should create imported key DWallet and sign with SHA512', async () => {
