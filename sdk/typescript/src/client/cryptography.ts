@@ -489,9 +489,16 @@ export async function publicKeyFromDWalletOutput(
 	curve: Curve,
 	dWalletOutput: Uint8Array,
 ): Promise<Uint8Array> {
-	return Uint8Array.from(
-		PublicKeyBCS.parse(Uint8Array.from(await public_key_from_dwallet_output(curve, dWalletOutput))),
-	);
+	const raw = await public_key_from_dwallet_output(curve, dWalletOutput);
+	const encoded = new Uint8Array(raw); // Convert JS array -> Uint8Array
+
+	// If it is Ristretto or ED25519
+	// It is not BCS-Encoded since they have fixed size in rust
+	if (curve === Curve.RISTRETTO || curve === Curve.ED25519) {
+		return new Uint8Array(encoded);
+	}
+
+	return new Uint8Array(PublicKeyBCS.parse(encoded)); // Decode BCS bytes -> raw public key
 }
 
 /**

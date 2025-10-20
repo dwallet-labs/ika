@@ -389,7 +389,7 @@ fn public_key_from_dwallet_output_inner_ristretto(
         }
     };
 
-    Ok(bcs::to_bytes(&public_key)?)
+    Ok(bcs::to_bytes(&public_key.value())?)
 }
 
 fn public_key_from_dwallet_output_inner_curve25519(
@@ -412,7 +412,7 @@ fn public_key_from_dwallet_output_inner_curve25519(
         }
     };
 
-    Ok(bcs::to_bytes(&public_key)?)
+    Ok(bcs::to_bytes(&public_key.value())?)
 }
 
 fn public_key_from_dwallet_output_inner_secp256r1(

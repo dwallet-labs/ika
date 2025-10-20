@@ -1,7 +1,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { p256 } from '@noble/curves/nist.js';
-import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256, sha512 } from '@noble/hashes/sha2';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { describe, expect, it } from 'vitest';
@@ -68,6 +68,7 @@ function verifySignature(
 	hash: Uint8Array,
 	publicKey: Uint8Array,
 	signatureAlgorithm: SignatureAlgorithm,
+	message?: Uint8Array,
 ): boolean {
 	switch (signatureAlgorithm) {
 		case SignatureAlgorithm.ECDSASecp256k1:
@@ -76,11 +77,16 @@ function verifySignature(
 			// Taproot uses Schnorr signatures on secp256k1
 			// For now, we'll use the same verification as ECDSASecp256k1
 			// In production, this would need proper Schnorr verification
-			return secp256k1.verify(signature, hash, publicKey, { prehash: false });
+			// For Taproot, strip the first byte (prefix) of the publicKey
+			return schnorr.verify(signature, hash, publicKey.slice(1));
 		case SignatureAlgorithm.ECDSASecp256r1:
 			return p256.verify(signature, hash, publicKey, { prehash: false });
 		case SignatureAlgorithm.EdDSA:
-			return ed25519.verify(signature, hash, publicKey);
+			if (!message) {
+				throw new Error('Message is required for EdDSA');
+			}
+
+			return ed25519.verify(signature, message, publicKey);
 		case SignatureAlgorithm.SchnorrkelSubstrate:
 			// Schnorrkel verification would require special handling
 			// For now, we'll skip client-side verification for Schnorrkel
@@ -276,7 +282,15 @@ async function signAndVerify(
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {
 		const expectedHash = computeHash(message, hashScheme);
-		const verified = verifySignature(signature, expectedHash, pkOutput, signatureAlgorithm);
+
+		const verified = verifySignature(
+			signature,
+			expectedHash,
+			pkOutput,
+			signatureAlgorithm,
+			message,
+		);
+
 		expect(verified).toBe(true);
 	}
 }
