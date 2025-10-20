@@ -4,5 +4,6 @@
 pub mod network_config;
 pub mod network_config_builder;
 pub mod node_config_builder;
+pub mod protocol_config;
 pub mod sui_client;
 pub mod validator_initialization_config;
