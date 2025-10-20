@@ -36,10 +36,10 @@ describe('Global Presign', () => {
 		);
 	});
 
-	it('should create a global presign - Ristretto Taproot', async () => {
+	it('should create a global presign - Secp256k1 Taproot', async () => {
 		await runGlobalPresignTest(
-			'global-presign-test-ristretto-taproot',
-			Curve.RISTRETTO,
+			'global-presign-test-secp256k1-taproot',
+			Curve.SECP256K1,
 			SignatureAlgorithm.Taproot,
 		);
 	});
