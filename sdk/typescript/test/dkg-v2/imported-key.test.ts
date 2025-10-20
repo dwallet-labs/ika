@@ -165,6 +165,7 @@ async function requestPresignForImportedKey(
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	importedKeyDWallet: ImportedKeyDWallet,
 	signatureAlgorithm: SignatureAlgorithm,
+	dwalletNetworkEncryptionKeyId: string,
 	signerAddress: string,
 	testName: string,
 ): Promise<Presign> {
@@ -178,11 +179,12 @@ async function requestPresignForImportedKey(
 
 	const ikaToken = createEmptyTestIkaToken(suiTransaction, ikaClient.ikaConfig);
 
-	const unverifiedPresignCap = ikaTransaction.requestPresign({
-		dWallet: importedKeyDWallet,
+	const unverifiedPresignCap = ikaTransaction.requestGlobalPresign({
 		signatureAlgorithm,
 		ikaCoin: ikaToken,
 		suiCoin: suiTransaction.gas,
+		curve: importedKeyDWallet.curve as Curve,
+		dwalletNetworkEncryptionKeyId,
 	});
 
 	suiTransaction.transferObjects([unverifiedPresignCap], signerAddress);
@@ -287,14 +289,14 @@ async function testImportedKeyScenario(
 
 	// Wait for DWallet to be verified and active
 	const importedKeyDWallet = (await retryUntil(
-		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature'),
 		(wallet) => wallet !== null,
 		30,
 		1000,
 	)) as ImportedKeyDWallet;
 
 	expect(importedKeyDWallet).toBeDefined();
-	expect(importedKeyDWallet.state.$kind).toBe('Active');
+	expect(importedKeyDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
 	expect(importedKeyDWallet.is_imported_key_dwallet).toBe(true);
 
 	// Get the encrypted user secret key share
@@ -307,12 +309,42 @@ async function testImportedKeyScenario(
 	);
 	expect(encryptedUserSecretKeyShare).toBeDefined();
 
+	const networkEncryptionKey = await ikaClient.getLatestNetworkEncryptionKey();
+
+	// Accept encrypted user share in a separate transaction
+	const acceptShareTransaction = new Transaction();
+	const acceptShareIkaTransaction = createTestIkaTransaction(
+		ikaClient,
+		acceptShareTransaction,
+		userShareEncryptionKeys,
+	);
+
+	await acceptShareIkaTransaction.acceptEncryptedUserShare({
+		dWallet: importedKeyDWallet,
+		encryptedUserSecretKeyShareId: encryptedUserSecretKeyShare.id.id,
+		userPublicOutput: importDWalletVerificationInput.userPublicOutput,
+	});
+
+	await executeTestTransaction(suiClient, acceptShareTransaction, testName);
+
+	// Wait for wallet to become Active
+	const activeDWallet = (await retryUntil(
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
+		(wallet) => wallet !== null,
+		30,
+		2000,
+	)) as ImportedKeyDWallet;
+
+	expect(activeDWallet).toBeDefined();
+	expect(activeDWallet.state.$kind).toBe('Active');
+
 	// Request presign
 	const presign = await requestPresignForImportedKey(
 		ikaClient,
 		userShareEncryptionKeys,
-		importedKeyDWallet,
+		activeDWallet,
 		signatureAlgorithm,
+		networkEncryptionKey.id,
 		signerAddress,
 		testName,
 	);
@@ -328,7 +360,7 @@ async function testImportedKeyScenario(
 	);
 
 	const importedKeyMessageApproval = signIkaTransaction.approveImportedKeyMessage({
-		dWalletCap: importedKeyDWallet.dwallet_cap_id,
+		dWalletCap: activeDWallet.dwallet_cap_id,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -340,13 +372,18 @@ async function testImportedKeyScenario(
 
 	const emptyIKACoin = createEmptyTestIkaToken(signTransaction, ikaClient.ikaConfig);
 
+	const encryptedUserSecretKeyShareForSign = await ikaClient.getEncryptedUserSecretKeyShare(
+		encryptedUserSecretKeyShareId as string,
+	);
+	expect(encryptedUserSecretKeyShare).toBeDefined();
+
 	await signIkaTransaction.requestSignWithImportedKey({
-		dWallet: importedKeyDWallet,
+		dWallet: activeDWallet,
 		importedKeyMessageApproval,
 		verifiedPresignCap,
 		hashScheme,
 		presign,
-		encryptedUserSecretKeyShare,
+		encryptedUserSecretKeyShare: encryptedUserSecretKeyShareForSign,
 		message,
 		signatureScheme: signatureAlgorithm,
 		ikaCoin: emptyIKACoin,
@@ -384,7 +421,7 @@ async function testImportedKeyScenario(
 	// Get the public key from DWallet output
 	const dWalletPublicKey = await publicKeyFromDWalletOutput(
 		curve,
-		Uint8Array.from(importedKeyDWallet.state.Active?.public_output ?? []),
+		Uint8Array.from(activeDWallet.state.Active?.public_output ?? []),
 	);
 
 	// Get the public key from centralized DKG output (user public output)
