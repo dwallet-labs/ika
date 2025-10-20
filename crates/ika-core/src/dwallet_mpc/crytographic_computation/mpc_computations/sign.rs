@@ -309,6 +309,12 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                 }
             },
             DWalletCurve::Ristretto => {
+                if protocol != &DWalletSignatureScheme::SchnorrkelSubstrate {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: curve.clone(),
+                        protocol: protocol.clone(),
+                    });
+                }
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol>,
                 >(
@@ -321,6 +327,12 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                 advance_request.map(Self::Ristretto)
             }
             DWalletCurve::Curve25519 => {
+                if protocol != &DWalletSignatureScheme::EdDSA {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: curve.clone(),
+                        protocol: protocol.clone(),
+                    });
+                }
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     DKGAndSignParty<Curve25519EdDSAProtocol>,
                 >(
@@ -530,29 +542,23 @@ impl DKGAndSignPublicInputByProtocol {
                     .secp256k1_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
+
+                let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) =
+                    dwallet_dkg_public_input
+                else {
+                    unreachable!("Curve and DKG public input type mismatch");
+                };
                 Ok(DKGAndSignPublicInputByProtocol::Secp256k1ECDSA(
-                    match bcs::from_bytes(presign)? {
-                        VersionedPresignOutput::V1(presign) => {
-                            unreachable!("DKGAndSign does not support V1 presign outputs");
-                        }
-                        VersionedPresignOutput::V2(presign) => {
-                            let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) =
-                                dwallet_dkg_public_input
-                            else {
-                                unreachable!("Curve and DKG public input type mismatch");
-                            };
-                            generate_dkg_and_sign_public_input::<Secp256K1ECDSAProtocol>(
-                                protocol_public_parameters,
-                                public_input,
-                                message,
-                                &presign,
-                                message_centralized_signature,
-                                decryption_pp,
-                                expected_decrypters,
-                                hash_scheme,
-                            )?
-                        }
-                    },
+                    generate_dkg_and_sign_public_input::<Secp256K1ECDSAProtocol>(
+                        protocol_public_parameters,
+                        public_input,
+                        message,
+                        &presign,
+                        message_centralized_signature,
+                        decryption_pp,
+                        expected_decrypters,
+                        hash_scheme,
+                    )?,
                 ))
             }
             DWalletSignatureScheme::Taproot => {
@@ -818,6 +824,12 @@ impl<P: twopc_mpc::sign::Protocol> DKGAndSignPartyPublicInputGenerator<P> for DK
         expected_decrypters: HashSet<PartyID>,
         hash_scheme: HashType,
     ) -> DwalletMPCResult<<DKGAndSignParty<P> as Party>::PublicInput> {
+        let presign = match bcs::from_bytes(&presign)? {
+            VersionedPresignOutput::V1(_) => {
+                unreachable!("Presign V1 should have been handled separately")
+            }
+            VersionedPresignOutput::V2(presign) => presign,
+        };
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
         let centralized_signed_message = match centralized_signed_message {
             VersionedUserSignedMessage::V1(centralized_signed_message) => {
