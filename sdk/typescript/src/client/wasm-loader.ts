@@ -196,12 +196,14 @@ export async function centralized_and_decentralized_parties_dkg_output_match(
 }
 
 export async function create_imported_dwallet_centralized_step(
+	curve: Curve,
 	protocolPublicParameters: Uint8Array,
 	sessionIdentifier: Uint8Array,
 	secretKey: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array, Uint8Array]> {
 	const wasm = await getWasmModule();
 	return wasm.create_imported_dwallet_centralized_step(
+		curve,
 		protocolPublicParameters,
 		sessionIdentifier,
 		secretKey,

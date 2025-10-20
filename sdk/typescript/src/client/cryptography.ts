@@ -295,6 +295,7 @@ export async function prepareImportedKeyDWalletVerification(
 
 	const [userSecretShare, userPublicOutput, userMessage] =
 		await create_imported_dwallet_user_output(
+			curve,
 			protocolPublicParameters,
 			sessionIdentifierDigest(bytesToHash, senderAddressBytes),
 			bcs.vector(bcs.u8()).serialize(privateKey).toBytes(),
