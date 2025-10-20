@@ -6,7 +6,6 @@ use dwallet_mpc_centralized_party::{
     create_dkg_output_by_curve_v2, create_dkg_output_v1,
     create_imported_dwallet_centralized_step_inner_v1, decrypt_user_share_v1,
     dwallet_version_inner, encrypt_secret_key_share_and_prove_v1,
-    generate_secp256k1_cg_keypair_from_seed_internal,
     network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
     public_key_from_dwallet_output_inner, reconfiguration_public_output_to_protocol_pp_inner,
     sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share_v1,

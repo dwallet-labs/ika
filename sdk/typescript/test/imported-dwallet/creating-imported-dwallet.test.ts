@@ -327,8 +327,7 @@ describe('Imported Key DWallet Creation', () => {
 
 		// Create a modified input with false data to trigger rejection
 		const falseVerificationInput = {
-			userPublicOutput: new Uint8Array(20).fill(1), // False data
-			encryptedUserShareAndProof: new Uint8Array(20).fill(2), // False data
+			...importDWalletVerificationRequestInput,
 			userMessage: new Uint8Array(20).fill(3), // False data
 		} as ImportDWalletVerificationRequestInput;
 
