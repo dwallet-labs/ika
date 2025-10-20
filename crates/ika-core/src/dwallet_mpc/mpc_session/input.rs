@@ -110,13 +110,6 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
-            let encrypted_secret_share_and_proof =
-                match bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)? {
-                    VersionedEncryptedUserShare::V1(
-                        encrypted_centralized_secret_share_and_proof,
-                    ) => encrypted_centralized_secret_share_and_proof,
-                };
-
             let public_input = DWalletImportedKeyVerificationPublicInputByCurve::try_new(
                 session_id,
                 &data.curve,
@@ -124,7 +117,9 @@ pub(crate) fn session_input_from_request(
                 &centralized_party_message,
                 BytesCentralizedPartyKeyShareVerification::Encrypted {
                     encryption_key: data.encryption_key.clone(),
-                    encrypted_secret_key_share_message: encrypted_secret_share_and_proof,
+                    encrypted_secret_key_share_message: data
+                        .encrypted_centralized_secret_share_and_proof
+                        .clone(),
                 },
             )?;
 
