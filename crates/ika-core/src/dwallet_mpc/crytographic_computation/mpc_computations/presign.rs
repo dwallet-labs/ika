@@ -28,6 +28,7 @@ use mpc::{
 };
 use std::collections::HashMap;
 use tracing::error;
+use twopc_mpc::dkg::decentralized_party::VersionedOutput;
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
 
@@ -148,16 +149,18 @@ impl PresignPublicInputByProtocol {
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
     ) -> DwalletMPCResult<Self> {
         if dwallet_public_output.is_none() {
-            return Self::try_new_v2(protocol, versioned_network_encryption_key_public_data);
+            return Self::try_new_v2(protocol, versioned_network_encryption_key_public_data, None);
         }
         // Safe to unwrap as we checked for None above
         match bcs::from_bytes(&dwallet_public_output.unwrap())? {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
                 Self::try_new_v1(versioned_network_encryption_key_public_data, dkg_output)
             }
-            VersionedDwalletDKGSecondRoundPublicOutput::V2(_) => {
-                unreachable!("Only global presign is supported for v2 dWallets")
-            }
+            VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => Self::try_new_v2(
+                protocol,
+                versioned_network_encryption_key_public_data,
+                Some(output),
+            ),
         }
     }
     pub(crate) fn try_new_v1(
@@ -181,6 +184,7 @@ impl PresignPublicInputByProtocol {
     pub(crate) fn try_new_v2(
         protocol: DWalletSignatureScheme,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        dwallet_dkg_output: Option<MPCPublicOutput>,
     ) -> DwalletMPCResult<Self> {
         let input = match protocol {
             DWalletSignatureScheme::ECDSASecp256k1 => {
@@ -189,7 +193,21 @@ impl PresignPublicInputByProtocol {
                 let public_input =
                     <PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
-                        None,
+                        match dwallet_dkg_output {
+                            Some(dkg_output) => {
+                                let versioned_output = bcs::from_bytes::<
+                                    <Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                >(&dkg_output)?;
+                                let output = match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
+                                    VersionedOutput::UniversalPublicDKGOutput {
+                                        output, ..
+                                    } => output,
+                                };
+                                Some(output)
+                            }
+                            None => None,
+                        },
                     ));
                 PresignPublicInputByProtocol::Secp256k1ECDSA(public_input)
             }
@@ -198,7 +216,22 @@ impl PresignPublicInputByProtocol {
                     .ristretto_protocol_public_parameters()?;
 
                 let pub_input =
-                    <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput::from((protocol_public_parameters, None::<<RistrettoSchnorrkelSubstrateProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>));
+                    <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput::from((
+                        protocol_public_parameters,
+                        match dwallet_dkg_output {
+                            Some(dkg_output) => {
+                                let versioned_output = bcs::from_bytes::<
+                                    <RistrettoSchnorrkelSubstrateProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                >(&dkg_output)?;
+                                let output = match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
+                                    VersionedOutput::UniversalPublicDKGOutput {output, ..} => output
+                                };
+                                Some(output)
+                            },
+                            None => None,
+                        },
+                    ));
 
                 PresignPublicInputByProtocol::SchnorrkelSubstrate(pub_input)
             }
@@ -209,7 +242,21 @@ impl PresignPublicInputByProtocol {
                 let pub_input =
                     <PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
-                        None::<<Curve25519EdDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>,
+                        match dwallet_dkg_output {
+                            Some(dkg_output) => {
+                                let versioned_output = bcs::from_bytes::<
+                                    <Curve25519EdDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                >(&dkg_output)?;
+                                let output = match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
+                                    VersionedOutput::UniversalPublicDKGOutput {
+                                        output, ..
+                                    } => output,
+                                };
+                                Some(output)
+                            }
+                            None => None,
+                        },
                     ));
 
                 PresignPublicInputByProtocol::EdDSA(pub_input)
@@ -221,7 +268,21 @@ impl PresignPublicInputByProtocol {
                 let pub_input =
                     <PresignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
-                        None::<<Secp256R1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>,
+                        match dwallet_dkg_output {
+                            Some(dkg_output) => {
+                                let versioned_output = bcs::from_bytes::<
+                                    <Secp256R1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                >(&dkg_output)?;
+                                let output = match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
+                                    VersionedOutput::UniversalPublicDKGOutput {
+                                        output, ..
+                                    } => output,
+                                };
+                                Some(output)
+                            }
+                            None => None,
+                        },
                     ));
 
                 PresignPublicInputByProtocol::Secp256r1ECDSA(pub_input)
@@ -233,7 +294,21 @@ impl PresignPublicInputByProtocol {
                 let pub_input =
                     <PresignParty<Secp256K1TaprootProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
-                        None::<<Secp256K1TaprootProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>,
+                        match dwallet_dkg_output {
+                            Some(dkg_output) => {
+                                let versioned_output = bcs::from_bytes::<
+                                    <Secp256K1TaprootProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                >(&dkg_output)?;
+                                let output = match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
+                                    VersionedOutput::UniversalPublicDKGOutput {
+                                        output, ..
+                                    } => output,
+                                };
+                                Some(output)
+                            }
+                            None => None,
+                        },
                     ));
 
                 PresignPublicInputByProtocol::Taproot(pub_input)
