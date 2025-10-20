@@ -345,6 +345,12 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                 advance_request.map(Self::Curve25519)
             }
             DWalletCurve::Secp256r1 => {
+                if protocol != &DWalletSignatureScheme::ECDSASecp256r1 {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: curve.clone(),
+                        protocol: protocol.clone(),
+                    });
+                }
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     DKGAndSignParty<Secp256R1ECDSAProtocol>,
                 >(
