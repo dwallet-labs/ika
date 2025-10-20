@@ -61,7 +61,7 @@ public fun approve_advance_epoch_by_witness<Witness: drop>(
     _: Witness,
     balance_ika: Balance<IKA>,
 ) {
-    let witness_type = type_name::get_with_original_ids<Witness>();
+    let witness_type = type_name::with_original_ids<Witness>();
     let witness_type_name = witness_type.into_string().to_string();
     let (is_found, index) = advance_epoch_approver
         .remaining_witnesses_to_approve

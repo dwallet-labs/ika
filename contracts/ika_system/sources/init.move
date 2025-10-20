@@ -75,12 +75,12 @@ public fun initialize(
     let ika_system_package_id = ika_system_upgrade_cap.package();
 
     assert!(
-        type_name::get<IKA>().get_address() == ika_package_id.to_address().to_ascii_string(),
+        type_name::with_defining_ids<IKA>().address_string() == ika_package_id.to_address().to_ascii_string(),
         EInvalidUpgradeCap,
     );
 
     assert!(
-        type_name::get<InitCap>().get_address() == ika_system_package_id.to_address().to_ascii_string(),
+        type_name::with_defining_ids<InitCap>().address_string() == ika_system_package_id.to_address().to_ascii_string(),
         EInvalidUpgradeCap,
     );
 
