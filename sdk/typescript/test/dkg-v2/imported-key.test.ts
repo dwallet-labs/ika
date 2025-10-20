@@ -179,13 +179,27 @@ async function requestPresignForImportedKey(
 
 	const ikaToken = createEmptyTestIkaToken(suiTransaction, ikaClient.ikaConfig);
 
-	const unverifiedPresignCap = ikaTransaction.requestGlobalPresign({
-		signatureAlgorithm,
-		ikaCoin: ikaToken,
-		suiCoin: suiTransaction.gas,
-		curve: importedKeyDWallet.curve as Curve,
-		dwalletNetworkEncryptionKeyId,
-	});
+	let unverifiedPresignCap;
+
+	if (
+		signatureAlgorithm === SignatureAlgorithm.EdDSA ||
+		signatureAlgorithm === SignatureAlgorithm.SchnorrkelSubstrate
+	) {
+		unverifiedPresignCap = ikaTransaction.requestGlobalPresign({
+			signatureAlgorithm,
+			ikaCoin: ikaToken,
+			suiCoin: suiTransaction.gas,
+			curve: importedKeyDWallet.curve as Curve,
+			dwalletNetworkEncryptionKeyId,
+		});
+	} else {
+		unverifiedPresignCap = ikaTransaction.requestPresign({
+			signatureAlgorithm,
+			ikaCoin: ikaToken,
+			suiCoin: suiTransaction.gas,
+			dWallet: importedKeyDWallet,
+		});
+	}
 
 	suiTransaction.transferObjects([unverifiedPresignCap], signerAddress);
 	destroyEmptyTestIkaToken(suiTransaction, ikaClient.ikaConfig, ikaToken);
