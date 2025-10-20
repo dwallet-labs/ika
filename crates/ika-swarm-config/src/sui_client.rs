@@ -1,6 +1,6 @@
 use crate::validator_initialization_config::ValidatorInitializationConfig;
 use anyhow::bail;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, VersionedMPCData};
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureScheme, VersionedMPCData};
 use fastcrypto::traits::ToFromBytes;
 use ika_config::Config;
 use ika_config::initiation::{InitiationParameters, MIN_VALIDATOR_JOINING_STAKE_INKU};
@@ -543,31 +543,59 @@ pub async fn set_global_presign_config(
         vec![system_arg, protocol_cap_arg],
     );
 
-    // Define supported curves
-    let curves = vec![
-        DWalletCurve::Secp256k1 as u32,
-        DWalletCurve::Secp256r1 as u32,
-        DWalletCurve::Ristretto as u32,
-        DWalletCurve::Curve25519 as u32,
-    ];
-
-    // All signature algorithms including ECDSA (0) and others (1, 2, 3, 4)
-    let all_signature_algorithms = vec![0u32, 1u32, 2u32, 3u32, 4u32];
-
-    // Non-ECDSA signature algorithms (1, 2, 3, 4) - for imported key
-    let non_ecdsa_signature_algorithms = vec![1u32, 2u32, 3u32, 4u32];
-
-    // For DKG: all curves support all signature algorithms including ECDSA
+    // For DKG: each curve supports specific signature algorithms including ECDSA
     let mut dkg_config = HashMap::new();
-    for curve in &curves {
-        dkg_config.insert(*curve, all_signature_algorithms.clone());
-    }
 
-    // For imported key: all curves support non-ECDSA signature algorithms only
+    // secp256k1 supports ECDSASecp256k1 and Taproot
+    dkg_config.insert(
+        DWalletCurve::Secp256k1 as u32,
+        vec![
+            DWalletSignatureScheme::ECDSASecp256k1 as u32,
+            DWalletSignatureScheme::Taproot as u32,
+        ],
+    );
+
+    // secp256r1 supports ECDSASecp256r1
+    dkg_config.insert(
+        DWalletCurve::Secp256r1 as u32,
+        vec![DWalletSignatureScheme::ECDSASecp256r1 as u32],
+    );
+
+    // ristretto supports SchnorrkelSubstrate
+    dkg_config.insert(
+        DWalletCurve::Ristretto as u32,
+        vec![DWalletSignatureScheme::SchnorrkelSubstrate as u32],
+    );
+
+    // curve25519 supports EdDSA
+    dkg_config.insert(
+        DWalletCurve::Curve25519 as u32,
+        vec![DWalletSignatureScheme::EdDSA as u32],
+    );
+
+    // For imported key: each curve supports specific non-ECDSA signature algorithms only
     let mut imported_key_config = HashMap::new();
-    for curve in &curves {
-        imported_key_config.insert(*curve, non_ecdsa_signature_algorithms.clone());
-    }
+
+    // secp256k1 supports Taproot (non-ECDSA)
+    imported_key_config.insert(
+        DWalletCurve::Secp256k1 as u32,
+        vec![DWalletSignatureScheme::Taproot as u32],
+    );
+
+    // secp256r1 supports no non-ECDSA algorithms (empty vector)
+    imported_key_config.insert(DWalletCurve::Secp256r1 as u32, vec![]);
+
+    // ristretto supports SchnorrkelSubstrate
+    imported_key_config.insert(
+        DWalletCurve::Ristretto as u32,
+        vec![DWalletSignatureScheme::SchnorrkelSubstrate as u32],
+    );
+
+    // curve25519 supports EdDSA
+    imported_key_config.insert(
+        DWalletCurve::Curve25519 as u32,
+        vec![DWalletSignatureScheme::EdDSA as u32],
+    );
 
     let curve_to_signature_algorithms_for_dkg =
         new_curve_to_signature_algorithm_vecmap(&mut ptb, dkg_config)?;
