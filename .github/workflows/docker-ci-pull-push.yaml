@@ -24,10 +24,10 @@ jobs:
 
       - name: Pull the docker image and retag
         run: |
-            docker pull us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key6
-            docker tag us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:v2key6 itaylevy134/ika-node:v2key6
+            docker pull us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:testnet-v0.0.2-notifier
+            docker tag us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:testnet-v0.0.2-notifier itaylevy134/ika-node:testnet-v0.0.2-notifier
 
       - name: Push the docker image to Docker Hub
         run: |
           echo ${{ secrets.DOCKER_TOKEN }} | docker login -u itaylevy134 --password-stdin
-          docker push itaylevy134/ika-node:v2key6
+          docker push itaylevy134/ika-node:testnet-v0.0.2-notifier
