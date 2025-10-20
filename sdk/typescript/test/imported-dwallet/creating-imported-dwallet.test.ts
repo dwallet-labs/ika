@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { prepareImportedKeyDWalletVerification } from '../../src/client/cryptography';
+import {
+	ImportDWalletVerificationRequestInput,
+	prepareImportedKeyDWalletVerification,
+} from '../../src/client/cryptography';
 import { Curve, ImportedKeyDWallet } from '../../src/client/types';
 import {
 	acceptTestEncryptedUserShare,
@@ -290,5 +293,90 @@ describe('Imported Key DWallet Creation', () => {
 			)
 			.catch(() => null);
 		expect(incorrectStateDWallet).toBeNull(); // Should not be Active yet
+	});
+
+	it('should handle rejected imported dwallet with false data', async () => {
+		const testName = 'rejected-imported-dwallet-test';
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+
+		const { userShareEncryptionKeys, signerPublicKey, dWalletKeypair, signerAddress } =
+			await generateTestKeypairForImportedKeyDWallet(testName);
+
+		await requestTestFaucetFunds(signerAddress);
+
+		const { sessionIdentifier, sessionIdentifierPreimage } = await createTestSessionIdentifier(
+			ikaClient,
+			suiClient,
+			signerAddress,
+			testName,
+		);
+
+		await delay(3);
+
+		await registerTestEncryptionKey(ikaClient, suiClient, userShareEncryptionKeys, testName);
+
+		// Create a valid verification input first
+		const importDWalletVerificationRequestInput = await prepareImportedKeyDWalletVerification(
+			ikaClient,
+			sessionIdentifierPreimage,
+			userShareEncryptionKeys,
+			dWalletKeypair,
+		);
+
+		// Create a modified input with false data to trigger rejection
+		const falseVerificationInput = {
+			...importDWalletVerificationRequestInput,
+			userMessage: new Uint8Array(20).fill(3), // False data
+		} as ImportDWalletVerificationRequestInput;
+
+		const importedKeyDWalletVerificationRequestEvent =
+			await requestTestImportedKeyDWalletVerification(
+				ikaClient,
+				suiClient,
+				falseVerificationInput,
+				Curve.SECP256K1,
+				signerPublicKey,
+				sessionIdentifier,
+				userShareEncryptionKeys,
+				signerAddress,
+				testName,
+			);
+
+		expect(importedKeyDWalletVerificationRequestEvent).toBeDefined();
+		expect(importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id).toBeDefined();
+
+		// Wait for the dwallet to be in AwaitingKeyHolderSignature state
+		const awaitingKeyHolderSignatureDWallet = await retryUntil(
+			() =>
+				ikaClient.getDWalletInParticularState(
+					importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+					'AwaitingNetworkImportedKeyVerification',
+				),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		);
+
+		expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
+		expect(awaitingKeyHolderSignatureDWallet.state.$kind).toBe(
+			'AwaitingNetworkImportedKeyVerification',
+		);
+
+		// Verify that the dwallet in NetworkRejectedImportedKeyVerification state
+		const stillAwaitingDWallet = await retryUntil(
+			() =>
+				ikaClient.getDWalletInParticularState(
+					importedKeyDWalletVerificationRequestEvent.event_data.dwallet_id,
+					'NetworkRejectedImportedKeyVerification',
+				),
+			(wallet) => wallet !== null,
+			10,
+			1000,
+		);
+
+		expect(stillAwaitingDWallet).toBeDefined();
+		expect(stillAwaitingDWallet.state.$kind).toBe('NetworkRejectedImportedKeyVerification');
 	});
 });
