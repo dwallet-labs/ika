@@ -526,10 +526,15 @@ export class IkaTransaction {
 
 		const dWalletVersion = dWallet.state.Active.public_output[0];
 
-		if (dWalletVersion === 1 && signatureAlgorithm !== Curve.SECP256K1) {
-			// In version 1, you must use ecdsa(k1) only
+		if (
+			dWalletVersion === 1 &&
+			signatureAlgorithm !== SignatureAlgorithm.ECDSASecp256k1 &&
+			signatureAlgorithm !== SignatureAlgorithm.ECDSASecp256r1 &&
+			signatureAlgorithm !== SignatureAlgorithm.Taproot
+		) {
+			// In version 1, you must use ecdsa k1, r1 or taproot only
 			throw new Error(
-				'You can call this fn if this is imported key dwallet(ecdsa) or the version is 1',
+				'You can call this fn if this is imported key dwallet(ecdsa k1, r1 or taproot) or the version is 1',
 			);
 		}
 

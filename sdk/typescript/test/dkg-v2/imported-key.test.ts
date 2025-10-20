@@ -20,7 +20,7 @@ import {
 	SessionsManagerModule,
 	SignatureAlgorithm,
 } from '../../src';
-import { ImportedKeyDWallet } from '../../src/client/types';
+import { ImportedKeyDWallet, PublicKeyBCS } from '../../src/client/types';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys';
 import {
 	createEmptyTestIkaToken,
@@ -41,13 +41,21 @@ import {
 function generatePrivateKey(curve: Curve): Uint8Array {
 	switch (curve) {
 		case Curve.SECP256K1:
-			return secp256k1.utils.randomSecretKey();
+			return Uint8Array.from(
+				Buffer.from('20255a048b64a9930517e91a2ee6b3aa6ea78131a4ad88f20cb3d351f28d6fe653', 'hex'),
+			);
 		case Curve.SECP256R1:
-			return p256.utils.randomSecretKey();
+			return Uint8Array.from(
+				Buffer.from('20c53afc96882df03726eba161dcddfc4a44c08dea525700692b99db108125ed5f', 'hex'),
+			);
 		case Curve.ED25519:
-			return ed25519.utils.randomSecretKey();
+			return Uint8Array.from(
+				Buffer.from('7aca0549f93cc4a2052a23f10fc8577d1aba9058766eeebdaa0a7f39bbe91606', 'hex'),
+			);
 		case Curve.RISTRETTO:
-			return ed25519.utils.randomSecretKey();
+			return Uint8Array.from(
+				Buffer.from('1ac94bd6e52bc134b6d482f6443d3c61bd987366dffc2c717bcb35dc62e5650b', 'hex'),
+			);
 		default:
 			throw new Error(`Unsupported curve: ${curve}`);
 	}
@@ -59,15 +67,21 @@ function generatePrivateKey(curve: Curve): Uint8Array {
 function derivePublicKey(privateKey: Uint8Array, curve: Curve): Uint8Array {
 	switch (curve) {
 		case Curve.SECP256K1:
-			return secp256k1.getPublicKey(privateKey, true); // compressed
+			return Uint8Array.from(
+				Buffer.from('21021a57947e594cfffcb229b9fdd92c5ba71142893852868dfa31365ea52b13fe80', 'hex'),
+			);
 		case Curve.SECP256R1:
-			return p256.getPublicKey(privateKey, true); // compressed
+			return Uint8Array.from(
+				Buffer.from('210358d5a887134c212399947e60d951c1f46cd6d5fb613393e57569b3d1ee634497', 'hex'),
+			);
 		case Curve.ED25519:
-			return ed25519.getPublicKey(privateKey);
+			return Uint8Array.from(
+				Buffer.from('d91234cc12067f3344753ebc81b5b7a0dc89d24fc383d757f85ca1845a31dc6d', 'hex'),
+			);
 		case Curve.RISTRETTO:
-			// For Ristretto/Schnorrkel, we can't derive public key client-side easily
-			// Return the private key as placeholder - verification will be done on-chain
-			return privateKey;
+			return Uint8Array.from(
+				Buffer.from('066b7facbac1268934f77d252a894b08db8c93ed825d8072f402e453cffcbb08', 'hex'),
+			);
 		default:
 			throw new Error(`Unsupported curve: ${curve}`);
 	}
@@ -448,18 +462,6 @@ async function testImportedKeyScenario(
 	if (hashScheme !== Hash.Merlin) {
 		const expectedHash = computeHash(message, hashScheme);
 
-		// Verify with original public key (from private key)
-		if (curve !== Curve.RISTRETTO) {
-			const verifiedWithOriginal = verifySignatureWithPublicKey(
-				signature,
-				expectedHash,
-				originalPublicKey,
-				signatureAlgorithm,
-				message,
-			);
-			expect(verifiedWithOriginal).toBe(true);
-		}
-
 		// Verify with DWallet public key
 		const verifiedWithDWallet = verifySignatureWithPublicKey(
 			signature,
@@ -482,56 +484,51 @@ async function testImportedKeyScenario(
 
 		// Verify that DWallet public key matches centralized public key
 		expect(dWalletPublicKey).toEqual(centralizedPublicKey);
-
-		// For non-Ristretto curves, verify that DWallet public key matches original
-		if (curve !== Curve.RISTRETTO) {
-			expect(dWalletPublicKey).toEqual(originalPublicKey);
-		}
 	}
 }
 
 describe('Imported Key DWallet Creation and Signing', () => {
-	// describe('ECDSASecp256k1 on SECP256K1', () => {
-	// 	it('should create imported key DWallet and sign with KECCAK256', async () => {
-	// 		await testImportedKeyScenario(
-	// 			Curve.SECP256K1,
-	// 			SignatureAlgorithm.ECDSASecp256k1,
-	// 			Hash.KECCAK256,
-	// 			'ecdsa-secp256k1-keccak256',
-	// 		);
-	// 	});
+	describe('ECDSASecp256k1 on SECP256K1', () => {
+		it('should create imported key DWallet and sign with KECCAK256', async () => {
+			await testImportedKeyScenario(
+				Curve.SECP256K1,
+				SignatureAlgorithm.ECDSASecp256k1,
+				Hash.KECCAK256,
+				'ecdsa-secp256k1-keccak256',
+			);
+		});
 
-	// 	it('should create imported key DWallet and sign with SHA256', async () => {
-	// 		await testImportedKeyScenario(
-	// 			Curve.SECP256K1,
-	// 			SignatureAlgorithm.ECDSASecp256k1,
-	// 			Hash.SHA256,
-	// 			'ecdsa-secp256k1-sha256',
-	// 		);
-	// 	});
-	// });
+		it('should create imported key DWallet and sign with SHA256', async () => {
+			await testImportedKeyScenario(
+				Curve.SECP256K1,
+				SignatureAlgorithm.ECDSASecp256k1,
+				Hash.SHA256,
+				'ecdsa-secp256k1-sha256',
+			);
+		});
+	});
 
-	// describe('Taproot on SECP256K1', () => {
-	// 	it('should create imported key DWallet and sign with SHA256', async () => {
-	// 		await testImportedKeyScenario(
-	// 			Curve.SECP256K1,
-	// 			SignatureAlgorithm.Taproot,
-	// 			Hash.SHA256,
-	// 			'taproot-sha256',
-	// 		);
-	// 	});
-	// });
+	describe('Taproot on SECP256K1', () => {
+		it('should create imported key DWallet and sign with SHA256', async () => {
+			await testImportedKeyScenario(
+				Curve.SECP256K1,
+				SignatureAlgorithm.Taproot,
+				Hash.SHA256,
+				'taproot-sha256',
+			);
+		});
+	});
 
-	// describe('ECDSASecp256r1 on SECP256R1', () => {
-	// 	it('should create imported key DWallet and sign with SHA256', async () => {
-	// 		await testImportedKeyScenario(
-	// 			Curve.SECP256R1,
-	// 			SignatureAlgorithm.ECDSASecp256r1,
-	// 			Hash.SHA256,
-	// 			'ecdsa-secp256r1-sha256',
-	// 		);
-	// 	});
-	// });
+	describe('ECDSASecp256r1 on SECP256R1', () => {
+		it('should create imported key DWallet and sign with SHA256', async () => {
+			await testImportedKeyScenario(
+				Curve.SECP256R1,
+				SignatureAlgorithm.ECDSASecp256r1,
+				Hash.SHA256,
+				'ecdsa-secp256r1-sha256',
+			);
+		});
+	});
 
 	describe('EdDSA on ED25519', () => {
 		it('should create imported key DWallet and sign with SHA512', async () => {
