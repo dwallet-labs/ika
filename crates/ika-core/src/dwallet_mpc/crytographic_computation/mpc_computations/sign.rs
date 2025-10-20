@@ -991,7 +991,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
                 return Err(parsed_signature_result.err().unwrap());
             }
             // For Sign protocol, we don't need to wrap the output with version like presign does
-            // since the output is already in the correct format
+            // since the output is a standardized signature
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value: bcs::to_bytes(&(
                     bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
