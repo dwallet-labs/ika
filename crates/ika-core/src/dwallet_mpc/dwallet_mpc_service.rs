@@ -922,12 +922,43 @@ impl DWalletMPCService {
                 dwallet_network_encryption_key_id,
                 ..
             } => {
+                let supported_curves = if output.is_empty() {
+                    vec![DWalletCurve::Secp256k1 as u32]
+                } else {
+                    match bcs::from_bytes::<dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput>(
+                        &output,
+                    ) {
+                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V1(_)) => {
+                            // V1 only supports Secp256k1
+                            vec![DWalletCurve::Secp256k1 as u32]
+                        }
+                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V2(_)) => {
+                            // V2 supports all curves
+                            vec![
+                                DWalletCurve::Secp256k1 as u32,
+                                DWalletCurve::Secp256r1 as u32,
+                                DWalletCurve::Ristretto as u32,
+                                DWalletCurve::Curve25519 as u32,
+                            ]
+                        }
+                        Err(e) => {
+                            error!(
+                                error=?e,
+                                session_identifier=?session_identifier,
+                                "failed to deserialize network DKG output to determine version, defaulting to V1 curves"
+                            );
+                            // Default to V1 curves for safety
+                            vec![DWalletCurve::Secp256k1 as u32]
+                        }
+                    }
+                };
+
                 let slices = if rejected {
                     vec![MPCNetworkDKGOutput {
                         dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                             .to_vec(),
                         public_output: vec![],
-                        supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                        supported_curves: supported_curves.clone(),
                         is_last: true,
                         rejected: true,
                         session_sequence_number: session_request.session_sequence_number,
@@ -939,7 +970,7 @@ impl DWalletMPCService {
                             dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                                 .to_vec(),
                             public_output: public_output_chunk,
-                            supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                            supported_curves: supported_curves.clone(),
                             is_last,
                             rejected: false,
                             session_sequence_number: session_request.session_sequence_number,
@@ -957,12 +988,41 @@ impl DWalletMPCService {
                 dwallet_network_encryption_key_id,
                 ..
             } => {
+                let supported_curves = if output.is_empty() {
+                    vec![DWalletCurve::Secp256k1 as u32]
+                } else {
+                    match bcs::from_bytes::<dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput>(&output) {
+                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V1(_)) => {
+                            // V1 only supports Secp256k1
+                            vec![DWalletCurve::Secp256k1 as u32]
+                        }
+                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V2(_)) => {
+                            // V2 supports all curves
+                            vec![
+                                DWalletCurve::Secp256k1 as u32,
+                                DWalletCurve::Secp256r1 as u32,
+                                DWalletCurve::Ristretto as u32,
+                                DWalletCurve::Curve25519 as u32,
+                            ]
+                        }
+                        Err(e) => {
+                            error!(
+                                error=?e,
+                                session_identifier=?session_identifier,
+                                "failed to deserialize network reconfiguration output to determine version, defaulting to V1 curves"
+                            );
+                            // Default to V1 curves for safety
+                            vec![DWalletCurve::Secp256k1 as u32]
+                        }
+                    }
+                };
+
                 let slices = if rejected {
                     vec![MPCNetworkReconfigurationOutput {
                         dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                             .to_vec(),
                         public_output: vec![],
-                        supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                        supported_curves: supported_curves.clone(),
                         is_last: true,
                         rejected: true,
                         session_sequence_number: session_request.session_sequence_number,
@@ -975,7 +1035,7 @@ impl DWalletMPCService {
                                 .clone()
                                 .to_vec(),
                             public_output: public_output_chunk,
-                            supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                            supported_curves: supported_curves.clone(),
                             is_last,
                             rejected: false,
                             session_sequence_number: session_request.session_sequence_number,
