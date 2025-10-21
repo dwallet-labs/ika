@@ -396,14 +396,19 @@ impl SignPublicInputByProtocol {
                     })? {
                         VersionedPresignOutput::V1(presign) => {
                             let dkg_output = bcs::from_bytes(dwallet_decentralized_public_output)
-                                .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(
-                                    "Failed to deserialize decentralized DKG versioned output v1".to_string(),
-                                )))?;
+                                .map_err(|e| {
+                                DwalletMPCError::BcsError(bcs::Error::Custom(
+                                    "Failed to deserialize decentralized DKG versioned output v1"
+                                        .to_string(),
+                                ))
+                            })?;
                             let centralized_signed_message =
-                                bcs::from_bytes(message_centralized_signature)
-                                    .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(
-                                        "Failed to deserialize centralized signed message".to_string(),
-                                    )))?;
+                                bcs::from_bytes(message_centralized_signature).map_err(|e| {
+                                    DwalletMPCError::BcsError(bcs::Error::Custom(
+                                        "Failed to deserialize centralized signed message"
+                                            .to_string(),
+                                    ))
+                                })?;
                             let decentralized_dkg_output = match dkg_output {
                                 VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
                                     bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice()).map_err(
@@ -435,9 +440,11 @@ impl SignPublicInputByProtocol {
                                         { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                                     >,
                                 >,
-                            > = bcs::from_bytes(&presign).map_err(|e| DwalletMPCError::BcsError(
-                                bcs::Error::Custom("Failed to deserialize presign V1".to_string()),
-                            ))?;
+                            > = bcs::from_bytes(&presign).map_err(|e| {
+                                DwalletMPCError::BcsError(bcs::Error::Custom(
+                                    "Failed to deserialize presign V1".to_string(),
+                                ))
+                            })?;
                             let public_input = <SignParty<Secp256K1ECDSAProtocol> as Party>::PublicInput::from((
                                 expected_decrypters,
                                 protocol_public_parameters,
@@ -835,27 +842,34 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
     ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
         let presign = match bcs::from_bytes(&presign)? {
             VersionedPresignOutput::V1(_) => {
-                unreachable!(
-                    "Presign
-                V1
-                should
-                have
-                been
-                handled
-                separately
-                "
-                )
+                unreachable!("Presign V1 should have been handled separately ")
             }
             VersionedPresignOutput::V2(presign) => presign,
         };
-        let dkg_output = bcs::from_bytes(dkg_output)?;
+        let dkg_output = bcs::from_bytes(dkg_output).map_err(|e| {
+            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                "Failed to deserialize decentralized DKG versioned output: {e}"
+            )))
+        })?;
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
         let decentralized_dkg_output = match dkg_output {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-                bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
+                bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())
+                    .map_err(|e| {
+                        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                            "Failed to deserialize decentralized DKG output V1: {e}"
+                        )))
+                    })?
+                    .into()
             }
             VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-                bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
+                bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice()).map_err(
+                    |e| {
+                        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                            "Failed to deserialize decentralized DKG output V2: {e}"
+                        )))
+                    },
+                )?
             }
         };
 
@@ -872,10 +886,21 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
             HashType::try_from(hash_scheme as u32)
                 .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
             decentralized_dkg_output,
-            bcs::from_bytes::<<P as twopc_mpc::presign::Protocol>::Presign>(&presign)?,
+            bcs::from_bytes::<<P as twopc_mpc::presign::Protocol>::Presign>(&presign).map_err(
+                |e| {
+                    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                        "Failed to deserialize presign: {e}"
+                    )))
+                },
+            )?,
             bcs::from_bytes::<<P as twopc_mpc::sign::Protocol>::SignMessage>(
                 &centralized_signed_message,
-            )?,
+            )
+            .map_err(|e| {
+                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                    "Failed to deserialize sign message: {e}"
+                )))
+            })?,
             decryption_key_share_public_parameters,
         ));
 
