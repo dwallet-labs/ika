@@ -156,7 +156,10 @@ done
 ###############################
 rm -rf "$SUI_CONFIG_PATH"
 
-cp ../old_mainnet_binaries/mainnet-release-ika-swarm-config ./ika-swarm-config
+if [ ! -f ../../../../../target/debug/ika-swarm-config ]; then
+  cargo build --bin ika-swarm-config
+fi
+cp ../../../../../target/debug/ika-swarm-config .
 
 # Publish IKA Modules (Creates the publisher config).
 # echo the parameters to the next call
@@ -164,7 +167,7 @@ echo "Publishing IKA modules with the following parameters:"
 echo "SUI_FULLNODE_RPC_URL: $SUI_FULLNODE_RPC_URL"
 echo "SUI_FAUCET_URL: $SUI_FAUCET_URL"
 
-./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL"
+./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL" --chain mainnet
 
 # Mint IKA Tokens
 ./ika-swarm-config mint-ika-tokens --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL" --ika-config-path ./ika_publish_config.json
