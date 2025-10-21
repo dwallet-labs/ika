@@ -120,14 +120,6 @@ pub fn sui_event_into_session_request(
             deserialize_event_contents(&contents, pulled)?;
 
         presign_party_session_request(deserialized_event, pulled)?
-    } else if event_type
-        .to_string()
-        .contains(&SignRequestEvent::type_(packages_config).name.to_string())
-    {
-        let deserialized_event: DWalletSessionEvent<SignRequestEvent> =
-            deserialize_event_contents(&contents, pulled)?;
-
-        sign_party_session_request(&deserialized_event, pulled)?
     } else if event_type.to_string().contains(
         &FutureSignRequestEvent::type_(packages_config)
             .name
@@ -137,6 +129,14 @@ pub fn sui_event_into_session_request(
             deserialize_event_contents(&contents, pulled)?;
 
         get_verify_partial_signatures_session_request(&deserialized_event, pulled)?
+    } else if event_type
+        .to_string()
+        .contains(&SignRequestEvent::type_(packages_config).name.to_string())
+    {
+        let deserialized_event: DWalletSessionEvent<SignRequestEvent> =
+            deserialize_event_contents(&contents, pulled)?;
+
+        sign_party_session_request(&deserialized_event, pulled)?
     } else if event_type.to_string().contains(
         &DWalletNetworkDKGEncryptionKeyRequestEvent::type_(packages_config)
             .name
