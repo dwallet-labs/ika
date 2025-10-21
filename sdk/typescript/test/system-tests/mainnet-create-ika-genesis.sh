@@ -330,23 +330,10 @@ process_validator() {
     fi
 }
 
-# Launch jobs with a max concurrency of 5 using a simple counter
-MAX_JOBS=10
-JOB_COUNT=0
 
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-    process_validator "$i" &
-
-    (( JOB_COUNT++ ))
-
-    if [[ $JOB_COUNT -ge $MAX_JOBS ]]; then
-        wait
-        JOB_COUNT=0
-    fi
+    process_validator "$i"
 done
-
-# Final wait for any remaining jobs
-wait
 
 # Read tuples file after all jobs complete
 if [[ -f "$TUPLES_FILE" ]]; then
