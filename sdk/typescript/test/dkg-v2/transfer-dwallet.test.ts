@@ -25,7 +25,7 @@ import {
 	createTestIkaClient,
 	createTestIkaTransaction,
 	createTestMessage,
-	createTestSuiClient,
+	createTestSuiClient, delay,
 	destroyEmptyTestIkaToken,
 	executeTestTransaction,
 	generateTestKeypair,
@@ -467,6 +467,8 @@ async function testDWalletTransfer(
 		bobUserShareEncryptionKeys,
 		`${testName}-bob`,
 	);
+
+	await delay(5); //
 
 	// Request presign (Bob can use the DWallet now)
 	const presign = await requestAndWaitForPresign(
