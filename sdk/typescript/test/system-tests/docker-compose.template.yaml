@@ -1,0 +1,132 @@
+---
+version: "3"
+
+services:
+  val1:
+    container_name: val1.DOMAIN_NAME_HERE
+    image: IMAGE_NAME
+    environment:
+      - RUST_BACKTRACE=1
+      - RUST_LOG=warn,ika_node=info,ika_core=info,ika_network::state_sync=error
+      - RUST_MIN_STACK=16777216
+    labels:
+      org.label-schema.name: "val1"
+    #    ports:
+    #      - 9000:9000
+    #      - "8080:8080"
+    #      - "8081:8081/udp"
+    #      - "8082:8082/udp"
+    #      - "8084:8084/udp"
+    #      - "9184:9184"
+    # network_mode: "host"
+    volumes:
+      - ./val1.DOMAIN_NAME_HERE/validator.yaml:/opt/ika/config/validator.yaml:ro
+      - ./val1.DOMAIN_NAME_HERE/key-pairs:/opt/ika/key-pairs/:ro
+      - ./dbs/val1.val1.DOMAIN_NAME_HERE/opt/ika/db:/opt/ika/db:rw
+    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/validator.yaml"]
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-file: "10"
+        max-size: "5g"
+
+  val2:
+    container_name: val2.DOMAIN_NAME_HERE
+    image: IMAGE_NAME
+    environment:
+      - RUST_BACKTRACE=1
+      - RUST_LOG=warn,ika_node=info,ika_core=info,ika_network::state_sync=error
+      - RUST_MIN_STACK=16777216
+    labels:
+      org.label-schema.name: "val2"
+    #    ports:
+    #      - "8080:8080"
+    #      - "8081:8081/udp"
+    #      - "8082:8082/udp"
+    #      - "8084:8084/udp"
+    #      - "9184:9184"
+    # network_mode: "host"
+    volumes:
+      - ./val2.DOMAIN_NAME_HERE/validator.yaml:/opt/ika/config/validator.yaml:ro
+      - ./val2.DOMAIN_NAME_HERE/key-pairs:/opt/ika/key-pairs/:ro
+      - ./dbs/val2.DOMAIN_NAME_HERE/opt/ika/db:/opt/ika/db:rw
+    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/validator.yaml"]
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-file: "10"
+        max-size: "5g"
+
+  val3:
+    container_name: val3.DOMAIN_NAME_HERE
+    image: IMAGE_NAME
+    environment:
+      - RUST_BACKTRACE=1
+      - RUST_LOG=warn,ika_node=info,ika_core=info,ika_network::state_sync=error
+      - RUST_MIN_STACK=16777216
+    labels:
+      org.label-schema.name: "val3"
+    #    ports:
+    #      - "8080:8080"
+    #      - "8081:8081/udp"
+    #      - "8082:8082/udp"
+    #      - "8084:8084/udp"
+    #      - "9184:9184"
+    # network_mode: "host"
+    volumes:
+      - ./val3.DOMAIN_NAME_HERE/validator.yaml:/opt/ika/config/validator.yaml:ro
+      - ./val3.DOMAIN_NAME_HERE/key-pairs:/opt/ika/key-pairs/:ro
+      - ./dbs/val3.DOMAIN_NAME_HERE/opt/ika/db:/opt/ika/db:rw
+    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/validator.yaml"]
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-file: "10"
+        max-size: "5g"
+
+  val4:
+    container_name: val4.DOMAIN_NAME_HERE
+    image: IMAGE_NAME
+    environment:
+      - RUST_BACKTRACE=1
+      - RUST_LOG=warn,ika_node=info,ika_core=info,ika_network::state_sync=error
+      - RUST_MIN_STACK=16777216
+    labels:
+      org.label-schema.name: "val4"
+    #    ports:
+    #      - "8080:8080"
+    #      - "8081:8081/udp"
+    #      - "8082:8082/udp"
+    #      - "8084:8084/udp"
+    #      - "9184:9184"
+    # network_mode: "host"
+    volumes:
+      - ./val4.DOMAIN_NAME_HERE/validator.yaml:/opt/ika/config/validator.yaml:ro
+      - ./val4.DOMAIN_NAME_HERE/key-pairs:/opt/ika/key-pairs/:ro
+      - ./dbs/val4.DOMAIN_NAME_HERE/opt/ika/db:/opt/ika/db:rw
+    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/validator.yaml"]
+    restart: no
+    logging:
+      driver: "json-file"
+      options:
+        max-file: "10"
+        max-size: "5g"
+
+  fullnode:
+    container_name: fullnode.DOMAIN_NAME_HERE
+    image: IMAGE_NAME
+    ports:
+      - "8080:8080"
+      - "9184:9184"
+      - "9000:9000"
+    environment:
+      - RUST_BACKTRACE=1
+      - RUST_LOG=warn,ika_node=info,ika_core=info,ika_network::state_sync=error
+    volumes:
+      - ./publisher/fullnode.yaml:/opt/ika/config/fullnode.yaml:ro
+      - ./publisher/sui_config/publisher.key:/opt/ika/key-pairs/notifier.key:ro
+      - ./dbs/fullnode/ikadb:/opt/ika/db:rw
+    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/fullnode.yaml"]

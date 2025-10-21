@@ -416,3 +416,18 @@ for ((i=1; i<=VALIDATOR_NUM; i++)); do
     yq e ".\"sui-connector-config\".\"ika-dwallet-2pc-mpc-package-id\" = \"$IKA_DWALLET_2PC_MPC_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
     yq e ".\"sui-connector-config\".\"ika-dwallet-coordinator-object-id\" = \"$IKA_DWALLET_COORDINATOR_OBJECT_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
 done
+
+DOCKER_COMPOSE="docker-compose.yaml"
+DOCKER_COMPOSE_PATH="$DOCKER_COMPOSE"
+cp ../docker-compose.template.yaml "$DOCKER_COMPOSE_PATH"
+
+# Replace DOMAIN_NAME_HERE with the provided domain name.
+yq e -i ".services.*.container_name |= sub(\"DOMAIN_NAME_HERE\"; \"$SUBDOMAIN\")" "$DOCKER_COMPOSE_PATH"
+
+# Replace DOMAIN_NAME_HERE with the provided domain name in volume paths.
+yq e -i "(.services.*.volumes[] | select(test(\".*DOMAIN_NAME_HERE.*\"))) |= sub(\"DOMAIN_NAME_HERE\"; \"$SUBDOMAIN\")" "$DOCKER_COMPOSE_PATH"
+
+# Replace IMAGE_NAME with the provided image name.
+yq e -i ".services.*.image = \"$IMAGE_NAME\"" "$DOCKER_COMPOSE_PATH"
+
+echo "$DOCKER_COMPOSE file has been created successfully."
