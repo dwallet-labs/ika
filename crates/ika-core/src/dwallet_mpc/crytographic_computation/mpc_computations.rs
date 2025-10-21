@@ -32,7 +32,7 @@ use class_groups::dkg::Secp256k1Party;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletSignatureScheme, ReconfigurationParty, ReconfigurationV2Party,
+    DWalletSignatureAlgorithm, ReconfigurationParty, ReconfigurationV2Party,
     VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGSecondRoundPublicOutput,
 };
@@ -1003,23 +1003,23 @@ fn parse_signature_from_sign_output(
     public_output_value: Vec<u8>,
 ) -> DwalletMPCResult<Vec<u8>> {
     match data.signature_algorithm {
-        DWalletSignatureScheme::ECDSASecp256k1 => {
+        DWalletSignatureAlgorithm::ECDSASecp256k1 => {
             let signature: ECDSASecp256k1Signature = bcs::from_bytes(&public_output_value)?;
             Ok(signature.to_bytes().to_vec())
         }
-        DWalletSignatureScheme::ECDSASecp256r1 => {
+        DWalletSignatureAlgorithm::ECDSASecp256r1 => {
             let signature: ECDSASecp256r1Signature = bcs::from_bytes(&public_output_value)?;
             Ok(signature.to_bytes().to_vec())
         }
-        DWalletSignatureScheme::EdDSA => {
+        DWalletSignatureAlgorithm::EdDSA => {
             let signature: EdDSASignature = bcs::from_bytes(&public_output_value)?;
             Ok(signature.to_bytes().to_vec())
         }
-        DWalletSignatureScheme::SchnorrkelSubstrate => {
+        DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
             let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&public_output_value)?;
             Ok(signature.to_bytes().to_vec())
         }
-        DWalletSignatureScheme::Taproot => {
+        DWalletSignatureAlgorithm::Taproot => {
             let signature: TaprootSignature = bcs::from_bytes(&public_output_value)?;
             Ok(signature.to_bytes().to_vec())
         }

@@ -307,6 +307,7 @@ dependencies = [
  "class_groups",
  "enum_dispatch",
  "group 0.1.0",
+ "lazy_static",
  "schemars",
  "serde",
  "strum_macros",

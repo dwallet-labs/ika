@@ -12,7 +12,7 @@ use crate::request_protocol_data::SignData;
 use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureScheme, MPCPublicOutput, NetworkEncryptionKeyPublicDataTrait,
+    DWalletCurve, DWalletSignatureAlgorithm, MPCPublicOutput, NetworkEncryptionKeyPublicDataTrait,
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput, VersionedUserSignedMessage,
 };
@@ -119,7 +119,7 @@ fn generate_expected_decrypters(
 impl SignAdvanceRequestByProtocol {
     pub fn try_new(
         curve: &DWalletCurve,
-        protocol: &DWalletSignatureScheme,
+        protocol: &DWalletSignatureAlgorithm,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
         consensus_round: u64,
@@ -127,7 +127,7 @@ impl SignAdvanceRequestByProtocol {
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match curve {
             DWalletCurve::Secp256k1 => match protocol {
-                DWalletSignatureScheme::ECDSASecp256k1 => {
+                DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     let advance_request = mpc_computations::try_ready_to_advance::<
                         SignParty<Secp256K1ECDSAProtocol>,
                     >(
@@ -139,7 +139,7 @@ impl SignAdvanceRequestByProtocol {
 
                     advance_request.map(SignAdvanceRequestByProtocol::Secp256k1ECDSA)
                 }
-                DWalletSignatureScheme::Taproot => {
+                DWalletSignatureAlgorithm::Taproot => {
                     let advance_request = mpc_computations::try_ready_to_advance::<
                         SignParty<Secp256K1TaprootProtocol>,
                     >(
@@ -207,13 +207,13 @@ impl SignPublicInputByProtocol {
         hash_scheme: HashType,
         access_structure: &WeightedThresholdAccessStructure,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
-        protocol: DWalletSignatureScheme,
+        protocol: DWalletSignatureAlgorithm,
     ) -> DwalletMPCResult<Self> {
         let expected_decrypters =
             generate_expected_decrypters(access_structure, session_identifier)?;
 
         match protocol {
-            DWalletSignatureScheme::ECDSASecp256k1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .secp256k1_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -253,8 +253,7 @@ impl SignPublicInputByProtocol {
                                 expected_decrypters,
                                 protocol_public_parameters,
                                 message,
-                                HashType::try_from(hash_scheme as u32)
-                                    .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
+                                hash_scheme,
                                 decentralized_dkg_output,
                                 presign.into(),
                                 bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage>(
@@ -280,7 +279,7 @@ impl SignPublicInputByProtocol {
                     },
                 ))
             }
-            DWalletSignatureScheme::Taproot => {
+            DWalletSignatureAlgorithm::Taproot => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .secp256k1_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -299,7 +298,7 @@ impl SignPublicInputByProtocol {
 
                 Ok(SignPublicInputByProtocol::Secp256k1Taproot(public_input))
             }
-            DWalletSignatureScheme::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .ristretto_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -319,7 +318,7 @@ impl SignPublicInputByProtocol {
 
                 Ok(SignPublicInputByProtocol::Ristretto(public_input))
             }
-            DWalletSignatureScheme::EdDSA => {
+            DWalletSignatureAlgorithm::EdDSA => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .curve25519_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -338,7 +337,7 @@ impl SignPublicInputByProtocol {
 
                 Ok(SignPublicInputByProtocol::Curve25519(public_input))
             }
-            DWalletSignatureScheme::ECDSASecp256r1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .secp256r1_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -460,8 +459,7 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
             expected_decrypters,
             protocol_public_parameters,
             message,
-            HashType::try_from(hash_scheme as u32)
-                .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
+            hash_scheme,
             decentralized_dkg_output,
             bcs::from_bytes::<<P as twopc_mpc::presign::Protocol>::Presign>(&presign)?,
             bcs::from_bytes::<<P as twopc_mpc::sign::Protocol>::SignMessage>(

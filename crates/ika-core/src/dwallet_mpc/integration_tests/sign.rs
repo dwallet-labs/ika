@@ -12,7 +12,7 @@ use crate::request_protocol_data::{
 use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, network_dkg_public_output_to_protocol_pp_inner,
 };
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureScheme};
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use group::HashType;
 use ika_protocol_config::ProtocolVersion;
 use ika_types::committee::Committee;
@@ -260,7 +260,7 @@ pub(crate) fn send_start_sign_event(
                     data: SignData {
                         curve: DWalletCurve::Secp256k1,
                         hash_scheme: HashType::Keccak256,
-                        signature_algorithm: DWalletSignatureScheme::ECDSASecp256k1,
+                        signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
                     },
                     dwallet_id,
                     sign_id,
@@ -307,7 +307,7 @@ pub(crate) fn send_start_future_sign_event(
                     data: SignData {
                         curve: DWalletCurve::Secp256k1,
                         hash_scheme: HashType::Keccak256,
-                        signature_algorithm: DWalletSignatureScheme::ECDSASecp256k1,
+                        signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
                     },
                     dwallet_id,
                     sign_id,
@@ -354,8 +354,8 @@ pub(crate) fn send_start_partial_signature_verification_event(
                     data: PartialSignatureVerificationData {
                         curve: DWalletCurve::Secp256k1,
                         message: message.clone(),
-                        hash_type: HashType::Keccak256,
-                        signature_algorithm: DWalletSignatureScheme::ECDSASecp256k1,
+                        hash_scheme: HashType::Keccak256,
+                        signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
                         dwallet_decentralized_output: dwallet_public_output.clone(),
                         presign: presign.clone(),
                         partially_signed_message: message_centralized_signature.clone(),
@@ -396,7 +396,7 @@ pub(crate) fn send_start_presign_event(
                 protocol_data: ProtocolData::Presign {
                     data: PresignData {
                         curve: DWalletCurve::Secp256k1,
-                        signature_algorithm: DWalletSignatureScheme::ECDSASecp256k1,
+                        signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
                     },
                     dwallet_id,
                     presign_id,
