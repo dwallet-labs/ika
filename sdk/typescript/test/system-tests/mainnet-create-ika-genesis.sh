@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# THIS SCRIPT DOES NOT WORK WITH THE CURRENT VERSION, BUT RATHER WORKS WITH THE MAINNET VERSION OF IKA.
+# IT IS LEFT HERE FOR THE VERSION UPGRADE TEST.
+
 set -e
 
 # Load environment variables from .env if not already set
@@ -41,13 +44,14 @@ else
     echo "yq is already installed."
 fi
 
-. ./shared.sh
-
 # Default values.
 # The prefix for the validator names (e.g. val1.devnet.ika.cloud, val2.devnet.ika.cloud, etc...).
 export VALIDATOR_PREFIX="val"
 # The number of staked tokens for each validator.
 export VALIDATOR_STAKED_TOKENS_NUM=40000000000000000
+# The subdomain for Ika the network.
+#export SUBDOMAIN="localhost"
+export SUBDOMAIN="ika-dns-service.ika.svc.cluster.local"
 # The binary name to use.
 export BINARY_NAME="ika"
 # The directory to store the key pairs.
@@ -56,10 +60,7 @@ export SUI_CHAIN_IDENTIFIER="custom"
 
 RUST_MIN_STACK=16777216
 
-if [ ! -f ../../../../target/release/"$BINARY_NAME" ]; then
-  RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
-fi
-cp ../../../../target/release/"$BINARY_NAME" .
+cp ./old_mainnet_binaries/mainnet-release-ika ../../../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
 echo "Creating validators from prefix '$VALIDATOR_PREFIX' and number '$VALIDATOR_NUM'"
@@ -154,10 +155,8 @@ done
 # Create the Ika system on Sui.
 ###############################
 rm -rf "$SUI_CONFIG_PATH"
-if [ ! -f ../../../../../target/debug/ika-swarm-config ]; then
-  cargo build --bin ika-swarm-config
-fi
-cp ../../../../../target/debug/ika-swarm-config .
+
+cp ../old_mainnet_binaries/mainnet-release-ika-swarm-config ./ika-swarm-config
 
 # Publish IKA Modules (Creates the publisher config).
 # echo the parameters to the next call
@@ -165,13 +164,13 @@ echo "Publishing IKA modules with the following parameters:"
 echo "SUI_FULLNODE_RPC_URL: $SUI_FULLNODE_RPC_URL"
 echo "SUI_FAUCET_URL: $SUI_FAUCET_URL"
 
-./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL" --chain mainnet
+./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL"
 
 # Mint IKA Tokens
 ./ika-swarm-config mint-ika-tokens --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL" --ika-config-path ./ika_publish_config.json
 
 # Init IKA
-./ika-swarm-config init-env --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --ika-config-path ./ika_publish_config.json --epoch-duration-ms "$EPOCH_DURATION_TIME_MS" --protocol-version 1
+./ika-swarm-config init-env --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --ika-config-path ./ika_publish_config.json --epoch-duration-ms "$EPOCH_DURATION_TIME_MS"
 
 export PUBLISHER_DIR=publisher
 
@@ -198,8 +197,65 @@ echo "Ika dWallet 2PC MPC Package ID: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
 # Request Tokens and Create Validator.yaml (Max 5 Parallel + Retry)
 ############################
 
+request_and_generate_yaml() {
+  local i="$1"
+  VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+  VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
+  local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
+
+  # Extract values from the validator.info file
+  local ACCOUNT_ADDRESS
+  ACCOUNT_ADDRESS=$(yq e '.account_address' "${VALIDATOR_DIR}/validator.info")
+  local P2P_ADDR
+  P2P_ADDR=$(yq e '.p2p_address' "${VALIDATOR_DIR}/validator.info")
+
+  # Copy the validator template
+  cp ../validator.template.yaml "$VALIDATOR_DIR/validator.yaml"
+
+  # Replace placeholders using yq
+  yq e ".\"sui-connector-config\".\"sui-rpc-url\" = \"$SUI_DOCKER_URL\"" -i "$VALIDATOR_DIR/validator.yaml"
+  yq e ".\"sui-connector-config\".\"sui-chain-identifier\" = \"$SUI_CHAIN_IDENTIFIER\"" -i "$VALIDATOR_DIR/validator.yaml"
+  yq e ".\"sui-connector-config\".\"ika-package-id\" = \"$IKA_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
+  yq e ".\"sui-connector-config\".\"ika-system-package-id\" = \"$IKA_SYSTEM_PACKAGE_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
+  yq e ".\"sui-connector-config\".\"ika-system-object-id\" = \"$IKA_SYSTEM_OBJECT_ID\"" -i "$VALIDATOR_DIR/validator.yaml"
+
+  yq e ".p2p-config.external-address = \"$P2P_ADDR\"" -i "$VALIDATOR_DIR/validator.yaml"
+
+  # Request tokens from the faucet with retry
+  local attempt=1
+  local max_attempts=10
+  local sleep_time=2
+
+  echo "[Faucet] Requesting tokens for '$VALIDATOR_NAME' ($ACCOUNT_ADDRESS)..."
+
+  while (( attempt <= max_attempts )); do
+    response=$(curl -s -w "%{http_code}" -o "$VALIDATOR_DIR/faucet_response.json" -X POST --location "${SUI_FAUCET_URL}" \
+      -H "Content-Type: application/json" \
+      -d '{
+            "FixedAmountRequest": {
+              "recipient": "'"${ACCOUNT_ADDRESS}"'"
+            }
+          }')
+
+    if [[ "$response" == "201" || "$response" == "200" ]]; then
+        echo "[Faucet] ✅ Success for '$VALIDATOR_NAME'"
+        jq . "$VALIDATOR_DIR/faucet_response.json"
+        break
+      else
+        echo "[Faucet] ❌ Attempt $attempt failed with HTTP $response for '$VALIDATOR_NAME'"
+        (( attempt++ ))
+        sleep $(( sleep_time ** attempt ))
+      fi
+    done
+
+
+
+  if (( attempt > max_attempts )); then
+    echo "[Faucet] ❗ Failed to get tokens for '$VALIDATOR_NAME' after $max_attempts attempts."
+  fi
+}
+
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-  echo "Processing validator $i for token request and YAML generation..."
   request_and_generate_yaml "$i"
 done
 
@@ -222,9 +278,72 @@ TUPLES_FILE="$TMP_OUTPUT_DIR/tuples.txt"
 mkdir -p "$TMP_OUTPUT_DIR"
 rm -f "$TUPLES_FILE"
 
+# Function to process a validator
+process_validator() {
+    local i="$1"
+    VALIDATOR_NAME="${VALIDATOR_PREFIX}${i}"
+    VALIDATOR_HOSTNAME="${VALIDATOR_NAME}.${SUBDOMAIN}"
+    local VALIDATOR_DIR="${VALIDATOR_HOSTNAME}"
+    local OUTPUT_FILE="$TMP_OUTPUT_DIR/${VALIDATOR_NAME}_output.json"
+    local LOCAL_SUI_CONFIG_DIR="/tmp/sui_config_${VALIDATOR_NAME}"
+    local LOCAL_IKA_CONFIG_DIR="/tmp/ika_config_${VALIDATOR_NAME}"
+
+    echo "[Become Validator Candidate] Processing validator '$VALIDATOR_NAME' in directory '$VALIDATOR_DIR'"
+
+    rm -rf "$LOCAL_IKA_CONFIG_DIR"
+    mkdir -p "$LOCAL_IKA_CONFIG_DIR"
+
+    # Set up clean local SUI config dir
+    rm -rf "$LOCAL_SUI_CONFIG_DIR"
+    mkdir -p "$LOCAL_SUI_CONFIG_DIR"
+    cp -r "$VALIDATOR_DIR/$SUI_BACKUP_DIR/sui_config/"* "$LOCAL_SUI_CONFIG_DIR"
+    # Update keystore path in client.yaml to the current validator's sui.keystore
+    yq e ".keystore.File = \"$LOCAL_SUI_CONFIG_DIR/sui.keystore\"" -i "$LOCAL_SUI_CONFIG_DIR/client.yaml"
+
+    # Run validator config-env and become-candidate with isolated config dirs
+    SUI_CONFIG_DIR="$LOCAL_SUI_CONFIG_DIR" \
+    IKA_CONFIG_DIR="$LOCAL_IKA_CONFIG_DIR" \
+    $BINARY_NAME validator config-env \
+        --ika-package-id "$IKA_PACKAGE_ID" \
+        --ika-system-package-id "$IKA_SYSTEM_PACKAGE_ID" \
+        --ika-system-object-id "$IKA_SYSTEM_OBJECT_ID" \
+        --ika-common-package-id "$IKA_COMMON_PACKAGE_ID" \
+        --ika-dwallet-2pc-mpc-package-id "$IKA_DWALLET_2PC_MPC_PACKAGE_ID" \
+
+    SUI_CONFIG_DIR="$LOCAL_SUI_CONFIG_DIR" \
+    IKA_CONFIG_DIR="$LOCAL_IKA_CONFIG_DIR" \
+    $BINARY_NAME validator become-candidate "$VALIDATOR_DIR/validator.info" --json > "$OUTPUT_FILE"
+#    $BINARY_NAME validator become-candidate "$VALIDATOR_DIR/validator.info" --json 2>&1 | tee "$OUTPUT_FILE"
+
+    # Validate and extract IDs
+    if jq empty "$OUTPUT_FILE" 2>/dev/null; then
+        VALIDATOR_ID=$(jq -r '.[1].validator_id' "$OUTPUT_FILE")
+        VALIDATOR_CAP_ID=$(jq -r '.[1].validator_cap_id' "$OUTPUT_FILE")
+        echo "[✓] Parsed validator_id=$VALIDATOR_ID, validator_cap_id=$VALIDATOR_CAP_ID for $VALIDATOR_NAME"
+        echo "$VALIDATOR_NAME:$VALIDATOR_ID:$VALIDATOR_CAP_ID" >> "$TUPLES_FILE"
+    else
+        echo "[ERROR] Invalid JSON from become-candidate for $VALIDATOR_NAME"
+        cat "$OUTPUT_FILE"
+    fi
+}
+
+# Launch jobs with a max concurrency of 5 using a simple counter
+MAX_JOBS=10
+JOB_COUNT=0
+
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-    process_validator "$i"
+    process_validator "$i" &
+
+    (( JOB_COUNT++ ))
+
+    if [[ $JOB_COUNT -ge $MAX_JOBS ]]; then
+        wait
+        JOB_COUNT=0
+    fi
 done
+
+# Final wait for any remaining jobs
+wait
 
 # Read tuples file after all jobs complete
 if [[ -f "$TUPLES_FILE" ]]; then

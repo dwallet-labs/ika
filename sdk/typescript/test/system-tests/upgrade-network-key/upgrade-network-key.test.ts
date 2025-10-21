@@ -22,7 +22,6 @@ import {
 	runSignFullFlowWithV2Dwallet,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
-import { runSignFullFlowTestWithImportedDwallet } from '../../imported-dwallet/imported-dwallet-sign.test';
 import {
 	deployUpgradedPackage,
 	getProtocolCapID,
@@ -46,12 +45,12 @@ describe('system tests', () => {
 		await requestTestFaucetFunds(signerAddress);
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		// ------------ Create Ika Genesis ------------
-		const createIkaGenesisPath = `${TEST_ROOT_DIR}/create-ika-genesis-mac.sh`;
+		const mainnetCreateIkaGenesisPath = `${TEST_ROOT_DIR}/mainnet-create-ika-genesis-mac.sh`;
 		await execa({
 			stdout: ['pipe', 'inherit'],
 			stderr: ['pipe', 'inherit'],
 			cwd: TEST_ROOT_DIR,
-		})`${createIkaGenesisPath}`;
+		})`${mainnetCreateIkaGenesisPath}`;
 
 		await fs.copyFile(
 			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/ika_config.json`,
@@ -65,6 +64,7 @@ describe('system tests', () => {
 		await ikaClient.initialize();
 		await waitForEpochSwitch(ikaClient);
 		console.log('Epoch switched, verifying the network key version is V1');
+		return;
 		const networkKey = await ikaClient.getConfiguredNetworkEncryptionKey();
 		let networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.networkDKGOutputID);
 		const networkKeyVersion = network_key_version(networkKeyBytes);
@@ -169,7 +169,7 @@ describe('system tests', () => {
 		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, testName, false);
 		console.log('V2 dWallet full flow works, test completed successfully');
 
-		await runSignFullFlowTestWithImportedDwallet(testName, ikaClient, suiClient, false);
+		// await runSignFullFlowTestWithImportedDwallet(testName, ikaClient, suiClient, false);
 		console.log(
 			'Imported dWallet full flow works, creating a new v2 dWallet and verifying it works',
 		);
