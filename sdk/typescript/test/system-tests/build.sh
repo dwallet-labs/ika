@@ -6,6 +6,8 @@ set -e
 DIR="$( cd "$( dirname "$0" )" && pwd )"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 DOCKERFILE="$DIR/Dockerfile"
+# Set build context to parent directory to include both dwallet-network and dwallet-network-original
+BUILD_CONTEXT="$(dirname "$REPO_ROOT")"
 GIT_REVISION="$(git describe --always --abbrev=12 --dirty --exclude '*')"
 BUILD_DATE="$(date -u +'%Y-%m-%d')"
 
@@ -35,14 +37,14 @@ fi
 echo
 echo "Building ika-node docker image"
 echo "Dockerfile:      $DOCKERFILE"
-echo "Docker context:  $REPO_ROOT"
+echo "Docker context:  $BUILD_CONTEXT"
 echo "Build date:      $BUILD_DATE"
 echo "Git revision:    $GIT_REVISION"
 echo "Docker tag:      $DOCKER_TAG"
 echo "Build profile:   $PROFILE"
 echo
 
-docker build -f "$DOCKERFILE" "$REPO_ROOT" \
+docker build -f "$DOCKERFILE" "$BUILD_CONTEXT" \
   --build-arg GIT_REVISION="$GIT_REVISION" \
   --build-arg BUILD_DATE="$BUILD_DATE" \
   --build-arg WITH_NETWORK_DKG="$WITH_NETWORK_DKG" \
