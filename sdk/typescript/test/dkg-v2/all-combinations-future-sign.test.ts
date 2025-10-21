@@ -669,93 +669,93 @@ async function testCombination(
 describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future Sign)', () => {
 	// ECDSASecp256k1 + SECP256K1 combinations (3 hashes × 3 dwallet types = 9 tests)
 	describe('ECDSASecp256k1 on SECP256K1', () => {
-		// describe('Zero Trust', () => {
-		// 	it('should work with KECCAK256', async () => {
-		// 		await testCombination(
-		// 			'zero-trust',
-		// 			Curve.SECP256K1,
-		// 			SignatureAlgorithm.ECDSASecp256k1,
-		// 			Hash.KECCAK256,
-		// 			'ecdsa-secp256k1-keccak256',
-		// 		);
-		// 	});
-		// 	it('should work with SHA256', async () => {
-		// 		await testCombination(
-		// 			'zero-trust',
-		// 			Curve.SECP256K1,
-		// 			SignatureAlgorithm.ECDSASecp256k1,
-		// 			Hash.SHA256,
-		// 			'ecdsa-secp256k1-sha256',
-		// 		);
-		// 	});
-		// 	it('should work with DoubleSHA256', async () => {
-		// 		await testCombination(
-		// 			'zero-trust',
-		// 			Curve.SECP256K1,
-		// 			SignatureAlgorithm.ECDSASecp256k1,
-		// 			Hash.DoubleSHA256,
-		// 			'ecdsa-secp256k1-double-sha256',
-		// 		);
-		// 	});
-		// });
-		// describe('Shared', () => {
-		// 	it('should work with KECCAK256', async () => {
-		// 		await testCombination(
-		// 			'shared',
-		// 			Curve.SECP256K1,
-		// 			SignatureAlgorithm.ECDSASecp256k1,
-		// 			Hash.KECCAK256,
-		// 			'ecdsa-secp256k1-keccak256',
-		// 		);
-		// 	});
-		// 	it('should work with SHA256', async () => {
-		// 		await testCombination(
-		// 			'shared',
-		// 			Curve.SECP256K1,
-		// 			SignatureAlgorithm.ECDSASecp256k1,
-		// 			Hash.SHA256,
-		// 			'ecdsa-secp256k1-sha256',
-		// 		);
-		// 	});
-		// 	it('should work with DoubleSHA256', async () => {
-		// 		await testCombination(
-		// 			'shared',
-		// 			Curve.SECP256K1,
-		// 			SignatureAlgorithm.ECDSASecp256k1,
-		// 			Hash.DoubleSHA256,
-		// 			'ecdsa-secp256k1-double-sha256',
-		// 		);
-		// 	});
-		// });
-		// describe('Imported Key', () => {
-		// 	it('should work with KECCAK256', async () => {
-		// 		await testCombination(
-		// 			'imported-key',
-		// 			Curve.SECP256K1,
-		// 			SignatureAlgorithm.ECDSASecp256k1,
-		// 			Hash.KECCAK256,
-		// 			'ecdsa-secp256k1-keccak256',
-		// 		);
-		// 	});
-		// 	it('should work with SHA256', async () => {
-		// 		await testCombination(
-		// 			'imported-key',
-		// 			Curve.SECP256K1,
-		// 			SignatureAlgorithm.ECDSASecp256k1,
-		// 			Hash.SHA256,
-		// 			'ecdsa-secp256k1-sha256',
-		// 		);
-		// 	});
-		// 	it('should work with DoubleSHA256', async () => {
-		// 		await testCombination(
-		// 			'imported-key',
-		// 			Curve.SECP256K1,
-		// 			SignatureAlgorithm.ECDSASecp256k1,
-		// 			Hash.DoubleSHA256,
-		// 			'ecdsa-secp256k1-double-sha256',
-		// 		);
-		// 	});
-		// });
+		describe('Zero Trust', () => {
+			it('should work with KECCAK256', async () => {
+				await testCombination(
+					'zero-trust',
+					Curve.SECP256K1,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Hash.KECCAK256,
+					'ecdsa-secp256k1-keccak256',
+				);
+			});
+			it('should work with SHA256', async () => {
+				await testCombination(
+					'zero-trust',
+					Curve.SECP256K1,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Hash.SHA256,
+					'ecdsa-secp256k1-sha256',
+				);
+			});
+			it('should work with DoubleSHA256', async () => {
+				await testCombination(
+					'zero-trust',
+					Curve.SECP256K1,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Hash.DoubleSHA256,
+					'ecdsa-secp256k1-double-sha256',
+				);
+			});
+		});
+		describe('Shared', () => {
+			it('should work with KECCAK256', async () => {
+				await testCombination(
+					'shared',
+					Curve.SECP256K1,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Hash.KECCAK256,
+					'ecdsa-secp256k1-keccak256',
+				);
+			});
+			it('should work with SHA256', async () => {
+				await testCombination(
+					'shared',
+					Curve.SECP256K1,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Hash.SHA256,
+					'ecdsa-secp256k1-sha256',
+				);
+			});
+			it('should work with DoubleSHA256', async () => {
+				await testCombination(
+					'shared',
+					Curve.SECP256K1,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Hash.DoubleSHA256,
+					'ecdsa-secp256k1-double-sha256',
+				);
+			});
+		});
+		describe('Imported Key', () => {
+			it('should work with KECCAK256', async () => {
+				await testCombination(
+					'imported-key',
+					Curve.SECP256K1,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Hash.KECCAK256,
+					'ecdsa-secp256k1-keccak256',
+				);
+			});
+			it('should work with SHA256', async () => {
+				await testCombination(
+					'imported-key',
+					Curve.SECP256K1,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Hash.SHA256,
+					'ecdsa-secp256k1-sha256',
+				);
+			});
+			it('should work with DoubleSHA256', async () => {
+				await testCombination(
+					'imported-key',
+					Curve.SECP256K1,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Hash.DoubleSHA256,
+					'ecdsa-secp256k1-double-sha256',
+				);
+			});
+		});
 	});
 
 	// Taproot + SECP256K1 combinations (1 hash × 3 dwallet types = 3 tests)
