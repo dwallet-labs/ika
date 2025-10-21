@@ -45,7 +45,7 @@ describe('system tests', () => {
 		await requestTestFaucetFunds(signerAddress);
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		// ------------ Create Ika Genesis ------------
-		const mainnetCreateIkaGenesisPath = `${TEST_ROOT_DIR}/mainnet-create-ika-genesis-mac.sh`;
+		const mainnetCreateIkaGenesisPath = `${TEST_ROOT_DIR}/mainnet-create-ika-genesis.sh`;
 		await execa({
 			stdout: ['pipe', 'inherit'],
 			stderr: ['pipe', 'inherit'],
