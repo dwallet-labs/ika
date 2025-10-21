@@ -345,7 +345,6 @@ pub enum VersionedDwalletUserSecretShare {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedUserSignedMessage {
     V1(MPCPublicOutput),
-    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

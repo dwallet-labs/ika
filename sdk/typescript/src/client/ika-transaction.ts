@@ -94,7 +94,7 @@ export class IkaTransaction {
 	 * @returns Promise resolving to a DWallet capability
 	 * @throws {Error} If the decryption key ID cannot be fetched
 	 */
-	async requestDWalletDKGFirstRoundAsync({}: {
+	async requestDWalletDKGFirstRoundAsync(_params: {
 		curve: Curve;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
@@ -116,7 +116,7 @@ export class IkaTransaction {
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns DWallet capability
 	 */
-	requestDWalletDKGFirstRound({}: {
+	requestDWalletDKGFirstRound(_params: {
 		curve: Curve;
 		networkEncryptionKeyID: string;
 		ikaCoin: TransactionObjectArgument;
@@ -138,7 +138,7 @@ export class IkaTransaction {
 	 * @returns The updated IkaTransaction instance
 	 * @throws {Error} If user share encryption keys are not set
 	 */
-	requestDWalletDKGSecondRound({}: {
+	requestDWalletDKGSecondRound(_params: {
 		dWalletCap: TransactionObjectArgument | string;
 		dkgSecondRoundRequestInput: DKGRequestInput;
 		ikaCoin: TransactionObjectArgument;

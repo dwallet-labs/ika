@@ -8,13 +8,17 @@ use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
 use crate::dwallet_mpc::presign::{PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol};
 use crate::dwallet_mpc::reconfiguration::ReconfigurationV1toV2Party;
-use crate::dwallet_mpc::sign::{SignAdvanceRequestByProtocol, SignPublicInputByProtocol};
+use crate::dwallet_mpc::sign::{
+    DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
+    SignAdvanceRequestByProtocol, SignPublicInputByProtocol,
+};
 use crate::request_protocol_data::{
-    DKGFirstData, DKGSecondData, DWalletDKGData, EncryptedShareVerificationData,
-    ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData,
-    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData,
-    NetworkEncryptionKeyV1ToV2ReconfigurationData, NetworkEncryptionKeyV2ReconfigurationData,
-    PartialSignatureVerificationData, PresignData, ProtocolData, SignData,
+    DKGFirstData, DKGSecondData, DWalletDKGAndSignData, DWalletDKGData,
+    EncryptedShareVerificationData, ImportedKeyVerificationData,
+    MakeDWalletUserSecretKeySharesPublicData, NetworkEncryptionKeyDkgData,
+    NetworkEncryptionKeyReconfigurationData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
+    NetworkEncryptionKeyV2ReconfigurationData, PartialSignatureVerificationData, PresignData,
+    ProtocolData, SignData,
 };
 use class_groups::SecretKeyShareSizedInteger;
 use class_groups::dkg::Secp256k1Party;
@@ -69,6 +73,12 @@ pub(crate) enum ProtocolCryptographicData {
         data: SignData,
         public_input: SignPublicInputByProtocol,
         advance_request: SignAdvanceRequestByProtocol,
+        decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
+    },
+    DWalletDKGAndSign {
+        data: DWalletDKGAndSignData,
+        public_input: DKGAndSignPublicInputByProtocol,
+        advance_request: DWalletDKGAndSignAdvanceRequestByProtocol,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
@@ -165,6 +175,26 @@ impl ProtocolCryptographicData {
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Sign {
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
@@ -286,6 +316,26 @@ impl ProtocolCryptographicData {
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Sign {
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request: DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
