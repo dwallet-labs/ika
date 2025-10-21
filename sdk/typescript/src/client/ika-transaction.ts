@@ -1559,7 +1559,12 @@ export class IkaTransaction {
 		return coordinatorTx.requestImportedKeySignWithPartialUserSignatureAndReturnId(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			partialUserSignatureCap,
+			coordinatorTx.verifyPartialUserSignatureCap(
+				this.#ikaClient.ikaConfig,
+				this.#getCoordinatorObjectRef(),
+				this.#transaction.object(partialUserSignatureCap),
+				this.#transaction,
+			),
 			importedKeyMessageApproval,
 			this.createSessionIdentifier(),
 			ikaCoin,
