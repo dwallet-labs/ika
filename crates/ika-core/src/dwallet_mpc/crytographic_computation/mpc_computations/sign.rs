@@ -389,17 +389,37 @@ impl SignPublicInputByProtocol {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
                 Ok(SignPublicInputByProtocol::Secp256k1ECDSA(
-                    match bcs::from_bytes(presign)? {
+                    match bcs::from_bytes(presign).map_err(|e| {
+                        DwalletMPCError::BcsError(bcs::Error::Custom(
+                            "Failed to deserialize presign output".to_string(),
+                        ))
+                    })? {
                         VersionedPresignOutput::V1(presign) => {
-                            let dkg_output = bcs::from_bytes(dwallet_decentralized_public_output)?;
+                            let dkg_output = bcs::from_bytes(dwallet_decentralized_public_output)
+                                .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(
+                                    "Failed to deserialize decentralized DKG versioned output v1".to_string(),
+                                )))?;
                             let centralized_signed_message =
-                                bcs::from_bytes(message_centralized_signature)?;
+                                bcs::from_bytes(message_centralized_signature)
+                                    .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(
+                                        "Failed to deserialize centralized signed message".to_string(),
+                                    )))?;
                             let decentralized_dkg_output = match dkg_output {
                                 VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-                                    bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
+                                    bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice()).map_err(
+                                        |e| DwalletMPCError::BcsError(bcs::Error::Custom(
+                                            "Failed to deserialize decentralized DKG output V1"
+                                                .to_string(),
+                                        )),
+                                    )?.into()
                                 }
                                 VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-                                    bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(output.as_slice())?
+                                    bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(output.as_slice()).map_err(
+                                        |e| DwalletMPCError::BcsError(bcs::Error::Custom(
+                                            "Failed to deserialize decentralized DKG output V2"
+                                                .to_string(),
+                                        ))
+                                    )?
                                 }
                             };
 
@@ -415,7 +435,9 @@ impl SignPublicInputByProtocol {
                                         { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                                     >,
                                 >,
-                            > = bcs::from_bytes(&presign)?;
+                            > = bcs::from_bytes(&presign).map_err(|e| DwalletMPCError::BcsError(
+                                bcs::Error::Custom("Failed to deserialize presign V1".to_string()),
+                            ))?;
                             let public_input = <SignParty<Secp256K1ECDSAProtocol> as Party>::PublicInput::from((
                                 expected_decrypters,
                                 protocol_public_parameters,
@@ -426,7 +448,9 @@ impl SignPublicInputByProtocol {
                                 presign.into(),
                                 bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage>(
                                     &centralized_signed_message,
-                                )?,
+                                ).map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(
+                                    "Failed to deserialize sign message".to_string(),
+                                )))?,
                                 decryption_pp,
                             ));
 
@@ -552,7 +576,10 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!("Curve and DKG public input type mismatch");
+                    unreachable!(
+                        "Curve and DKG public input type mismatch
+                "
+                    );
                 };
                 Ok(DKGAndSignPublicInputByProtocol::Secp256k1ECDSA(
                     generate_dkg_and_sign_public_input::<Secp256K1ECDSAProtocol>(
@@ -575,7 +602,14 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!("Curve and DKG public input type mismatch");
+                    unreachable!(
+                        "Curve
+                and
+                DKG
+                public
+                input type mismatch
+                "
+                    );
                 };
                 let public_input = generate_dkg_and_sign_public_input::<Secp256K1TaprootProtocol>(
                     protocol_public_parameters,
@@ -600,7 +634,14 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!("Curve and DKG public input type mismatch");
+                    unreachable!(
+                        "Curve
+                and
+                DKG
+                public
+                input type mismatch
+                "
+                    );
                 };
                 let public_input =
                     generate_dkg_and_sign_public_input::<RistrettoSchnorrkelSubstrateProtocol>(
@@ -624,7 +665,14 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!("Curve and DKG public input type mismatch");
+                    unreachable!(
+                        "Curve
+                and
+                DKG
+                public
+                input type mismatch
+                "
+                    );
                 };
                 let public_input = generate_dkg_and_sign_public_input::<Curve25519EdDSAProtocol>(
                     protocol_public_parameters,
@@ -647,7 +695,14 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!("Curve and DKG public input type mismatch");
+                    unreachable!(
+                        "Curve
+                and
+                DKG
+                public
+                input type mismatch
+                "
+                    );
                 };
                 let public_input = generate_dkg_and_sign_public_input::<Secp256R1ECDSAProtocol>(
                     protocol_public_parameters,
@@ -780,7 +835,16 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
     ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
         let presign = match bcs::from_bytes(&presign)? {
             VersionedPresignOutput::V1(_) => {
-                unreachable!("Presign V1 should have been handled separately")
+                unreachable!(
+                    "Presign
+                V1
+                should
+                have
+                been
+                handled
+                separately
+                "
+                )
             }
             VersionedPresignOutput::V2(presign) => presign,
         };
@@ -832,7 +896,16 @@ impl<P: twopc_mpc::sign::Protocol> DKGAndSignPartyPublicInputGenerator<P> for DK
     ) -> DwalletMPCResult<<DKGAndSignParty<P> as Party>::PublicInput> {
         let presign = match bcs::from_bytes(&presign)? {
             VersionedPresignOutput::V1(_) => {
-                unreachable!("Presign V1 should have been handled separately")
+                unreachable!(
+                    "Presign
+                V1
+                should
+                have
+                been
+                handled
+                separately
+                "
+                )
             }
             VersionedPresignOutput::V2(presign) => presign,
         };
@@ -953,7 +1026,13 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
                     ?malicious_parties,
                     signature_algorithm=?sign_data.signature_algorithm,
                     should_never_happen = true,
-                    "failed to deserialize sign session result"
+                    "failed
+                to
+                deserialize
+                sign
+                session
+                result
+                "
                 );
                 return Err(parsed_signature_result.err().unwrap());
             }
@@ -1012,7 +1091,13 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
                     ?malicious_parties,
                     signature_algorithm=?sign_data.signature_algorithm,
                     should_never_happen = true,
-                    "failed to deserialize sign session result"
+                    "failed
+                to
+                deserialize
+                sign
+                session
+                result
+                "
                 );
                 return Err(parsed_signature_result.err().unwrap());
             }
