@@ -23,7 +23,7 @@ describe('DWallet Creation', () => {
 	it('should sign during DKG v2 for a new zero trust DWallet - Ed25519', async () => {
 		await runCompleteDKGFlow('dwallet-creation-dkg-v2-test-ed25519', Curve.ED25519, {
 			message: Buffer.from('test message'),
-			hashScheme: Hash.SHA256,
+			hashScheme: Hash.SHA512,
 			signatureAlgorithm: SignatureAlgorithm.EdDSA,
 		});
 	});
@@ -34,14 +34,14 @@ describe('DWallet Creation', () => {
 			Curve.RISTRETTO,
 			{
 				message: Buffer.from('test message'),
-				hashScheme: Hash.SHA256,
+				hashScheme: Hash.Merlin,
 				signatureAlgorithm: SignatureAlgorithm.SchnorrkelSubstrate,
 			},
 		);
 	});
 
-	it('should sign during DKG v2 for a new zero trust DWallet - Ristretto Taproot', async () => {
-		await runCompleteDKGFlow('dwallet-creation-dkg-v2-test-ristretto-taproot', Curve.RISTRETTO, {
+	it('should sign during DKG v2 for a new zero trust DWallet - Secp256k1 Taproot', async () => {
+		await runCompleteDKGFlow('dwallet-creation-dkg-v2-test-secp256k1-taproot', Curve.SECP256K1, {
 			message: Buffer.from('test message'),
 			hashScheme: Hash.SHA256,
 			signatureAlgorithm: SignatureAlgorithm.Taproot,
@@ -78,7 +78,7 @@ describe('DWallet Creation', () => {
 			Curve.ED25519,
 			{
 				message: Buffer.from('test message'),
-				hashScheme: Hash.SHA256,
+				hashScheme: Hash.SHA512,
 				signatureAlgorithm: SignatureAlgorithm.EdDSA,
 			},
 		);
@@ -90,16 +90,16 @@ describe('DWallet Creation', () => {
 			Curve.RISTRETTO,
 			{
 				message: Buffer.from('test message'),
-				hashScheme: Hash.SHA256,
+				hashScheme: Hash.Merlin,
 				signatureAlgorithm: SignatureAlgorithm.SchnorrkelSubstrate,
 			},
 		);
 	});
 
-	it('should sign during DKG v2 for a new shared DWallet - Ristretto Taproot', async () => {
+	it('should sign during DKG v2 for a new shared DWallet - Secp256k1 Taproot', async () => {
 		await runCompleteSharedDKGFlowWithSign(
-			'dwallet-creation-shared-dkg-v2-sign-test-ristretto-taproot',
-			Curve.RISTRETTO,
+			'dwallet-creation-shared-dkg-v2-sign-test-secp256k1-taproot',
+			Curve.SECP256K1,
 			{
 				message: Buffer.from('test message'),
 				hashScheme: Hash.SHA256,

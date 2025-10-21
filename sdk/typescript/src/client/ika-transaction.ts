@@ -319,6 +319,8 @@ export class IkaTransaction {
 								signatureScheme: signDuringDKGRequest.signatureAlgorithm,
 								presign: signDuringDKGRequest.presign,
 								curve,
+								publicOutput: userPublicOutput,
+								secretShare: publicUserSecretKeyShare,
 							},
 							signDuringDKG: signDuringDKGRequest ? true : false,
 						}),
