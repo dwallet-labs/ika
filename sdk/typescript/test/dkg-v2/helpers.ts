@@ -501,7 +501,7 @@ export async function runCompleteSharedDKGFlowWithSign(
 
 	const emptyIKACoin = createEmptyTestIkaToken(suiTransaction, ikaClient.ikaConfig);
 
-	const [dWalletCap, signatureCap] = await ikaTransaction.requestDWalletDKGWithPublicUserShare({
+	const [dWalletCap, _] = await ikaTransaction.requestDWalletDKGWithPublicUserShare({
 		publicKeyShareAndProof: userDKGMessage,
 		publicUserSecretKeyShare: userSecretKeyShare,
 		userPublicOutput: userPublicOutput,
@@ -521,7 +521,7 @@ export async function runCompleteSharedDKGFlowWithSign(
 		},
 	});
 
-	suiTransaction.transferObjects([dWalletCap, signatureCap], signerAddress);
+	suiTransaction.transferObjects([dWalletCap], signerAddress);
 
 	destroyEmptyTestIkaToken(suiTransaction, ikaClient.ikaConfig, emptyIKACoin);
 

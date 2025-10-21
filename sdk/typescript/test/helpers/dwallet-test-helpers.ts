@@ -472,7 +472,7 @@ export async function requestTestDkgWithPublicUserShare(
 	suiClient: SuiClient,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
-	sessionIdentifierObjID: string,
+	sessionIdentifier: TransactionObjectArgument,
 	dwalletNetworkEncryptionKeyId: string,
 	curve: number,
 	signerAddress: string,
@@ -486,7 +486,7 @@ export async function requestTestDkgWithPublicUserShare(
 	const [dWalletCap] = await ikaTransaction.requestDWalletDKGWithPublicUserShare({
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
-		sessionIdentifierObjID,
+		sessionIdentifier,
 		dwalletNetworkEncryptionKeyId,
 		curve: numberToCurve(curve),
 		publicKeyShareAndProof,

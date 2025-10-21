@@ -1471,12 +1471,16 @@ export class IkaTransaction {
 		} else if (hasPublicShares) {
 			// Public shares available on DWallet
 			this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
+			this.#assertDWalletPublicOutputSet(dWallet);
 
 			unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
 				verifiedPresignCap,
 				userSignatureInputs: {
 					activeDWallet: dWallet,
 					presign,
+					// No need to verify public output in public user-share flows, as there is no zero-trust security in this model.
+					publicOutput: Uint8Array.from(dWallet.state.Active?.public_output),
+					secretShare: Uint8Array.from(dWallet.public_user_secret_key_share),
 					message,
 					hash: hashScheme,
 					signatureScheme,
