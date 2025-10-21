@@ -1142,7 +1142,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
                     bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
                         bcs::to_bytes(&dwallet_dkg_output)?,
                     ))?,
-                    bcs::to_bytes(&parsed_signature_result.unwrap())?,
+                    &parsed_signature_result.unwrap(),
                 ))?,
                 malicious_parties,
                 private_output,
