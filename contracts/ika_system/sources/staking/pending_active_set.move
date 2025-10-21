@@ -203,7 +203,7 @@ public(package) fun remove(set: &mut PendingActiveSet, validator_id: ID): bool {
             set.validator_changes.insert(validator_id);
         };
         assert!(
-            set.validator_changes.size() <= set.max_validator_change_count,
+            set.validator_changes.length() <= set.max_validator_change_count,
             EMaxValidatorChangeReached,
         );
     };
@@ -236,11 +236,13 @@ public(package) fun find_validator_index(set: &PendingActiveSet, validator_id: I
 
 /// Sets the maximum size of the active set.
 public(package) fun set_max_validator_count(set: &mut PendingActiveSet, max_validator_count: u64) {
+    assert!(max_validator_count > 0, EZeroMaxSize);
     set.max_validator_count = max_validator_count;
 }
 
 /// Sets the minimum number of validators required in the active set.
 public(package) fun set_min_validator_count(set: &mut PendingActiveSet, min_validator_count: u64) {
+    assert!(min_validator_count <= set.max_validator_count, EBelowMinValidatorCount);
     set.min_validator_count = min_validator_count;
 }
 
@@ -344,7 +346,7 @@ fun insert(set: &mut PendingActiveSet, validator_id: ID, staked_amount: u64): (b
             set.validator_changes.insert(validator_id);
         };
         assert!(
-            set.validator_changes.size() <= set.max_validator_change_count,
+            set.validator_changes.length() <= set.max_validator_change_count,
             EMaxValidatorChangeReached,
         );
 
@@ -367,7 +369,7 @@ fun insert(set: &mut PendingActiveSet, validator_id: ID, staked_amount: u64): (b
         set.validator_changes.insert(validator_id);
     };
     assert!(
-        set.validator_changes.size() <= set.max_validator_change_count,
+        set.validator_changes.length() <= set.max_validator_change_count,
         EMaxValidatorChangeReached,
     );
     (true, option::some(removed_validator_id))

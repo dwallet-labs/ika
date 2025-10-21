@@ -717,6 +717,7 @@ public(package) fun set_max_validator_change_count(
 }
 
 public(package) fun set_reward_slashing_rate(self: &mut ValidatorSet, reward_slashing_rate: u16) {
+    assert!(reward_slashing_rate <= BASIS_POINT_DENOMINATOR, EBpsTooLarge);
     self.reward_slashing_rate = reward_slashing_rate;
 }
 
@@ -900,7 +901,7 @@ fun compute_slashed_validators(self: &mut ValidatorSet): vector<ID> {
         //     self,
         //     reporters.into_keys(),
         // );
-        let reporter_votes = reporters.size();
+        let reporter_votes = reporters.length();
         //if (reporter_votes >= quorum_threshold()) {
         if (self.active_committee.is_quorum_threshold(reporter_votes)) {
             slashed_validators.push_back(validator_id);
