@@ -270,6 +270,7 @@ async function futureSignAndVerify(
 	curve: Curve,
 	testName: string,
 	dwalletType: DWalletType,
+	signerAddress: string,
 ): Promise<void> {
 	const suiClient = createTestSuiClient();
 
@@ -352,10 +353,7 @@ async function futureSignAndVerify(
 		}
 	}
 
-	transaction1.transferObjects(
-		[unverifiedPartialUserSignatureCap],
-		userShareEncryptionKeys.getSuiAddress(),
-	);
+	transaction1.transferObjects([unverifiedPartialUserSignatureCap], signerAddress);
 
 	destroyEmptyTestIkaToken(transaction1, ikaClient.ikaConfig, emptyIKACoin1);
 
@@ -423,8 +421,6 @@ async function futureSignAndVerify(
 			suiCoin: transaction2.gas,
 		});
 	}
-
-	transaction2.transferObjects([signId], userShareEncryptionKeys.getSuiAddress());
 
 	destroyEmptyTestIkaToken(transaction2, ikaClient.ikaConfig, emptyIKACoin2);
 
@@ -522,6 +518,7 @@ async function testCombination(
 		curve,
 		testName,
 		dwalletType,
+		signerAddress,
 	);
 }
 
