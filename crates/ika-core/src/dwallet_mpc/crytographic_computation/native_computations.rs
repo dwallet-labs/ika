@@ -186,6 +186,13 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Secp256r1(protocol_public_parameters),
                 ..
             } => {
+                if data.signature_algorithm != DWalletSignatureScheme::ECDSASecp256r1 {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: data.curve,
+                        protocol: data.signature_algorithm
+                    });
+                }
+
                 verify_partial_signature::<Secp256R1ECDSAProtocol>(
                     &data.message,
                     &HashType::try_from(data.hash_type.clone() as u32)
@@ -203,6 +210,13 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Curve25519(protocol_public_parameters),
                 ..
             } => {
+                if data.signature_algorithm != DWalletSignatureScheme::EdDSA {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: data.curve,
+                        protocol: data.signature_algorithm
+                    });
+                }
+
                 verify_partial_signature::<Curve25519EdDSAProtocol>(
                     &data.message,
                     &HashType::try_from(data.hash_type.clone() as u32)
@@ -220,6 +234,13 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Ristretto(protocol_public_parameters),
                 ..
             } => {
+                if data.signature_algorithm != DWalletSignatureScheme::SchnorrkelSubstrate {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: data.curve,
+                        protocol: data.signature_algorithm
+                    });
+                }
+
                 verify_partial_signature::<RistrettoSchnorrkelSubstrateProtocol>(
                     &data.message,
                     &HashType::try_from(data.hash_type.clone() as u32)
