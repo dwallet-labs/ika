@@ -1,7 +1,7 @@
-use crate::protocol_config::ProtocolConfiguration;
 use crate::validator_initialization_config::ValidatorInitializationConfig;
 use anyhow::bail;
 use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
+use dwallet_mpc_types::mpc_protocol_configuration::MpcProtocolConfiguration;
 use fastcrypto::traits::ToFromBytes;
 use ika_config::Config;
 use ika_config::initiation::{InitiationParameters, MIN_VALIDATOR_JOINING_STAKE_INKU};
@@ -538,15 +538,19 @@ pub async fn set_global_presign_config(
     );
 
     // Load protocol configuration
-    let protocol_config = ProtocolConfiguration::default_config();
+    let protocol_config = MpcProtocolConfiguration::default_config();
 
     let curve_to_signature_algorithms_for_dkg = new_curve_to_signature_algorithm_vecmap(
         &mut ptb,
-        protocol_config.get_dkg_curve_to_signature_algorithms_u32(),
+        protocol_config
+            .get_dkg_curve_to_signature_algorithms()
+            .clone(),
     )?;
     let curve_to_signature_algorithms_for_imported_key = new_curve_to_signature_algorithm_vecmap(
         &mut ptb,
-        protocol_config.get_imported_key_curve_to_signature_algorithms_u32(),
+        protocol_config
+            .get_imported_key_curve_to_signature_algorithms()
+            .clone(),
     )?;
 
     ptb.programmable_move_call(
@@ -600,10 +604,10 @@ pub async fn ika_system_initialize(
         .await?;
 
     // Load protocol configuration
-    let protocol_config = ProtocolConfiguration::default_config();
+    let protocol_config = MpcProtocolConfiguration::default_config();
 
     // Get supported curves
-    let curves = ProtocolConfiguration::get_supported_curves();
+    let curves = MpcProtocolConfiguration::get_supported_curves();
 
     let ika_system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
@@ -670,15 +674,15 @@ pub async fn ika_system_initialize(
     // Insert pricing for each curve with its supported signature algorithms for protocols with signature algorithms
     for curve in &curves {
         let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
+        let curve_u32 = *curve as u32;
 
         // Get signature algorithms supported by THIS specific curve
         let curve_sig_algos = protocol_config
-            .get_dkg_signature_algorithms_for_curve(*curve)
+            .get_dkg_signature_algorithms_for_curve(curve_u32)
             .expect("Curve must have signature algorithm configuration");
 
         for sig_algo in curve_sig_algos {
-            let sig_algo_u32 = *sig_algo as u32;
-            let sig_algo_option = ptb.input(CallArg::Pure(bcs::to_bytes(&Some(sig_algo_u32))?))?;
+            let sig_algo_option = ptb.input(CallArg::Pure(bcs::to_bytes(&Some(*sig_algo))?))?;
 
             for protocol in &protocols_with_sig_algo {
                 ptb.programmable_move_call(
@@ -712,18 +716,19 @@ pub async fn ika_system_initialize(
     let mut curve_hash_maps = Vec::new();
 
     for curve in &curves {
+        let curve_u32 = *curve as u32;
         let hash_algos = protocol_config
-            .get_hash_algorithms_for_curve(*curve)
+            .get_hash_algorithms_for_curve(curve_u32)
             .expect("Curve must have hash algorithm configuration");
 
         // Get signature algorithms supported by THIS curve (not all signature algorithms)
         let curve_sig_algos = protocol_config
-            .get_dkg_signature_algorithms_for_curve(*curve)
+            .get_dkg_signature_algorithms_for_curve(curve_u32)
             .expect("Curve must have signature algorithm configuration");
 
-        // Convert to u32 vectors for serialization
-        let hash_algos_vec: Vec<u32> = hash_algos.iter().map(|h| *h as u32).collect();
-        let sig_algos_vec: Vec<u32> = curve_sig_algos.iter().map(|s| *s as u32).collect();
+        // Already in u32 format
+        let hash_algos_vec: Vec<u32> = hash_algos;
+        let sig_algos_vec: Vec<u32> = curve_sig_algos.clone();
 
         // Each signature algorithm for this curve gets the same hash algorithms
         let hash_values = vec![hash_algos_vec; sig_algos_vec.len()];
