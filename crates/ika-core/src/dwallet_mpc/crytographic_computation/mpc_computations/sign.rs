@@ -840,7 +840,11 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
         expected_decrypters: HashSet<PartyID>,
         hash_scheme: HashType,
     ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
-        let presign = match bcs::from_bytes(&presign)? {
+        let presign = match bcs::from_bytes(&presign).map_err(|e| {
+            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                "Failed to deserialize presign output: {e}"
+            )))
+        })? {
             VersionedPresignOutput::V1(_) => {
                 unreachable!("Presign V1 should have been handled separately ")
             }
@@ -851,7 +855,12 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
                 "Failed to deserialize decentralized DKG versioned output: {e}"
             )))
         })?;
-        let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
+        let centralized_signed_message =
+            bcs::from_bytes(centralized_signed_message).map_err(|e| {
+                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                    "Failed to deserialize centralized signed message: {e}"
+                )))
+            })?;
         let decentralized_dkg_output = match dkg_output {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
                 bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())
