@@ -804,6 +804,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme: signatureScheme,
+					curve: dWallet.curve,
 				},
 				ikaCoin,
 				suiCoin,
