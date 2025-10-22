@@ -52,7 +52,7 @@ COPY dwallet-network/crates crates
 COPY dwallet-network/contracts contracts
 COPY dwallet-network/deployed_contracts deployed_contracts
 RUN git config --global url."https://x-access-token:$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"
-RUN cargo build ${CARGO_BUILD_FLAGS} --profile release --bin ika-node
+RUN cargo build --no-default-features ${CARGO_BUILD_FLAGS} --profile release --bin ika-node
 
 # ==========================
 # Runtime stage

@@ -23,7 +23,7 @@ services:
       - ./val1.DOMAIN_NAME_HERE/validator.yaml:/opt/ika/config/validator.yaml:ro
       - ./val1.DOMAIN_NAME_HERE/key-pairs:/opt/ika/key-pairs/:ro
       - ./dbs/val1.val1.DOMAIN_NAME_HERE/opt/ika/db:/opt/ika/db:rw
-    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/validator.yaml"]
+    command: ["/opt/ika/bin/ika-node-v1", "--config-path", "/opt/ika/config/validator.yaml"]
     restart: on-failure
     logging:
       driver: "json-file"
@@ -51,7 +51,7 @@ services:
       - ./val2.DOMAIN_NAME_HERE/validator.yaml:/opt/ika/config/validator.yaml:ro
       - ./val2.DOMAIN_NAME_HERE/key-pairs:/opt/ika/key-pairs/:ro
       - ./dbs/val2.DOMAIN_NAME_HERE/opt/ika/db:/opt/ika/db:rw
-    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/validator.yaml"]
+    command: ["/opt/ika/bin/ika-node-v1", "--config-path", "/opt/ika/config/validator.yaml"]
     restart: on-failure
     logging:
       driver: "json-file"
@@ -79,7 +79,7 @@ services:
       - ./val3.DOMAIN_NAME_HERE/validator.yaml:/opt/ika/config/validator.yaml:ro
       - ./val3.DOMAIN_NAME_HERE/key-pairs:/opt/ika/key-pairs/:ro
       - ./dbs/val3.DOMAIN_NAME_HERE/opt/ika/db:/opt/ika/db:rw
-    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/validator.yaml"]
+    command: ["/opt/ika/bin/ika-node-v1", "--config-path", "/opt/ika/config/validator.yaml"]
     restart: on-failure
     logging:
       driver: "json-file"
@@ -107,7 +107,7 @@ services:
       - ./val4.DOMAIN_NAME_HERE/validator.yaml:/opt/ika/config/validator.yaml:ro
       - ./val4.DOMAIN_NAME_HERE/key-pairs:/opt/ika/key-pairs/:ro
       - ./dbs/val4.DOMAIN_NAME_HERE/opt/ika/db:/opt/ika/db:rw
-    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/validator.yaml"]
+    command: ["/opt/ika/bin/ika-node-v1", "--config-path", "/opt/ika/config/validator.yaml"]
     restart: no
     logging:
       driver: "json-file"
@@ -129,4 +129,4 @@ services:
       - ./publisher/fullnode.yaml:/opt/ika/config/fullnode.yaml:ro
       - ./publisher/sui_config/publisher.key:/opt/ika/key-pairs/notifier.key:ro
       - ./dbs/fullnode/ikadb:/opt/ika/db:rw
-    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/fullnode.yaml"]
+    command: ["/opt/ika/bin/ika-node-v1", "--config-path", "/opt/ika/config/fullnode.yaml"]
