@@ -55,15 +55,15 @@ pub(crate) enum SignPublicInputByProtocol {
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub(crate) enum DKGAndSignPublicInputByProtocol {
-    #[strum(to_string = "Sign Public Input - curve: Secp256k1, protocol: ECDSA")]
+    #[strum(to_string = "DKG and Sign Public Input - curve: Secp256k1, protocol: ECDSA")]
     Secp256k1ECDSA(<DKGAndSignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Sign Public Input - curve: Secp256k1, protocol: Taproot")]
+    #[strum(to_string = "DKG and Sign Public Input - curve: Secp256k1, protocol: Taproot")]
     Secp256k1Taproot(<DKGAndSignParty<Secp256K1TaprootProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Sign Public Input - curve: Secp256r1, protocol: ECDSA")]
+    #[strum(to_string = "DKG and Sign Public Input - curve: Secp256r1, protocol: ECDSA")]
     Secp256r1(<DKGAndSignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Sign Public Input - curve: Curve25519, protocol: EdDSA")]
+    #[strum(to_string = "DKG and Sign Public Input - curve: Curve25519, protocol: EdDSA")]
     Curve25519(<DKGAndSignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrate")]
+    #[strum(to_string = "DKG and Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrate")]
     Ristretto(<DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput),
 }
 
