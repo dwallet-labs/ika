@@ -161,25 +161,16 @@ export function requestDWalletDKG(
 	encryptionKeyAddress: string,
 	userPublicOutput: Uint8Array,
 	signerPublicKey: Uint8Array,
-	sessionIdentifierObjID: string,
+	sessionIdentifier: TransactionObjectArgument,
 	signDuringDKGRequest: TransactionObjectArgument | null,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ): TransactionResult {
-	let signDuringDKGRequestSerialized: TransactionObjectArgument | null = null;
-
-	if (signDuringDKGRequest) {
-		signDuringDKGRequestSerialized = tx.moveCall({
-			target: `0x1::option::some`,
-			arguments: [signDuringDKGRequest],
-		});
-	} else {
-		signDuringDKGRequestSerialized = tx.object.option({
-			type: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::SignDuringDKGRequest`,
-			value: null,
-		});
-	}
+	const signDuringDKGRequestSerialized = tx.object.option({
+		type: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::SignDuringDKGRequest`,
+		value: signDuringDKGRequest,
+	})(tx);
 
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg`,
@@ -193,7 +184,7 @@ export function requestDWalletDKG(
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(signerPublicKey)),
 			signDuringDKGRequestSerialized,
-			tx.object(sessionIdentifierObjID),
+			tx.object(sessionIdentifier),
 			ikaCoin,
 			suiCoin,
 		],
@@ -208,25 +199,16 @@ export function requestDWalletDKGWithPublicUserSecretKeyShare(
 	userPublicKeyShareAndProof: Uint8Array,
 	publicUserSecretKeyShare: Uint8Array,
 	userPublicOutput: Uint8Array,
-	sessionIdentifierObjID: string,
+	sessionIdentifier: TransactionObjectArgument,
 	signDuringDKGRequest: TransactionObjectArgument | null,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
 ): TransactionResult {
-	let signDuringDKGRequestSerialized: TransactionObjectArgument | null = null;
-
-	if (signDuringDKGRequest) {
-		signDuringDKGRequestSerialized = tx.moveCall({
-			target: `0x1::option::some`,
-			arguments: [signDuringDKGRequest],
-		});
-	} else {
-		signDuringDKGRequestSerialized = tx.object.option({
-			type: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::SignDuringDKGRequest`,
-			value: null,
-		});
-	}
+	const signDuringDKGRequestSerialized = tx.object.option({
+		type: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::SignDuringDKGRequest`,
+		value: signDuringDKGRequest,
+	})(tx);
 
 	return tx.moveCall({
 		target: `${ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator::request_dwallet_dkg_with_public_user_secret_key_share`,
@@ -238,7 +220,7 @@ export function requestDWalletDKGWithPublicUserSecretKeyShare(
 			tx.pure(bcs.vector(bcs.u8()).serialize(userPublicOutput)),
 			tx.pure(bcs.vector(bcs.u8()).serialize(publicUserSecretKeyShare)),
 			signDuringDKGRequestSerialized,
-			tx.object(sessionIdentifierObjID),
+			tx.object(sessionIdentifier),
 			ikaCoin,
 			suiCoin,
 		],
@@ -485,7 +467,7 @@ export function requestImportedKeyDwalletVerification(
 	encryptionKeyAddress: string,
 	userPublicOutput: Uint8Array,
 	signerPublicKey: Uint8Array,
-	sessionIdentifier: string,
+	sessionIdentifier: TransactionObjectArgument,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,
 	tx: Transaction,
@@ -640,7 +622,7 @@ export function isPresignValid(
 export function verifyPresignCap(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
-	unverifiedPresignCap: string,
+	unverifiedPresignCap: TransactionObjectArgument,
 	tx: Transaction,
 ): TransactionObjectArgument {
 	return tx.moveCall({
@@ -874,8 +856,8 @@ export function requestImportedKeySignWithPartialUserSignature(
 export function requestImportedKeySignWithPartialUserSignatureAndReturnId(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
-	verifiedPartialUserSignatureCap: string,
-	importedKeyMessageApproval: string,
+	verifiedPartialUserSignatureCap: TransactionObjectArgument | string,
+	importedKeyMessageApproval: TransactionObjectArgument | string,
 	sessionIdentifier: TransactionObjectArgument,
 	ikaCoin: TransactionObjectArgument,
 	suiCoin: TransactionObjectArgument,

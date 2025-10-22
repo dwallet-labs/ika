@@ -278,6 +278,7 @@ impl From<&ProtocolData> for SessionComputationType {
     fn from(value: &ProtocolData) -> Self {
         match value {
             ProtocolData::MakeDWalletUserSecretKeySharesPublic { .. }
+            | ProtocolData::EncryptedShareVerification { .. }
             | ProtocolData::PartialSignatureVerification { .. } => SessionComputationType::Native,
             _ => SessionComputationType::MPC {
                 messages_by_consensus_round: HashMap::new(),
