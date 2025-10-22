@@ -586,9 +586,7 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!(
-                        "Curve and DKG public input type mismatch"
-                    );
+                    unreachable!("Curve and DKG public input type mismatch");
                 };
                 Ok(DKGAndSignPublicInputByProtocol::Secp256k1ECDSA(
                     generate_dkg_and_sign_public_input::<Secp256K1ECDSAProtocol>(
