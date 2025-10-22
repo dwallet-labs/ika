@@ -349,8 +349,9 @@ export async function createUserSignMessageWithPublicOutput(
 			userSecretKeyShare,
 			presign,
 			message,
-			signatureScheme,
 			hash,
+			signatureScheme,
+			curve,
 		),
 	);
 }
