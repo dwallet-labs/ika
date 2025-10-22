@@ -11,7 +11,10 @@ use crate::dwallet_mpc::sign::verify_partial_signature;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::ProtocolData;
 use class_groups::CiphertextSpaceGroupElement;
-use dwallet_mpc_types::dwallet_mpc::{DWalletSignatureAlgorithm, VersionedDwalletDKGSecondRoundPublicOutput, VersionedPresignOutput, VersionedUserSignedMessage};
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletSignatureAlgorithm, VersionedDwalletDKGSecondRoundPublicOutput, VersionedPresignOutput,
+    VersionedUserSignedMessage,
+};
 use group::{HashType, OsCsRng};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
@@ -155,22 +158,23 @@ impl ProtocolCryptographicData {
                                 &data.partially_signed_message,
                                 &protocol_public_parameters,
                             )?;
-                        },
+                        }
                         DWalletSignatureAlgorithm::Taproot => {
                             verify_partial_signature::<TaprootProtocol>(
                                 &data.message,
-                                &HashType::try_from(data.hash_type.clone() as u32)
-                                    .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                                &HashType::try_from(data.hash_scheme.clone() as u32).map_err(
+                                    |err| DwalletMPCError::InternalError(err.to_string()),
+                                )?,
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
                                 &protocol_public_parameters,
                             )?;
                         }
-                        _ =>  {
+                        _ => {
                             return Err(DwalletMPCError::CurveToProtocolMismatch {
                                 curve: data.curve,
-                                protocol: data.signature_algorithm
+                                protocol: data.signature_algorithm,
                             });
                         }
                     }
@@ -186,7 +190,7 @@ impl ProtocolCryptographicData {
                 if data.signature_algorithm != DWalletSignatureAlgorithm::ECDSASecp256r1 {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: data.curve,
-                        protocol: data.signature_algorithm
+                        protocol: data.signature_algorithm,
                     });
                 }
 
@@ -209,7 +213,7 @@ impl ProtocolCryptographicData {
                 if data.signature_algorithm != DWalletSignatureAlgorithm::EdDSA {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: data.curve,
-                        protocol: data.signature_algorithm
+                        protocol: data.signature_algorithm,
                     });
                 }
 
@@ -232,7 +236,7 @@ impl ProtocolCryptographicData {
                 if data.signature_algorithm != DWalletSignatureAlgorithm::SchnorrkelSubstrate {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: data.curve,
-                        protocol: data.signature_algorithm
+                        protocol: data.signature_algorithm,
                     });
                 }
 
