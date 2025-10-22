@@ -15,6 +15,7 @@ import {
 	publicKeyFromDWalletOutput,
 	SessionsManagerModule,
 	SignatureAlgorithm,
+	SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES,
 	ZeroTrustDWallet,
 } from '../../src';
 import { testPresign } from '../helpers/dwallet-test-helpers';
@@ -345,9 +346,11 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 	describe('ECDSASecp256k1 on SECP256K1', () => {
 		it('should work with KECCAK256', async () => {
 			await testCombination(
-				Curve.SECP256K1,
-				SignatureAlgorithm.ECDSASecp256k1,
-				Hash.KECCAK256,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.signatureAlgorithms.ECDSA
+					.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.signatureAlgorithms.ECDSA
+					.hashSchemes.Keccak256.value,
 				'ecdsa-secp256k1-keccak256',
 			);
 		});

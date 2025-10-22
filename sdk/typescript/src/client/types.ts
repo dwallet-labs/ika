@@ -221,3 +221,62 @@ export type UserSignatureInputs = {
 };
 
 export const PublicKeyBCS = bcs.vector(bcs.u8());
+
+export const SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES = {
+	Secp256k1: {
+		value: 0,
+		signatureAlgorithms: {
+			ECDSA: {
+				value: 0,
+				hashSchemes: {
+					Keccak256: { value: 0 },
+					SHA256: { value: 1 },
+					DoubleSHA256: { value: 2 },
+				},
+			},
+			Taproot: {
+				value: 1,
+				hashSchemes: {
+					SHA256: { value: 0 },
+				},
+			},
+		},
+	},
+
+	Secp256r1: {
+		value: 1,
+		signatureAlgorithms: {
+			ECDSA: {
+				value: 0,
+				hashSchemes: {
+					SHA256: { value: 0 },
+					DoubleSHA256: { value: 1 },
+				},
+			},
+		},
+	},
+
+	Curve25519: {
+		value: 2,
+		signatureAlgorithms: {
+			EdDSA: {
+				value: 0,
+				hashSchemes: {
+					SHA512: { value: 0 },
+				},
+			},
+		},
+	},
+
+	Ristretto: {
+		value: 3,
+		signatureAlgorithms: {
+			SchnorrkelSubstrate: {
+				value: 0,
+				hashSchemes: {
+					Merlin: { value: 0 },
+				},
+			},
+		},
+	},
+} as const;
