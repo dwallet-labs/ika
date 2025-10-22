@@ -522,6 +522,7 @@ describe('Cryptography Direct Functions', () => {
 					message,
 					1, // SHA256 hash
 					0, // ECDSA signature scheme
+					0
 				),
 			).rejects.toThrow();
 		});

@@ -340,6 +340,7 @@ export async function createUserSignMessageWithPublicOutput(
 	message: Uint8Array,
 	hash: number,
 	signatureScheme: number,
+	curve: number,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
 		await create_sign_user_message(
@@ -348,8 +349,8 @@ export async function createUserSignMessageWithPublicOutput(
 			userSecretKeyShare,
 			presign,
 			message,
-			hash,
 			signatureScheme,
+			hash,
 		),
 	);
 }
