@@ -1,3 +1,4 @@
+import { bcs } from '@mysten/sui/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { expect } from 'vitest';
@@ -26,6 +27,27 @@ import {
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
+
+const PublicKeyBCS = bcs.vector(bcs.u8());
+
+/**
+ * Decode a public key from the encoded format returned by WASM functions.
+ * For Ristretto and ED25519, the key is already in raw format.
+ * For other curves, the key is BCS-encoded and needs to be decoded.
+ *
+ * @param curve - The curve of the public key
+ * @param encodedPublicKey - The encoded public key from WASM
+ * @returns The decoded raw public key
+ */
+export function decodePublicKey(curve: Curve, encodedPublicKey: Uint8Array): Uint8Array {
+	// If it is Ristretto or ED25519, it's not BCS-Encoded since they have fixed size in rust
+	if (curve === Curve.RISTRETTO || curve === Curve.ED25519) {
+		return new Uint8Array(encodedPublicKey);
+	}
+
+	// For other curves, decode BCS bytes to raw public key
+	return new Uint8Array(PublicKeyBCS.parse(encodedPublicKey));
+}
 
 export interface DKGTestSetup {
 	suiClient: SuiClient;

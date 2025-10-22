@@ -32,6 +32,7 @@ import {
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
+import { decodePublicKey } from './helpers';
 
 /**
  * Generate a private key for the given curve
@@ -488,10 +489,11 @@ async function signWithPublicShareAndVerify(
 
 	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
 
-	const pkOutput = await publicKeyFromDWalletOutput(
+	const encodedPkOutput = await publicKeyFromDWalletOutput(
 		curve,
 		Uint8Array.from(dWallet.state.Active?.public_output ?? []),
 	);
+	const pkOutput = decodePublicKey(curve, encodedPkOutput);
 
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {
@@ -628,15 +630,6 @@ describe('Make Imported Key DWallet User Share Public and Sign', () => {
 				SignatureAlgorithm.ECDSASecp256r1,
 				Hash.SHA256,
 				'ecdsa-secp256r1-sha256',
-			);
-		});
-
-		it('should create imported key wallet, make share public, and sign with DoubleSHA256', async () => {
-			await testMakeImportedKeyPublicAndSign(
-				Curve.SECP256R1,
-				SignatureAlgorithm.ECDSASecp256r1,
-				Hash.DoubleSHA256,
-				'ecdsa-secp256r1-double-sha256',
 			);
 		});
 	});

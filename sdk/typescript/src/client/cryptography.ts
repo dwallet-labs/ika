@@ -8,7 +8,7 @@ import { randomBytes } from '@noble/hashes/utils.js';
 
 import type { IkaClient } from './ika-client.js';
 import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
-import { Curve, PublicKeyBCS, SignatureAlgorithm } from './types.js';
+import { Curve, SignatureAlgorithm } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 import {
@@ -472,22 +472,14 @@ export async function verifySecpSignature(
  *
  * @param curve - The curve to use for key generation
  * @param dWalletOutput - The DWallet output
- * @returns The public key
+ *
+ * @returns The BCS-encoded public key
  */
 export async function publicKeyFromDWalletOutput(
 	curve: Curve,
 	dWalletOutput: Uint8Array,
 ): Promise<Uint8Array> {
-	const raw = await public_key_from_dwallet_output(curve, dWalletOutput);
-	const encoded = new Uint8Array(raw); // Convert JS array -> Uint8Array
-
-	// If it is Ristretto or ED25519
-	// It is not BCS-Encoded since they have fixed size in rust
-	if (curve === Curve.RISTRETTO || curve === Curve.ED25519) {
-		return new Uint8Array(encoded);
-	}
-
-	return new Uint8Array(PublicKeyBCS.parse(encoded)); // Decode BCS bytes -> raw public key
+	return Uint8Array.from(await public_key_from_dwallet_output(curve, dWalletOutput));
 }
 
 /**
@@ -495,22 +487,14 @@ export async function publicKeyFromDWalletOutput(
  *
  * @param curve - The curve to use for key generation
  * @param centralizedDkgOutput - The centralized DKG output
- * @returns The public key
+ *
+ * @returns The BCS-encoded public key
  */
 export async function publicKeyFromCentralizedDKGOutput(
 	curve: Curve,
 	centralizedDkgOutput: Uint8Array,
 ): Promise<Uint8Array> {
-	const raw = await public_key_from_centralized_dkg_output(curve, centralizedDkgOutput);
-	const encoded = new Uint8Array(raw); // Convert JS array -> Uint8Array
-
-	// If it is Ristretto or ED25519
-	// It is not BCS-Encoded since they have fixed size in rust
-	if (curve === Curve.RISTRETTO || curve === Curve.ED25519) {
-		return new Uint8Array(encoded);
-	}
-
-	return new Uint8Array(PublicKeyBCS.parse(encoded)); // Decode BCS bytes -> raw public key
+	return Uint8Array.from(await public_key_from_centralized_dkg_output(curve, centralizedDkgOutput));
 }
 
 /**

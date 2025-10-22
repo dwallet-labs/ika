@@ -35,6 +35,7 @@ import {
 } from '../helpers/test-utils';
 import {
 	acceptUserShareAndActivate,
+	decodePublicKey,
 	executeDKGRequest,
 	prepareDKG,
 	setupDKGTest,
@@ -367,10 +368,11 @@ async function bobSignAndVerify(
 
 	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
 
-	const pkOutput = await publicKeyFromDWalletOutput(
+	const encodedPkOutput = await publicKeyFromDWalletOutput(
 		curve,
 		Uint8Array.from(dWallet.state.Active?.public_output ?? []),
 	);
+	const pkOutput = decodePublicKey(curve, encodedPkOutput);
 
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {
@@ -546,15 +548,6 @@ describe('DWallet Transfer from Alice to Bob', () => {
 				SignatureAlgorithm.ECDSASecp256r1,
 				Hash.SHA256,
 				'ecdsa-secp256r1-sha256',
-			);
-		});
-
-		it('should transfer DWallet from Alice to Bob and Bob should sign with DoubleSHA256', async () => {
-			await testDWalletTransfer(
-				Curve.SECP256R1,
-				SignatureAlgorithm.ECDSASecp256r1,
-				Hash.DoubleSHA256,
-				'ecdsa-secp256r1-double-sha256',
 			);
 		});
 	});

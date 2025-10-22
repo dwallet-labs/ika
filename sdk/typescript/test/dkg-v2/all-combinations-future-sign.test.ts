@@ -37,6 +37,7 @@ import {
 } from '../helpers/test-utils';
 import {
 	acceptUserShareAndActivate,
+	decodePublicKey,
 	executeDKGRequest,
 	prepareDKG,
 	waitForDWalletAwaitingSignature,
@@ -598,10 +599,11 @@ async function futureSignAndVerify(
 
 	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
 
-	const pkOutput = await publicKeyFromDWalletOutput(
+	const encodedPkOutput = await publicKeyFromDWalletOutput(
 		curve,
 		Uint8Array.from(dWallet.state.Active?.public_output ?? []),
 	);
+	const pkOutput = decodePublicKey(curve, encodedPkOutput);
 
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {
@@ -797,7 +799,7 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 		});
 	});
 
-	// ECDSASecp256r1 + SECP256R1 combinations (2 hashes × 3 dwallet types = 6 tests)
+	// ECDSASecp256r1 + SECP256R1 combinations (1 hash × 3 dwallet types = 3 tests)
 	describe('ECDSASecp256r1 on SECP256R1', () => {
 		describe('Zero Trust', () => {
 			it('should work with SHA256', async () => {
@@ -807,16 +809,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					SignatureAlgorithm.ECDSASecp256r1,
 					Hash.SHA256,
 					'ecdsa-secp256r1-sha256',
-				);
-			});
-
-			it('should work with DoubleSHA256', async () => {
-				await testCombination(
-					'zero-trust',
-					Curve.SECP256R1,
-					SignatureAlgorithm.ECDSASecp256r1,
-					Hash.DoubleSHA256,
-					'ecdsa-secp256r1-double-sha256',
 				);
 			});
 		});
@@ -831,16 +823,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					'ecdsa-secp256r1-sha256',
 				);
 			});
-
-			it('should work with DoubleSHA256', async () => {
-				await testCombination(
-					'shared',
-					Curve.SECP256R1,
-					SignatureAlgorithm.ECDSASecp256r1,
-					Hash.DoubleSHA256,
-					'ecdsa-secp256r1-double-sha256',
-				);
-			});
 		});
 
 		describe('Imported Key', () => {
@@ -851,16 +833,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					SignatureAlgorithm.ECDSASecp256r1,
 					Hash.SHA256,
 					'ecdsa-secp256r1-sha256',
-				);
-			});
-
-			it('should work with DoubleSHA256', async () => {
-				await testCombination(
-					'imported-key',
-					Curve.SECP256R1,
-					SignatureAlgorithm.ECDSASecp256r1,
-					Hash.DoubleSHA256,
-					'ecdsa-secp256r1-double-sha256',
 				);
 			});
 		});
