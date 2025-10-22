@@ -156,10 +156,7 @@ done
 ###############################
 rm -rf "$SUI_CONFIG_PATH"
 
-if [ ! -f ../../../../../target/debug/ika-swarm-config ]; then
-  cargo build --bin ika-swarm-config
-fi
-cp ../../../../../target/debug/ika-swarm-config .
+cp ../old_mainnet_binaries/mainnet-release-ika-swarm-config ./ika-swarm-config
 
 # Publish IKA Modules (Creates the publisher config).
 # echo the parameters to the next call
