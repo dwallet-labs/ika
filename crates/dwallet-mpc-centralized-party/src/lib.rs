@@ -584,7 +584,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
             Ok(signed_message)
         }
         VersionedPresignOutput::V2(presign) => {
-            let signature_scheme = try_into_signature_algorithm()? DWalletSignatureAlgorithm::try_from(signature_scheme)?;
+            let signature_scheme = try_into_signature_algorithm(curve, signature_scheme)?;
             match signature_scheme {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<
