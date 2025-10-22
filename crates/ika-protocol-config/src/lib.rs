@@ -261,7 +261,7 @@ pub struct ProtocolConfig {
     consensus_gc_depth: Option<u32>,
     decryption_key_reconfiguration_third_round_delay: Option<u64>,
     network_dkg_third_round_delay: Option<u64>,
-    pub network_encryption_key_version: Option<u64>,
+    network_encryption_key_version: Option<u64>,
 }
 
 // feature flags
@@ -312,6 +312,10 @@ impl ProtocolConfig {
 
     pub fn consensus_zstd_compression(&self) -> bool {
         self.feature_flags.consensus_zstd_compression
+    }
+
+    pub fn is_network_encryption_key_version_v2(&self) -> bool {
+        self.network_encryption_key_version.is_some_and(|v| v == 2)
     }
 }
 

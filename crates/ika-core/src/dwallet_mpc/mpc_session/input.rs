@@ -176,7 +176,7 @@ pub(crate) fn session_input_from_request(
             let class_groups_decryption_key = network_keys
                 .validator_private_dec_key_data
                 .class_groups_decryption_key;
-            if protocol_config.network_encryption_key_version == Some(2) {
+            if protocol_config.is_network_encryption_key_version_v2() {
                 Ok((
                     PublicInput::NetworkEncryptionKeyDkgV2(network_dkg_v2_public_input(
                         access_structure,
@@ -207,7 +207,7 @@ pub(crate) fn session_input_from_request(
             )?;
             let key_version =
                 network_keys.get_network_key_version(dwallet_network_encryption_key_id)?;
-            if (key_version == 1) && protocol_config.network_encryption_key_version == Some(2) {
+            if (key_version == 1) && protocol_config.is_network_encryption_key_version_v2() {
                 Ok((
                     PublicInput::NetworkEncryptionKeyReconfigurationV1ToV2(<ReconfigurationV1toV2Party as ReconfigurationV1ToV2PartyPublicInputGenerator>::generate_public_input(
                         committee,
@@ -225,7 +225,7 @@ pub(crate) fn session_input_from_request(
                         &class_groups_decryption_key
                     )?),
                 ))
-            } else if protocol_config.network_encryption_key_version == Some(2) {
+            } else if protocol_config.is_network_encryption_key_version_v2() {
                 Ok((
                     PublicInput::NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Party as ReconfigurationV2PartyPublicInputGenerator>::generate_public_input(
                         committee,

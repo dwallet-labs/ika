@@ -42,18 +42,6 @@ pub const NETWORK_ENCRYPTION_KEY_RECONFIGURATION_STR_KEY: &str =
 pub const NETWORK_ENCRYPTION_KEY_DKG_STR_KEY: &str = "NetworkEncryptionKeyDkg";
 pub const SIGN_STR_KEY: &str = "Sign";
 
-pub const DKG_FIRST_ROUND_PROTOCOL_FLAG: u32 = 0;
-pub const DKG_SECOND_ROUND_PROTOCOL_FLAG: u32 = 1;
-pub const RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG: u32 = 2;
-pub const MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG: u32 = 3;
-pub const IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG: u32 = 4;
-pub const PRESIGN_PROTOCOL_FLAG: u32 = 5;
-pub const SIGN_PROTOCOL_FLAG: u32 = 6;
-pub const FUTURE_SIGN_PROTOCOL_FLAG: u32 = 7;
-pub const SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG: u32 = 8;
-pub const DWALLET_DKG_PROTOCOL_FLAG: u32 = 9;
-pub const DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG: u32 = 10;
-
 /// This is a wrapper type for the [`SuiEvent`] type that is being used to write it to the local RocksDB.
 /// This is needed because the [`SuiEvent`] cannot be directly written to the RocksDB.
 #[derive(Debug, Clone, Serialize, Deserialize)]

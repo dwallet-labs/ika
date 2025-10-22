@@ -12,7 +12,7 @@ use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::ProtocolData;
 use class_groups::CiphertextSpaceGroupElement;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletSignatureScheme, VersionedDwalletDKGSecondRoundPublicOutput, VersionedPresignOutput,
+    DWalletSignatureAlgorithm, VersionedDwalletDKGSecondRoundPublicOutput, VersionedPresignOutput,
     VersionedUserSignedMessage,
 };
 use group::{HashType, OsCsRng};
@@ -108,8 +108,7 @@ impl ProtocolCryptographicData {
                     let dkg_output = bcs::from_bytes(&data.dwallet_decentralized_output)?;
                     let partially_signed_message = bcs::from_bytes(&data.partially_signed_message)?;
                     let message = &data.message;
-                    let hash_type = HashType::try_from(data.hash_type.clone() as u32)
-                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?;
+                    let hash_type = data.hash_scheme.clone();
                     let decentralized_dkg_output = match dkg_output {
                             VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
                                 bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
@@ -150,22 +149,20 @@ impl ProtocolCryptographicData {
                 }
                 VersionedPresignOutput::V2(_) => {
                     match data.signature_algorithm {
-                        DWalletSignatureScheme::ECDSASecp256k1 => {
+                        DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                             verify_partial_signature::<Secp256K1ECDSAProtocol>(
                                 &data.message,
-                                &HashType::try_from(data.hash_type.clone() as u32).map_err(
-                                    |err| DwalletMPCError::InternalError(err.to_string()),
-                                )?,
+                                &data.hash_scheme,
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
                                 &protocol_public_parameters,
                             )?;
                         }
-                        DWalletSignatureScheme::Taproot => {
+                        DWalletSignatureAlgorithm::Taproot => {
                             verify_partial_signature::<TaprootProtocol>(
                                 &data.message,
-                                &HashType::try_from(data.hash_type.clone() as u32).map_err(
+                                &HashType::try_from(data.hash_scheme.clone() as u32).map_err(
                                     |err| DwalletMPCError::InternalError(err.to_string()),
                                 )?,
                                 &data.dwallet_decentralized_output,
@@ -181,7 +178,6 @@ impl ProtocolCryptographicData {
                             });
                         }
                     }
-
                     Vec::new()
                 }
             },
@@ -191,7 +187,7 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Secp256r1(protocol_public_parameters),
                 ..
             } => {
-                if data.signature_algorithm != DWalletSignatureScheme::ECDSASecp256r1 {
+                if data.signature_algorithm != DWalletSignatureAlgorithm::ECDSASecp256r1 {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: data.curve,
                         protocol: data.signature_algorithm,
@@ -200,8 +196,7 @@ impl ProtocolCryptographicData {
 
                 verify_partial_signature::<Secp256R1ECDSAProtocol>(
                     &data.message,
-                    &HashType::try_from(data.hash_type.clone() as u32)
-                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.hash_scheme,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
@@ -215,7 +210,7 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Curve25519(protocol_public_parameters),
                 ..
             } => {
-                if data.signature_algorithm != DWalletSignatureScheme::EdDSA {
+                if data.signature_algorithm != DWalletSignatureAlgorithm::EdDSA {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: data.curve,
                         protocol: data.signature_algorithm,
@@ -224,8 +219,7 @@ impl ProtocolCryptographicData {
 
                 verify_partial_signature::<Curve25519EdDSAProtocol>(
                     &data.message,
-                    &HashType::try_from(data.hash_type.clone() as u32)
-                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.hash_scheme,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
@@ -239,7 +233,7 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Ristretto(protocol_public_parameters),
                 ..
             } => {
-                if data.signature_algorithm != DWalletSignatureScheme::SchnorrkelSubstrate {
+                if data.signature_algorithm != DWalletSignatureAlgorithm::SchnorrkelSubstrate {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: data.curve,
                         protocol: data.signature_algorithm,
@@ -248,8 +242,7 @@ impl ProtocolCryptographicData {
 
                 verify_partial_signature::<RistrettoSchnorrkelSubstrateProtocol>(
                     &data.message,
-                    &HashType::try_from(data.hash_type.clone() as u32)
-                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.hash_scheme,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
