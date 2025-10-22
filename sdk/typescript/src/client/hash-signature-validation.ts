@@ -113,6 +113,65 @@ export function validateHashSignatureCombination(
 	}
 }
 
+export const SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES = {
+	Secp256k1: {
+		value: 0,
+		signatureAlgorithms: {
+			ECDSA: {
+				value: 0,
+				hashSchemes: {
+					Keccak256: { value: 0 },
+					SHA256: { value: 1 },
+					DoubleSHA256: { value: 2 },
+				},
+			},
+			Taproot: {
+				value: 1,
+				hashSchemes: {
+					SHA256: { value: 0 },
+				},
+			},
+		},
+	},
+
+	Secp256r1: {
+		value: 1,
+		signatureAlgorithms: {
+			ECDSA: {
+				value: 0,
+				hashSchemes: {
+					SHA256: { value: 0 },
+					DoubleSHA256: { value: 1 },
+				},
+			},
+		},
+	},
+
+	Curve25519: {
+		value: 2,
+		signatureAlgorithms: {
+			EdDSA: {
+				value: 0,
+				hashSchemes: {
+					SHA512: { value: 0 },
+				},
+			},
+		},
+	},
+
+	Ristretto: {
+		value: 3,
+		signatureAlgorithms: {
+			SchnorrkelSubstrate: {
+				value: 0,
+				hashSchemes: {
+					Merlin: { value: 0 },
+				},
+			},
+		},
+	},
+} as const;
+
 /**
  * Runtime validation: Checks if the curve matches the signature algorithm.
  *
@@ -120,17 +179,23 @@ export function validateHashSignatureCombination(
  * @param signatureAlgorithm - The signature algorithm to validate
  * @throws {Error} If the curve does not match the signature algorithm
  */
-export function validateCurveSignatureAlgorithm(
-	curve: Curve,
-	signatureAlgorithm: SignatureAlgorithm,
-): void {
-	const expectedCurve = SIGNATURE_ALGORITHM_TO_CURVE[signatureAlgorithm];
+export function validateCurveSignatureAlgorithm(curve: number, signatureAlgorithm: number): void {
+	const expectedCurve = Object.values(
+		SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES,
+	).find((curveObj) => curveObj.value === curve);
 
-	if (curve !== expectedCurve) {
+	if (!expectedCurve) {
+		throw new Error(`Unsupported curve: ${curve}`);
+	}
+
+	const expetedSignatureAlgorithm = Object.values(expectedCurve.signatureAlgorithms).find(
+		(sigAlg) => sigAlg.value === signatureAlgorithm,
+	);
+	if (!expetedSignatureAlgorithm) {
 		throw new Error(
-			`Invalid curve and signature algorithm combination: ` +
-				`${getSignatureAlgorithmName(signatureAlgorithm)} requires ${getCurveName(expectedCurve)}, ` +
-				`but ${getCurveName(curve)} was provided.`,
+			'unsupported signature algorithm for the given curve: ' +
+				`${curve} does not support ` +
+				`${signatureAlgorithm}`,
 		);
 	}
 }

@@ -18,3 +18,4 @@ export * from './client/user-share-encryption-keys.js';
 export * from './client/utils.js';
 
 export { CoordinatorModule, CoordinatorInnerModule, SessionsManagerModule, SystemModule };
+export {SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES} from "./client";
