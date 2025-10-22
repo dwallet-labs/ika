@@ -6,7 +6,7 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
 use group::HashType;
-use ika_types::dwallet_mpc_error::DwalletMPCResult;
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
@@ -63,7 +63,7 @@ pub struct DWalletDKGAndSignData {
     pub user_secret_key_share: UserSecretKeyShareEventType,
     pub presign_id: ObjectID,
     pub presign: Vec<u8>,
-    pub signature_algorithm: DWalletSignatureScheme,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_type: HashType,
     pub message: Vec<u8>,
     pub message_centralized_signature: Vec<u8>,
@@ -274,13 +274,14 @@ pub fn dwallet_dkg_and_sign_protocol_data(
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::DWalletDKGAndSign {
         data: DWalletDKGAndSignData {
-            curve: request_event_data.curve.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
             centralized_public_key_share_and_proof: request_event_data
                 .centralized_public_key_share_and_proof,
             user_secret_key_share,
             presign_id: sign_during_dkg_request.presign_id,
             presign: sign_during_dkg_request.presign.clone(),
-            signature_algorithm: DWalletSignatureScheme::try_from(
+            signature_algorithm: try_into_signature_algorithm(
+                request_event_data.curve,
                 sign_during_dkg_request.signature_algorithm,
             )?,
             hash_type: HashType::try_from(sign_during_dkg_request.hash_scheme)

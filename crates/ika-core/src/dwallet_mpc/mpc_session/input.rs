@@ -24,9 +24,8 @@ use crate::request_protocol_data::{
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletSignatureScheme, MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait,
-    ReconfigurationParty, ReconfigurationV2Party, VersionedDwalletUserSecretShare,
-    VersionedEncryptedUserShare,
+    DWalletSignatureAlgorithm, MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait,
+    ReconfigurationParty, ReconfigurationV2Party, VersionedEncryptedUserShare,
 };
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;

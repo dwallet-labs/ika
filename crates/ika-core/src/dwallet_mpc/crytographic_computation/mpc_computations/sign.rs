@@ -214,7 +214,7 @@ impl SignAdvanceRequestByProtocol {
                 }
             },
             DWalletCurve::Ristretto => {
-                if protocol != &DWalletSignatureScheme::SchnorrkelSubstrate {
+                if protocol != &DWalletSignatureAlgorithm::SchnorrkelSubstrate {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: curve.clone(),
                         protocol: protocol.clone(),
@@ -232,7 +232,7 @@ impl SignAdvanceRequestByProtocol {
                 advance_request.map(SignAdvanceRequestByProtocol::Ristretto)
             }
             DWalletCurve::Curve25519 => {
-                if protocol != &DWalletSignatureScheme::EdDSA {
+                if protocol != &DWalletSignatureAlgorithm::EdDSA {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: curve.clone(),
                         protocol: protocol.clone(),
@@ -249,7 +249,7 @@ impl SignAdvanceRequestByProtocol {
                 advance_request.map(SignAdvanceRequestByProtocol::Curve25519)
             }
             DWalletCurve::Secp256r1 => {
-                if protocol != &DWalletSignatureScheme::ECDSASecp256r1 {
+                if protocol != &DWalletSignatureAlgorithm::ECDSASecp256r1 {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: curve.clone(),
                         protocol: protocol.clone(),
@@ -273,7 +273,7 @@ impl SignAdvanceRequestByProtocol {
 impl DWalletDKGAndSignAdvanceRequestByProtocol {
     pub fn try_new(
         curve: &DWalletCurve,
-        protocol: &DWalletSignatureScheme,
+        protocol: &DWalletSignatureAlgorithm,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
         consensus_round: u64,
@@ -281,7 +281,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match curve {
             DWalletCurve::Secp256k1 => match protocol {
-                DWalletSignatureScheme::ECDSASecp256k1 => {
+                DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     let advance_request = mpc_computations::try_ready_to_advance::<
                         DKGAndSignParty<Secp256K1ECDSAProtocol>,
                     >(
@@ -293,7 +293,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
 
                     advance_request.map(Self::Secp256k1ECDSA)
                 }
-                DWalletSignatureScheme::Taproot => {
+                DWalletSignatureAlgorithm::Taproot => {
                     let advance_request = mpc_computations::try_ready_to_advance::<
                         DKGAndSignParty<Secp256K1TaprootProtocol>,
                     >(
@@ -313,7 +313,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                 }
             },
             DWalletCurve::Ristretto => {
-                if protocol != &DWalletSignatureScheme::SchnorrkelSubstrate {
+                if protocol != &DWalletSignatureAlgorithm::SchnorrkelSubstrate {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: curve.clone(),
                         protocol: protocol.clone(),
@@ -331,7 +331,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                 advance_request.map(Self::Ristretto)
             }
             DWalletCurve::Curve25519 => {
-                if protocol != &DWalletSignatureScheme::EdDSA {
+                if protocol != &DWalletSignatureAlgorithm::EdDSA {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: curve.clone(),
                         protocol: protocol.clone(),
@@ -349,7 +349,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                 advance_request.map(Self::Curve25519)
             }
             DWalletCurve::Secp256r1 => {
-                if protocol != &DWalletSignatureScheme::ECDSASecp256r1 {
+                if protocol != &DWalletSignatureAlgorithm::ECDSASecp256r1 {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: curve.clone(),
                         protocol: protocol.clone(),
@@ -572,12 +572,12 @@ impl DKGAndSignPublicInputByProtocol {
         hash_scheme: HashType,
         access_structure: &WeightedThresholdAccessStructure,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
-        protocol: DWalletSignatureScheme,
+        protocol: DWalletSignatureAlgorithm,
     ) -> DwalletMPCResult<Self> {
         let expected_decrypters =
             generate_expected_decrypters(access_structure, session_identifier)?;
         match protocol {
-            DWalletSignatureScheme::ECDSASecp256k1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .secp256k1_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -586,9 +586,7 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!(
-                        "Curve and DKG public input type mismatch"
-                    );
+                    unreachable!("Curve and DKG public input type mismatch");
                 };
                 Ok(DKGAndSignPublicInputByProtocol::Secp256k1ECDSA(
                     generate_dkg_and_sign_public_input::<Secp256K1ECDSAProtocol>(
@@ -603,7 +601,7 @@ impl DKGAndSignPublicInputByProtocol {
                     )?,
                 ))
             }
-            DWalletSignatureScheme::Taproot => {
+            DWalletSignatureAlgorithm::Taproot => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .secp256k1_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -628,7 +626,7 @@ impl DKGAndSignPublicInputByProtocol {
                     public_input,
                 ))
             }
-            DWalletSignatureScheme::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .ristretto_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -652,7 +650,7 @@ impl DKGAndSignPublicInputByProtocol {
 
                 Ok(DKGAndSignPublicInputByProtocol::Ristretto(public_input))
             }
-            DWalletSignatureScheme::EdDSA => {
+            DWalletSignatureAlgorithm::EdDSA => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .curve25519_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
@@ -675,7 +673,7 @@ impl DKGAndSignPublicInputByProtocol {
 
                 Ok(DKGAndSignPublicInputByProtocol::Curve25519(public_input))
             }
-            DWalletSignatureScheme::ECDSASecp256r1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let decryption_pp = versioned_network_encryption_key_public_data
                     .secp256r1_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
