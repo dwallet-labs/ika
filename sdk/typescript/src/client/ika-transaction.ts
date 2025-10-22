@@ -524,27 +524,8 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): TransactionObjectArgument {
-		if (!dWallet.state.Active?.public_output) throw new Error('DWallet is not active');
-
-		const dWalletVersion = dWallet.state.Active.public_output[0];
-
-		if (
-			dWalletVersion === 1 &&
-			signatureAlgorithm !== SignatureAlgorithm.ECDSASecp256k1 &&
-			signatureAlgorithm !== SignatureAlgorithm.ECDSASecp256r1 &&
-			signatureAlgorithm !== SignatureAlgorithm.Taproot
-		) {
-			// In version 1, you must use ecdsa k1, r1 or taproot only
-			throw new Error(
-				'You can call this fn if this is imported key dwallet(ecdsa k1, r1 or taproot) or the version is 1',
-			);
-		}
-
-		if (dWalletVersion === 2 && dWallet.is_imported_key_dwallet) {
-			if (signatureAlgorithm !== Curve.SECP256K1 && signatureAlgorithm !== Curve.SECP256R1) {
-				throw new Error('On version 2, you must use ecdsa(k1,r1) and imported key dwallet');
-			}
-		}
+		this.#assertDWalletPublicOutputSet(dWallet);
+		this.#assertCanRunNormalPresign(dWallet, signatureAlgorithm);
 
 		const unverifiedPresignCap = this.#requestPresign({
 			dWallet,
@@ -2300,5 +2281,30 @@ export class IkaTransaction {
 				),
 			);
 		}
+	}
+
+	#assertCanRunNormalPresign(dWallet: DWallet, signatureAlgorithm: SignatureAlgorithm) {
+		if (
+			dWallet.is_imported_key_dwallet &&
+			(signatureAlgorithm === SignatureAlgorithm.ECDSASecp256k1 ||
+				signatureAlgorithm === SignatureAlgorithm.ECDSASecp256r1)
+		) {
+			return;
+		}
+
+		const dWalletVersion = dWallet.state.Active?.public_output?.[0] ?? 0 + 1;
+
+		if (
+			!dWallet.is_imported_key_dwallet &&
+			dWallet.state.Active?.public_output &&
+			dWalletVersion === 1 && // v1 dwallet
+			signatureAlgorithm === SignatureAlgorithm.ECDSASecp256k1
+		) {
+			return;
+		}
+
+		throw new Error(
+			'You can call this function if this is imported key dwallet for ecdsa signatures, or the version is 1',
+		);
 	}
 }
