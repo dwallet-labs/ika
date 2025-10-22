@@ -1036,13 +1036,7 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
                     ?malicious_parties,
                     signature_algorithm=?sign_data.signature_algorithm,
                     should_never_happen = true,
-                    "failed
-                to
-                deserialize
-                sign
-                session
-                result
-                "
+                    "failed to deserialize sign session result "
                 );
                 return Err(parsed_signature_result.err().unwrap());
             }
@@ -1101,13 +1095,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
                     ?malicious_parties,
                     signature_algorithm=?sign_data.signature_algorithm,
                     should_never_happen = true,
-                    "failed
-                to
-                deserialize
-                sign
-                session
-                result
-                "
+                    "failed to deserialize sign session result "
                 );
                 return Err(parsed_signature_result.err().unwrap());
             }
