@@ -595,9 +595,10 @@ export async function userAndNetworkDKGOutputMatch(
 export async function parseSignatureFromSignOutput(
 	signatureAlgorithm: SignatureAlgorithm,
 	signatureOutput: Uint8Array,
+	curve: Curve
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
-		await parse_signature_from_sign_output(signatureAlgorithm, signatureOutput),
+		await parse_signature_from_sign_output(signatureAlgorithm, signatureOutput, curve),
 	);
 }
 

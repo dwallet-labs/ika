@@ -232,9 +232,10 @@ export async function decrypt_user_share(
 export async function parse_signature_from_sign_output(
 	signatureAlgorithm: SignatureAlgorithm,
 	signatureOutput: Uint8Array,
+	curve: Curve,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
-	return wasm.parse_signature_from_sign_output(signatureAlgorithm, signatureOutput);
+	return wasm.parse_signature_from_sign_output(signatureAlgorithm, signatureOutput, curve);
 }
 
 /**

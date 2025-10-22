@@ -251,6 +251,7 @@ async function signWithPublicShareAndVerify(
 	const sign = await ikaClient.getSignInParticularState(
 		signEventData.event_data.sign_id,
 		signatureAlgorithm,
+		curve,
 		'Completed',
 		{ timeout: 60000, interval: 1000 },
 	);

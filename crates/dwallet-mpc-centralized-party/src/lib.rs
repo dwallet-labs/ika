@@ -1457,8 +1457,9 @@ fn decrypt_user_share_inner<P: twopc_mpc::dkg::Protocol>(
 pub fn parse_signature_from_sign_output_inner(
     signature_algorithm: u32,
     signature_output: Vec<u8>,
+    curve: u32
 ) -> anyhow::Result<Vec<u8>> {
-    match DWalletSignatureAlgorithm::try_from(signature_algorithm)? {
+    match try_into_signature_algorithm(curve, signature_algorithm)? {
         DWalletSignatureAlgorithm::ECDSASecp256k1 => {
             let signature: ECDSASecp256k1Signature = bcs::from_bytes(&signature_output)?;
             Ok(signature.signature()?.to_vec())
