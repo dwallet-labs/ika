@@ -511,7 +511,11 @@ export class IkaClient {
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getSign(signID: string, signatureAlgorithm: SignatureAlgorithm, curve: Curve): Promise<Sign> {
+	async getSign(
+		signID: string,
+		signatureAlgorithm: SignatureAlgorithm,
+		curve: Curve,
+	): Promise<Sign> {
 		await this.ensureInitialized();
 
 		const unparsedSign = await this.client.getObject({
@@ -526,7 +530,7 @@ export class IkaClient {
 				await parseSignatureFromSignOutput(
 					signatureAlgorithm,
 					Uint8Array.from(sign.state.Completed.signature),
-					curve
+					curve,
 				),
 			);
 		}
@@ -1298,6 +1302,7 @@ export class IkaClient {
 				lastError = error as Error;
 			}
 
+			// eslint-disable-next-line no-loop-func
 			await new Promise((resolve, reject) => {
 				const timeoutId = setTimeout(resolve, currentInterval);
 				signal?.addEventListener('abort', () => {

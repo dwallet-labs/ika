@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { bcs } from '@mysten/sui/bcs';
-import { PublicKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
+import type { PublicKey } from '@mysten/sui/cryptography';
+import { SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { randomBytes } from '@noble/hashes/utils.js';
 
 import type { IkaClient } from './ika-client.js';
-import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
-import { Curve, PublicKeyBCS, SignatureAlgorithm } from './types.js';
+import type { DWallet, EncryptedUserSecretKeyShare, SignatureAlgorithm } from './types.js';
+import { Curve, PublicKeyBCS } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 import {
@@ -595,7 +596,7 @@ export async function userAndNetworkDKGOutputMatch(
 export async function parseSignatureFromSignOutput(
 	signatureAlgorithm: SignatureAlgorithm,
 	signatureOutput: Uint8Array,
-	curve: Curve
+	curve: Curve,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
 		await parse_signature_from_sign_output(signatureAlgorithm, signatureOutput, curve),

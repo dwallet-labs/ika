@@ -18,11 +18,10 @@ import {
 import {
 	validateCurveSignatureAlgorithm,
 	validateHashSignatureCombination,
-	type ValidHashForSignature,
 } from './hash-signature-validation.js';
+import type { ValidHashForSignature } from './hash-signature-validation.js';
 import type { IkaClient } from './ika-client.js';
-import {
-	Curve,
+import type {
 	DWallet,
 	EncryptedUserSecretKeyShare,
 	EncryptionKey,
@@ -31,10 +30,10 @@ import {
 	ImportedSharedDWallet,
 	Presign,
 	SharedDWallet,
-	SignatureAlgorithm,
 	UserSignatureInputs,
 	ZeroTrustDWallet,
 } from './types.js';
+import { Curve, SignatureAlgorithm } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import {
 	create_sign_centralized_party_message as create_sign,
