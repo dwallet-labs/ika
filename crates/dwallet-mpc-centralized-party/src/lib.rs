@@ -530,7 +530,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
     message: Vec<u8>,
     hash_type: u32,
     signature_scheme: u32,
-    curve: u32
+    curve: u32,
 ) -> anyhow::Result<SignedMessage> {
     let presign = bcs::from_bytes(&presign)?;
     match presign {
@@ -1457,7 +1457,7 @@ fn decrypt_user_share_inner<P: twopc_mpc::dkg::Protocol>(
 pub fn parse_signature_from_sign_output_inner(
     signature_algorithm: u32,
     signature_output: Vec<u8>,
-    curve: u32
+    curve: u32,
 ) -> anyhow::Result<Vec<u8>> {
     match try_into_signature_algorithm(curve, signature_algorithm)? {
         DWalletSignatureAlgorithm::ECDSASecp256k1 => {
