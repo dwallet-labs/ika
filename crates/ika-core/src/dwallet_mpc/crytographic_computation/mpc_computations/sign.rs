@@ -588,8 +588,7 @@ impl DKGAndSignPublicInputByProtocol {
                     dwallet_dkg_public_input
                 else {
                     unreachable!(
-                        "Curve and DKG public input type mismatch
-                "
+                        "Curve and DKG public input type mismatch"
                     );
                 };
                 Ok(DKGAndSignPublicInputByProtocol::Secp256k1ECDSA(
