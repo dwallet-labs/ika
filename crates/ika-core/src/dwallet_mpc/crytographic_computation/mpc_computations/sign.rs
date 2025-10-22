@@ -55,15 +55,17 @@ pub(crate) enum SignPublicInputByProtocol {
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub(crate) enum DKGAndSignPublicInputByProtocol {
-    #[strum(to_string = "Sign Public Input - curve: Secp256k1, protocol: ECDSA")]
+    #[strum(to_string = "DKG and Sign Public Input - curve: Secp256k1, protocol: ECDSA")]
     Secp256k1ECDSA(<DKGAndSignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Sign Public Input - curve: Secp256k1, protocol: Taproot")]
+    #[strum(to_string = "DKG and Sign Public Input - curve: Secp256k1, protocol: Taproot")]
     Secp256k1Taproot(<DKGAndSignParty<Secp256K1TaprootProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Sign Public Input - curve: Secp256r1, protocol: ECDSA")]
+    #[strum(to_string = "DKG and Sign Public Input - curve: Secp256r1, protocol: ECDSA")]
     Secp256r1(<DKGAndSignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Sign Public Input - curve: Curve25519, protocol: EdDSA")]
+    #[strum(to_string = "DKG and Sign Public Input - curve: Curve25519, protocol: EdDSA")]
     Curve25519(<DKGAndSignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrate")]
+    #[strum(
+        to_string = "DKG and Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrate"
+    )]
     Ristretto(<DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput),
 }
 
@@ -109,25 +111,27 @@ pub(crate) enum DWalletDKGAndSignAdvanceRequestByProtocol {
             <DKGAndSignParty<Secp256K1ECDSAProtocol> as mpc::Party>::Message,
         >,
     ),
-    #[strum(to_string = "Sign Advance Request - curve: Secp256k1, protocol: Taproot")]
+    #[strum(to_string = "DKG and Sign Advance Request - curve: Secp256k1, protocol: Taproot")]
     Secp256k1Taproot(
         mpc::guaranteed_output_delivery::AdvanceRequest<
             <DKGAndSignParty<Secp256K1TaprootProtocol> as mpc::Party>::Message,
         >,
     ),
-    #[strum(to_string = "Sign Advance Request - curve: Secp256r1, protocol: ECDSA")]
+    #[strum(to_string = "DKG and Sign Advance Request - curve: Secp256r1, protocol: ECDSA")]
     Secp256r1(
         mpc::guaranteed_output_delivery::AdvanceRequest<
             <DKGAndSignParty<Secp256R1ECDSAProtocol> as mpc::Party>::Message,
         >,
     ),
-    #[strum(to_string = "Sign Advance Request - curve: Curve25519, protocol: EdDSA")]
+    #[strum(to_string = "DKG and Sign Advance Request - curve: Curve25519, protocol: EdDSA")]
     Curve25519(
         mpc::guaranteed_output_delivery::AdvanceRequest<
             <DKGAndSignParty<Curve25519EdDSAProtocol> as mpc::Party>::Message,
         >,
     ),
-    #[strum(to_string = "Sign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrate")]
+    #[strum(
+        to_string = "DKG and Sign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrate"
+    )]
     Ristretto(
         mpc::guaranteed_output_delivery::AdvanceRequest<
             <DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::Message,
@@ -583,8 +587,7 @@ impl DKGAndSignPublicInputByProtocol {
                     dwallet_dkg_public_input
                 else {
                     unreachable!(
-                        "Curve and DKG public input type mismatch
-                "
+                        "Curve and DKG public input type mismatch"
                     );
                 };
                 Ok(DKGAndSignPublicInputByProtocol::Secp256k1ECDSA(
@@ -608,14 +611,7 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::Secp256K1DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!(
-                        "Curve
-                and
-                DKG
-                public
-                input type mismatch
-                "
-                    );
+                    unreachable!("Curve and DKG public input type mismatch ");
                 };
                 let public_input = generate_dkg_and_sign_public_input::<Secp256K1TaprootProtocol>(
                     protocol_public_parameters,
@@ -640,14 +636,7 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!(
-                        "Curve
-                and
-                DKG
-                public
-                input type mismatch
-                "
-                    );
+                    unreachable!("Curve and DKG public input type mismatch ");
                 };
                 let public_input =
                     generate_dkg_and_sign_public_input::<RistrettoSchnorrkelSubstrateProtocol>(
@@ -671,14 +660,7 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!(
-                        "Curve
-                and
-                DKG
-                public
-                input type mismatch
-                "
-                    );
+                    unreachable!("Curve and DKG public input type mismatch ");
                 };
                 let public_input = generate_dkg_and_sign_public_input::<Curve25519EdDSAProtocol>(
                     protocol_public_parameters,
@@ -701,14 +683,7 @@ impl DKGAndSignPublicInputByProtocol {
                 let DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
-                    unreachable!(
-                        "Curve
-                and
-                DKG
-                public
-                input type mismatch
-                "
-                    );
+                    unreachable!("Curve and DKG public input type mismatch ");
                 };
                 let public_input = generate_dkg_and_sign_public_input::<Secp256R1ECDSAProtocol>(
                     protocol_public_parameters,
@@ -1058,13 +1033,7 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
                     ?malicious_parties,
                     signature_algorithm=?sign_data.signature_algorithm,
                     should_never_happen = true,
-                    "failed
-                to
-                deserialize
-                sign
-                session
-                result
-                "
+                    "failed to deserialize sign session result "
                 );
                 return Err(parsed_signature_result.err().unwrap());
             }
@@ -1123,13 +1092,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
                     ?malicious_parties,
                     signature_algorithm=?sign_data.signature_algorithm,
                     should_never_happen = true,
-                    "failed
-                to
-                deserialize
-                sign
-                session
-                result
-                "
+                    "failed to deserialize sign session result "
                 );
                 return Err(parsed_signature_result.err().unwrap());
             }
