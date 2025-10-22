@@ -87,7 +87,7 @@ async fn sign() {
     else {
         panic!("Expected DWallet presign output message");
     };
-    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
+    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes).unwrap();
     let message_to_sign = bcs::to_bytes("Hello World!").unwrap();
     let centralized_sign = advance_centralized_sign_party(
         protocol_pp,
@@ -95,6 +95,7 @@ async fn sign() {
         dwallet_secret_share,
         presign_output.presign.clone(),
         message_to_sign.clone(),
+        0,
         0,
         0,
     )
@@ -182,7 +183,7 @@ async fn future_sign() {
     else {
         panic!("Expected DWallet presign output message");
     };
-    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
+    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes).unwrap();
     let message_to_sign = bcs::to_bytes("Hello World!").unwrap();
     let centralized_sign = advance_centralized_sign_party(
         protocol_pp,
@@ -190,6 +191,7 @@ async fn future_sign() {
         dwallet_secret_share,
         presign_output.presign.clone(),
         message_to_sign.clone(),
+        0,
         0,
         0,
     )

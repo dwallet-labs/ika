@@ -50,7 +50,7 @@ async fn test_handle_mpc_request_with_invalid_protocol_data_returns_failed() {
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
     let protocol_pp =
-        network_dkg_public_output_to_protocol_pp_inner(network_key_bytes.clone()).unwrap();
+        network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes.clone()).unwrap();
     let (dwallet_secret_key, dwallet_public_key) =
         sample_dwallet_keypair_inner(protocol_pp.clone()).unwrap();
 
