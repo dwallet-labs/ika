@@ -16,7 +16,7 @@ import { Curve, Hash, SignatureAlgorithm } from './types.js';
 const VALID_HASH_SIGNATURE_COMBINATIONS: Record<SignatureAlgorithm, readonly Hash[]> = {
 	[SignatureAlgorithm.ECDSASecp256k1]: [Hash.KECCAK256, Hash.SHA256, Hash.DoubleSHA256],
 	[SignatureAlgorithm.Taproot]: [Hash.SHA256],
-	[SignatureAlgorithm.ECDSASecp256r1]: [Hash.SHA256, Hash.DoubleSHA256],
+	[SignatureAlgorithm.ECDSASecp256r1]: [Hash.SHA256],
 	[SignatureAlgorithm.EdDSA]: [Hash.SHA512],
 	[SignatureAlgorithm.SchnorrkelSubstrate]: [Hash.Merlin],
 } as const;
