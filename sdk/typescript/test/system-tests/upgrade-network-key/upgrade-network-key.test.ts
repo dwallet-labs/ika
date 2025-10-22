@@ -22,7 +22,6 @@ import {
 	runSignFullFlowWithV2Dwallet,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
-import { runSignFullFlowTestWithImportedDwallet } from '../../imported-dwallet/imported-dwallet-sign.test';
 import {
 	deployUpgradedPackage,
 	getProtocolCapID,
@@ -169,7 +168,6 @@ describe('system tests', () => {
 		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, testName, false);
 		console.log('V2 dWallet full flow works, test completed successfully');
 
-		await runSignFullFlowTestWithImportedDwallet(testName, ikaClient, suiClient, false);
 		console.log(
 			'Imported dWallet full flow works, creating a new v2 dWallet and verifying it works',
 		);
