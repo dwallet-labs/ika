@@ -127,7 +127,7 @@ pub(crate) enum DWalletDKGAndSignAdvanceRequestByProtocol {
             <DKGAndSignParty<Curve25519EdDSAProtocol> as mpc::Party>::Message,
         >,
     ),
-    #[strum(to_string = "Sign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrate")]
+    #[strum(to_string = "DKG and Sign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrate")]
     Ristretto(
         mpc::guaranteed_output_delivery::AdvanceRequest<
             <DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::Message,
