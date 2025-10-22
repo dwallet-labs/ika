@@ -115,7 +115,7 @@ pub(crate) enum DWalletDKGAndSignAdvanceRequestByProtocol {
             <DKGAndSignParty<Secp256K1TaprootProtocol> as mpc::Party>::Message,
         >,
     ),
-    #[strum(to_string = "Sign Advance Request - curve: Secp256r1, protocol: ECDSA")]
+    #[strum(to_string = "DKG and Sign Advance Request - curve: Secp256r1, protocol: ECDSA")]
     Secp256r1(
         mpc::guaranteed_output_delivery::AdvanceRequest<
             <DKGAndSignParty<Secp256R1ECDSAProtocol> as mpc::Party>::Message,
