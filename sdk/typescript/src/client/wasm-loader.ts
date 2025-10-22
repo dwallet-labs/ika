@@ -121,6 +121,7 @@ export async function create_sign_centralized_party_message_with_centralized_par
 	message: Uint8Array,
 	hash: number,
 	signatureScheme: number,
+	curve: number,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
 	return wasm.create_sign_centralized_party_message_with_centralized_party_dkg_output(
@@ -131,6 +132,7 @@ export async function create_sign_centralized_party_message_with_centralized_par
 		message,
 		hash,
 		signatureScheme,
+		curve,
 	);
 }
 

@@ -37,7 +37,6 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
 use serde::{Deserialize, Serialize};
-use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput};
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
@@ -451,7 +450,7 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
     centralized_dkg_output: &Vec<u8>,
     decentralized_dkg_output: &Vec<u8>,
 ) -> anyhow::Result<bool> {
-    match curve.try_into()? {
+    match try_into_curve(curve)? {
         DWalletCurve::Secp256k1 => {
             centralized_and_decentralized_parties_dkg_output_match_by_protocol::<Secp256K1DKGProtocol>(
                 centralized_dkg_output,
@@ -531,6 +530,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
     message: Vec<u8>,
     hash_type: u32,
     signature_scheme: u32,
+    curve: u32
 ) -> anyhow::Result<SignedMessage> {
     let presign = bcs::from_bytes(&presign)?;
     match presign {
@@ -584,7 +584,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
             Ok(signed_message)
         }
         VersionedPresignOutput::V2(presign) => {
-            let signature_scheme = DWalletSignatureAlgorithm::try_from(signature_scheme)?;
+            let signature_scheme = try_into_signature_algorithm()? DWalletSignatureAlgorithm::try_from(signature_scheme)?;
             match signature_scheme {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<

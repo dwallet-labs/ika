@@ -2285,6 +2285,7 @@ export class IkaTransaction {
 					message,
 					hash,
 					signatureScheme,
+					curve,
 				),
 			);
 		} else {

@@ -282,6 +282,7 @@ pub fn create_sign_centralized_party_message_with_centralized_party_dkg_output(
     message: Vec<u8>,
     hash_type: u32,
     signature_scheme: u32,
+    curve: u32,
 ) -> Result<JsValue, JsError> {
     let signed_message = advance_centralized_sign_party_with_centralized_party_dkg_output(
         protocol_pp,
@@ -291,6 +292,7 @@ pub fn create_sign_centralized_party_message_with_centralized_party_dkg_output(
         message,
         hash_type,
         signature_scheme,
+        curve
     )
     .map_err(|e| JsError::new(&e.to_string()))?;
 

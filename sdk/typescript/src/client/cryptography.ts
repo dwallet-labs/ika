@@ -377,6 +377,7 @@ export async function createUserSignMessageWithCentralizedOutput(
 	message: Uint8Array,
 	hash: number,
 	signatureScheme: number,
+	curve: number,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
 		await create_sign_centralized_party_message_with_centralized_party_dkg_output(
@@ -387,6 +388,7 @@ export async function createUserSignMessageWithCentralizedOutput(
 			message,
 			hash,
 			signatureScheme,
+			curve,
 		),
 	);
 }
