@@ -610,12 +610,7 @@ impl DKGAndSignPublicInputByProtocol {
                     dwallet_dkg_public_input
                 else {
                     unreachable!(
-                        "Curve
-                and
-                DKG
-                public
-                input type mismatch
-                "
+                        "Curve and DKG public input type mismatch "
                     );
                 };
                 let public_input = generate_dkg_and_sign_public_input::<Secp256K1TaprootProtocol>(
