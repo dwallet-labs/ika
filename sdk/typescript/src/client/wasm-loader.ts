@@ -109,9 +109,9 @@ export async function create_sign_centralized_party_message(
 		userSecretKeyShare,
 		presign,
 		message,
-		hash,
-		signatureScheme,
 		curve,
+		signatureScheme,
+		hash,
 	);
 }
 
