@@ -925,8 +925,7 @@ impl<P: twopc_mpc::sign::Protocol> DKGAndSignPartyPublicInputGenerator<P> for DK
             expected_decrypters,
             protocol_public_parameters,
             message,
-            HashType::try_from(hash_scheme as u32)
-                .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
+            hash_scheme,
             dwallet_dkg_public_input,
             bcs::from_bytes::<<P as twopc_mpc::presign::Protocol>::Presign>(&presign)?,
             bcs::from_bytes::<<P as twopc_mpc::sign::Protocol>::SignMessage>(

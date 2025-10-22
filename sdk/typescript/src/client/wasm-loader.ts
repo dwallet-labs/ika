@@ -3,8 +3,6 @@
 
 import type * as WasmModule from '@ika.xyz/ika-wasm';
 
-import type { Curve, SignatureAlgorithm } from './types.js';
-
 let wasmModule: typeof WasmModule | null = null;
 let initPromise: Promise<void> | null = null;
 const isNode = typeof process !== 'undefined' && !!process.versions?.node;
@@ -43,7 +41,7 @@ async function getWasmModule() {
 
 // Export wrapped functions that ensure WASM is initialized
 export async function encrypt_secret_share(
-	curve: Curve,
+	curve: number,
 	userSecretKeyShare: Uint8Array,
 	encryptionKey: Uint8Array,
 	protocolPublicParameters: Uint8Array,
@@ -58,7 +56,7 @@ export async function encrypt_secret_share(
 }
 
 export async function verify_user_share(
-	curve: Curve,
+	curve: number,
 	userSecretKeyShare: Uint8Array,
 	userDKGOutput: Uint8Array,
 	networkDkgPublicOutput: Uint8Array,
@@ -68,7 +66,7 @@ export async function verify_user_share(
 }
 
 export async function generate_secp_cg_keypair_from_seed(
-	curve: Curve,
+	curve: number,
 	seed: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array]> {
 	const wasm = await getWasmModule();
@@ -84,7 +82,7 @@ export async function create_dkg_centralized_output_v1(
 }
 
 export async function create_dkg_centralized_output_v2(
-	curve: Curve,
+	curve: number,
 	protocolPublicParameters: Uint8Array,
 	session_id: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array, Uint8Array]> {
@@ -100,6 +98,7 @@ export async function create_sign_centralized_party_message(
 	message: Uint8Array,
 	hash: number,
 	signatureScheme: number,
+	curve: number,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
 	return wasm.create_sign_centralized_party_message(
@@ -108,8 +107,9 @@ export async function create_sign_centralized_party_message(
 		userSecretKeyShare,
 		presign,
 		message,
-		hash,
+		curve,
 		signatureScheme,
+		hash,
 	);
 }
 
@@ -121,6 +121,7 @@ export async function create_sign_centralized_party_message_with_centralized_par
 	message: Uint8Array,
 	hash: number,
 	signatureScheme: number,
+	curve: number,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
 	return wasm.create_sign_centralized_party_message_with_centralized_party_dkg_output(
@@ -131,11 +132,12 @@ export async function create_sign_centralized_party_message_with_centralized_par
 		message,
 		hash,
 		signatureScheme,
+		curve,
 	);
 }
 
 export async function network_dkg_public_output_to_protocol_pp(
-	curve: Curve,
+	curve: number,
 	networkDkgPublicOutput: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
@@ -148,13 +150,23 @@ export async function verify_secp_signature(
 	message: Uint8Array,
 	networkDkgPublicOutput: Uint8Array,
 	hash: number,
+	signatureAlgorithm: number,
+	curve: number,
 ): Promise<boolean> {
 	const wasm = await getWasmModule();
-	return wasm.verify_secp_signature(publicKey, signature, message, networkDkgPublicOutput, hash);
+	return wasm.verify_secp_signature(
+		publicKey,
+		signature,
+		message,
+		networkDkgPublicOutput,
+		curve,
+		signatureAlgorithm,
+		hash,
+	);
 }
 
 export async function public_key_from_dwallet_output(
-	curve: Curve,
+	curve: number,
 	dWalletOutput: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
@@ -162,7 +174,7 @@ export async function public_key_from_dwallet_output(
 }
 
 export async function public_key_from_centralized_dkg_output(
-	curve: Curve,
+	curve: number,
 	centralizedDkgOutput: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
@@ -170,7 +182,7 @@ export async function public_key_from_centralized_dkg_output(
 }
 
 export async function reconfiguration_public_output_to_protocol_pp(
-	curve: Curve,
+	curve: number,
 	reconfig_public_output: Uint8Array,
 	network_dkg_public_output: Uint8Array,
 ): Promise<Uint8Array> {
@@ -183,7 +195,7 @@ export async function reconfiguration_public_output_to_protocol_pp(
 }
 
 export async function centralized_and_decentralized_parties_dkg_output_match(
-	curve: Curve,
+	curve: number,
 	userPublicOutput: Uint8Array,
 	networkDKGOutput: Uint8Array,
 ): Promise<boolean> {
@@ -196,7 +208,7 @@ export async function centralized_and_decentralized_parties_dkg_output_match(
 }
 
 export async function create_imported_dwallet_centralized_step(
-	curve: Curve,
+	curve: number,
 	protocolPublicParameters: Uint8Array,
 	sessionIdentifier: Uint8Array,
 	secretKey: Uint8Array,
@@ -211,7 +223,7 @@ export async function create_imported_dwallet_centralized_step(
 }
 
 export async function decrypt_user_share(
-	curve: Curve,
+	curve: number,
 	decryptionKey: Uint8Array,
 	dWalletPublicOutput: Uint8Array,
 	encryptedShare: Uint8Array,
@@ -228,11 +240,12 @@ export async function decrypt_user_share(
 }
 
 export async function parse_signature_from_sign_output(
-	signatureAlgorithm: SignatureAlgorithm,
+	curve: number,
+	signatureAlgorithm: number,
 	signatureOutput: Uint8Array,
 ): Promise<Uint8Array> {
 	const wasm = await getWasmModule();
-	return wasm.parse_signature_from_sign_output(signatureAlgorithm, signatureOutput);
+	return wasm.parse_signature_from_sign_output(curve, signatureAlgorithm, signatureOutput);
 }
 
 /**

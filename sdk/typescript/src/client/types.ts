@@ -130,15 +130,15 @@ export type SignState = typeof CoordinatorInnerModule.SignState.$inferType.$kind
  */
 export const Hash = {
 	/** KECCAK256 (SHA3) - Compatible with: ECDSASecp256k1 */
-	KECCAK256: 0,
+	KECCAK256: 'KECCAK256',
 	/** SHA256 - Compatible with: ECDSASecp256k1, Taproot, ECDSASecp256r1 */
-	SHA256: 1,
+	SHA256: 'SHA256',
 	/** Double SHA256: h(x) = sha256(sha256(x)) - Compatible with: ECDSASecp256k1, ECDSASecp256r1 */
-	DoubleSHA256: 2,
+	DoubleSHA256: 'DoubleSHA256',
 	/** SHA512 - Compatible with: EdDSA only */
-	SHA512: 3,
+	SHA512: 'SHA512',
 	/** Merlin (STROBE-based transcript construction) - Compatible with: SchnorrkelSubstrate only */
-	Merlin: 4,
+	Merlin: 'Merlin',
 } as const;
 
 export type Hash = (typeof Hash)[keyof typeof Hash];
@@ -149,13 +149,13 @@ export type Hash = (typeof Hash)[keyof typeof Hash];
  */
 export const Curve = {
 	/** secp256k1 - Used by: ECDSASecp256k1, Taproot */
-	SECP256K1: 0,
+	SECP256K1: 'SECP256K1',
 	/** Ristretto - Used by: SchnorrkelSubstrate */
-	RISTRETTO: 1,
+	RISTRETTO: 'RISTRETTO',
 	/** Ed25519 - Used by: EdDSA */
-	ED25519: 2,
+	ED25519: 'ED25519',
 	/** secp256r1 (P-256) - Used by: ECDSASecp256r1 */
-	SECP256R1: 3,
+	SECP256R1: 'SECP256R1',
 } as const;
 
 export type Curve = (typeof Curve)[keyof typeof Curve];
@@ -172,15 +172,15 @@ export type Curve = (typeof Curve)[keyof typeof Curve];
  */
 export const SignatureAlgorithm = {
 	/** ECDSA with secp256k1 curve - Valid hashes: KECCAK256, SHA256, DoubleSHA256 */
-	ECDSASecp256k1: 0,
+	ECDSASecp256k1: 'ECDSASecp256k1',
 	/** Taproot (Bitcoin) - Valid hash: SHA256 only */
-	Taproot: 1,
+	Taproot: 'Taproot',
 	/** ECDSA with secp256r1 (P-256) curve - Valid hashes: SHA256, DoubleSHA256 */
-	ECDSASecp256r1: 2,
+	ECDSASecp256r1: 'ECDSASecp256r1',
 	/** EdDSA (Ed25519) - Valid hash: SHA512 only */
-	EdDSA: 3,
+	EdDSA: 'EdDSA',
 	/** Schnorrkel/Ristretto (Substrate) - Valid hash: Merlin only */
-	SchnorrkelSubstrate: 4,
+	SchnorrkelSubstrate: 'SchnorrkelSubstrate',
 } as const;
 
 export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];
@@ -217,5 +217,6 @@ export type UserSignatureInputs = {
 	message: Uint8Array;
 	hash: Hash;
 	signatureScheme: SignatureAlgorithm;
-	curve?: Curve;
+	curve: Curve;
+	createWithCentralizedOutput?: boolean;
 };

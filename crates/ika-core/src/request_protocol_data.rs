@@ -284,8 +284,11 @@ pub fn dwallet_dkg_and_sign_protocol_data(
                 request_event_data.curve,
                 sign_during_dkg_request.signature_algorithm,
             )?,
-            hash_type: HashType::try_from(sign_during_dkg_request.hash_scheme)
-                .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
+            hash_type: try_into_hash_scheme(
+                request_event_data.curve,
+                sign_during_dkg_request.signature_algorithm,
+                sign_during_dkg_request.hash_scheme,
+            )?,
             message: sign_during_dkg_request.message.clone(),
             message_centralized_signature: sign_during_dkg_request
                 .message_centralized_signature

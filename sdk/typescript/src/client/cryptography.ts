@@ -6,9 +6,16 @@ import { PublicKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { randomBytes } from '@noble/hashes/utils.js';
 
+import {
+	fromCurveAndSignatureAlgorithmAndHashToNumbers,
+	fromCurveToNumber,
+	fromSignatureAlgorithmToNumber,
+	type ValidHashForSignature,
+	type ValidSignatureAlgorithmForCurve,
+} from './hash-signature-validation.js';
 import type { IkaClient } from './ika-client.js';
 import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
-import { Curve, SignatureAlgorithm } from './types.js';
+import { Curve } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import { encodeToASCII, u64ToBytesBigEndian } from './utils.js';
 import {
@@ -87,7 +94,10 @@ export async function createClassGroupsKeypair(
 		curve === Curve.RISTRETTO ||
 		curve === Curve.ED25519
 	) {
-		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed(curve, seed);
+		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed(
+			fromCurveToNumber(curve),
+			seed,
+		);
 	} else {
 		throw new Error(
 			'Only SECP256K1, SECP256R1, RISTRETTO, and ED25519 curves are supported for now',
@@ -136,6 +146,7 @@ export async function createDKGUserOutput(
  * Encrypt a secret share using the provided encryption key.
  * This creates an encrypted share that can only be decrypted by the corresponding decryption key.
  *
+ * @param curve - The curve to use for encryption
  * @param userSecretKeyShare - The secret key share to encrypt
  * @param encryptionKey - The public encryption key to encrypt with
  * @param protocolPublicParameters - The protocol public parameters for encryption
@@ -148,7 +159,7 @@ export async function encryptSecretShare(
 	protocolPublicParameters: Uint8Array,
 ): Promise<Uint8Array> {
 	const encryptedUserShareAndProof = await encrypt_secret_share(
-		curve,
+		fromCurveToNumber(curve),
 		userSecretKeyShare,
 		encryptionKey,
 		protocolPublicParameters,
@@ -182,10 +193,9 @@ export async function prepareDKGSecondRound(
  * @param protocolPublicParameters - The protocol public parameters
  * @param curve - The curve to use for key generation
  * @param encryptionKey - The user's public encryption key
- * @param bytesToHash - The bytes to hash
- * @param senderAddress - The sender address
- * @returns Complete prepared data for the second DKG round
- * @throws {Error} If the first round output is not available in the DWallet
+ * @param bytesToHash - The bytes to hash for session identifier generation
+ * @param senderAddress - The sender address for session identifier generation
+ * @returns Complete prepared data for DKG including user message, public output, encrypted share, and secret key share
  *
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
@@ -200,7 +210,7 @@ export async function prepareDKG(
 
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] =
 		await create_dkg_centralized_output_v2(
-			curve,
+			fromCurveToNumber(curve),
 			protocolPublicParameters,
 			sessionIdentifierDigest(bytesToHash, senderAddressBytes),
 		);
@@ -240,15 +250,15 @@ export async function prepareDKGSecondRoundAsync(
 }
 
 /**
- * Prepare all cryptographic data needed for DKG.
+ * Prepare all cryptographic data needed for DKG (async version that fetches protocol parameters).
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param curve - The curve to use for key generation
  * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
- * @param bytesToHash - The bytes to hash
- * @param senderAddress - The sender address
- * @returns Promise resolving to complete prepared data for the second DKG round
- * @throws {Error} If the first round output is not available or network parameters cannot be fetched
+ * @param bytesToHash - The bytes to hash for session identifier generation
+ * @param senderAddress - The sender address for session identifier generation
+ * @returns Promise resolving to complete prepared data for DKG including user message, public output, encrypted share, and secret key share
+ * @throws {Error} If network parameters cannot be fetched
  *
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
@@ -276,10 +286,11 @@ export async function prepareDKGAsync(
  *
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param curve - The curve to use for key generation
- * @param sessionIdentifier - Unique identifier for this import session
+ * @param bytesToHash - The bytes to hash for session identifier generation
+ * @param senderAddress - The sender address for session identifier generation
  * @param userShareEncryptionKeys - The user's encryption keys for securing the imported share
- * @param keypair - The existing keypair to import as a DWallet.
- * @returns Promise resolving to complete verification data for the import process
+ * @param privateKey - The existing private key to import as a DWallet
+ * @returns Promise resolving to complete verification data for the import process including user public output, message, and encrypted share
  * @throws {Error} If network parameters cannot be fetched or key import preparation fails
  */
 export async function prepareImportedKeyDWalletVerification(
@@ -295,7 +306,7 @@ export async function prepareImportedKeyDWalletVerification(
 
 	const [userSecretShare, userPublicOutput, userMessage] =
 		await create_imported_dwallet_user_output(
-			curve,
+			fromCurveToNumber(curve),
 			protocolPublicParameters,
 			sessionIdentifierDigest(bytesToHash, senderAddressBytes),
 			privateKey,
@@ -326,20 +337,28 @@ export async function prepareImportedKeyDWalletVerification(
  * @param userSecretKeyShare - The user's secret key share
  * @param presign - The presignature data from a completed presign operation
  * @param message - The message bytes to sign
- * @param hash - The hash scheme identifier to use for signing
- * @param signatureScheme
+ * @param hash - The hash scheme to use for signing
+ * @param signatureAlgorithm - The signature algorithm to use
+ * @param curve - The curve to use
  * @returns The user's sign message that will be sent to the network for signature generation
- * @throws {Error} If the DWallet is not in active state or public output is missing
  */
-export async function createUserSignMessageWithPublicOutput(
+export async function createUserSignMessageWithPublicOutput<
+	C extends Curve,
+	S extends ValidSignatureAlgorithmForCurve<C>,
+	H extends ValidHashForSignature<S>,
+>(
 	protocolPublicParameters: Uint8Array,
 	publicOutput: Uint8Array,
 	userSecretKeyShare: Uint8Array,
 	presign: Uint8Array,
 	message: Uint8Array,
-	hash: number,
-	signatureScheme: number,
+	hash: H,
+	signatureAlgorithm: S,
+	curve: C,
 ): Promise<Uint8Array> {
+	const { signatureAlgorithmNumber, hashNumber, curveNumber } =
+		fromCurveAndSignatureAlgorithmAndHashToNumbers(curve, signatureAlgorithm, hash);
+
 	return Uint8Array.from(
 		await create_sign_user_message(
 			protocolPublicParameters,
@@ -347,8 +366,9 @@ export async function createUserSignMessageWithPublicOutput(
 			userSecretKeyShare,
 			presign,
 			message,
-			hash,
-			signatureScheme,
+			hashNumber,
+			signatureAlgorithmNumber,
+			curveNumber,
 		),
 	);
 }
@@ -364,20 +384,28 @@ export async function createUserSignMessageWithPublicOutput(
  * @param userSecretKeyShare - The user's secret key share
  * @param presign - The presignature data from a completed presign operation
  * @param message - The message bytes to sign
- * @param hash - The hash scheme identifier to use for signing
- * @param signatureScheme
+ * @param hash - The hash scheme to use for signing
+ * @param signatureAlgorithm - The signature algorithm to use
+ * @param curve - The curve to use
  * @returns The user's sign message that will be sent to the network for signature generation
- * @throws {Error} If the DWallet is not in active state or public output is missing
  */
-export async function createUserSignMessageWithCentralizedOutput(
+export async function createUserSignMessageWithCentralizedOutput<
+	C extends Curve,
+	S extends ValidSignatureAlgorithmForCurve<C>,
+	H extends ValidHashForSignature<S>,
+>(
 	protocolPublicParameters: Uint8Array,
 	centralizedDkgOutput: Uint8Array,
 	userSecretKeyShare: Uint8Array,
 	presign: Uint8Array,
 	message: Uint8Array,
-	hash: number,
-	signatureScheme: number,
+	hash: H,
+	signatureAlgorithm: S,
+	curve: C,
 ): Promise<Uint8Array> {
+	const { signatureAlgorithmNumber, hashNumber, curveNumber } =
+		fromCurveAndSignatureAlgorithmAndHashToNumbers(curve, signatureAlgorithm, hash);
+
 	return Uint8Array.from(
 		await create_sign_centralized_party_message_with_centralized_party_dkg_output(
 			protocolPublicParameters,
@@ -385,8 +413,9 @@ export async function createUserSignMessageWithCentralizedOutput(
 			userSecretKeyShare,
 			presign,
 			message,
-			hash,
-			signatureScheme,
+			hashNumber,
+			signatureAlgorithmNumber,
+			curveNumber,
 		),
 	);
 }
@@ -403,7 +432,10 @@ export async function networkDkgPublicOutputToProtocolPublicParameters(
 	network_dkg_public_output: Uint8Array,
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
-		await network_dkg_public_output_to_protocol_pp(curve, network_dkg_public_output),
+		await network_dkg_public_output_to_protocol_pp(
+			fromCurveToNumber(curve),
+			network_dkg_public_output,
+		),
 	);
 }
 
@@ -422,7 +454,7 @@ export async function reconfigurationPublicOutputToProtocolPublicParameters(
 ): Promise<Uint8Array> {
 	return Uint8Array.from(
 		await reconfiguration_public_output_to_protocol_pp(
-			curve,
+			fromCurveToNumber(curve),
 			reconfiguration_public_output,
 			network_dkg_public_output,
 		),
@@ -444,27 +476,51 @@ export async function verifyUserShare(
 	userDKGOutput: Uint8Array,
 	networkDkgPublicOutput: Uint8Array,
 ): Promise<boolean> {
-	return await verify_user_share(curve, userSecretKeyShare, userDKGOutput, networkDkgPublicOutput);
+	return await verify_user_share(
+		fromCurveToNumber(curve),
+		userSecretKeyShare,
+		userDKGOutput,
+		networkDkgPublicOutput,
+	);
 }
 
 /**
- * Verify a user's signature.
+ * Verify a signature.
  *
- * @param publicKey - The user's public key
- * @param signature - The user's signature
- * @param message - The message to verify
+ * @param publicKey - The public key bytes
+ * @param signature - The signature bytes to verify
+ * @param message - The message bytes that was signed
  * @param networkDkgPublicOutput - The network DKG public output
- * @param hash - The hash scheme identifier to use for verification
+ * @param hash - The hash scheme to use for verification
+ * @param signatureAlgorithm - The signature algorithm to use
+ * @param curve - The curve to use
  * @returns True if the signature is valid, false otherwise
  */
-export async function verifySecpSignature(
+export async function verifySecpSignature<
+	C extends Curve,
+	S extends ValidSignatureAlgorithmForCurve<C>,
+	H extends ValidHashForSignature<S>,
+>(
 	publicKey: Uint8Array,
 	signature: Uint8Array,
 	message: Uint8Array,
 	networkDkgPublicOutput: Uint8Array,
-	hash: number,
+	hash: H,
+	signatureAlgorithm: S,
+	curve: C,
 ): Promise<boolean> {
-	return await verify_secp_signature(publicKey, signature, message, networkDkgPublicOutput, hash);
+	const { signatureAlgorithmNumber, hashNumber, curveNumber } =
+		fromCurveAndSignatureAlgorithmAndHashToNumbers(curve, signatureAlgorithm, hash);
+
+	return await verify_secp_signature(
+		publicKey,
+		signature,
+		message,
+		networkDkgPublicOutput,
+		hashNumber,
+		signatureAlgorithmNumber,
+		curveNumber,
+	);
 }
 
 /**
@@ -479,7 +535,9 @@ export async function publicKeyFromDWalletOutput(
 	curve: Curve,
 	dWalletOutput: Uint8Array,
 ): Promise<Uint8Array> {
-	return Uint8Array.from(await public_key_from_dwallet_output(curve, dWalletOutput));
+	return Uint8Array.from(
+		await public_key_from_dwallet_output(fromCurveToNumber(curve), dWalletOutput),
+	);
 }
 
 /**
@@ -494,7 +552,9 @@ export async function publicKeyFromCentralizedDKGOutput(
 	curve: Curve,
 	centralizedDkgOutput: Uint8Array,
 ): Promise<Uint8Array> {
-	return Uint8Array.from(await public_key_from_centralized_dkg_output(curve, centralizedDkgOutput));
+	return Uint8Array.from(
+		await public_key_from_centralized_dkg_output(fromCurveToNumber(curve), centralizedDkgOutput),
+	);
 }
 
 /**
@@ -551,6 +611,7 @@ export async function verifyAndGetDWalletDKGPublicOutput(
 /**
  * Verify that the user's public output matches the network's public output.
  *
+ * @param curve - The curve to use
  * @param userPublicOutput - The user's public output
  * @param networkDKGOutput - The network's public output
  * @returns True if the user's public output matches the network's public output, false otherwise
@@ -561,7 +622,7 @@ export async function userAndNetworkDKGOutputMatch(
 	networkDKGOutput: Uint8Array,
 ): Promise<boolean> {
 	return await centralized_and_decentralized_parties_dkg_output_match(
-		curve,
+		fromCurveToNumber(curve),
 		userPublicOutput,
 		networkDKGOutput,
 	);
@@ -570,16 +631,21 @@ export async function userAndNetworkDKGOutputMatch(
 /**
  * Parse a signature from a sign output.
  *
- * @param signatureAlgorithm - The signature algorithm
- * @param signatureOutput - The signature output
- * @returns The parsed signature
+ * @param curve - The curve to use
+ * @param signatureAlgorithm - The signature algorithm to use
+ * @param signatureOutput - The signature output bytes from the network
+ * @returns The parsed signature bytes
  */
-export async function parseSignatureFromSignOutput(
-	signatureAlgorithm: SignatureAlgorithm,
-	signatureOutput: Uint8Array,
-): Promise<Uint8Array> {
+export async function parseSignatureFromSignOutput<
+	C extends Curve,
+	S extends ValidSignatureAlgorithmForCurve<C>,
+>(curve: C, signatureAlgorithm: S, signatureOutput: Uint8Array): Promise<Uint8Array> {
 	return Uint8Array.from(
-		await parse_signature_from_sign_output(signatureAlgorithm, signatureOutput),
+		await parse_signature_from_sign_output(
+			fromCurveToNumber(curve),
+			fromSignatureAlgorithmToNumber(curve, signatureAlgorithm),
+			signatureOutput,
+		),
 	);
 }
 
@@ -587,8 +653,9 @@ export async function parseSignatureFromSignOutput(
  * Create a digest of the session identifier for cryptographic operations.
  * This function creates a versioned, domain-separated hash of the session identifier.
  *
- * @param sessionIdentifier - The raw session identifier bytes
- * @returns The SHA3-256 digest of the versioned and domain-separated session identifier
+ * @param bytesToHash - The bytes to hash for session identifier generation
+ * @param senderAddressBytes - The sender address bytes for session identifier generation
+ * @returns The KECCAK-256 digest of the versioned and domain-separated session identifier
  * @private
  */
 export function sessionIdentifierDigest(
@@ -611,7 +678,7 @@ export function sessionIdentifierDigest(
 /**
  * Create a random session identifier.
  *
- * @returns The random session identifier
+ * @returns 32 random bytes for use as a session identifier
  */
 export function createRandomSessionIdentifier(): Uint8Array {
 	return Uint8Array.from(randomBytes(32));

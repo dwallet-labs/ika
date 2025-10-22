@@ -20,6 +20,7 @@ import {
 	SessionsManagerModule,
 	SignatureAlgorithm,
 } from '../../src';
+import { fromNumberToCurve } from '../../src/client/hash-signature-validation';
 import { ImportedKeyDWallet } from '../../src/client/types';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys';
 import {
@@ -204,7 +205,7 @@ async function requestPresignForImportedKey(
 			signatureAlgorithm,
 			ikaCoin: ikaToken,
 			suiCoin: suiTransaction.gas,
-			curve: importedKeyDWallet.curve as Curve,
+			curve: fromNumberToCurve(importedKeyDWallet.curve),
 			dwalletNetworkEncryptionKeyId,
 		});
 	} else {
@@ -391,6 +392,7 @@ async function testImportedKeyScenario(
 	const importedKeyMessageApproval = signIkaTransaction.approveImportedKeyMessage({
 		dWalletCap: activeDWallet.dwallet_cap_id,
 		signatureAlgorithm,
+		curve,
 		hashScheme,
 		message,
 	});
@@ -436,6 +438,7 @@ async function testImportedKeyScenario(
 	// Wait for signature to complete
 	const sign = await ikaClient.getSignInParticularState(
 		signEventData.event_data.sign_id,
+		curve,
 		signatureAlgorithm,
 		'Completed',
 		{ timeout: 60000, interval: 1000 },

@@ -218,6 +218,7 @@ async function signAndVerify(
 
 	const messageApproval = ikaTransaction.approveMessage({
 		dWalletCap: activeDWallet.dwallet_cap_id,
+		curve,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -259,6 +260,7 @@ async function signAndVerify(
 
 	const sign = await ikaClient.getSignInParticularState(
 		signEventData.event_data.sign_id,
+		curve,
 		signatureAlgorithm,
 		'Completed',
 		{ timeout: 60000, interval: 1000 },

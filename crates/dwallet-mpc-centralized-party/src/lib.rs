@@ -584,8 +584,9 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
             Ok(signed_message)
         }
         VersionedPresignOutput::V2(presign) => {
-            let signature_scheme = try_into_signature_algorithm(curve, signature_scheme)?;
-            match signature_scheme {
+            let signature_scheme_enum = try_into_signature_algorithm(curve, signature_scheme)?;
+            let hash_type = try_into_hash_scheme(curve, signature_scheme, hash_type)?;
+            match signature_scheme_enum {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<
                         Secp256K1ECDSAProtocol,
@@ -811,7 +812,7 @@ fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],
     message: Vec<u8>,
-    hash_type: u32,
+    hash_type: HashType,
     centralized_party_dkg_public_output: &[u8],
     protocol_pp: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -833,7 +834,7 @@ fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign
         centralized_party_secret_key_share,
         presign,
         message,
-        HashType::try_from(hash_type)?,
+        hash_type,
         centralized_party_dkg_public_output,
         protocol_pp,
     )
@@ -1455,9 +1456,9 @@ fn decrypt_user_share_inner<P: twopc_mpc::dkg::Protocol>(
 }
 
 pub fn parse_signature_from_sign_output_inner(
+    curve: u32,
     signature_algorithm: u32,
     signature_output: Vec<u8>,
-    curve: u32,
 ) -> anyhow::Result<Vec<u8>> {
     match try_into_signature_algorithm(curve, signature_algorithm)? {
         DWalletSignatureAlgorithm::ECDSASecp256k1 => {

@@ -162,9 +162,7 @@ impl ProtocolCryptographicData {
                         DWalletSignatureAlgorithm::Taproot => {
                             verify_partial_signature::<TaprootProtocol>(
                                 &data.message,
-                                &HashType::try_from(data.hash_scheme.clone() as u32).map_err(
-                                    |err| DwalletMPCError::InternalError(err.to_string()),
-                                )?,
+                                &data.hash_scheme,
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
