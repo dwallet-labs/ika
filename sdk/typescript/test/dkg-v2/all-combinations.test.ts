@@ -357,18 +357,22 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 
 		it('should work with SHA256', async () => {
 			await testCombination(
-				Curve.SECP256K1,
-				SignatureAlgorithm.ECDSASecp256k1,
-				Hash.SHA256,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.signatureAlgorithms.ECDSA
+					.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.signatureAlgorithms.ECDSA
+					.hashSchemes.SHA256.value,
 				'ecdsa-secp256k1-sha256',
 			);
 		});
 
 		it('should work with DoubleSHA256', async () => {
 			await testCombination(
-				Curve.SECP256K1,
-				SignatureAlgorithm.ECDSASecp256k1,
-				Hash.DoubleSHA256,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.signatureAlgorithms.ECDSA
+					.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.signatureAlgorithms.ECDSA
+					.hashSchemes.DoubleSHA256.value,
 				'ecdsa-secp256k1-double-sha256',
 			);
 		});
@@ -378,9 +382,11 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 	describe('Taproot on SECP256K1', () => {
 		it('should work with SHA256', async () => {
 			await testCombination(
-				Curve.SECP256K1,
-				SignatureAlgorithm.Taproot,
-				Hash.SHA256,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.signatureAlgorithms
+					.Taproot.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256k1.signatureAlgorithms
+					.Taproot.hashSchemes.SHA256.value,
 				'taproot-sha256',
 			);
 		});
@@ -390,37 +396,50 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 	describe('ECDSASecp256r1 on SECP256R1', () => {
 		it('should work with SHA256', async () => {
 			await testCombination(
-				Curve.SECP256R1,
-				SignatureAlgorithm.ECDSASecp256r1,
-				Hash.SHA256,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256r1.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256r1.signatureAlgorithms.ECDSA
+					.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256r1.signatureAlgorithms.ECDSA
+					.hashSchemes.SHA256.value,
 				'ecdsa-secp256r1-sha256',
 			);
 		});
 
 		it('should work with DoubleSHA256', async () => {
 			await testCombination(
-				Curve.SECP256R1,
-				SignatureAlgorithm.ECDSASecp256r1,
-				Hash.DoubleSHA256,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256r1.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256r1.signatureAlgorithms.ECDSA
+					.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Secp256r1.signatureAlgorithms.ECDSA
+					.hashSchemes.DoubleSHA256.value,
 				'ecdsa-secp256r1-double-sha256',
 			);
 		});
 	});
 
-	// EdDSA + ED25519 combination (1 test)
-	describe('EdDSA on ED25519', () => {
+	// EdDSA + Curve25519 combination (1 test)
+	describe('EdDSA on Curve25519', () => {
 		it('should work with SHA512', async () => {
-			await testCombination(Curve.ED25519, SignatureAlgorithm.EdDSA, Hash.SHA512, 'eddsa-sha512');
+			await testCombination(
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Curve25519.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Curve25519.signatureAlgorithms
+					.EdDSA.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Curve25519.signatureAlgorithms
+					.EdDSA.hashSchemes.SHA512.value,
+				'eddsa-sha512',
+			);
 		});
 	});
 
-	// SchnorrkelSubstrate + RISTRETTO combination (1 test)
-	describe('SchnorrkelSubstrate on RISTRETTO', () => {
+	// SchnorrkelSubstrate + Ristretto combination (1 test)
+	describe('SchnorrkelSubstrate on Ristretto', () => {
 		it('should work with Merlin', async () => {
 			await testCombination(
-				Curve.RISTRETTO,
-				SignatureAlgorithm.SchnorrkelSubstrate,
-				Hash.Merlin,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Ristretto.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Ristretto.signatureAlgorithms
+					.SchnorrkelSubstrate.value,
+				SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.Ristretto.signatureAlgorithms
+					.SchnorrkelSubstrate.hashSchemes.Merlin.value,
 				'schnorrkel-merlin',
 			);
 		});
