@@ -292,7 +292,7 @@ pub fn create_sign_centralized_party_message_with_centralized_party_dkg_output(
         message,
         hash_type,
         signature_scheme,
-        curve
+        curve,
     )
     .map_err(|e| JsError::new(&e.to_string()))?;
 
@@ -309,9 +309,10 @@ fn to_js_err(e: anyhow::Error) -> JsError {
 pub fn parse_signature_from_sign_output(
     signature_algorithm: u32,
     signature_output: Vec<u8>,
-    curve: u32
+    curve: u32,
 ) -> Result<JsValue, JsError> {
-    let signature = parse_signature_from_sign_output_inner(signature_algorithm, signature_output, curve)
-        .map_err(to_js_err)?;
+    let signature =
+        parse_signature_from_sign_output_inner(signature_algorithm, signature_output, curve)
+            .map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&signature)?)
 }

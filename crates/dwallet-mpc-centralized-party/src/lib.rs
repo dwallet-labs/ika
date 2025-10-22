@@ -833,7 +833,7 @@ fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign
         centralized_party_secret_key_share,
         presign,
         message,
-        hash_type,
+        HashType::try_from(hash_type)?,
         centralized_party_dkg_public_output,
         protocol_pp,
     )
@@ -843,7 +843,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],
     message: Vec<u8>,
-    hash_type: u32,
+    hash_type: HashType,
     centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput,
     protocol_pp: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -1099,7 +1099,7 @@ fn protocol_public_parameters(
             let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
 
-            let pp = match DWalletCurve::try_from(curve)? {
+            let pp = match try_into_curve(curve)? {
                 DWalletCurve::Secp256k1 => bcs::to_bytes(
                     &network_dkg_public_output.secp256k1_protocol_public_parameters()?,
                 )?,
@@ -1136,7 +1136,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
             let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
 
-            let pp = match DWalletCurve::try_from(curve)? {
+            let pp = match try_into_curve(curve)? {
                 DWalletCurve::Secp256k1 => {
                     bcs::to_bytes(&public_output.secp256k1_protocol_public_parameters()?)?
                 }
