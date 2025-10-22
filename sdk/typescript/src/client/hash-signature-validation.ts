@@ -9,7 +9,7 @@ import { Curve, Hash, SignatureAlgorithm } from './types.js';
  * Mapping:
  * - secp256k1 (ECDSASecp256k1): SHA2 (SHA256, DoubleSHA256), SHA3 (KECCAK256)
  * - Taproot: SHA256 only
- * - secp256r1 (ECDSASecp256r1): SHA2 (SHA256, DoubleSHA256) only
+ * - secp256r1 (ECDSASecp256r1): SHA2 (SHA256) only
  * - EdDSA (Ed25519): SHA512 only
  * - SchnorrkelSubstrate (Ristretto): Merlin only
  */
