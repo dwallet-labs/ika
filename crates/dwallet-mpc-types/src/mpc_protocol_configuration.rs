@@ -160,7 +160,7 @@ pub fn try_into_curve(curve: u32) -> Result<DWalletCurve, DwalletNetworkMPCError
     }
 }
 
-/// Convert curve and signature algorithm numbers to (DWalletCurve, DWalletSignatureScheme)
+/// Convert curve and signature algorithm numbers to (DWalletCurve, DWalletSignatureAlgorithm)
 /// Example: (0, 0) -> (Secp256k1, ECDSA)
 pub fn try_into_signature_algorithm(
     curve: u32,

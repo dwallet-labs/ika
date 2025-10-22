@@ -63,7 +63,7 @@ pub struct DWalletDKGAndSignData {
     pub user_secret_key_share: UserSecretKeyShareEventType,
     pub presign_id: ObjectID,
     pub presign: Vec<u8>,
-    pub signature_algorithm: DWalletSignatureScheme,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_type: HashType,
     pub message: Vec<u8>,
     pub message_centralized_signature: Vec<u8>,
@@ -280,7 +280,7 @@ pub fn dwallet_dkg_and_sign_protocol_data(
             user_secret_key_share,
             presign_id: sign_during_dkg_request.presign_id,
             presign: sign_during_dkg_request.presign.clone(),
-            signature_algorithm: DWalletSignatureScheme::try_from(
+            signature_algorithm: DWalletSignatureAlgorithm::try_from(
                 sign_during_dkg_request.signature_algorithm,
             )?,
             hash_type: HashType::try_from(sign_during_dkg_request.hash_scheme)

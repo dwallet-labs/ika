@@ -584,9 +584,9 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
             Ok(signed_message)
         }
         VersionedPresignOutput::V2(presign) => {
-            let signature_scheme = DWalletSignatureScheme::try_from(signature_scheme)?;
+            let signature_scheme = DWalletSignatureAlgorithm::try_from(signature_scheme)?;
             match signature_scheme {
-                DWalletSignatureScheme::ECDSASecp256k1 => {
+                DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<
                         Secp256K1ECDSAProtocol,
                     >(
@@ -598,7 +598,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &protocol_pp,
                     )
                 }
-                DWalletSignatureScheme::Taproot => {
+                DWalletSignatureAlgorithm::Taproot => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<TaprootProtocol>(
                         &centralized_party_secret_key_share,
                         &presign,
@@ -608,7 +608,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &protocol_pp,
                     )
                 }
-                DWalletSignatureScheme::ECDSASecp256r1 => {
+                DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<Secp256R1DKGProtocol>(
                         &centralized_party_secret_key_share,
                         &presign,
@@ -618,7 +618,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &protocol_pp,
                     )
                 }
-                DWalletSignatureScheme::EdDSA => {
+                DWalletSignatureAlgorithm::EdDSA => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<
                         Curve25519DKGProtocol,
                     >(
@@ -630,7 +630,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &protocol_pp,
                     )
                 }
-                DWalletSignatureScheme::SchnorrkelSubstrate => {
+                DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<RistrettoDKGProtocol>(
                         &centralized_party_secret_key_share,
                         &presign,
@@ -1458,24 +1458,24 @@ pub fn parse_signature_from_sign_output_inner(
     signature_algorithm: u32,
     signature_output: Vec<u8>,
 ) -> anyhow::Result<Vec<u8>> {
-    match DWalletSignatureScheme::try_from(signature_algorithm)? {
-        DWalletSignatureScheme::ECDSASecp256k1 => {
+    match DWalletSignatureAlgorithm::try_from(signature_algorithm)? {
+        DWalletSignatureAlgorithm::ECDSASecp256k1 => {
             let signature: ECDSASecp256k1Signature = bcs::from_bytes(&signature_output)?;
             Ok(signature.signature()?.to_vec())
         }
-        DWalletSignatureScheme::ECDSASecp256r1 => {
+        DWalletSignatureAlgorithm::ECDSASecp256r1 => {
             let signature: ECDSASecp256r1Signature = bcs::from_bytes(&signature_output)?;
             Ok(signature.signature()?.to_vec())
         }
-        DWalletSignatureScheme::EdDSA => {
+        DWalletSignatureAlgorithm::EdDSA => {
             let signature: EdDSASignature = bcs::from_bytes(&signature_output)?;
             Ok(signature.to_bytes().to_vec())
         }
-        DWalletSignatureScheme::SchnorrkelSubstrate => {
+        DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
             let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&signature_output)?;
             Ok(signature.to_bytes().to_vec())
         }
-        DWalletSignatureScheme::Taproot => {
+        DWalletSignatureAlgorithm::Taproot => {
             let signature: TaprootSignature = bcs::from_bytes(&signature_output)?;
             Ok(signature.to_bytes().to_vec())
         }

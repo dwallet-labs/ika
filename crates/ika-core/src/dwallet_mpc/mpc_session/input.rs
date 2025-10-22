@@ -24,7 +24,7 @@ use crate::request_protocol_data::{
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletSignatureScheme, MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait,
+    DWalletSignatureAlgorithm, MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait,
     ReconfigurationParty, ReconfigurationV2Party, VersionedEncryptedUserShare,
 };
 use group::PartyID;

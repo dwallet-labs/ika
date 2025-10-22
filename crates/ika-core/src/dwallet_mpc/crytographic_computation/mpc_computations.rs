@@ -1151,7 +1151,7 @@ impl ProtocolCryptographicData {
 }
 
 fn parse_signature_from_sign_output(
-    signature_algorithm: &DWalletSignatureScheme,
+    signature_algorithm: &DWalletSignatureAlgorithm,
     public_output_value: Vec<u8>,
 ) -> DwalletMPCResult<Vec<u8>> {
     match signature_algorithm {
