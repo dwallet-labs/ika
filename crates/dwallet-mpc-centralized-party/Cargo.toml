@@ -32,4 +32,5 @@ wasm_js = ["group/wasm_js", "dep:getrandom"]
 workspace = true
 
 [patch.crates-io]
-crypto-bigint = { git = 'https://github.com/ycscaly/crypto-bigint.git', rev = '8aabcee5' }
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }
+rfc6979 = { git = "https://github.com/RustCrypto/signatures", tag = "rfc6979/v0.5.0-rc.1" }

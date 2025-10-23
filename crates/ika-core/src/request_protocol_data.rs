@@ -5,7 +5,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
-use group::HashType;
+use group::HashScheme;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,
@@ -64,7 +64,7 @@ pub struct DWalletDKGAndSignData {
     pub presign_id: ObjectID,
     pub presign: Vec<u8>,
     pub signature_algorithm: DWalletSignatureAlgorithm,
-    pub hash_type: HashType,
+    pub hash_scheme: HashScheme,
     pub message: Vec<u8>,
     pub message_centralized_signature: Vec<u8>,
     pub sign_id: ObjectID,
@@ -82,7 +82,7 @@ pub struct PresignData {
 pub struct SignData {
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
-    pub hash_scheme: HashType,
+    pub hash_scheme: HashScheme,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
@@ -115,7 +115,7 @@ pub struct EncryptedShareVerificationData {
 pub struct PartialSignatureVerificationData {
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
-    pub hash_scheme: HashType,
+    pub hash_scheme: HashScheme,
     pub message: Vec<u8>,
     pub dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
     pub presign: SerializedWrappedMPCPublicOutput,
@@ -284,7 +284,7 @@ pub fn dwallet_dkg_and_sign_protocol_data(
                 request_event_data.curve,
                 sign_during_dkg_request.signature_algorithm,
             )?,
-            hash_type: try_into_hash_scheme(
+            hash_scheme: try_into_hash_scheme(
                 request_event_data.curve,
                 sign_during_dkg_request.signature_algorithm,
                 sign_during_dkg_request.hash_scheme,

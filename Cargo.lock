@@ -3737,7 +3737,7 @@ dependencies = [
  "der 0.8.0-rc.9",
  "digest 0.11.0-rc.3",
  "elliptic-curve 0.14.0-rc.16",
- "rfc6979 0.5.0-rc.2",
+ "rfc6979 0.5.0-rc.1",
  "serdect",
  "signature 3.0.0-rc.4",
  "spki 0.8.0-rc.4",
@@ -10812,9 +10812,8 @@ dependencies = [
 
 [[package]]
 name = "rfc6979"
-version = "0.5.0-rc.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a165e1723c68a5c6c3746322ba13f0e167206be428305bc9c76e204eacc639c"
+version = "0.5.0-rc.1"
+source = "git+https://github.com/RustCrypto/signatures?tag=rfc6979%2Fv0.5.0-rc.1#6375b4dbba32db5c733985c9146090115cd81923"
 dependencies = [
  "hmac 0.13.0-rc.2",
  "subtle",

@@ -122,7 +122,7 @@ pub(crate) fn session_input_from_request(
                     data.message.clone(),
                     &data.presign,
                     &data.message_centralized_signature,
-                    data.hash_type,
+                    data.hash_scheme,
                     access_structure,
                     encryption_key_public_data,
                     data.signature_algorithm,
