@@ -4,6 +4,7 @@ use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use group::HashScheme;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use std::cmp::Ordering;
+use std::fmt;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequest {
@@ -20,13 +21,18 @@ pub struct DWalletSessionRequest {
     pub pulled: bool,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, derive_more::Display)]
-#[display("{name}")]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequestMetricData {
     name: String,
     curve: Option<DWalletCurve>,
     hash_scheme: Option<HashScheme>,
     signature_algorithm: Option<DWalletSignatureAlgorithm>,
+}
+
+impl fmt::Display for DWalletSessionRequestMetricData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
 }
 
 impl PartialOrd<Self> for DWalletSessionRequest {
