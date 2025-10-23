@@ -231,7 +231,7 @@ export function signDuringDKGRequest(
 	ikaConfig: IkaConfig,
 	coordinatorObjectRef: TransactionObjectArgument,
 	presignCap: TransactionObjectArgument,
-	hashScheme: Hash,
+	hashScheme: number,
 	message: Uint8Array,
 	messageCentralizedSignature: Uint8Array,
 	tx: Transaction,

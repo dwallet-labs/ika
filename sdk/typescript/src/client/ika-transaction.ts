@@ -19,6 +19,7 @@ import {
 	fromCurveAndSignatureAlgorithmAndHashToNumbers,
 	fromCurveAndSignatureAlgorithmToNumbers,
 	fromCurveToNumber,
+	fromHashToNumber,
 	fromNumberToCurve,
 	validateCurveSignatureAlgorithm,
 	validateHashSignatureCombination,
@@ -220,7 +221,11 @@ export class IkaTransaction {
 						this.#ikaClient.ikaConfig,
 						this.#getCoordinatorObjectRef(),
 						signDuringDKGRequest.verifiedPresignCap,
-						signDuringDKGRequest.hashScheme,
+						fromHashToNumber(
+							curve,
+							signDuringDKGRequest.signatureAlgorithm,
+							signDuringDKGRequest.hashScheme,
+						),
 						signDuringDKGRequest.message,
 						await this.#getUserSignMessage({
 							userSignatureInputs: {
@@ -316,7 +321,11 @@ export class IkaTransaction {
 						this.#ikaClient.ikaConfig,
 						this.#getCoordinatorObjectRef(),
 						signDuringDKGRequest.verifiedPresignCap,
-						signDuringDKGRequest.hashScheme,
+						fromHashToNumber(
+							curve,
+							signDuringDKGRequest.signatureAlgorithm,
+							signDuringDKGRequest.hashScheme,
+						),
 						signDuringDKGRequest.message,
 						await this.#getUserSignMessage({
 							userSignatureInputs: {
