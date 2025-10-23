@@ -2374,7 +2374,7 @@ export class IkaTransaction {
 		}
 
 		throw new Error(
-			'You can call this function if this is imported key dwallet for ecdsa signatures, or the version is 1',
+			'You can call this function for ecdsa signatures only, and if this is imported key dwallet, or the version is 1',
 		);
 	}
 }
