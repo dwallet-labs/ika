@@ -145,7 +145,7 @@ impl CryptographicComputationsOrchestrator {
                     ?session_identifier,
                     ?computation_result_data,
                     attempt_number,
-                    mpc_protocol=protocol_metadata,
+                    mpc_protocol=?protocol_metadata,
                     error=?err,
                     "Cryptographic computation failed"
                 );
@@ -155,7 +155,7 @@ impl CryptographicComputationsOrchestrator {
                     ?session_identifier,
                     ?computation_result_data,
                     attempt_number,
-                    mpc_protocol = protocol_metadata,
+                    mpc_protocol =? protocol_metadata,
                     duration_ms = elapsed_ms,
                     duration_seconds = elapsed_ms / 1000,
                     "Cryptographic computation completed successfully"
@@ -236,7 +236,7 @@ impl CryptographicComputationsOrchestrator {
                 session_identifier=?computation_id.session_identifier,
                 mpc_round=?computation_id.mpc_round,
                 attempt_number=?computation_id.attempt_number,
-                mpc_protocol=computation_request.protocol_data,
+                mpc_protocol=?computation_request.protocol_data,
                 available_cores=?self.available_cores_for_cryptographic_computations,
                 currently_running_sessions_count =? self.currently_running_cryptographic_computations.len(),
                 "No available CPU cores to perform cryptographic computation"
@@ -255,7 +255,7 @@ impl CryptographicComputationsOrchestrator {
             session_identifier=?computation_id.session_identifier,
             current_round=?computation_id.mpc_round,
             attempt_number=?computation_id.attempt_number,
-            mpc_protocol=protocol_metadata,
+            mpc_protocol=?protocol_metadata,
             "Starting cryptographic computation",
         );
 

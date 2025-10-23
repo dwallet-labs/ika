@@ -31,7 +31,7 @@ impl Request {
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         info!(
-            mpc_protocol=self.protocol_data,
+            mpc_protocol=?self.protocol_data,
             validator=?self.validator_name,
             session_identifier=?computation_id.session_identifier,
             current_round=?computation_id.mpc_round,
