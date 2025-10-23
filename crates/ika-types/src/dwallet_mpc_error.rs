@@ -186,6 +186,9 @@ pub enum DwalletMPCError {
     #[error("Internal error: {0}")]
     InternalError(String),
 
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
     #[error("missing protocol public parameters for curve: {0:?}")]
     MissingProtocolPublicParametersForCurve(DWalletCurve),
 

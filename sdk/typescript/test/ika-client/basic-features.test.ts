@@ -3,6 +3,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { Curve } from '../../src';
 import { createIndividualTestSetup, getSharedTestSetup } from '../helpers/shared-test-setup';
 import { generateTestKeypair } from '../helpers/test-utils';
 
@@ -228,7 +229,7 @@ describe('IkaClient Basic Features', () => {
 		const { suiClient, ikaClient } = await createIndividualTestSetup('protocol-params-test');
 
 		// Get protocol public parameters without specifying a dWallet
-		const params = await ikaClient.getProtocolPublicParameters();
+		const params = await ikaClient.getProtocolPublicParameters(undefined, Curve.SECP256K1);
 		expect(params).toBeInstanceOf(Uint8Array);
 		expect(params.length).toBeGreaterThan(0);
 
@@ -238,7 +239,7 @@ describe('IkaClient Basic Features', () => {
 
 		// Test cache methods with latest encryption key
 		const latestKey = await ikaClient.getLatestNetworkEncryptionKey();
-		const isCached = ikaClient.isProtocolPublicParametersCached(latestKey.id);
+		const isCached = ikaClient.isProtocolPublicParametersCached(latestKey.id, Curve.SECP256K1);
 		expect(typeof isCached).toBe('boolean');
 
 		// After getting parameters, they should be cached
@@ -246,13 +247,16 @@ describe('IkaClient Basic Features', () => {
 
 		// Test cache invalidation and verify it affects caching status
 		ikaClient.invalidateProtocolPublicParametersCache();
-		const isCachedAfterInvalidation = ikaClient.isProtocolPublicParametersCached(latestKey.id);
+		const isCachedAfterInvalidation = ikaClient.isProtocolPublicParametersCached(
+			latestKey.id,
+			Curve.SECP256K1,
+		);
 		expect(isCachedAfterInvalidation).toBe(false);
 
 		// Getting parameters again should re-populate cache
 		const params2 = await ikaClient.getProtocolPublicParameters();
 		expect(params2).toEqual(params); // Should be same parameters
-		const isCachedAgain = ikaClient.isProtocolPublicParametersCached(latestKey.id);
+		const isCachedAgain = ikaClient.isProtocolPublicParametersCached(latestKey.id, Curve.SECP256K1);
 		expect(isCachedAgain).toBe(true);
 	});
 
@@ -313,7 +317,10 @@ describe('IkaClient Basic Features', () => {
 		await expect(ikaClient.getOwnedDWalletCaps('invalid-address')).rejects.toThrow();
 
 		// Test protocol parameters caching with invalid key ID
-		const isCachedInvalid = ikaClient.isProtocolPublicParametersCached('invalid-key');
+		const isCachedInvalid = ikaClient.isProtocolPublicParametersCached(
+			'invalid-key',
+			Curve.SECP256K1,
+		);
 		expect(isCachedInvalid).toBe(false); // Should handle gracefully
 	});
 });

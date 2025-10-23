@@ -15,7 +15,7 @@ use crate::dwallet_mpc::reconfiguration::{
     ReconfigurationPartyPublicInputGenerator, ReconfigurationV1ToV2PartyPublicInputGenerator,
     ReconfigurationV1toV2Party, ReconfigurationV2PartyPublicInputGenerator,
 };
-use crate::dwallet_mpc::sign::SignPublicInputByProtocol;
+use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
     EncryptedShareVerificationData, MakeDWalletUserSecretKeySharesPublicData,
@@ -24,8 +24,8 @@ use crate::request_protocol_data::{
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty,
-    ReconfigurationV2Party, VersionedEncryptedUserShare,
+    DWalletSignatureAlgorithm, MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait,
+    ReconfigurationParty, ReconfigurationV2Party, VersionedEncryptedUserShare,
 };
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
@@ -39,6 +39,7 @@ use std::collections::HashMap;
 pub(crate) enum PublicInput {
     DWalletImportedKeyVerificationRequest(DWalletImportedKeyVerificationPublicInputByCurve),
     DWalletDKG(DWalletDKGPublicInputByCurve),
+    DWalletDKGAndSign(DKGAndSignPublicInputByProtocol),
     // Used only for V1 dWallets
     DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
     // Used only for V1 dWallets
@@ -101,6 +102,34 @@ pub(crate) fn session_input_from_request(
                 None,
             ))
         }
+        ProtocolData::DWalletDKGAndSign {
+            dwallet_network_encryption_key_id,
+            data,
+            ..
+        } => {
+            let encryption_key_public_data = network_keys
+                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
+            let dwallet_dkg_public_input = DWalletDKGPublicInputByCurve::try_new(
+                &data.curve,
+                encryption_key_public_data,
+                &data.centralized_public_key_share_and_proof,
+                BytesCentralizedPartyKeyShareVerification::from(data.user_secret_key_share.clone()),
+            )?;
+            Ok((
+                PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
+                    request.session_identifier,
+                    dwallet_dkg_public_input,
+                    data.message.clone(),
+                    &data.presign,
+                    &data.message_centralized_signature,
+                    data.hash_type,
+                    access_structure,
+                    encryption_key_public_data,
+                    data.signature_algorithm,
+                )?),
+                None,
+            ))
+        }
         ProtocolData::ImportedKeyVerification {
             data,
             dwallet_network_encryption_key_id,
@@ -110,13 +139,6 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
-            let encrypted_secret_share_and_proof =
-                match bcs::from_bytes(&data.encrypted_centralized_secret_share_and_proof)? {
-                    VersionedEncryptedUserShare::V1(
-                        encrypted_centralized_secret_share_and_proof,
-                    ) => encrypted_centralized_secret_share_and_proof,
-                };
-
             let public_input = DWalletImportedKeyVerificationPublicInputByCurve::try_new(
                 session_id,
                 &data.curve,
@@ -124,7 +146,9 @@ pub(crate) fn session_input_from_request(
                 &centralized_party_message,
                 BytesCentralizedPartyKeyShareVerification::Encrypted {
                     encryption_key: data.encryption_key.clone(),
-                    encrypted_secret_key_share_message: encrypted_secret_share_and_proof,
+                    encrypted_secret_key_share_message: data
+                        .encrypted_centralized_secret_share_and_proof
+                        .clone(),
                 },
             )?;
 

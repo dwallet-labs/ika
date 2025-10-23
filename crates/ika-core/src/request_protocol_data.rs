@@ -1,3 +1,4 @@
+use crate::request_protocol_data::ProtocolData::DWalletDKGAndSign;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, SerializedWrappedMPCPublicOutput,
 };
@@ -5,13 +6,13 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
 use group::HashType;
-use ika_types::dwallet_mpc_error::DwalletMPCResult;
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
     DWalletNetworkDKGEncryptionKeyRequestEvent, EncryptedShareVerificationRequestEvent,
     FutureSignRequestEvent, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
-    SignRequestEvent, UserSecretKeyShareEventType,
+    SignDuringDKGRequestEvent, SignRequestEvent, UserSecretKeyShareEventType,
 };
 use sui_types::base_types::ObjectID;
 
@@ -52,6 +53,21 @@ pub struct DWalletDKGData {
     pub curve: DWalletCurve,
     pub centralized_public_key_share_and_proof: Vec<u8>,
     pub user_secret_key_share: UserSecretKeyShareEventType,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
+#[display("dWallet DKG and Sign")]
+pub struct DWalletDKGAndSignData {
+    pub curve: DWalletCurve,
+    pub centralized_public_key_share_and_proof: Vec<u8>,
+    pub user_secret_key_share: UserSecretKeyShareEventType,
+    pub presign_id: ObjectID,
+    pub presign: Vec<u8>,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
+    pub hash_type: HashType,
+    pub message: Vec<u8>,
+    pub message_centralized_signature: Vec<u8>,
+    pub sign_id: ObjectID,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
@@ -130,6 +146,11 @@ pub enum ProtocolData {
 
     DWalletDKG {
         data: DWalletDKGData,
+        dwallet_id: ObjectID,
+        dwallet_network_encryption_key_id: ObjectID,
+    },
+    DWalletDKGAndSign {
+        data: DWalletDKGAndSignData,
         dwallet_id: ObjectID,
         dwallet_network_encryption_key_id: ObjectID,
     },
@@ -240,6 +261,39 @@ pub fn dwallet_dkg_protocol_data(
             centralized_public_key_share_and_proof: request_event_data
                 .centralized_public_key_share_and_proof,
             user_secret_key_share,
+        },
+        dwallet_id: request_event_data.dwallet_id,
+        dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
+    })
+}
+
+pub fn dwallet_dkg_and_sign_protocol_data(
+    request_event_data: DWalletDKGRequestEvent,
+    user_secret_key_share: UserSecretKeyShareEventType,
+    sign_during_dkg_request: &SignDuringDKGRequestEvent,
+) -> DwalletMPCResult<ProtocolData> {
+    Ok(ProtocolData::DWalletDKGAndSign {
+        data: DWalletDKGAndSignData {
+            curve: try_into_curve(request_event_data.curve)?,
+            centralized_public_key_share_and_proof: request_event_data
+                .centralized_public_key_share_and_proof,
+            user_secret_key_share,
+            presign_id: sign_during_dkg_request.presign_id,
+            presign: sign_during_dkg_request.presign.clone(),
+            signature_algorithm: try_into_signature_algorithm(
+                request_event_data.curve,
+                sign_during_dkg_request.signature_algorithm,
+            )?,
+            hash_type: try_into_hash_scheme(
+                request_event_data.curve,
+                sign_during_dkg_request.signature_algorithm,
+                sign_during_dkg_request.hash_scheme,
+            )?,
+            message: sign_during_dkg_request.message.clone(),
+            message_centralized_signature: sign_during_dkg_request
+                .message_centralized_signature
+                .clone(),
+            sign_id: sign_during_dkg_request.sign_id,
         },
         dwallet_id: request_event_data.dwallet_id,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
@@ -378,6 +432,10 @@ impl ProtocolData {
                 ..
             }
             | ProtocolData::DKGFirst {
+                dwallet_network_encryption_key_id,
+                ..
+            }
+            | ProtocolData::DWalletDKGAndSign {
                 dwallet_network_encryption_key_id,
                 ..
             }
