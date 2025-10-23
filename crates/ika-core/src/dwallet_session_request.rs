@@ -21,7 +21,7 @@ pub struct DWalletSessionRequest {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, derive_more::Display)]
-#[display("{name}")]
+#[display("{name, curve, signature_algorithm, hash_scheme}")]
 pub struct DWalletSessionRequestMetricData {
     name: String,
     curve: Option<DWalletCurve>,
