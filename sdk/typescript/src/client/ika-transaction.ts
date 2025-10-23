@@ -100,13 +100,45 @@ export class IkaTransaction {
 	 * @returns Promise resolving to a DWallet capability
 	 * @throws {Error} If the decryption key ID cannot be fetched
 	 */
-	async requestDWalletDKGFirstRoundAsync(_params: {
-		curve: Curve;
+	async requestDWalletDKGFirstRoundAsync({
+		curve,
+		ikaCoin,
+		suiCoin,
+	}: {
+		curve: number;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<TransactionObjectArgument> {
-		throw new Error(
-			'requestDWalletDKGFirstRoundAsync is deprecated. Use requestDWalletDKGFirstRound instead',
+		const dwalletCap = this.#requestDWalletDKGFirstRound({
+			curve,
+			networkEncryptionKeyID: (await this.#ikaClient.getConfiguredNetworkEncryptionKey()).id,
+			ikaCoin,
+			suiCoin,
+		});
+
+		return dwalletCap;
+	}
+
+	#requestDWalletDKGFirstRound({
+		curve,
+		networkEncryptionKeyID,
+		ikaCoin,
+		suiCoin,
+	}: {
+		curve: number;
+		networkEncryptionKeyID: string;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		return coordinatorTx.requestDWalletDKGFirstRound(
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			networkEncryptionKeyID,
+			curve,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.#transaction,
 		);
 	}
 

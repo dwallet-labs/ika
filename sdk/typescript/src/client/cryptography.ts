@@ -242,11 +242,17 @@ export async function prepareDKG(
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
 export async function prepareDKGSecondRoundAsync(
-	_ikaClient: IkaClient,
-	_dWallet: DWallet,
-	_userShareEncryptionKeys: UserShareEncryptionKeys,
+	ikaClient: IkaClient,
+	dWallet: DWallet,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 ): Promise<DKGRequestInput> {
-	throw new Error('prepareDKGSecondRoundAsync is deprecated. Use prepareDKGAsync instead');
+	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
+
+	return prepareDKGSecondRound(
+		protocolPublicParameters,
+		dWallet,
+		userShareEncryptionKeys.encryptionKey,
+	);
 }
 
 /**

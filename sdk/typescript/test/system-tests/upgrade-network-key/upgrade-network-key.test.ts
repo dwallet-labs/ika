@@ -162,7 +162,9 @@ describe('system tests', () => {
 		await delay(30);
 		await createPods(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM));
 
-		console.log('Move contracts upgraded to V2, running sign full flow with all curves and verifying it works');
+		console.log(
+			'Move contracts upgraded to V2, running sign full flow with all curves and verifying it works',
+		);
 		ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage = upgradedPackageID;
 		await testSignCombination(
 			Curve.SECP256K1,
