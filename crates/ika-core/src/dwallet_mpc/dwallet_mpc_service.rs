@@ -360,7 +360,6 @@ impl DWalletMPCService {
             if let Some(last_consensus_round) = last_consensus_round {
                 last_consensus_round
             } else {
-                // TODO(Scaly): what is this? what does it mean to even retry here?
                 info!("No consensus round from DB yet, retrying in {DELAY_NO_ROUNDS_SEC} seconds.");
                 tokio::time::sleep(Duration::from_secs(DELAY_NO_ROUNDS_SEC)).await;
                 return;
