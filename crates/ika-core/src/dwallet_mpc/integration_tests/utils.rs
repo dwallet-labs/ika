@@ -551,13 +551,10 @@ pub(crate) async fn send_start_network_dkg_event_to_all_parties(
     );
     for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
         dwallet_mpc_service.run_service_loop_iteration().await;
-        assert_eq!(
-            dwallet_mpc_service.dwallet_mpc_manager().mpc_sessions.len(),
-            1
-        );
+        assert_eq!(dwallet_mpc_service.dwallet_mpc_manager().sessions.len(), 1);
         let session = dwallet_mpc_service
             .dwallet_mpc_manager()
-            .mpc_sessions
+            .sessions
             .values()
             .next()
             .unwrap();

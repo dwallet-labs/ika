@@ -100,16 +100,12 @@ impl DWalletMPCService {
         let decryption_key_reconfiguration_third_round_delay =
             protocol_config.decryption_key_reconfiguration_third_round_delay();
 
-        let root_seed = match node_config.root_seed_key_pair {
+        let root_seed = match node_config.root_seed {
             None => {
-                error!(
-                    "root_seed_key_pair is not set in the node config, cannot start DWallet MPC service"
-                );
-                panic!(
-                    "root_seed_key_pair is not set in the node config, cannot start DWallet MPC service"
-                );
+                error!("root_seed is not set in the node config, cannot start DWallet MPC service");
+                panic!("root_seed is not set in the node config, cannot start DWallet MPC service");
             }
-            Some(root_seed_keypair) => root_seed_keypair.root_seed().clone(),
+            Some(root_seed) => root_seed.root_seed().clone(),
         };
 
         let dwallet_mpc_manager = DWalletMPCManager::new(
@@ -305,18 +301,22 @@ impl DWalletMPCService {
         };
         let requests = [uncompleted_requests, pulled_requests].concat();
 
-        let requests_session_identifiers: HashMap<SessionIdentifier, &DWalletSessionRequest> =
+        let requests_by_session_identifiers: HashMap<SessionIdentifier, &DWalletSessionRequest> =
             requests.iter().map(|e| (e.session_identifier, e)).collect();
 
-        match self.state.get_dwallet_mpc_sessions_completed_status(
-            requests_session_identifiers.keys().cloned().collect(),
-        ) {
+        let requests_session_identifiers =
+            requests_by_session_identifiers.keys().copied().collect();
+
+        match self
+            .state
+            .get_dwallet_mpc_sessions_completed_status(requests_session_identifiers)
+        {
             Ok(mpc_session_identifier_to_computation_completed) => {
                 for (session_identifier, session_completed) in
                     mpc_session_identifier_to_computation_completed
                 {
                     // Safe to unwrap, as we just inserted the session identifier into the map.
-                    let request = requests_session_identifiers
+                    let request = requests_by_session_identifiers
                         .get(&session_identifier)
                         .unwrap();
 
@@ -336,7 +336,7 @@ impl DWalletMPCService {
             }
             Err(e) => {
                 error!(
-                    ?requests_session_identifiers,
+                    ?requests_by_session_identifiers,
                     error=?e,
                     "Could not read from the DB completed sessions, got error"
                 );
@@ -475,14 +475,12 @@ impl DWalletMPCService {
             self.dwallet_mpc_manager
                 .handle_consensus_round_messages(consensus_round, mpc_messages);
 
-            // Now we have the MPC messages for the current round, we can
-            // process the MPC outputs for the current round.
+            // Process the MPC outputs for the current round.
             let (mut checkpoint_messages, completed_sessions) = self
                 .dwallet_mpc_manager
                 .handle_consensus_round_outputs(consensus_round, mpc_outputs);
 
-            // Now we have the MPC outputs for the current round, we can
-            // add messages from the consensus output such as EndOfPublish.
+            // Add messages from the consensus output such as EndOfPublish.
             checkpoint_messages.extend(verified_dwallet_checkpoint_messages);
 
             if !self.end_of_publish {
@@ -589,11 +587,7 @@ impl DWalletMPCService {
                 ComputationResultData::Native
             };
 
-            let Some(session) = self
-                .dwallet_mpc_manager
-                .mpc_sessions
-                .get(&session_identifier)
-            else {
+            let Some(session) = self.dwallet_mpc_manager.sessions.get(&session_identifier) else {
                 error!(
                     should_never_happen =? true,
                     ?session_identifier,
@@ -609,7 +603,7 @@ impl DWalletMPCService {
                     ?session_identifier,
                     validator=?validator_name,
                     ?computation_result_data,
-                    "received a computation update for an non-active session"
+                    "received a computation update for a non-active session"
                 );
                 return;
             };
@@ -661,9 +655,6 @@ impl DWalletMPCService {
                     } else {
                         vec![]
                     };
-
-                    self.dwallet_mpc_manager
-                        .record_malicious_actors(&malicious_authorities);
 
                     let rejected = false;
 
@@ -1171,7 +1162,7 @@ impl DWalletMPCService {
         }
 
         let root_seed = config
-            .root_seed_key_pair
+            .root_seed
             .clone()
             .ok_or(DwalletMPCError::MissingRootSeed)?
             .root_seed()

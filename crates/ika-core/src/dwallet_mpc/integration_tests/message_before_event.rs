@@ -71,7 +71,7 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         let dwallet_mpc_service = &mut dwallet_mpc_services[*i];
         let pending_event_session = dwallet_mpc_service
             .dwallet_mpc_manager()
-            .mpc_sessions
+            .sessions
             .values()
             .next()
             .clone()
