@@ -3,13 +3,11 @@ import { exec } from 'node:child_process';
 import path from 'path';
 import * as TOML from '@iarna/toml';
 import { network_key_version } from '@ika.xyz/ika-wasm';
-import { dumpYaml, KubeConfig, loadYaml } from '@kubernetes/client-node';
-import { SuiClient } from '@mysten/sui/client';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { KubeConfig } from '@kubernetes/client-node';
 import { execa } from 'execa';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { fetchAllDynamicFields, IkaClient } from '../../../src';
+import { IkaClient } from '../../../src';
 import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
@@ -168,7 +166,6 @@ describe('system tests', () => {
 		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, testName, false);
 		console.log('V2 dWallet full flow works, test completed successfully');
 
-		// await runSignFullFlowTestWithImportedDwallet(testName, ikaClient, suiClient, false);
 		console.log(
 			'Imported dWallet full flow works, creating a new v2 dWallet and verifying it works',
 		);
