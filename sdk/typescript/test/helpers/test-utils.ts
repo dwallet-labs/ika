@@ -407,7 +407,8 @@ export async function runSignFullFlowWithDWallet(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		SignatureAlgorithm.ECDSA,
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
 		signerAddress,
 		testName,
 	);
@@ -440,7 +441,7 @@ export async function runSignFullFlowWithDWallet(
 		encryptedUserSecretKeyShare,
 		message,
 		Hash.KECCAK256,
-		SignatureAlgorithm.ECDSA,
+		SignatureAlgorithm.ECDSASecp256k1,
 		testName,
 	);
 }
