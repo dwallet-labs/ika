@@ -8,7 +8,7 @@
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyOutputSecp256k1, DWalletSignatureScheme, MPCPublicOutput,
+    DKGDecentralizedPartyOutputSecp256k1, DWalletSignatureAlgorithm, MPCPublicOutput,
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedNetworkEncryptionKeyPublicData,
 };
@@ -28,6 +28,7 @@ use mpc::{
 };
 use std::collections::HashMap;
 use tracing::error;
+use twopc_mpc::dkg::decentralized_party::VersionedOutput;
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
 
@@ -71,14 +72,14 @@ pub(crate) enum PresignAdvanceRequestByProtocol {
 
 impl PresignAdvanceRequestByProtocol {
     pub fn try_new(
-        protocol: &DWalletSignatureScheme,
+        protocol: &DWalletSignatureAlgorithm,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
         consensus_round: u64,
         serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match protocol {
-            DWalletSignatureScheme::ECDSASecp256k1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let advance_request =
                     mpc_computations::try_ready_to_advance::<PresignParty<Secp256K1ECDSAProtocol>>(
                         party_id,
@@ -89,7 +90,7 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::Secp256k1ECDSA)
             }
-            DWalletSignatureScheme::Taproot => {
+            DWalletSignatureAlgorithm::Taproot => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     PresignParty<Secp256K1TaprootProtocol>,
                 >(
@@ -101,7 +102,7 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::Taproot)
             }
-            DWalletSignatureScheme::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     PresignParty<RistrettoSchnorrkelSubstrateProtocol>,
                 >(
@@ -113,7 +114,7 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::SchnorrkelSubstrate)
             }
-            DWalletSignatureScheme::EdDSA => {
+            DWalletSignatureAlgorithm::EdDSA => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     PresignParty<Curve25519EdDSAProtocol>,
                 >(
@@ -125,7 +126,7 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::EdDSA)
             }
-            DWalletSignatureScheme::ECDSASecp256r1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let advance_request =
                     mpc_computations::try_ready_to_advance::<PresignParty<Secp256R1ECDSAProtocol>>(
                         party_id,
@@ -143,21 +144,23 @@ impl PresignAdvanceRequestByProtocol {
 
 impl PresignPublicInputByProtocol {
     pub(crate) fn try_new(
-        protocol: DWalletSignatureScheme,
+        protocol: DWalletSignatureAlgorithm,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
     ) -> DwalletMPCResult<Self> {
         if dwallet_public_output.is_none() {
-            return Self::try_new_v2(protocol, versioned_network_encryption_key_public_data);
+            return Self::try_new_v2(protocol, versioned_network_encryption_key_public_data, None);
         }
         // Safe to unwrap as we checked for None above
         match bcs::from_bytes(&dwallet_public_output.unwrap())? {
             VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
                 Self::try_new_v1(versioned_network_encryption_key_public_data, dkg_output)
             }
-            VersionedDwalletDKGSecondRoundPublicOutput::V2(_) => {
-                unreachable!("Only global presign is supported for v2 dWallets")
-            }
+            VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => Self::try_new_v2(
+                protocol,
+                versioned_network_encryption_key_public_data,
+                Some(output),
+            ),
         }
     }
     pub(crate) fn try_new_v1(
@@ -179,61 +182,154 @@ impl PresignPublicInputByProtocol {
     }
 
     pub(crate) fn try_new_v2(
-        protocol: DWalletSignatureScheme,
+        protocol: DWalletSignatureAlgorithm,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        dwallet_dkg_output: Option<MPCPublicOutput>,
     ) -> DwalletMPCResult<Self> {
         let input = match protocol {
-            DWalletSignatureScheme::ECDSASecp256k1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
                 let public_input =
                     <PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
-                        None,
+                        match dwallet_dkg_output {
+                            Some(dkg_output) => {
+                                let versioned_output = bcs::from_bytes::<
+                                    <Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                >(&dkg_output)?;
+                                let output = match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
+                                    VersionedOutput::UniversalPublicDKGOutput {
+                                        ..
+                                    } => {
+                                        return Err(DwalletMPCError::InvalidInput(
+                                            "Universal DKG output is not supported for v2 non-global presign".to_string(),
+                                        ))
+                                    }
+                                };
+                                Some(output)
+                            }
+                            None => None,
+                        },
                     ));
                 PresignPublicInputByProtocol::Secp256k1ECDSA(public_input)
             }
-            DWalletSignatureScheme::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .ristretto_protocol_public_parameters()?;
 
                 let pub_input =
-                    <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput::from((protocol_public_parameters, None::<<RistrettoSchnorrkelSubstrateProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>));
+                    <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput::from((
+                        protocol_public_parameters,
+                        match dwallet_dkg_output {
+                            Some(dkg_output) => {
+                                let versioned_output = bcs::from_bytes::<
+                                    <RistrettoSchnorrkelSubstrateProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                >(&dkg_output)?;
+                                let output = match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
+                                    VersionedOutput::UniversalPublicDKGOutput {
+                                        ..
+                                    } => {
+                                        return Err(DwalletMPCError::InvalidInput(
+                                            "Universal DKG output is not supported for v2 non-global presign".to_string(),
+                                        ))
+                                    }
+                                };
+                                Some(output)
+                            },
+                            None => None,
+                        },
+                    ));
 
                 PresignPublicInputByProtocol::SchnorrkelSubstrate(pub_input)
             }
-            DWalletSignatureScheme::EdDSA => {
+            DWalletSignatureAlgorithm::EdDSA => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .curve25519_protocol_public_parameters()?;
 
                 let pub_input =
                     <PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
-                        None::<<Curve25519EdDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>,
+                        match dwallet_dkg_output {
+                            Some(dkg_output) => {
+                                let versioned_output = bcs::from_bytes::<
+                                    <Curve25519EdDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                >(&dkg_output)?;
+                                let output = match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
+                                    VersionedOutput::UniversalPublicDKGOutput {
+                                        ..
+                                    } => {
+                                        return Err(DwalletMPCError::InvalidInput(
+                                            "Universal DKG output is not supported for v2 non-global presign".to_string(),
+                                        ))
+                                    }                                };
+                                Some(output)
+                            }
+                            None => None,
+                        },
                     ));
 
                 PresignPublicInputByProtocol::EdDSA(pub_input)
             }
-            DWalletSignatureScheme::ECDSASecp256r1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256r1_protocol_public_parameters()?;
 
                 let pub_input =
                     <PresignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
-                        None::<<Secp256R1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>,
+                        match dwallet_dkg_output {
+                            Some(dkg_output) => {
+                                let versioned_output = bcs::from_bytes::<
+                                    <Secp256R1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                >(&dkg_output)?;
+                                let output = match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
+                                    VersionedOutput::UniversalPublicDKGOutput {
+                                        ..
+                                    } => {
+                                        return Err(DwalletMPCError::InvalidInput(
+                                            "Universal DKG output is not supported for v2 non-global presign".to_string(),
+                                        ))
+                                    }
+                                };
+                                Some(output)
+                            }
+                            None => None,
+                        },
                     ));
 
                 PresignPublicInputByProtocol::Secp256r1ECDSA(pub_input)
             }
-            DWalletSignatureScheme::Taproot => {
+            DWalletSignatureAlgorithm::Taproot => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
 
                 let pub_input =
                     <PresignParty<Secp256K1TaprootProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
-                        None::<<Secp256K1TaprootProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>,
+                        match dwallet_dkg_output {
+                            Some(dkg_output) => {
+                                let versioned_output = bcs::from_bytes::<
+                                    <Secp256K1TaprootProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                >(&dkg_output)?;
+                                let output = match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
+                                    VersionedOutput::UniversalPublicDKGOutput {
+                                        ..
+                                    } => {
+                                        return Err(DwalletMPCError::InvalidInput(
+                                            "Universal DKG output is not supported for v2 non-global presign".to_string(),
+                                        ))
+                                    }
+                                };
+                                Some(output)
+                            }
+                            None => None,
+                        },
                     ));
 
                 PresignPublicInputByProtocol::Taproot(pub_input)

@@ -1,9 +1,10 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::request_protocol_data::ProtocolData;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureScheme};
-use group::HashType;
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use group::HashScheme;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use std::cmp::Ordering;
+use std::fmt;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequest {
@@ -20,13 +21,18 @@ pub struct DWalletSessionRequest {
     pub pulled: bool,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, derive_more::Display)]
-#[display("{name}")]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequestMetricData {
     name: String,
     curve: Option<DWalletCurve>,
-    hash_scheme: Option<HashType>,
-    signature_algorithm: Option<DWalletSignatureScheme>,
+    hash_scheme: Option<HashScheme>,
+    signature_algorithm: Option<DWalletSignatureAlgorithm>,
+}
+
+impl fmt::Display for DWalletSessionRequestMetricData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
 }
 
 impl PartialOrd<Self> for DWalletSessionRequest {
@@ -83,6 +89,12 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
                 curve: Some(data.curve.clone()),
                 hash_scheme: None,
                 signature_algorithm: None,
+            },
+            ProtocolData::DWalletDKGAndSign { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve.clone()),
+                hash_scheme: Some(data.hash_scheme),
+                signature_algorithm: Some(data.signature_algorithm.clone()),
             },
             ProtocolData::ImportedKeyVerification { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
@@ -148,7 +160,7 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
                     curve: Some(data.curve.clone()),
-                    hash_scheme: Some(data.hash_type.clone()),
+                    hash_scheme: Some(data.hash_scheme.clone()),
                     signature_algorithm: Some(data.signature_algorithm.clone()),
                 }
             }
@@ -205,6 +217,14 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: Some(data.hash_scheme.clone()),
                 signature_algorithm: Some(data.signature_algorithm.clone()),
             },
+            ProtocolCryptographicData::DWalletDKGAndSign { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve.clone()),
+                    hash_scheme: Some(data.hash_scheme.clone()),
+                    signature_algorithm: Some(data.signature_algorithm.clone()),
+                }
+            }
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 { data, .. } => {
                 // TODO (#1508): Remove the curve label completely from protocols the curve label is irrelevant for
                 DWalletSessionRequestMetricData {
@@ -234,7 +254,7 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
                     curve: Some(data.curve.clone()),
-                    hash_scheme: Some(data.hash_type.clone()),
+                    hash_scheme: Some(data.hash_scheme.clone()),
                     signature_algorithm: Some(data.signature_algorithm.clone()),
                 }
             }

@@ -249,13 +249,12 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
             DWalletCurve::Secp256r1 => {
                 let protocol_public_parameters =
                     encryption_key_public_data.secp256r1_protocol_public_parameters()?;
-                let centralized_party_message: VersionedCentralizedPartyImportedDWalletPublicOutput =
+                let centralized_party_message: VersionedImportedDwalletOutgoingMessage =
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
 
-                let VersionedCentralizedPartyImportedDWalletPublicOutput::V2(
-                    centralized_party_message,
-                ) = centralized_party_message
+                let VersionedImportedDwalletOutgoingMessage::V1(centralized_party_message) =
+                    centralized_party_message
                 else {
                     return Err(
                         DwalletMPCError::InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
@@ -276,13 +275,12 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
             DWalletCurve::Curve25519 => {
                 let protocol_public_parameters =
                     encryption_key_public_data.curve25519_protocol_public_parameters()?;
-                let centralized_party_message: VersionedCentralizedPartyImportedDWalletPublicOutput =
+                let centralized_party_message: VersionedImportedDwalletOutgoingMessage =
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
 
-                let VersionedCentralizedPartyImportedDWalletPublicOutput::V2(
-                    centralized_party_message,
-                ) = centralized_party_message
+                let VersionedImportedDwalletOutgoingMessage::V1(centralized_party_message) =
+                    centralized_party_message
                 else {
                     return Err(
                         DwalletMPCError::InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
@@ -303,13 +301,12 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
             DWalletCurve::Ristretto => {
                 let protocol_public_parameters =
                     encryption_key_public_data.ristretto_protocol_public_parameters()?;
-                let centralized_party_message: VersionedCentralizedPartyImportedDWalletPublicOutput =
+                let centralized_party_message: VersionedImportedDwalletOutgoingMessage =
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
 
-                let VersionedCentralizedPartyImportedDWalletPublicOutput::V2(
-                    centralized_party_message,
-                ) = centralized_party_message
+                let VersionedImportedDwalletOutgoingMessage::V1(centralized_party_message) =
+                    centralized_party_message
                 else {
                     return Err(
                         DwalletMPCError::InvalidCentralizedPartyImportedDWalletPublicOutputVersion,

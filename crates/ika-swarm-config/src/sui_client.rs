@@ -1,7 +1,12 @@
 use crate::validator_initialization_config::ValidatorInitializationConfig;
 use anyhow::bail;
 use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
-use dwallet_mpc_types::mpc_protocol_configuration::MpcProtocolConfiguration;
+use dwallet_mpc_types::mpc_protocol_configuration::{
+    GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG,
+    GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_IMPORTED_KEY,
+    MPC_PROTOCOLS_WITH_SIGNATURE_ALGORITHM, MPC_PROTOCOLS_WITHOUT_SIGNATURE_ALGORITHM,
+    SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES,
+};
 use fastcrypto::traits::ToFromBytes;
 use ika_config::Config;
 use ika_config::initiation::{InitiationParameters, MIN_VALIDATOR_JOINING_STAKE_INKU};
@@ -537,20 +542,13 @@ pub async fn set_global_presign_config(
         vec![system_arg, protocol_cap_arg],
     );
 
-    // Load protocol configuration
-    let protocol_config = MpcProtocolConfiguration::default_config();
-
     let curve_to_signature_algorithms_for_dkg = new_curve_to_signature_algorithm_vecmap(
         &mut ptb,
-        protocol_config
-            .get_dkg_curve_to_signature_algorithms()
-            .clone(),
+        GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG.clone(),
     )?;
     let curve_to_signature_algorithms_for_imported_key = new_curve_to_signature_algorithm_vecmap(
         &mut ptb,
-        protocol_config
-            .get_imported_key_curve_to_signature_algorithms()
-            .clone(),
+        GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_IMPORTED_KEY.clone(),
     )?;
 
     ptb.programmable_move_call(
@@ -603,12 +601,6 @@ pub async fn ika_system_initialize(
         .get_object_ref(ika_dwallet_2pc_mpc_init_id)
         .await?;
 
-    // Load protocol configuration
-    let protocol_config = MpcProtocolConfiguration::default_config();
-
-    // Get supported curves
-    let curves = MpcProtocolConfiguration::get_supported_curves();
-
     let ika_system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version: init_system_shared_version,
@@ -625,13 +617,8 @@ pub async fn ika_system_initialize(
 
     let zero_price = ptb.input(CallArg::Pure(bcs::to_bytes(&0u64)?))?;
 
-    // Get protocol flags from configuration
-    let protocols_without_sig_algo_flags =
-        protocol_config.get_protocols_without_signature_algorithm();
-    let protocols_with_sig_algo_flags = protocol_config.get_protocols_with_signature_algorithm();
-
     // Convert protocol flags to PTB arguments
-    let protocols_without_sig_algo: Vec<Argument> = protocols_without_sig_algo_flags
+    let protocols_without_sig_algo: Vec<Argument> = MPC_PROTOCOLS_WITHOUT_SIGNATURE_ALGORITHM
         .iter()
         .map(|flag| {
             ptb.input(CallArg::Pure(bcs::to_bytes(flag).unwrap()))
@@ -639,7 +626,7 @@ pub async fn ika_system_initialize(
         })
         .collect();
 
-    let protocols_with_sig_algo: Vec<Argument> = protocols_with_sig_algo_flags
+    let protocols_with_sig_algo: Vec<Argument> = MPC_PROTOCOLS_WITH_SIGNATURE_ALGORITHM
         .iter()
         .map(|flag| {
             ptb.input(CallArg::Pure(bcs::to_bytes(flag).unwrap()))
@@ -648,7 +635,9 @@ pub async fn ika_system_initialize(
         .collect();
 
     // Insert pricing for all curves for protocols without signature algorithms
-    for curve in &curves {
+    for (curve, _signature_algorithms_to_hash_schemes) in
+        SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.iter()
+    {
         let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
         let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
 
@@ -672,16 +661,12 @@ pub async fn ika_system_initialize(
     }
 
     // Insert pricing for each curve with its supported signature algorithms for protocols with signature algorithms
-    for curve in &curves {
+    for (curve, signature_algorithms_to_hash_schemes) in
+        SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.iter()
+    {
         let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
-        let curve_u32 = *curve as u32;
 
-        // Get signature algorithms supported by THIS specific curve
-        let curve_sig_algos = protocol_config
-            .get_dkg_signature_algorithms_for_curve(curve_u32)
-            .expect("Curve must have signature algorithm configuration");
-
-        for sig_algo in curve_sig_algos {
+        for (sig_algo, hash_schemes) in signature_algorithms_to_hash_schemes {
             let sig_algo_option = ptb.input(CallArg::Pure(bcs::to_bytes(&Some(*sig_algo))?))?;
 
             for protocol in &protocols_with_sig_algo {
@@ -715,23 +700,27 @@ pub async fn ika_system_initialize(
     // Build hash maps for each curve using protocol configuration
     let mut curve_hash_maps = Vec::new();
 
-    for curve in &curves {
-        let curve_u32 = *curve as u32;
-        let hash_algos = protocol_config
-            .get_hash_algorithms_for_curve(curve_u32)
-            .expect("Curve must have hash algorithm configuration");
+    let supported_curves_to_signature_algorithms_to_hash_schemes = ptb.programmable_move_call(
+        SUI_FRAMEWORK_PACKAGE_ID,
+        ident_str!("vec_map").into(),
+        ident_str!("empty").into(),
+        vec![TypeTag::U32, vec_map_type],
+        vec![],
+    );
 
-        // Get signature algorithms supported by THIS curve (not all signature algorithms)
-        let curve_sig_algos = protocol_config
-            .get_dkg_signature_algorithms_for_curve(curve_u32)
-            .expect("Curve must have signature algorithm configuration");
-
-        // Already in u32 format
-        let hash_algos_vec: Vec<u32> = hash_algos;
-        let sig_algos_vec: Vec<u32> = curve_sig_algos.clone();
+    for (curve, signature_algorithms_to_hash_schemes) in
+        SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.iter()
+    {
+        let sig_algos_vec: Vec<u32> = signature_algorithms_to_hash_schemes
+            .keys()
+            .cloned()
+            .collect();
 
         // Each signature algorithm for this curve gets the same hash algorithms
-        let hash_values = vec![hash_algos_vec; sig_algos_vec.len()];
+        let hash_values: Vec<_> = signature_algorithms_to_hash_schemes
+            .values()
+            .cloned()
+            .collect();
 
         let sig_algo_keys = ptb.input(CallArg::Pure(bcs::to_bytes(&sig_algos_vec)?))?;
         let hash_values_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&hash_values)?))?;
@@ -744,38 +733,29 @@ pub async fn ika_system_initialize(
             vec![sig_algo_keys, hash_values_arg],
         );
 
+        let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
+
+        let vec_map_type = TypeTag::Struct(Box::new(StructTag {
+            address: SUI_FRAMEWORK_PACKAGE_ID.into(),
+            module: ident_str!("vec_map").into(),
+            name: ident_str!("VecMap").into(),
+            type_params: vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+        }));
+
+        ptb.programmable_move_call(
+            SUI_FRAMEWORK_PACKAGE_ID,
+            ident_str!("vec_map").into(),
+            ident_str!("insert").into(),
+            vec![TypeTag::U32, vec_map_type],
+            vec![
+                supported_curves_to_signature_algorithms_to_hash_schemes,
+                curve_arg,
+                curve_map,
+            ],
+        );
+
         curve_hash_maps.push(curve_map);
     }
-
-    // Create vector of VecMaps
-    let vec_of_maps = ptb.programmable_move_call(
-        MOVE_STDLIB_PACKAGE_ID,
-        ident_str!("vector").into(),
-        ident_str!("singleton").into(),
-        vec![vec_map_type.clone()],
-        vec![curve_hash_maps[0]],
-    );
-
-    for curve_map in curve_hash_maps.iter().skip(1) {
-        ptb.programmable_move_call(
-            MOVE_STDLIB_PACKAGE_ID,
-            ident_str!("vector").into(),
-            ident_str!("push_back").into(),
-            vec![vec_map_type.clone()],
-            vec![vec_of_maps, *curve_map],
-        );
-    }
-
-    // Create VecMap<Curve, VecMap<SignatureAlgorithm, Vec<Hash>>>
-    let curve_keys = ptb.input(CallArg::Pure(bcs::to_bytes(&curves)?))?;
-
-    let supported_curves_to_signature_algorithms_to_hash_schemes = ptb.programmable_move_call(
-        SUI_FRAMEWORK_PACKAGE_ID,
-        ident_str!("vec_map").into(),
-        ident_str!("from_keys_values").into(),
-        vec![TypeTag::U32, vec_map_type],
-        vec![curve_keys, vec_of_maps],
-    );
 
     let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         protocol_cap_ref,

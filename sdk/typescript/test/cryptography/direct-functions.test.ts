@@ -111,19 +111,20 @@ describe('Cryptography Direct Functions', () => {
 
 	it('should compute session identifier digest', async () => {
 		// Test with hardcoded session identifier for reproducible results
-		const hardcodedSessionId = new Uint8Array([
+		const hardcodedBytesToHash = new Uint8Array([
 			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
 			0x10,
 		]);
+		const hardcodedSenderAddress = new Uint8Array(32).fill(1);
 
-		const digest = sessionIdentifierDigest(hardcodedSessionId);
+		const digest = sessionIdentifierDigest(hardcodedBytesToHash, hardcodedSenderAddress);
 
 		// Test against expected deterministic output
 		expect(digest).toBeInstanceOf(Uint8Array);
 		expect(digest.length).toBe(32); // Should always be 32 bytes
 
 		// Verify exact expected digest for this specific input
-		const expectedDigest = '8d177679b5fb62500cd3fc64a76dca83f30c40b16638f52f09c74a1fb6fd668c';
+		const expectedDigest = '73be7ad97a2a6ef7421e40841962fd317596a476b5a53863747806c5bb4cd0c5';
 		const actualDigest = Array.from(digest)
 			.map((b) => b.toString(16).padStart(2, '0'))
 			.join('');
@@ -131,12 +132,12 @@ describe('Cryptography Direct Functions', () => {
 		expect(actualDigest).toBe(expectedDigest);
 
 		// Same input should produce same output
-		const digest2 = sessionIdentifierDigest(hardcodedSessionId);
+		const digest2 = sessionIdentifierDigest(hardcodedBytesToHash, hardcodedSenderAddress);
 		expect(digest).toEqual(digest2);
 
 		// Different input should produce different output
-		const sessionId2 = await createRandomSessionIdentifier();
-		const digest3 = sessionIdentifierDigest(sessionId2);
+		const sessionId2 = createRandomSessionIdentifier();
+		const digest3 = sessionIdentifierDigest(sessionId2, hardcodedSenderAddress);
 		expect(digest).not.toEqual(digest3);
 	});
 
@@ -182,7 +183,12 @@ describe('Cryptography Direct Functions', () => {
 
 		// This should fail with mock data but validate parameters properly
 		try {
-			const result = await encryptSecretShare(secretShare, encryptionKey, protocolParams);
+			const result = await encryptSecretShare(
+				Curve.SECP256K1,
+				secretShare,
+				encryptionKey,
+				protocolParams,
+			);
 			expect(result).toBeDefined();
 		} catch (error) {
 			// Expected to fail with mock data
@@ -203,12 +209,14 @@ describe('Cryptography Direct Functions', () => {
 	});
 
 	it('should handle edge cases and invalid inputs gracefully', async () => {
+		const senderAddress = new Uint8Array(32).fill(1);
+
 		// Test with empty arrays
-		expect(() => sessionIdentifierDigest(new Uint8Array(0))).not.toThrow();
+		expect(() => sessionIdentifierDigest(new Uint8Array(0), senderAddress)).not.toThrow();
 
 		// Test with minimal valid inputs
 		const minimalSessionId = new Uint8Array(1);
-		const digest = sessionIdentifierDigest(minimalSessionId);
+		const digest = sessionIdentifierDigest(minimalSessionId, senderAddress);
 		expect(digest).toBeInstanceOf(Uint8Array);
 
 		// Test random session identifier multiple times for consistency
@@ -238,7 +246,9 @@ describe('Cryptography Direct Functions', () => {
 			const mockDWalletOutput = new Uint8Array(64).fill(1);
 
 			// This function may throw for invalid input, which is expected behavior
-			await expect(publicKeyFromDWalletOutput(mockDWalletOutput)).rejects.toThrow();
+			await expect(
+				publicKeyFromDWalletOutput(Curve.SECP256K1, mockDWalletOutput),
+			).rejects.toThrow();
 		});
 	});
 
@@ -380,12 +390,21 @@ describe('Cryptography Direct Functions', () => {
 		it('should handle invalid protocol parameters', async () => {
 			const invalidProtocolParams = new Uint8Array(0); // Empty params
 			const encryptionKey = new Uint8Array(778);
-			const sessionId = new Uint8Array(32);
-			crypto.getRandomValues(sessionId);
+			const bytesToHash = new Uint8Array(32);
+			const senderAddress = '0x' + '1'.repeat(64);
+			crypto.getRandomValues(bytesToHash);
 
 			const { prepareDKG } = await import('../../src/client/cryptography');
 
-			await expect(prepareDKG(invalidProtocolParams, encryptionKey, sessionId)).rejects.toThrow();
+			await expect(
+				prepareDKG(
+					invalidProtocolParams,
+					Curve.SECP256K1,
+					encryptionKey,
+					bytesToHash,
+					senderAddress,
+				),
+			).rejects.toThrow();
 		});
 	});
 
@@ -398,7 +417,7 @@ describe('Cryptography Direct Functions', () => {
 			);
 
 			await expect(
-				networkDkgPublicOutputToProtocolPublicParameters(invalidOutput),
+				networkDkgPublicOutputToProtocolPublicParameters(Curve.SECP256K1, invalidOutput),
 			).rejects.toThrow();
 		});
 	});
@@ -414,6 +433,7 @@ describe('Cryptography Direct Functions', () => {
 
 			await expect(
 				reconfigurationPublicOutputToProtocolPublicParameters(
+					Curve.SECP256K1,
 					invalidReconfigOutput,
 					invalidNetworkOutput,
 				),
@@ -434,7 +454,7 @@ describe('Cryptography Direct Functions', () => {
 
 			// With random invalid data, this should throw an error
 			await expect(
-				verifyUserShare(userSecretKeyShare, userDKGOutput, networkDkgPublicOutput),
+				verifyUserShare(Curve.SECP256K1, userSecretKeyShare, userDKGOutput, networkDkgPublicOutput),
 			).rejects.toThrow();
 		});
 	});
@@ -470,7 +490,7 @@ describe('Cryptography Direct Functions', () => {
 
 			// With random invalid data, this should throw an error
 			await expect(
-				userAndNetworkDKGOutputMatch(userPublicOutput, networkDKGOutput),
+				userAndNetworkDKGOutputMatch(Curve.SECP256K1, userPublicOutput, networkDKGOutput),
 			).rejects.toThrow();
 		});
 	});

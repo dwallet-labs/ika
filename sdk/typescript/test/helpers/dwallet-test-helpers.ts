@@ -472,7 +472,7 @@ export async function requestTestDkgWithPublicUserShare(
 	suiClient: SuiClient,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
-	sessionIdentifierObjID: string,
+	sessionIdentifier: TransactionObjectArgument,
 	dwalletNetworkEncryptionKeyId: string,
 	curve: number,
 	signerAddress: string,
@@ -486,7 +486,7 @@ export async function requestTestDkgWithPublicUserShare(
 	const [dWalletCap] = await ikaTransaction.requestDWalletDKGWithPublicUserShare({
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
-		sessionIdentifierObjID,
+		sessionIdentifier,
 		dwalletNetworkEncryptionKeyId,
 		curve: numberToCurve(curve),
 		publicKeyShareAndProof,
@@ -645,6 +645,7 @@ export async function testPresign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
 	dWallet: DWallet,
+	curve: Curve,
 	signatureAlgorithm: SignatureAlgorithm,
 	signerAddress: string,
 	testName: string,
@@ -654,13 +655,28 @@ export async function testPresign(
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	const unverifiedPresignCap = ikaTransaction.requestGlobalPresign({
-		curve: 0,
-		dwalletNetworkEncryptionKeyId: dWallet.dwallet_network_encryption_key_id,
-		signatureAlgorithm,
-		ikaCoin: emptyIKACoin,
-		suiCoin: transaction.gas,
-	});
+	let unverifiedPresignCap;
+
+	if (
+		dWallet.is_imported_key_dwallet &&
+		(signatureAlgorithm === SignatureAlgorithm.ECDSASecp256k1 ||
+			signatureAlgorithm === SignatureAlgorithm.ECDSASecp256r1)
+	) {
+		unverifiedPresignCap = ikaTransaction.requestPresign({
+			dWallet,
+			signatureAlgorithm,
+			ikaCoin: emptyIKACoin,
+			suiCoin: transaction.gas,
+		});
+	} else {
+		unverifiedPresignCap = ikaTransaction.requestGlobalPresign({
+			curve,
+			dwalletNetworkEncryptionKeyId: dWallet.dwallet_network_encryption_key_id,
+			signatureAlgorithm,
+			ikaCoin: emptyIKACoin,
+			suiCoin: transaction.gas,
+		});
+	}
 
 	transaction.transferObjects([unverifiedPresignCap], signerAddress);
 

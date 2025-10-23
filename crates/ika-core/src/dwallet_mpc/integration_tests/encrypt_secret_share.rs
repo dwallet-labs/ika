@@ -57,7 +57,7 @@ async fn encrypt_secret_share() {
         network_key_bytes.clone(),
     )
     .await;
-    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
+    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes).unwrap();
     let encrypted_secret_share = encrypt_secret_key_share_and_prove_v1(
         dwallet_test_result.dwallet_secret_key_share.clone(),
         dwallet_test_result.class_groups_encryption_key.clone(),
