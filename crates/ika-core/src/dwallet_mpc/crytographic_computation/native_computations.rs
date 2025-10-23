@@ -107,7 +107,7 @@ impl ProtocolCryptographicData {
                     let dkg_output = bcs::from_bytes(&data.dwallet_decentralized_output)?;
                     let partially_signed_message = bcs::from_bytes(&data.partially_signed_message)?;
                     let message = &data.message;
-                    let hash_type = data.hash_scheme.clone();
+                    let hash_scheme = data.hash_scheme.clone();
                     let decentralized_dkg_output = match dkg_output {
                             VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
                                 bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
@@ -135,13 +135,13 @@ impl ProtocolCryptographicData {
                             bcs::from_bytes(&partially_signed_message)?;
 
                     <Secp256K1ECDSAProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
-                            message,
-                            hash_type.clone(),
-                            decentralized_dkg_output,
-                            presign.into(),
-                            partial,
-                            protocol_public_parameters,
-                            &mut OsCsRng,
+                        message,
+                        hash_scheme.clone(),
+                        decentralized_dkg_output,
+                        presign.into(),
+                        partial,
+                        protocol_public_parameters,
+                        &mut OsCsRng,
                         )
                             .map_err(DwalletMPCError::from)?;
                     Vec::new()
