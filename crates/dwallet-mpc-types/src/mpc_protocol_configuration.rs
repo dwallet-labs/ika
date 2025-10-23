@@ -69,7 +69,6 @@ lazy_static! {
                     0, // Signature Algorithm: ECDSA
                     vec![
                         0, // Hash: SHA256
-                        1, // Hash: DoubleSHA256
                     ],
                 )]
                 .into_iter()
@@ -247,7 +246,6 @@ pub fn try_into_hash_scheme(
                                     // ECDSA
                                     match hash_scheme {
                                         0 => Some(HashType::SHA256),
-                                        1 => Some(HashType::DoubleSHA256),
                                         _ => None,
                                     }
                                 }
@@ -286,4 +284,120 @@ pub fn try_into_hash_scheme(
             signature_algorithm,
             hash_scheme,
         ))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn validate_all_supported_curves_to_signature_algorithms_to_hash_schemes_are_correct() {
+        // Validate Secp256k1 curve
+        let secp256k1_entry = super::SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
+            .get(&0)
+            .expect("Secp256k1 entry should exist");
+
+        // Validate Secp256k1 curve / ECDSA signature algorithm
+        let ecdsa_entry = secp256k1_entry
+            .get(&0)
+            .expect("ECDSA entry should exist for Secp256k1");
+
+        assert_eq!(
+            ecdsa_entry,
+            &vec![0, 1, 2],
+            "Secp256k1 ECDSA should support Keccak256, SHA256, DoubleSHA256"
+        );
+
+        // Validate Secp256k1 curve / Taproot signature algorithm
+        let taproot_entry = secp256k1_entry
+            .get(&1)
+            .expect("Taproot entry should exist for Secp256k1");
+
+        assert_eq!(
+            taproot_entry,
+            &vec![0],
+            "Secp256k1 Taproot should support SHA256"
+        );
+
+        // Validate Secp256k1 curve / no invalid signature algorithm
+        let all_signature_algorithm_keys: Vec<_> = secp256k1_entry.keys().copied().collect();
+        assert_eq!(
+            all_signature_algorithm_keys,
+            vec![0, 1],
+            "Secp256k1 have only ECDSA and Taproot signature algorithms"
+        );
+
+        // Validate Secp256r1 curve
+        let secp256r1_entry = super::SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
+            .get(&1)
+            .expect("Secp256r1 entry should exist");
+
+        // Validate Secp256r1 curve / ECDSA signature algorithm
+        let ecdsa_secp256r1_entry = secp256r1_entry
+            .get(&0)
+            .expect("ECDSA entry should exist for Secp256r1");
+
+        assert_eq!(
+            ecdsa_secp256r1_entry,
+            &vec![0],
+            "Secp256r1 ECDSA should support SHA256"
+        );
+
+        // Validate Secp256r1 curve / no invalid signature algorithm
+        let all_secp256r1_signature_algorithm_keys: Vec<_> =
+            secp256r1_entry.keys().copied().collect();
+        assert_eq!(
+            all_secp256r1_signature_algorithm_keys,
+            vec![0],
+            "Secp256r1 have only ECDSA signature algorithm"
+        );
+
+        // Validate Curve25519 curve
+        let curve25519_entry = super::SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
+            .get(&2)
+            .expect("Curve25519 entry should exist");
+
+        // Validate Curve25519 curve / EdDSA signature algorithm
+        let eddsa_entry = curve25519_entry
+            .get(&0)
+            .expect("EdDSA entry should exist for Curve25519");
+
+        assert_eq!(
+            eddsa_entry,
+            &vec![0],
+            "Curve25519 EdDSA should support SHA512"
+        );
+
+        // Validate Curve25519 curve / no invalid signature algorithm
+        let all_curve25519_signature_algorithm_keys: Vec<_> =
+            curve25519_entry.keys().copied().collect();
+        assert_eq!(
+            all_curve25519_signature_algorithm_keys,
+            vec![0],
+            "Curve25519 have only EdDSA signature algorithm"
+        );
+
+        // Validate Ristretto curve
+        let ristretto_entry = super::SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
+            .get(&3)
+            .expect("Ristretto entry should exist");
+
+        // Validate Ristretto curve / SchnorrkelSubstrate signature algorithm
+        let schnorrkel_entry = ristretto_entry
+            .get(&0)
+            .expect("SchnorrkelSubstrate entry should exist for Ristretto");
+
+        assert_eq!(
+            schnorrkel_entry,
+            &vec![0],
+            "Ristretto SchnorrkelSubstrate should support Merlin"
+        );
+
+        // Validate Ristretto curve / no invalid signature algorithm
+        let all_ristretto_signature_algorithm_keys: Vec<_> =
+            ristretto_entry.keys().copied().collect();
+        assert_eq!(
+            all_ristretto_signature_algorithm_keys,
+            vec![0],
+            "Ristretto have only SchnorrkelSubstrate signature algorithm"
+        );
+    }
 }
