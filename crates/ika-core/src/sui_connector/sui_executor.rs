@@ -186,14 +186,6 @@ where
             info!(
                 "Running network encryption key mid-epoch reconfiguration and Calculating protocol pricing"
             );
-            let pricing_keys = coordinator_inner
-                .pricing_and_fee_management
-                .default
-                .pricing_map
-                .contents
-                .iter()
-                .map(|c| c.key.clone())
-                .collect_vec();
             let supported_curves_to_signature_algorithms = coordinator_inner
                 .support_config
                 .supported_curves_to_signature_algorithms_to_hash_schemes
@@ -213,7 +205,6 @@ where
                     network_encryption_key_ids.clone(),
                     sui_notifier,
                     self.notifier_tx_lock.clone(),
-                    &pricing_keys,
                     &supported_curves_to_signature_algorithms,
                 ),
                 Duration::from_secs(ONE_HOUR_IN_SECONDS)
@@ -574,7 +565,6 @@ where
         network_encryption_key_ids: Vec<ObjectID>,
         sui_notifier: &SuiNotifier,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
-        pricing_keys: &Vec<PricingInfoKey>,
         supported_curves_to_signature_algorithms: &HashMap<u32, Vec<u32>>,
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
@@ -641,25 +631,6 @@ where
             }
         }
 
-        // for pricing_key in pricing_keys {
-        //     let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&pricing_key.curve)?))?;
-        //     let signature_algorithm_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
-        //         &pricing_key.signature_algorithm,
-        //     )?))?;
-        //     let protocol_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&pricing_key.protocol)?))?;
-        //     ptb.programmable_move_call(
-        //         ika_dwallet_2pc_mpc_package_id,
-        //         DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-        //         ident_str!("calculate_pricing_votes").into(),
-        //         vec![],
-        //         vec![
-        //             dwallet_coordinator_ptb_arg,
-        //             curve_arg,
-        //             signature_algorithm_arg,
-        //             protocol_arg,
-        //         ],
-        //     );
-        // }
         let transaction = super::build_sui_transaction(
             sui_notifier.sui_address,
             ptb.finish(),
