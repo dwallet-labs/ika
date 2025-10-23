@@ -198,14 +198,13 @@ pub fn create_dkg_output_v1(
     protocol_pp: Vec<u8>,
     decentralized_first_round_public_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    let protocol_public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp).map_err(
-        |e| anyhow!("failed to deserialize protocol public parameters: {:?}", e)
-    )?;
+    let protocol_public_parameters: ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)
+        .map_err(|e| anyhow!("failed to deserialize protocol public parameters: {:?}", e))?;
     let decentralized_first_round_public_output =
         bcs::from_bytes(&decentralized_first_round_public_output).map_err(
             |e| {
                 anyhow!(
-                    "failed to deserialize decentralized first round DKG output: {:?}",
+                    "failed to deserialize decentralized first round DKG output into versioned output: {:?}",
                     e
                 )
             },
