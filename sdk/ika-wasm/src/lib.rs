@@ -188,7 +188,9 @@ pub fn verify_secp_signature(
     signature: Vec<u8>,
     message: Vec<u8>,
     network_dkg_public_output: Vec<u8>,
-    hash_type: u32,
+    curve: u32,
+    signature_algorithm: u32,
+    hash_scheme: u32,
 ) -> Result<JsValue, JsError> {
     Ok(serde_wasm_bindgen::to_value(
         &verify_secp_signature_inner(
@@ -196,7 +198,9 @@ pub fn verify_secp_signature(
             signature,
             message,
             network_dkg_public_output,
-            hash_type,
+            curve,
+            signature_algorithm,
+            hash_scheme,
         )
         .map_err(to_js_err)?,
     )?)
@@ -225,8 +229,9 @@ pub fn create_sign_centralized_party_message(
     centralized_party_dkg_secret_output: Vec<u8>,
     presign: Vec<u8>,
     message: Vec<u8>,
-    hash_type: u32,
-    signature_scheme: u32,
+    curve: u32,
+    signature_algorithm: u32,
+    hash_scheme: u32,
 ) -> Result<JsValue, JsError> {
     let signed_message = advance_centralized_sign_party(
         protocol_pp,
@@ -234,8 +239,9 @@ pub fn create_sign_centralized_party_message(
         centralized_party_dkg_secret_output,
         presign,
         message,
-        hash_type,
-        signature_scheme,
+        curve,
+        signature_algorithm,
+        hash_scheme,
     )
     .map_err(|e| JsError::new(&e.to_string()))?;
 

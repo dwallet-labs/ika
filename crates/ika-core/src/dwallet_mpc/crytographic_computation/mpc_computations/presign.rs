@@ -8,7 +8,7 @@
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyOutputSecp256k1, DWalletSignatureScheme, MPCPublicOutput,
+    DKGDecentralizedPartyOutputSecp256k1, DWalletSignatureAlgorithm, MPCPublicOutput,
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
     VersionedNetworkEncryptionKeyPublicData,
 };
@@ -71,14 +71,14 @@ pub(crate) enum PresignAdvanceRequestByProtocol {
 
 impl PresignAdvanceRequestByProtocol {
     pub fn try_new(
-        protocol: &DWalletSignatureScheme,
+        protocol: &DWalletSignatureAlgorithm,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
         consensus_round: u64,
         serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match protocol {
-            DWalletSignatureScheme::ECDSASecp256k1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let advance_request =
                     mpc_computations::try_ready_to_advance::<PresignParty<Secp256K1ECDSAProtocol>>(
                         party_id,
@@ -89,7 +89,7 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::Secp256k1ECDSA)
             }
-            DWalletSignatureScheme::Taproot => {
+            DWalletSignatureAlgorithm::Taproot => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     PresignParty<Secp256K1TaprootProtocol>,
                 >(
@@ -101,7 +101,7 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::Taproot)
             }
-            DWalletSignatureScheme::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     PresignParty<RistrettoSchnorrkelSubstrateProtocol>,
                 >(
@@ -113,7 +113,7 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::SchnorrkelSubstrate)
             }
-            DWalletSignatureScheme::EdDSA => {
+            DWalletSignatureAlgorithm::EdDSA => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     PresignParty<Curve25519EdDSAProtocol>,
                 >(
@@ -125,7 +125,7 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::EdDSA)
             }
-            DWalletSignatureScheme::ECDSASecp256r1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let advance_request =
                     mpc_computations::try_ready_to_advance::<PresignParty<Secp256R1ECDSAProtocol>>(
                         party_id,
@@ -143,7 +143,7 @@ impl PresignAdvanceRequestByProtocol {
 
 impl PresignPublicInputByProtocol {
     pub(crate) fn try_new(
-        protocol: DWalletSignatureScheme,
+        protocol: DWalletSignatureAlgorithm,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
     ) -> DwalletMPCResult<Self> {
@@ -179,11 +179,11 @@ impl PresignPublicInputByProtocol {
     }
 
     pub(crate) fn try_new_v2(
-        protocol: DWalletSignatureScheme,
+        protocol: DWalletSignatureAlgorithm,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
     ) -> DwalletMPCResult<Self> {
         let input = match protocol {
-            DWalletSignatureScheme::ECDSASecp256k1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
                 let public_input =
@@ -193,7 +193,7 @@ impl PresignPublicInputByProtocol {
                     ));
                 PresignPublicInputByProtocol::Secp256k1ECDSA(public_input)
             }
-            DWalletSignatureScheme::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .ristretto_protocol_public_parameters()?;
 
@@ -202,7 +202,7 @@ impl PresignPublicInputByProtocol {
 
                 PresignPublicInputByProtocol::SchnorrkelSubstrate(pub_input)
             }
-            DWalletSignatureScheme::EdDSA => {
+            DWalletSignatureAlgorithm::EdDSA => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .curve25519_protocol_public_parameters()?;
 
@@ -214,7 +214,7 @@ impl PresignPublicInputByProtocol {
 
                 PresignPublicInputByProtocol::EdDSA(pub_input)
             }
-            DWalletSignatureScheme::ECDSASecp256r1 => {
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256r1_protocol_public_parameters()?;
 
@@ -226,7 +226,7 @@ impl PresignPublicInputByProtocol {
 
                 PresignPublicInputByProtocol::Secp256r1ECDSA(pub_input)
             }
-            DWalletSignatureScheme::Taproot => {
+            DWalletSignatureAlgorithm::Taproot => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
 
