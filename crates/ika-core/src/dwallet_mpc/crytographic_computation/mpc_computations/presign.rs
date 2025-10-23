@@ -203,7 +203,7 @@ impl PresignPublicInputByProtocol {
                                     VersionedOutput::UniversalPublicDKGOutput {
                                         ..
                                     } => {
-                                        return Err(DwalletMPCError::InternalError(
+                                        return Err(DwalletMPCError::InvalidInput(
                                             "Universal DKG output is not supported for v2 non-global presign".to_string(),
                                         ))
                                     }
@@ -232,7 +232,7 @@ impl PresignPublicInputByProtocol {
                                     VersionedOutput::UniversalPublicDKGOutput {
                                         ..
                                     } => {
-                                        return Err(DwalletMPCError::InternalError(
+                                        return Err(DwalletMPCError::InvalidInput(
                                             "Universal DKG output is not supported for v2 non-global presign".to_string(),
                                         ))
                                     }
@@ -262,7 +262,7 @@ impl PresignPublicInputByProtocol {
                                     VersionedOutput::UniversalPublicDKGOutput {
                                         ..
                                     } => {
-                                        return Err(DwalletMPCError::InternalError(
+                                        return Err(DwalletMPCError::InvalidInput(
                                             "Universal DKG output is not supported for v2 non-global presign".to_string(),
                                         ))
                                     }                                };
@@ -291,7 +291,7 @@ impl PresignPublicInputByProtocol {
                                     VersionedOutput::UniversalPublicDKGOutput {
                                         ..
                                     } => {
-                                        return Err(DwalletMPCError::InternalError(
+                                        return Err(DwalletMPCError::InvalidInput(
                                             "Universal DKG output is not supported for v2 non-global presign".to_string(),
                                         ))
                                     }
@@ -321,7 +321,7 @@ impl PresignPublicInputByProtocol {
                                     VersionedOutput::UniversalPublicDKGOutput {
                                         ..
                                     } => {
-                                        return Err(DwalletMPCError::InternalError(
+                                        return Err(DwalletMPCError::InvalidInput(
                                             "Universal DKG output is not supported for v2 non-global presign".to_string(),
                                         ))
                                     }
