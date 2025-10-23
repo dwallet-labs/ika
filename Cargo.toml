@@ -71,14 +71,14 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 # Dependencies that should be kept in sync through the whole workspace
 [workspace.dependencies]
-k256 = { version = "0.14.0-pre.9", features = ["arithmetic", "critical-section", "precomputed-tables", "serde", "ecdsa", "hash2curve", "alloc"], default-features = false }
-mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "1e3d1c1e"}
-proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "1e3d1c1e"}
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "1e3d1c1e", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "1e3d1c1e" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "1e3d1c1e"}
-group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "1e3d1c1e"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "1e3d1c1e"}
+mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e874eb94"}
+proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e874eb94"}
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e874eb94", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e874eb94" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e874eb94"}
+group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "e874eb94"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e874eb94"}
+
 anyhow = "1.0.71"
 arc-swap = { version = "1.5.1", features = ["serde"] }
 assert_cmd = "2.0.6"
@@ -169,7 +169,7 @@ prometheus = "0.13.3"
 quote = "1.0.23"
 rand = "0.9"
 rand_chacha = "0.9"
-rayon = "1.5.3"
+rayon = "1.11.0"
 regex = "1.7.1"
 reqwest = { version = "0.12", default-features = false, features = [
     "http2",
@@ -303,4 +303,4 @@ ika-network = { path = "crates/ika-network" }
 ika-archival = { path = "crates/ika-archival" }
 
 [patch.crates-io]
-crypto-bigint = { git = 'https://github.com/erik-3milabs/crypto-bigint.git', rev = "d0929d4" }
+crypto-bigint = { git = 'https://github.com/ycscaly/crypto-bigint.git', rev = '8aabcee5' }
