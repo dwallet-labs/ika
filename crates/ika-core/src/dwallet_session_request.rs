@@ -1,7 +1,7 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
-use group::HashType;
+use group::HashScheme;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use std::cmp::Ordering;
 use std::fmt;
@@ -25,7 +25,7 @@ pub struct DWalletSessionRequest {
 pub struct DWalletSessionRequestMetricData {
     name: String,
     curve: Option<DWalletCurve>,
-    hash_scheme: Option<HashType>,
+    hash_scheme: Option<HashScheme>,
     signature_algorithm: Option<DWalletSignatureAlgorithm>,
 }
 
@@ -93,7 +93,7 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
             ProtocolData::DWalletDKGAndSign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve.clone()),
-                hash_scheme: Some(data.hash_type),
+                hash_scheme: Some(data.hash_scheme),
                 signature_algorithm: Some(data.signature_algorithm.clone()),
             },
             ProtocolData::ImportedKeyVerification { data, .. } => DWalletSessionRequestMetricData {
@@ -221,7 +221,7 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
                     curve: Some(data.curve.clone()),
-                    hash_scheme: Some(data.hash_type.clone()),
+                    hash_scheme: Some(data.hash_scheme.clone()),
                     signature_algorithm: Some(data.signature_algorithm.clone()),
                 }
             }

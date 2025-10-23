@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm, DwalletNetworkMPCError};
-use group::HashType;
+use group::HashScheme;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -209,7 +209,7 @@ pub fn try_into_hash_scheme(
     curve: u32,
     signature_algorithm: u32,
     hash_scheme: u32,
-) -> Result<HashType, DwalletNetworkMPCError> {
+) -> Result<HashScheme, DwalletNetworkMPCError> {
     let signature_algorithms_to_hash_scheme =
         SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.get(&curve);
 
@@ -225,16 +225,16 @@ pub fn try_into_hash_scheme(
                                 0 => {
                                     // ECDSA
                                     match hash_scheme {
-                                        0 => Some(HashType::Keccak256),
-                                        1 => Some(HashType::SHA256),
-                                        2 => Some(HashType::DoubleSHA256),
+                                        0 => Some(HashScheme::Keccak256),
+                                        1 => Some(HashScheme::SHA256),
+                                        2 => Some(HashScheme::DoubleSHA256),
                                         _ => None,
                                     }
                                 }
                                 1 => {
                                     // Taproot
                                     match hash_scheme {
-                                        0 => Some(HashType::SHA256),
+                                        0 => Some(HashScheme::SHA256),
                                         _ => None,
                                     }
                                 }
@@ -245,7 +245,7 @@ pub fn try_into_hash_scheme(
                                 0 => {
                                     // ECDSA
                                     match hash_scheme {
-                                        0 => Some(HashType::SHA256),
+                                        0 => Some(HashScheme::SHA256),
                                         _ => None,
                                     }
                                 }
@@ -256,7 +256,7 @@ pub fn try_into_hash_scheme(
                                 0 => {
                                     // EdDSA
                                     match hash_scheme {
-                                        0 => Some(HashType::SHA512),
+                                        0 => Some(HashScheme::SHA512),
                                         _ => None,
                                     }
                                 }
@@ -267,7 +267,7 @@ pub fn try_into_hash_scheme(
                                 0 => {
                                     // SchnorrkelSubstrate},
                                     match hash_scheme {
-                                        0 => Some(HashType::Merlin),
+                                        0 => Some(HashScheme::Merlin),
                                         _ => None,
                                     }
                                 }

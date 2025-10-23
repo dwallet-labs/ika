@@ -18,7 +18,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput, VersionedUserSignedMessage,
 };
 use group::CsRng;
-use group::{HashType, OsCsRng, PartyID};
+use group::{HashScheme, OsCsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256K1ECDSAProtocol,
@@ -378,7 +378,7 @@ impl SignPublicInputByProtocol {
         message: Vec<u8>,
         presign: &SerializedWrappedMPCPublicOutput,
         message_centralized_signature: &SerializedWrappedMPCPublicOutput,
-        hash_scheme: HashType,
+        hash_scheme: HashScheme,
         access_structure: &WeightedThresholdAccessStructure,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         protocol: DWalletSignatureAlgorithm,
@@ -569,7 +569,7 @@ impl DKGAndSignPublicInputByProtocol {
         message: Vec<u8>,
         presign: &SerializedWrappedMPCPublicOutput,
         message_centralized_signature: &SerializedWrappedMPCPublicOutput,
-        hash_scheme: HashType,
+        hash_scheme: HashScheme,
         access_structure: &WeightedThresholdAccessStructure,
         versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
         protocol: DWalletSignatureAlgorithm,
@@ -708,7 +708,7 @@ fn generate_sign_public_input<P: twopc_mpc::sign::Protocol>(
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     decryption_pp: P::DecryptionKeySharePublicParameters,
     expected_decrypters: HashSet<PartyID>,
-    hash_scheme: HashType,
+    hash_scheme: HashScheme,
 ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
     <SignParty<P> as SignPartyPublicInputGenerator<P>>::generate_public_input(
         protocol_public_parameters,
@@ -730,7 +730,7 @@ fn generate_dkg_and_sign_public_input<P: twopc_mpc::sign::Protocol>(
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     decryption_pp: P::DecryptionKeySharePublicParameters,
     expected_decrypters: HashSet<PartyID>,
-    hash_scheme: HashType,
+    hash_scheme: HashScheme,
 ) -> DwalletMPCResult<<DKGAndSignParty<P> as Party>::PublicInput> {
     <DKGAndSignParty<P> as DKGAndSignPartyPublicInputGenerator<P>>::generate_public_input(
         protocol_public_parameters,
@@ -782,7 +782,7 @@ pub(crate) trait SignPartyPublicInputGenerator<P: twopc_mpc::sign::Protocol>: Pa
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: P::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-        hash_scheme: HashType,
+        hash_scheme: HashScheme,
     ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput>;
 }
 
@@ -797,7 +797,7 @@ pub(crate) trait DKGAndSignPartyPublicInputGenerator<P: twopc_mpc::sign::Protoco
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: P::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-        hash_scheme: HashType,
+        hash_scheme: HashScheme,
     ) -> DwalletMPCResult<<DKGAndSignParty<P> as Party>::PublicInput>;
 }
 
@@ -810,7 +810,7 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: P::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-        hash_scheme: HashType,
+        hash_scheme: HashScheme,
     ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
         let presign = match bcs::from_bytes(&presign).map_err(|e| {
             DwalletMPCError::BcsError(bcs::Error::Custom(format!(
@@ -897,7 +897,7 @@ impl<P: twopc_mpc::sign::Protocol> DKGAndSignPartyPublicInputGenerator<P> for DK
         centralized_signed_message: &SerializedWrappedMPCPublicOutput,
         decryption_key_share_public_parameters: P::DecryptionKeySharePublicParameters,
         expected_decrypters: HashSet<PartyID>,
-        hash_scheme: HashType,
+        hash_scheme: HashScheme,
     ) -> DwalletMPCResult<<DKGAndSignParty<P> as Party>::PublicInput> {
         let presign = match bcs::from_bytes(&presign)? {
             VersionedPresignOutput::V1(_) => {
@@ -943,7 +943,7 @@ impl<P: twopc_mpc::sign::Protocol> DKGAndSignPartyPublicInputGenerator<P> for DK
 /// Returns Ok if the message is valid, Err otherwise.
 pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     message: &[u8],
-    hash_type: &HashType,
+    hash_scheme: &HashScheme,
     dwallet_decentralized_output: &SerializedWrappedMPCPublicOutput,
     presign: &SerializedWrappedMPCPublicOutput,
     partially_signed_message: &SerializedWrappedMPCPublicOutput,
@@ -977,7 +977,7 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
 
     <P as sign::Protocol>::verify_centralized_party_partial_signature(
         message,
-        hash_type.clone(),
+        hash_scheme.clone(),
         decentralized_dkg_output,
         presign,
         partial,

@@ -53,16 +53,14 @@ wasm-opt = false
 #]
 [dependencies]
 dwallet-mpc-centralized-party = { path = "../../crates/dwallet-mpc-centralized-party", features = ["wasm_js"] }
-anyhow = "1.0.95"
-wasm-bindgen = "0.2.100"
+anyhow = "1.0.100"
+wasm-bindgen = "0.2.104"
 serde-wasm-bindgen = "0.6.5"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [patch.crates-io]
-sha2 = { git = 'https://github.com/RustCrypto/hashes.git', tag = "sha2-v0.11.0-rc.0" }
-sha3 = { git = 'https://github.com/RustCrypto/hashes.git', tag = "sha3-v0.11.0-rc.0" }
-digest = { git = 'https://github.com/RustCrypto/traits.git', tag = "digest-v0.11.0-rc.0" }
-signature = { git = 'https://github.com/RustCrypto/traits.git', tag = "signature-v3.0.0-rc.1" }
-crypto-bigint = { git = 'https://github.com/erik-3milabs/crypto-bigint.git', rev = "d0929d4" }
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }
+rfc6979 = { git = "https://github.com/RustCrypto/signatures", tag = "rfc6979/v0.5.0-rc.1" }
+der = { git = "https://github.com/RustCrypto/formats", tag = "der/v0.8.0-rc.8" }

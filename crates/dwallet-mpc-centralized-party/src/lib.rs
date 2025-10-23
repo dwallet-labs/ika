@@ -23,7 +23,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedNetworkDkgOutput, VersionedPresignOutput, VersionedPublicKeyShareAndProof,
     VersionedSignOutput, VersionedUserSignedMessage,
 };
-use group::{CyclicGroupElement, GroupElement, HashType, OsCsRng, Samplable, secp256k1};
+use group::{CyclicGroupElement, GroupElement, HashScheme, OsCsRng, Samplable, secp256k1};
 use homomorphic_encryption::GroupsPublicParametersAccessors;
 use mpc::Party;
 use mpc::two_party::Round;
@@ -36,7 +36,6 @@ use crypto_bigint::{Encoding, Uint};
 use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
-use serde::{Deserialize, Serialize};
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
@@ -528,8 +527,8 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
     centralized_party_secret_key_share: SerializedWrappedMPCPublicOutput,
     presign: SerializedWrappedMPCPublicOutput,
     message: Vec<u8>,
-    hash_type: u32,
-    signature_scheme: u32,
+    hash_scheme: u32,
+    signature_algorithm: u32,
     curve: u32,
 ) -> anyhow::Result<SignedMessage> {
     let presign = bcs::from_bytes(&presign)?;
@@ -564,7 +563,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
             let centralized_party_public_input =
                 <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
                     message,
-                    HashType::try_from(hash_type)?,
+                    try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?,
                     centralized_dkg_output,
                     presign,
                     bcs::from_bytes(&protocol_pp)?,
@@ -584,8 +583,8 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
             Ok(signed_message)
         }
         VersionedPresignOutput::V2(presign) => {
-            let signature_scheme_enum = try_into_signature_algorithm(curve, signature_scheme)?;
-            let hash_type = try_into_hash_scheme(curve, signature_scheme, hash_type)?;
+            let signature_scheme_enum = try_into_signature_algorithm(curve, signature_algorithm)?;
+            let hash_scheme = try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?;
             match signature_scheme_enum {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<
@@ -594,7 +593,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
-                        hash_type,
+                        hash_scheme,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -604,7 +603,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
-                        hash_type,
+                        hash_scheme,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -614,7 +613,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
-                        hash_type,
+                        hash_scheme,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -626,7 +625,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
-                        hash_type,
+                        hash_scheme,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -636,7 +635,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
-                        hash_type,
+                        hash_scheme,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -662,7 +661,7 @@ pub fn advance_centralized_sign_party(
     hash_scheme: u32,
 ) -> anyhow::Result<SignedMessage> {
     let presign = bcs::from_bytes(&presign)?;
-    let hash_type = try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?;
+    let hash_scheme = try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?;
     match presign {
         VersionedPresignOutput::V1(presign) => {
             let decentralized_dkg_output =
@@ -690,7 +689,7 @@ pub fn advance_centralized_sign_party(
             let centralized_party_public_input =
                 <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
                     message,
-                    hash_type,
+                    hash_scheme,
                     centralized_public_output.clone().into(),
                     presign,
                     bcs::from_bytes(&protocol_pp)?,
@@ -719,7 +718,7 @@ pub fn advance_centralized_sign_party(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
-                        hash_type,
+                        hash_scheme,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -729,7 +728,7 @@ pub fn advance_centralized_sign_party(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
-                        hash_type,
+                        hash_scheme,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -741,7 +740,7 @@ pub fn advance_centralized_sign_party(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
-                        hash_type,
+                        hash_scheme,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -753,7 +752,7 @@ pub fn advance_centralized_sign_party(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
-                        hash_type,
+                        hash_scheme,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -765,7 +764,7 @@ pub fn advance_centralized_sign_party(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
-                        hash_type,
+                        hash_scheme,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -779,7 +778,7 @@ fn advance_sign_by_protocol_with_decentralized_party_dkg_output<P: twopc_mpc::si
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],
     message: Vec<u8>,
-    hash_type: HashType,
+    hash_scheme: HashScheme,
     decentralized_party_dkg_public_output: &[u8],
     protocol_pp: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -802,7 +801,7 @@ fn advance_sign_by_protocol_with_decentralized_party_dkg_output<P: twopc_mpc::si
         centralized_party_secret_key_share,
         presign,
         message,
-        hash_type,
+        hash_scheme,
         centralized_party_dkg_public_output,
         protocol_pp,
     )
@@ -812,7 +811,7 @@ fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],
     message: Vec<u8>,
-    hash_type: HashType,
+    hash_scheme: HashScheme,
     centralized_party_dkg_public_output: &[u8],
     protocol_pp: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -834,7 +833,7 @@ fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign
         centralized_party_secret_key_share,
         presign,
         message,
-        hash_type,
+        hash_scheme,
         centralized_party_dkg_public_output,
         protocol_pp,
     )
@@ -844,7 +843,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],
     message: Vec<u8>,
-    hash_type: HashType,
+    hash_scheme: HashScheme,
     centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput,
     protocol_pp: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -860,7 +859,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     let centralized_party_public_input =
         <P as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
             message,
-            hash_type,
+            hash_scheme,
             centralized_party_dkg_public_output,
             presign,
             bcs::from_bytes(&protocol_pp)?,

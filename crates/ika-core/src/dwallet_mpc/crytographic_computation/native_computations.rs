@@ -15,7 +15,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletSignatureAlgorithm, VersionedDwalletDKGSecondRoundPublicOutput, VersionedPresignOutput,
     VersionedUserSignedMessage,
 };
-use group::{HashType, OsCsRng};
+use group::{HashScheme, OsCsRng};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256K1ECDSAProtocol,
