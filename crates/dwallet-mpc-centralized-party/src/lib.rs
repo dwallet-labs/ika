@@ -36,7 +36,6 @@ use crypto_bigint::{Encoding, Uint};
 use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
-use serde::{Deserialize, Serialize};
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
@@ -529,7 +528,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
     presign: SerializedWrappedMPCPublicOutput,
     message: Vec<u8>,
     hash_scheme: u32,
-    signature_scheme: u32,
+    signature_algorithm: u32,
     curve: u32,
 ) -> anyhow::Result<SignedMessage> {
     let presign = bcs::from_bytes(&presign)?;
@@ -564,7 +563,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
             let centralized_party_public_input =
                 <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
                     message,
-                    HashScheme::try_from(hash_scheme)?,
+                    try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?,
                     centralized_dkg_output,
                     presign,
                     bcs::from_bytes(&protocol_pp)?,
@@ -584,8 +583,8 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
             Ok(signed_message)
         }
         VersionedPresignOutput::V2(presign) => {
-            let signature_scheme_enum = try_into_signature_algorithm(curve, signature_scheme)?;
-            let hash_scheme = try_into_hash_scheme(curve, signature_scheme, hash_scheme)?;
+            let signature_scheme_enum = try_into_signature_algorithm(curve, signature_algorithm)?;
+            let hash_scheme = try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?;
             match signature_scheme_enum {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<
