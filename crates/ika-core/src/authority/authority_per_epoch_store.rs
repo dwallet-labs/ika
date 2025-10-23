@@ -281,7 +281,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         &self,
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
-        // TODO(Scaly): what is this function; name; nth(1)?
         let tables = self.tables()?;
         let mut iter = tables
             .dwallet_mpc_outputs
