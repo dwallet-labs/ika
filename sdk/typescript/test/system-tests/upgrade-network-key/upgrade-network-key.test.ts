@@ -64,7 +64,6 @@ describe('system tests', () => {
 		await ikaClient.initialize();
 		await waitForEpochSwitch(ikaClient);
 		console.log('Epoch switched, verifying the network key version is V1');
-		return;
 		const networkKey = await ikaClient.getConfiguredNetworkEncryptionKey();
 		let networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.networkDKGOutputID);
 		const networkKeyVersion = network_key_version(networkKeyBytes);
