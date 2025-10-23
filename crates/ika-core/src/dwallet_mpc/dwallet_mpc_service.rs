@@ -506,7 +506,6 @@ impl DWalletMPCService {
                                 checkpoint_height: consensus_round,
                             },
                         });
-                    // TODO(Scaly): I'm confused, wasn't the pending checkpoint read from the db now? what's the point of inserting here?
                     if let Err(e) = self
                         .epoch_store
                         .insert_pending_dwallet_checkpoint(pending_checkpoint)
