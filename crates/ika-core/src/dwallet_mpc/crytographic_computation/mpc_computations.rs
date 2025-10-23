@@ -736,14 +736,13 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    //  Todo (#1408): Return update_expected_decrypters_metrics
-                    // let decrypters = advance_request. (Scaly should add a method to extract it)
-                    // update_expected_decrypters_metrics(
-                    //     &public_input.expected_decrypters,
-                    //     decrypters,
-                    //     access_structure,
-                    //     dwallet_mpc_metrics,
-                    // );
+                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
 
                 }
 
@@ -766,14 +765,13 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    //  Todo (#1408): Return update_expected_decrypters_metrics
-                    // let decrypters = advance_request. (Scaly should add a method to extract it)
-                    // update_expected_decrypters_metrics(
-                    //     &public_input.expected_decrypters,
-                    //     decrypters,
-                    //     access_structure,
-                    //     dwallet_mpc_metrics,
-                    // );
+                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
                 }
 
                 compute_sign::<Secp256K1TaprootProtocol>(
@@ -795,14 +793,13 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    //  Todo (#1408): Return update_expected_decrypters_metrics
-                    // let decrypters = advance_request. (Scaly should add a method to extract it)
-                    // update_expected_decrypters_metrics(
-                    //     &public_input.expected_decrypters,
-                    //     decrypters,
-                    //     access_structure,
-                    //     dwallet_mpc_metrics,
-                    // );
+                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
                 }
 
                 compute_sign::<Secp256R1ECDSAProtocol>(
@@ -824,14 +821,13 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    //  Todo (#1408): Return update_expected_decrypters_metrics
-                    // let decrypters = advance_request. (Scaly should add a method to extract it)
-                    // update_expected_decrypters_metrics(
-                    //     &public_input.expected_decrypters,
-                    //     decrypters,
-                    //     access_structure,
-                    //     dwallet_mpc_metrics,
-                    // );
+                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
                 }
 
                 compute_sign::<Curve25519EdDSAProtocol>(
@@ -853,14 +849,13 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    //  Todo (#1408): Return update_expected_decrypters_metrics
-                    // let decrypters = advance_request. (Scaly should add a method to extract it)
-                    // update_expected_decrypters_metrics(
-                    //     &public_input.expected_decrypters,
-                    //     decrypters,
-                    //     access_structure,
-                    //     dwallet_mpc_metrics,
-                    // );
+                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
                 }
 
                 compute_sign::<RistrettoSchnorrkelSubstrateProtocol>(
