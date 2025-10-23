@@ -25,7 +25,8 @@ import {
 	createTestIkaClient,
 	createTestIkaTransaction,
 	createTestMessage,
-	createTestSuiClient, delay,
+	createTestSuiClient,
+	delay,
 	destroyEmptyTestIkaToken,
 	executeTestTransaction,
 	generateTestKeypair,
@@ -34,6 +35,7 @@ import {
 } from '../helpers/test-utils';
 import {
 	acceptUserShareAndActivate,
+	decodePublicKey,
 	executeDKGRequest,
 	prepareDKG,
 	setupDKGTest,
@@ -120,6 +122,7 @@ async function aliceTransferShareToBob(
 	aliceUserShareEncryptionKeys: UserShareEncryptionKeys,
 	bobEncryptionKeyAddress: string,
 	testName: string,
+	bobSignerAddress,
 ): Promise<{
 	bobEncryptedUserSecretKeyShareId: string;
 	aliceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
@@ -127,7 +130,6 @@ async function aliceTransferShareToBob(
 	const suiClient = createTestSuiClient();
 
 	// Get Alice's encrypted user secret key share
-	console.log('aliceEncryptedUserSecretKeyShareId1: ', aliceEncryptedUserSecretKeyShareId);
 	const aliceEncryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeyShare(
 		aliceEncryptedUserSecretKeyShareId,
 	);
@@ -151,6 +153,8 @@ async function aliceTransferShareToBob(
 		suiCoin: transaction.gas,
 	});
 
+	transaction.transferObjects([activeDWallet.dwallet_cap_id], bobSignerAddress);
+
 	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 
 	const result = await executeTestTransaction(suiClient, transaction, testName);
@@ -172,7 +176,6 @@ async function aliceTransferShareToBob(
 	expect(bobEncryptedUserSecretKeyShareId).toBeDefined();
 
 	// Wait for Bob's encrypted share to be available
-	console.log('bobEncryptedUserSecretKeyShareId2: ', bobEncryptedUserSecretKeyShareId);
 	const bobEncryptedUserSecretKeyShare = await retryUntil(
 		() =>
 			ikaClient.getEncryptedUserSecretKeyShareInParticularState(
@@ -207,7 +210,6 @@ async function bobAcceptTransferredShare(
 	const suiClient = createTestSuiClient();
 
 	// Get Bob's encrypted user secret key share
-	console.log('bobEncryptedUserSecretKeyShareId3: ', bobEncryptedUserSecretKeyShareId);
 	const bobEncryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeyShare(
 		bobEncryptedUserSecretKeyShareId,
 	);
@@ -295,7 +297,6 @@ async function bobSignAndVerify(
 	const suiClient = createTestSuiClient();
 
 	// Get Bob's encrypted user secret key share
-	console.log('bobEncryptedUserSecretKeyShareId4: ', bobEncryptedUserSecretKeyShareId);
 	const bobEncryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeyShare(
 		bobEncryptedUserSecretKeyShareId,
 	);
@@ -311,6 +312,7 @@ async function bobSignAndVerify(
 
 	const messageApproval = ikaTransaction.approveMessage({
 		dWalletCap: activeDWallet.dwallet_cap_id,
+		curve,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -351,6 +353,7 @@ async function bobSignAndVerify(
 
 	const sign = await ikaClient.getSignInParticularState(
 		signEventData.event_data.sign_id,
+		curve,
 		signatureAlgorithm,
 		'Completed',
 		{ timeout: 60000, interval: 1000 },
@@ -367,10 +370,11 @@ async function bobSignAndVerify(
 
 	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
 
-	const pkOutput = await publicKeyFromDWalletOutput(
+	const encodedPkOutput = await publicKeyFromDWalletOutput(
 		curve,
 		Uint8Array.from(dWallet.state.Active?.public_output ?? []),
 	);
+	const pkOutput = decodePublicKey(curve, encodedPkOutput);
 
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {
@@ -455,6 +459,7 @@ async function testDWalletTransfer(
 			aliceUserShareEncryptionKeys,
 			bobUserShareEncryptionKeys.getSuiAddress(),
 			`${testName}-alice`,
+			bobSignerAddress,
 		);
 
 	// Bob accepts the transferred encrypted user share
@@ -545,15 +550,6 @@ describe('DWallet Transfer from Alice to Bob', () => {
 				SignatureAlgorithm.ECDSASecp256r1,
 				Hash.SHA256,
 				'ecdsa-secp256r1-sha256',
-			);
-		});
-
-		it('should transfer DWallet from Alice to Bob and Bob should sign with DoubleSHA256', async () => {
-			await testDWalletTransfer(
-				Curve.SECP256R1,
-				SignatureAlgorithm.ECDSASecp256r1,
-				Hash.DoubleSHA256,
-				'ecdsa-secp256r1-double-sha256',
 			);
 		});
 	});

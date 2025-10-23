@@ -1,6 +1,9 @@
 use crate::request_protocol_data::ProtocolData::DWalletDKGAndSign;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureScheme, SerializedWrappedMPCPublicOutput,
+    DWalletCurve, DWalletSignatureAlgorithm, SerializedWrappedMPCPublicOutput,
+};
+use dwallet_mpc_types::mpc_protocol_configuration::{
+    try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
 use group::HashType;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -60,7 +63,7 @@ pub struct DWalletDKGAndSignData {
     pub user_secret_key_share: UserSecretKeyShareEventType,
     pub presign_id: ObjectID,
     pub presign: Vec<u8>,
-    pub signature_algorithm: DWalletSignatureScheme,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_type: HashType,
     pub message: Vec<u8>,
     pub message_centralized_signature: Vec<u8>,
@@ -71,15 +74,15 @@ pub struct DWalletDKGAndSignData {
 #[display("Presign")]
 pub struct PresignData {
     pub curve: DWalletCurve,
-    pub signature_algorithm: DWalletSignatureScheme,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Sign")]
 pub struct SignData {
     pub curve: DWalletCurve,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_scheme: HashType,
-    pub signature_algorithm: DWalletSignatureScheme,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
@@ -111,9 +114,9 @@ pub struct EncryptedShareVerificationData {
 #[display("Partial Signature Verification")]
 pub struct PartialSignatureVerificationData {
     pub curve: DWalletCurve,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
+    pub hash_scheme: HashType,
     pub message: Vec<u8>,
-    pub hash_type: HashType,
-    pub signature_algorithm: DWalletSignatureScheme,
     pub dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
     pub presign: SerializedWrappedMPCPublicOutput,
     pub partially_signed_message: SerializedWrappedMPCPublicOutput,
@@ -210,7 +213,7 @@ pub fn make_dwallet_user_secret_key_shares_public_protocol_data(
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::MakeDWalletUserSecretKeySharesPublic {
         data: MakeDWalletUserSecretKeySharesPublicData {
-            curve: request_event_data.curve.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
             public_user_secret_key_shares: request_event_data.public_user_secret_key_shares,
             dwallet_decentralized_output: request_event_data.public_output,
         },
@@ -224,7 +227,7 @@ pub fn imported_key_verification_protocol_data(
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::ImportedKeyVerification {
         data: ImportedKeyVerificationData {
-            curve: request_event_data.curve.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
             encrypted_centralized_secret_share_and_proof: request_event_data
                 .encrypted_centralized_secret_share_and_proof,
             encryption_key: request_event_data.encryption_key,
@@ -241,7 +244,7 @@ pub fn dwallet_dkg_first_protocol_data(
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::DKGFirst {
         data: DKGFirstData {
-            curve: request_event_data.curve.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
         },
         dwallet_id: request_event_data.dwallet_id,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
@@ -254,7 +257,7 @@ pub fn dwallet_dkg_protocol_data(
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::DWalletDKG {
         data: DWalletDKGData {
-            curve: request_event_data.curve.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
             centralized_public_key_share_and_proof: request_event_data
                 .centralized_public_key_share_and_proof,
             user_secret_key_share,
@@ -271,17 +274,21 @@ pub fn dwallet_dkg_and_sign_protocol_data(
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::DWalletDKGAndSign {
         data: DWalletDKGAndSignData {
-            curve: request_event_data.curve.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
             centralized_public_key_share_and_proof: request_event_data
                 .centralized_public_key_share_and_proof,
             user_secret_key_share,
             presign_id: sign_during_dkg_request.presign_id,
             presign: sign_during_dkg_request.presign.clone(),
-            signature_algorithm: DWalletSignatureScheme::try_from(
+            signature_algorithm: try_into_signature_algorithm(
+                request_event_data.curve,
                 sign_during_dkg_request.signature_algorithm,
             )?,
-            hash_type: HashType::try_from(sign_during_dkg_request.hash_scheme)
-                .map_err(|_| DwalletMPCError::InvalidHashScheme)?,
+            hash_type: try_into_hash_scheme(
+                request_event_data.curve,
+                sign_during_dkg_request.signature_algorithm,
+                sign_during_dkg_request.hash_scheme,
+            )?,
             message: sign_during_dkg_request.message.clone(),
             message_centralized_signature: sign_during_dkg_request
                 .message_centralized_signature
@@ -298,7 +305,7 @@ pub fn dwallet_dkg_second_protocol_data(
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::DKGSecond {
         data: DKGSecondData {
-            curve: request_event_data.curve.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
             encrypted_centralized_secret_share_and_proof: request_event_data
                 .encrypted_centralized_secret_share_and_proof,
             encryption_key: request_event_data.encryption_key,
@@ -317,8 +324,11 @@ pub fn presign_protocol_data(
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::Presign {
         data: PresignData {
-            curve: request_event_data.curve.try_into()?,
-            signature_algorithm: request_event_data.signature_algorithm.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
+            signature_algorithm: try_into_signature_algorithm(
+                request_event_data.curve,
+                request_event_data.signature_algorithm,
+            )?,
         },
         dwallet_id: request_event_data.dwallet_id,
         presign_id: request_event_data.presign_id,
@@ -330,10 +340,16 @@ pub fn presign_protocol_data(
 pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::Sign {
         data: SignData {
-            curve: request_event_data.curve.try_into()?,
-            hash_scheme: HashType::try_from(request_event_data.hash_scheme)
-                .map_err(|_| DwalletMPCError::InvalidSessionPublicInput)?,
-            signature_algorithm: request_event_data.signature_algorithm.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
+            signature_algorithm: try_into_signature_algorithm(
+                request_event_data.curve,
+                request_event_data.signature_algorithm,
+            )?,
+            hash_scheme: try_into_hash_scheme(
+                request_event_data.curve,
+                request_event_data.signature_algorithm,
+                request_event_data.hash_scheme,
+            )?,
         },
         dwallet_id: request_event_data.dwallet_id,
         sign_id: request_event_data.sign_id,
@@ -369,7 +385,7 @@ pub fn encrypted_share_verification_protocol_data(
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::EncryptedShareVerification {
         data: EncryptedShareVerificationData {
-            curve: request_event_data.curve.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
             encrypted_centralized_secret_share_and_proof: request_event_data
                 .encrypted_centralized_secret_share_and_proof,
             decentralized_public_output: request_event_data.decentralized_public_output,
@@ -386,10 +402,17 @@ pub fn partial_signature_verification_protocol_data(
 ) -> DwalletMPCResult<ProtocolData> {
     Ok(ProtocolData::PartialSignatureVerification {
         data: PartialSignatureVerificationData {
-            curve: request_event_data.curve.try_into()?,
+            curve: try_into_curve(request_event_data.curve)?,
+            signature_algorithm: try_into_signature_algorithm(
+                request_event_data.curve,
+                request_event_data.signature_algorithm,
+            )?,
+            hash_scheme: try_into_hash_scheme(
+                request_event_data.curve,
+                request_event_data.signature_algorithm,
+                request_event_data.hash_scheme,
+            )?,
             message: request_event_data.message,
-            hash_type: HashType::try_from(request_event_data.hash_scheme).unwrap(),
-            signature_algorithm: request_event_data.signature_algorithm.try_into()?,
             dwallet_decentralized_output: request_event_data.dkg_output,
             presign: request_event_data.presign,
             partially_signed_message: request_event_data.message_centralized_signature,

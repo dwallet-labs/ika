@@ -32,6 +32,7 @@ import {
 } from '../helpers/test-utils';
 import {
 	acceptUserShareAndActivate,
+	decodePublicKey,
 	executeDKGRequest,
 	prepareDKG,
 	waitForDWalletAwaitingSignature,
@@ -217,6 +218,7 @@ async function signAndVerify(
 
 	const messageApproval = ikaTransaction.approveMessage({
 		dWalletCap: activeDWallet.dwallet_cap_id,
+		curve,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -258,6 +260,7 @@ async function signAndVerify(
 
 	const sign = await ikaClient.getSignInParticularState(
 		signEventData.event_data.sign_id,
+		curve,
 		signatureAlgorithm,
 		'Completed',
 		{ timeout: 60000, interval: 1000 },
@@ -274,10 +277,11 @@ async function signAndVerify(
 
 	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
 
-	const pkOutput = await publicKeyFromDWalletOutput(
+	const encodedPkOutput = await publicKeyFromDWalletOutput(
 		curve,
 		Uint8Array.from(dWallet.state.Active?.public_output ?? []),
 	);
+	const pkOutput = decodePublicKey(curve, encodedPkOutput);
 
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {
@@ -382,7 +386,7 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 		});
 	});
 
-	// ECDSASecp256r1 + SECP256R1 combinations (2 tests)
+	// ECDSASecp256r1 + SECP256R1 combinations (1 test)
 	describe('ECDSASecp256r1 on SECP256R1', () => {
 		it('should work with SHA256', async () => {
 			await testCombination(
@@ -390,15 +394,6 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 				SignatureAlgorithm.ECDSASecp256r1,
 				Hash.SHA256,
 				'ecdsa-secp256r1-sha256',
-			);
-		});
-
-		it('should work with DoubleSHA256', async () => {
-			await testCombination(
-				Curve.SECP256R1,
-				SignatureAlgorithm.ECDSASecp256r1,
-				Hash.DoubleSHA256,
-				'ecdsa-secp256r1-double-sha256',
 			);
 		});
 	});

@@ -8,21 +8,19 @@ use crate::dwallet_checkpoints::DWalletCheckpointStore;
 use crate::sui_connector::SuiNotifier;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::system_checkpoints::SystemCheckpointStore;
+use dwallet_mpc_types::mpc_protocol_configuration::{
+    MPC_PROTOCOLS_WITH_SIGNATURE_ALGORITHM, MPC_PROTOCOLS_WITHOUT_SIGNATURE_ALGORITHM,
+};
 use fastcrypto::traits::ToFromBytes;
 use ika_config::node::RunWithRange;
+use ika_protocol_config::ProtocolConfig;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::EpochId;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointMessage;
 use ika_types::messages_dwallet_mpc::{
-    DKG_FIRST_ROUND_PROTOCOL_FLAG, DKG_SECOND_ROUND_PROTOCOL_FLAG,
-    DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME, DWALLET_DKG_PROTOCOL_FLAG,
-    DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG, DWalletNetworkEncryptionKeyData,
-    FUTURE_SIGN_PROTOCOL_FLAG, IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG,
-    MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG, PRESIGN_PROTOCOL_FLAG,
-    RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG, SIGN_PROTOCOL_FLAG,
-    SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG,
+    DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME, DWalletNetworkEncryptionKeyData,
 };
 use ika_types::messages_system_checkpoints::SystemCheckpointMessage;
 use ika_types::sui::epoch_start_system::EpochStartSystem;
@@ -31,7 +29,8 @@ use ika_types::sui::{
     ADVANCE_EPOCH_FUNCTION_NAME, APPEND_VECTOR_FUNCTION_NAME,
     CREATE_SYSTEM_CURRENT_STATUS_INFO_FUNCTION_NAME, DWalletCoordinator, DWalletCoordinatorInner,
     INITIATE_ADVANCE_EPOCH_FUNCTION_NAME, INITIATE_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME,
-    PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME,
+    PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, PricingInfoKey,
+    REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME,
     REQUEST_NETWORK_ENCRYPTION_KEY_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME, SYSTEM_MODULE_NAME,
     System, SystemInner, SystemInnerTrait, VECTOR_MODULE_NAME,
 };
@@ -187,6 +186,18 @@ where
             info!(
                 "Running network encryption key mid-epoch reconfiguration and Calculating protocol pricing"
             );
+            let supported_curves_to_signature_algorithms = coordinator_inner
+                .support_config
+                .supported_curves_to_signature_algorithms_to_hash_schemes
+                .contents
+                .iter()
+                .map(|c| {
+                    (
+                        c.key.clone(),
+                        c.value.contents.iter().map(|c| c.key.clone()).collect_vec(),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
             let result = retry_with_max_elapsed_time!(
                 Self::request_mid_epoch_reconfiguration_and_calculate_protocols_pricing(
                     &self.sui_client,
@@ -194,6 +205,7 @@ where
                     network_encryption_key_ids.clone(),
                     sui_notifier,
                     self.notifier_tx_lock.clone(),
+                    &supported_curves_to_signature_algorithms,
                 ),
                 Duration::from_secs(ONE_HOUR_IN_SECONDS)
             );
@@ -553,47 +565,17 @@ where
         network_encryption_key_ids: Vec<ObjectID>,
         sui_notifier: &SuiNotifier,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        supported_curves_to_signature_algorithms: &HashMap<u32, Vec<u32>>,
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
         let gas_coin = gas_coins
             .first()
             .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
         let mut ptb = ProgrammableTransactionBuilder::new();
-        let zero = ptb.input(CallArg::Pure(bcs::to_bytes(&0u32)?))?;
-        let zero_option = ptb.input(CallArg::Pure(bcs::to_bytes(&Some(0u32))?))?;
         let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
         let dwallet_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
             .await;
-
-        let dkg_first_round_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
-            &DKG_FIRST_ROUND_PROTOCOL_FLAG,
-        )?))?;
-        let dkg_second_round_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
-            &DKG_SECOND_ROUND_PROTOCOL_FLAG,
-        )?))?;
-        let re_encrypt_user_share_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
-            &RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG,
-        )?))?;
-        let make_dwallet_user_secret_key_share_public_protocol_flag = ptb.input(CallArg::Pure(
-            bcs::to_bytes(&MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG)?,
-        ))?;
-        let imported_key_dwallet_verification_protocol_flag = ptb.input(CallArg::Pure(
-            bcs::to_bytes(&IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG)?,
-        ))?;
-        let presign_protocol_flag =
-            ptb.input(CallArg::Pure(bcs::to_bytes(&PRESIGN_PROTOCOL_FLAG)?))?;
-        let sign_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(&SIGN_PROTOCOL_FLAG)?))?;
-        let future_sign_protocol_flag =
-            ptb.input(CallArg::Pure(bcs::to_bytes(&FUTURE_SIGN_PROTOCOL_FLAG)?))?;
-        let sign_with_partial_user_signature_protocol_flag = ptb.input(CallArg::Pure(
-            bcs::to_bytes(&SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG)?,
-        ))?;
-        let dwallet_dkg_protocol_flag =
-            ptb.input(CallArg::Pure(bcs::to_bytes(&DWALLET_DKG_PROTOCOL_FLAG)?))?;
-        let dwallet_dkg_with_sign_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
-            &DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG,
-        )?))?;
 
         let dwallet_coordinator_ptb_arg = ptb.input(CallArg::Object(dwallet_coordinator_arg))?;
 
@@ -608,138 +590,47 @@ where
                 vec![dwallet_coordinator_ptb_arg, network_encryption_key_id_arg],
             );
         }
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                none_option,
-                dkg_first_round_protocol_flag,
-            ],
-        );
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                none_option,
-                dkg_second_round_protocol_flag,
-            ],
-        );
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                none_option,
-                re_encrypt_user_share_protocol_flag,
-            ],
-        );
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                none_option,
-                make_dwallet_user_secret_key_share_public_protocol_flag,
-            ],
-        );
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                none_option,
-                imported_key_dwallet_verification_protocol_flag,
-            ],
-        );
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                zero_option,
-                presign_protocol_flag,
-            ],
-        );
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                zero_option,
-                sign_protocol_flag,
-            ],
-        );
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                zero_option,
-                future_sign_protocol_flag,
-            ],
-        );
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                zero_option,
-                sign_with_partial_user_signature_protocol_flag,
-            ],
-        );
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                none_option,
-                dwallet_dkg_protocol_flag,
-            ],
-        );
-        ptb.programmable_move_call(
-            ika_dwallet_2pc_mpc_package_id,
-            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-            ident_str!("calculate_pricing_votes").into(),
-            vec![],
-            vec![
-                dwallet_coordinator_ptb_arg,
-                zero,
-                zero_option,
-                dwallet_dkg_with_sign_protocol_flag,
-            ],
-        );
+
+        for (curve, signature_algorithms) in supported_curves_to_signature_algorithms {
+            let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
+
+            for protocol in MPC_PROTOCOLS_WITHOUT_SIGNATURE_ALGORITHM.iter() {
+                let protocol_arg = ptb.input(CallArg::Pure(bcs::to_bytes(protocol)?))?;
+                ptb.programmable_move_call(
+                    ika_dwallet_2pc_mpc_package_id,
+                    DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+                    ident_str!("calculate_pricing_votes").into(),
+                    vec![],
+                    vec![
+                        dwallet_coordinator_ptb_arg,
+                        curve_arg,
+                        none_option,
+                        protocol_arg,
+                    ],
+                );
+            }
+
+            for signature_algorithm in signature_algorithms {
+                let signature_algorithm_arg =
+                    ptb.input(CallArg::Pure(bcs::to_bytes(&Some(signature_algorithm))?))?;
+                for protocol in MPC_PROTOCOLS_WITH_SIGNATURE_ALGORITHM.iter() {
+                    let protocol_arg = ptb.input(CallArg::Pure(bcs::to_bytes(protocol)?))?;
+                    ptb.programmable_move_call(
+                        ika_dwallet_2pc_mpc_package_id,
+                        DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+                        ident_str!("calculate_pricing_votes").into(),
+                        vec![],
+                        vec![
+                            dwallet_coordinator_ptb_arg,
+                            curve_arg,
+                            signature_algorithm_arg,
+                            protocol_arg,
+                        ],
+                    );
+                }
+            }
+        }
+
         let transaction = super::build_sui_transaction(
             sui_notifier.sui_address,
             ptb.finish(),

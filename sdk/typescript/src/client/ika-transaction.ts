@@ -16,9 +16,15 @@ import {
 	verifyUserShare,
 } from './cryptography.js';
 import {
+	fromCurveAndSignatureAlgorithmAndHashToNumbers,
+	fromCurveAndSignatureAlgorithmToNumbers,
+	fromCurveToNumber,
+	fromHashToNumber,
+	fromNumberToCurve,
 	validateCurveSignatureAlgorithm,
 	validateHashSignatureCombination,
 	type ValidHashForSignature,
+	type ValidSignatureAlgorithmForCurve,
 } from './hash-signature-validation.js';
 import type { IkaClient } from './ika-client.js';
 import {
@@ -203,7 +209,7 @@ export class IkaTransaction {
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			dwalletNetworkEncryptionKeyId,
-			curve,
+			fromCurveToNumber(curve),
 			dkgRequestInput.userDKGMessage,
 			dkgRequestInput.encryptedUserShareAndProof,
 			this.#userShareEncryptionKeys.getSuiAddress(),
@@ -215,7 +221,11 @@ export class IkaTransaction {
 						this.#ikaClient.ikaConfig,
 						this.#getCoordinatorObjectRef(),
 						signDuringDKGRequest.verifiedPresignCap,
-						signDuringDKGRequest.hashScheme,
+						fromHashToNumber(
+							curve,
+							signDuringDKGRequest.signatureAlgorithm,
+							signDuringDKGRequest.hashScheme,
+						),
 						signDuringDKGRequest.message,
 						await this.#getUserSignMessage({
 							userSignatureInputs: {
@@ -226,6 +236,7 @@ export class IkaTransaction {
 								signatureScheme: signDuringDKGRequest.signatureAlgorithm,
 								presign: signDuringDKGRequest.presign,
 								curve,
+								createWithCentralizedOutput: true,
 							},
 							signDuringDKG: signDuringDKGRequest ? true : false,
 						}),
@@ -300,7 +311,7 @@ export class IkaTransaction {
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			dwalletNetworkEncryptionKeyId,
-			curve,
+			fromCurveToNumber(curve),
 			publicKeyShareAndProof,
 			publicUserSecretKeyShare,
 			userPublicOutput,
@@ -310,7 +321,11 @@ export class IkaTransaction {
 						this.#ikaClient.ikaConfig,
 						this.#getCoordinatorObjectRef(),
 						signDuringDKGRequest.verifiedPresignCap,
-						signDuringDKGRequest.hashScheme,
+						fromHashToNumber(
+							curve,
+							signDuringDKGRequest.signatureAlgorithm,
+							signDuringDKGRequest.hashScheme,
+						),
 						signDuringDKGRequest.message,
 						await this.#getUserSignMessage({
 							userSignatureInputs: {
@@ -319,6 +334,9 @@ export class IkaTransaction {
 								signatureScheme: signDuringDKGRequest.signatureAlgorithm,
 								presign: signDuringDKGRequest.presign,
 								curve,
+								publicOutput: userPublicOutput,
+								secretShare: publicUserSecretKeyShare,
+								createWithCentralizedOutput: true,
 							},
 							signDuringDKG: signDuringDKGRequest ? true : false,
 						}),
@@ -453,7 +471,7 @@ export class IkaTransaction {
 		coordinatorTx.registerEncryptionKeyTx(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			curve,
+			fromCurveToNumber(curve),
 			this.#userShareEncryptionKeys.encryptionKey,
 			await this.#userShareEncryptionKeys.getEncryptionKeySignature(),
 			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
@@ -522,27 +540,9 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): TransactionObjectArgument {
-		if (!dWallet.state.Active?.public_output) throw new Error('DWallet is not active');
-
-		const dWalletVersion = dWallet.state.Active.public_output[0];
-
-		if (
-			dWalletVersion === 1 &&
-			signatureAlgorithm !== SignatureAlgorithm.ECDSASecp256k1 &&
-			signatureAlgorithm !== SignatureAlgorithm.ECDSASecp256r1 &&
-			signatureAlgorithm !== SignatureAlgorithm.Taproot
-		) {
-			// In version 1, you must use ecdsa k1, r1 or taproot only
-			throw new Error(
-				'You can call this fn if this is imported key dwallet(ecdsa k1, r1 or taproot) or the version is 1',
-			);
-		}
-
-		if (dWalletVersion === 2 && dWallet.is_imported_key_dwallet) {
-			if (signatureAlgorithm !== Curve.SECP256K1 && signatureAlgorithm !== Curve.SECP256R1) {
-				throw new Error('On version 2, you must use ecdsa(k1,r1) and imported key dwallet');
-			}
-		}
+		this.#assertDWalletPublicOutputSet(dWallet);
+		this.#assertCanRunNormalPresign(dWallet, signatureAlgorithm);
+		validateCurveSignatureAlgorithm(fromNumberToCurve(dWallet.curve), signatureAlgorithm);
 
 		const unverifiedPresignCap = this.#requestPresign({
 			dWallet,
@@ -561,12 +561,12 @@ export class IkaTransaction {
 	 *
 	 * @param params.dwalletNetworkEncryptionKeyId - The network encryption key ID to use for the presign
 	 * @param params.curve - The curve to use for the presign
-	 * @param params.signatureAlgorithm - The signature algorithm to use
+	 * @param params.signatureAlgorithm - The signature algorithm to use (must be valid for the curve)
 	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
 	 * @param params.suiCoin - The SUI coin object to use for gas fees
 	 * @returns Unverified presign capability
 	 */
-	requestGlobalPresign({
+	requestGlobalPresign<C extends Curve>({
 		dwalletNetworkEncryptionKeyId,
 		curve,
 		signatureAlgorithm,
@@ -574,11 +574,13 @@ export class IkaTransaction {
 		suiCoin,
 	}: {
 		dwalletNetworkEncryptionKeyId: string;
-		curve: Curve;
-		signatureAlgorithm: SignatureAlgorithm;
+		curve: C;
+		signatureAlgorithm: ValidSignatureAlgorithmForCurve<C>;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
+		validateCurveSignatureAlgorithm(curve, signatureAlgorithm);
+
 		const unverifiedPresignCap = this.#requestGlobalPresign({
 			dwalletNetworkEncryptionKeyId,
 			curve,
@@ -595,28 +597,40 @@ export class IkaTransaction {
 	 * This creates an approval object that can be used in subsequent signing operations.
 	 *
 	 * @param params.dWalletCap - The dWalletCap object, that owns the dWallet
-	 * @param params.signatureAlgorithm - The signature algorithm to use
-	 * @param params.hashScheme - The hash scheme to apply to the message
+	 * @param params.curve - The curve to use for the approval
+	 * @param params.signatureAlgorithm - The signature algorithm to use (must be valid for the curve)
+	 * @param params.hashScheme - The hash scheme to apply to the message (must be valid for the signature algorithm)
 	 * @param params.message - The message bytes to approve for signing
 	 * @returns Message approval
 	 */
-	approveMessage({
+	approveMessage<C extends Curve, S extends ValidSignatureAlgorithmForCurve<C>>({
 		dWalletCap,
+		curve,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	}: {
 		dWalletCap: TransactionObjectArgument | string;
-		signatureAlgorithm: SignatureAlgorithm;
-		hashScheme: Hash;
+		curve: C;
+		signatureAlgorithm: S;
+		hashScheme: ValidHashForSignature<S>;
 		message: Uint8Array;
 	}): TransactionObjectArgument {
+		validateCurveSignatureAlgorithm(curve, signatureAlgorithm);
+		validateHashSignatureCombination(hashScheme, signatureAlgorithm);
+
+		const { signatureAlgorithmNumber, hashNumber } = fromCurveAndSignatureAlgorithmAndHashToNumbers(
+			curve,
+			signatureAlgorithm,
+			hashScheme,
+		);
+
 		const messageApproval = coordinatorTx.approveMessage(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			this.#transaction.object(dWalletCap),
-			signatureAlgorithm,
-			hashScheme,
+			signatureAlgorithmNumber,
+			hashNumber,
 			message,
 			this.#transaction,
 		);
@@ -678,28 +692,40 @@ export class IkaTransaction {
 	 * This is similar to approveMessage but specifically for DWallets created with imported keys.
 	 *
 	 * @param params.dWalletCap - The dWalletCap object, that owns the dWallet
-	 * @param params.signatureAlgorithm - The signature algorithm to use
-	 * @param params.hashScheme - The hash scheme to apply to the message
+	 * @param params.curve - The curve to use for the approval
+	 * @param params.signatureAlgorithm - The signature algorithm to use (must be valid for the curve)
+	 * @param params.hashScheme - The hash scheme to apply to the message (must be valid for the signature algorithm)
 	 * @param params.message - The message bytes to approve for signing
 	 * @returns Imported key message approval
 	 */
-	approveImportedKeyMessage({
+	approveImportedKeyMessage<C extends Curve, S extends ValidSignatureAlgorithmForCurve<C>>({
 		dWalletCap,
+		curve,
 		signatureAlgorithm,
 		hashScheme,
 		message,
 	}: {
 		dWalletCap: TransactionObjectArgument | string;
-		signatureAlgorithm: SignatureAlgorithm;
-		hashScheme: Hash;
+		curve: C;
+		signatureAlgorithm: S;
+		hashScheme: ValidHashForSignature<S>;
 		message: Uint8Array;
 	}): TransactionObjectArgument {
+		validateCurveSignatureAlgorithm(curve, signatureAlgorithm);
+		validateHashSignatureCombination(hashScheme, signatureAlgorithm);
+
+		const { signatureAlgorithmNumber, hashNumber } = fromCurveAndSignatureAlgorithmAndHashToNumbers(
+			curve,
+			signatureAlgorithm,
+			hashScheme,
+		);
+
 		const importedKeyMessageApproval = coordinatorTx.approveImportedKeyMessage(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			this.#transaction.object(dWalletCap),
-			signatureAlgorithm,
-			hashScheme,
+			signatureAlgorithmNumber,
+			hashNumber,
 			message,
 			this.#transaction,
 		);
@@ -785,7 +811,7 @@ export class IkaTransaction {
 	}): Promise<TransactionObjectArgument> {
 		// Validate hash and signature algorithm combination
 		validateHashSignatureCombination(hashScheme, signatureScheme);
-		validateCurveSignatureAlgorithm(dWallet.curve as Curve, signatureScheme);
+		validateCurveSignatureAlgorithm(fromNumberToCurve(dWallet.curve), signatureScheme);
 
 		// Auto-detect share availability
 		const hasPublicShares = !!dWallet.public_user_secret_key_share;
@@ -803,6 +829,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme: signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -820,6 +847,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme: signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -841,6 +869,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme: signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -938,7 +967,7 @@ export class IkaTransaction {
 
 		// Validate hash and signature algorithm combination
 		validateHashSignatureCombination(hashScheme, actualSignatureScheme);
-		validateCurveSignatureAlgorithm(dWallet.curve as Curve, actualSignatureScheme);
+		validateCurveSignatureAlgorithm(fromNumberToCurve(dWallet.curve), actualSignatureScheme);
 
 		// Auto-detect share availability
 		const hasPublicShares = !!dWallet.public_user_secret_key_share;
@@ -956,6 +985,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme: actualSignatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -973,6 +1003,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme: actualSignatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -989,6 +1020,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme: actualSignatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -1180,7 +1212,7 @@ export class IkaTransaction {
 	}): Promise<TransactionObjectArgument> {
 		// Validate hash and signature algorithm combination
 		validateHashSignatureCombination(hashScheme, signatureScheme);
-		validateCurveSignatureAlgorithm(dWallet.curve as Curve, signatureScheme);
+		validateCurveSignatureAlgorithm(fromNumberToCurve(dWallet.curve), signatureScheme);
 
 		// Auto-detect share availability
 		const hasPublicShares = !!dWallet.public_user_secret_key_share;
@@ -1199,6 +1231,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -1215,6 +1248,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -1235,6 +1269,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -1427,7 +1462,7 @@ export class IkaTransaction {
 	}): Promise<TransactionObjectArgument> {
 		// Validate hash and signature algorithm combination
 		validateHashSignatureCombination(hashScheme, signatureScheme);
-		validateCurveSignatureAlgorithm(dWallet.curve as Curve, signatureScheme);
+		validateCurveSignatureAlgorithm(fromNumberToCurve(dWallet.curve), signatureScheme);
 
 		// Auto-detect share availability
 		const hasPublicShares = !!dWallet.public_user_secret_key_share;
@@ -1446,6 +1481,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -1462,6 +1498,7 @@ export class IkaTransaction {
 					message,
 					hash: hashScheme,
 					signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -1469,15 +1506,20 @@ export class IkaTransaction {
 		} else if (hasPublicShares) {
 			// Public shares available on DWallet
 			this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
+			this.#assertDWalletPublicOutputSet(dWallet);
 
 			unverifiedPartialUserSignatureCap = await this.#requestFutureSign({
 				verifiedPresignCap,
 				userSignatureInputs: {
 					activeDWallet: dWallet,
 					presign,
+					// No need to verify public output in public user-share flows, as there is no zero-trust security in this model.
+					publicOutput: Uint8Array.from(dWallet.state.Active?.public_output),
+					secretShare: Uint8Array.from(dWallet.public_user_secret_key_share),
 					message,
 					hash: hashScheme,
 					signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
 				},
 				ikaCoin,
 				suiCoin,
@@ -1553,7 +1595,12 @@ export class IkaTransaction {
 		return coordinatorTx.requestImportedKeySignWithPartialUserSignatureAndReturnId(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			partialUserSignatureCap,
+			coordinatorTx.verifyPartialUserSignatureCap(
+				this.#ikaClient.ikaConfig,
+				this.#getCoordinatorObjectRef(),
+				this.#transaction.object(partialUserSignatureCap),
+				this.#transaction,
+			),
 			importedKeyMessageApproval,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -1877,7 +1924,7 @@ export class IkaTransaction {
 			);
 
 		await this.#verifySecretShare({
-			curve: dWallet.curve as Curve,
+			curve: fromNumberToCurve(dWallet.curve),
 			verifiedPublicOutput,
 			secretShare,
 			publicParameters,
@@ -1897,11 +1944,16 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
+		const { signatureAlgorithmNumber } = fromCurveAndSignatureAlgorithmToNumbers(
+			fromNumberToCurve(dWallet.curve),
+			signatureAlgorithm,
+		);
+
 		return coordinatorTx.requestPresign(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			dWallet.id.id,
-			signatureAlgorithm,
+			signatureAlgorithmNumber,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
@@ -1922,12 +1974,17 @@ export class IkaTransaction {
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}) {
+		const { curveNumber, signatureAlgorithmNumber } = fromCurveAndSignatureAlgorithmToNumbers(
+			curve,
+			signatureAlgorithm,
+		);
+
 		return coordinatorTx.requestGlobalPresign(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			dwalletNetworkEncryptionKeyId,
-			curve,
-			signatureAlgorithm,
+			curveNumber,
+			signatureAlgorithmNumber,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,
@@ -2011,6 +2068,7 @@ export class IkaTransaction {
 			hash: userSignatureInputs.hash,
 			signatureScheme: userSignatureInputs.signatureScheme,
 			curve: userSignatureInputs.curve,
+			createWithCentralizedOutput: userSignatureInputs.createWithCentralizedOutput,
 		});
 	}
 
@@ -2063,13 +2121,19 @@ export class IkaTransaction {
 			userSignatureInputs,
 		});
 
+		const { hashNumber } = fromCurveAndSignatureAlgorithmAndHashToNumbers(
+			userSignatureInputs.curve,
+			userSignatureInputs.signatureScheme,
+			userSignatureInputs.hash,
+		);
+
 		return coordinatorTx.requestFutureSign(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			userSignatureInputs.activeDWallet.id.id,
 			verifiedPresignCap,
 			userSignatureInputs.message,
-			userSignatureInputs.hash,
+			hashNumber,
 			userSignMessage,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -2195,7 +2259,7 @@ export class IkaTransaction {
 			dWallet.id.id,
 			destinationEncryptionKeyAddress,
 			await encryptSecretShare(
-				destinationEncryptionKeyObj.curve as Curve,
+				fromNumberToCurve(destinationEncryptionKeyObj.curve),
 				sourceSecretShare,
 				new Uint8Array(destinationEncryptionKeyObj.encryption_key),
 				publicParameters,
@@ -2232,7 +2296,7 @@ export class IkaTransaction {
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			(await this.#ikaClient.getConfiguredNetworkEncryptionKey()).id,
-			curve,
+			fromCurveToNumber(curve),
 			importDWalletVerificationRequestInput.userMessage,
 			importDWalletVerificationRequestInput.encryptedUserShareAndProof,
 			this.#userShareEncryptionKeys.getSuiAddress(),
@@ -2254,6 +2318,7 @@ export class IkaTransaction {
 		hash,
 		signatureScheme,
 		curve,
+		createWithCentralizedOutput,
 	}: {
 		protocolPublicParameters: Uint8Array;
 		publicOutput: Uint8Array;
@@ -2262,9 +2327,13 @@ export class IkaTransaction {
 		message: Uint8Array;
 		hash: Hash;
 		signatureScheme: SignatureAlgorithm;
-		curve?: Curve;
+		curve: Curve;
+		createWithCentralizedOutput?: boolean;
 	}): Promise<Uint8Array> {
-		if (curve !== undefined) {
+		const { curveNumber, signatureAlgorithmNumber, hashNumber } =
+			fromCurveAndSignatureAlgorithmAndHashToNumbers(curve, signatureScheme, hash);
+
+		if (createWithCentralizedOutput) {
 			return new Uint8Array(
 				await create_sign_with_centralized_output(
 					protocolPublicParameters,
@@ -2272,8 +2341,9 @@ export class IkaTransaction {
 					userSecretKeyShare,
 					presign,
 					message,
-					hash,
-					signatureScheme,
+					hashNumber,
+					signatureAlgorithmNumber,
+					curveNumber,
 				),
 			);
 		} else {
@@ -2284,10 +2354,36 @@ export class IkaTransaction {
 					userSecretKeyShare,
 					presign,
 					message,
-					hash,
-					signatureScheme,
+					hashNumber,
+					signatureAlgorithmNumber,
+					curveNumber,
 				),
 			);
 		}
+	}
+
+	#assertCanRunNormalPresign(dWallet: DWallet, signatureAlgorithm: SignatureAlgorithm) {
+		if (
+			dWallet.is_imported_key_dwallet &&
+			(signatureAlgorithm === SignatureAlgorithm.ECDSASecp256k1 ||
+				signatureAlgorithm === SignatureAlgorithm.ECDSASecp256r1)
+		) {
+			return;
+		}
+
+		const dWalletVersion = dWallet.state.Active?.public_output?.[0] ?? 0 + 1;
+
+		if (
+			!dWallet.is_imported_key_dwallet &&
+			dWallet.state.Active?.public_output &&
+			dWalletVersion === 1 && // v1 dwallet
+			signatureAlgorithm === SignatureAlgorithm.ECDSASecp256k1
+		) {
+			return;
+		}
+
+		throw new Error(
+			'You can call this function for ecdsa signatures only, and if this is imported key dwallet, or the version is 1',
+		);
 	}
 }

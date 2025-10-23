@@ -18,6 +18,7 @@ import {
 	SessionsManagerModule,
 	SignatureAlgorithm,
 } from '../../src';
+import { fromNumberToCurve } from '../../src/client/hash-signature-validation';
 import { ImportedKeyDWallet } from '../../src/client/types';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys';
 import {
@@ -32,6 +33,7 @@ import {
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
+import { decodePublicKey } from './helpers';
 
 /**
  * Generate a private key for the given curve
@@ -368,7 +370,7 @@ async function requestPresignForImportedKey(
 			signatureAlgorithm,
 			ikaCoin: ikaToken,
 			suiCoin: suiTransaction.gas,
-			curve: importedKeyDWallet.curve as Curve,
+			curve: fromNumberToCurve(importedKeyDWallet.curve),
 			dwalletNetworkEncryptionKeyId: latestNetworkEncryptionKey.id,
 		});
 	} else {
@@ -431,6 +433,7 @@ async function signWithPublicShareAndVerify(
 
 	const importedKeyMessageApproval = ikaTransaction.approveImportedKeyMessage({
 		dWalletCap: activeDWallet.dwallet_cap_id,
+		curve: curve,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -472,6 +475,7 @@ async function signWithPublicShareAndVerify(
 
 	const sign = await ikaClient.getSignInParticularState(
 		signEventData.event_data.sign_id,
+		curve,
 		signatureAlgorithm,
 		'Completed',
 		{ timeout: 60000, interval: 1000 },
@@ -488,10 +492,11 @@ async function signWithPublicShareAndVerify(
 
 	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
 
-	const pkOutput = await publicKeyFromDWalletOutput(
+	const encodedPkOutput = await publicKeyFromDWalletOutput(
 		curve,
 		Uint8Array.from(dWallet.state.Active?.public_output ?? []),
 	);
+	const pkOutput = decodePublicKey(curve, encodedPkOutput);
 
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {
@@ -628,15 +633,6 @@ describe('Make Imported Key DWallet User Share Public and Sign', () => {
 				SignatureAlgorithm.ECDSASecp256r1,
 				Hash.SHA256,
 				'ecdsa-secp256r1-sha256',
-			);
-		});
-
-		it('should create imported key wallet, make share public, and sign with DoubleSHA256', async () => {
-			await testMakeImportedKeyPublicAndSign(
-				Curve.SECP256R1,
-				SignatureAlgorithm.ECDSASecp256r1,
-				Hash.DoubleSHA256,
-				'ecdsa-secp256r1-double-sha256',
 			);
 		});
 	});

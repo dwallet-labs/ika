@@ -20,7 +20,8 @@ import {
 	SessionsManagerModule,
 	SignatureAlgorithm,
 } from '../../src';
-import { ImportedKeyDWallet, PublicKeyBCS } from '../../src/client/types';
+import { fromNumberToCurve } from '../../src/client/hash-signature-validation';
+import { ImportedKeyDWallet } from '../../src/client/types';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys';
 import {
 	createEmptyTestIkaToken,
@@ -34,6 +35,7 @@ import {
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
+import { decodePublicKey } from './helpers';
 
 /**
  * Generate a private key for the given curve
@@ -203,7 +205,7 @@ async function requestPresignForImportedKey(
 			signatureAlgorithm,
 			ikaCoin: ikaToken,
 			suiCoin: suiTransaction.gas,
-			curve: importedKeyDWallet.curve as Curve,
+			curve: fromNumberToCurve(importedKeyDWallet.curve),
 			dwalletNetworkEncryptionKeyId,
 		});
 	} else {
@@ -390,6 +392,7 @@ async function testImportedKeyScenario(
 	const importedKeyMessageApproval = signIkaTransaction.approveImportedKeyMessage({
 		dWalletCap: activeDWallet.dwallet_cap_id,
 		signatureAlgorithm,
+		curve,
 		hashScheme,
 		message,
 	});
@@ -435,6 +438,7 @@ async function testImportedKeyScenario(
 	// Wait for signature to complete
 	const sign = await ikaClient.getSignInParticularState(
 		signEventData.event_data.sign_id,
+		curve,
 		signatureAlgorithm,
 		'Completed',
 		{ timeout: 60000, interval: 1000 },
@@ -447,16 +451,18 @@ async function testImportedKeyScenario(
 	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
 
 	// Get the public key from DWallet output
-	const dWalletPublicKey = await publicKeyFromDWalletOutput(
+	const encodedDWalletPublicKey = await publicKeyFromDWalletOutput(
 		curve,
 		Uint8Array.from(activeDWallet.state.Active?.public_output ?? []),
 	);
+	const dWalletPublicKey = decodePublicKey(curve, encodedDWalletPublicKey);
 
 	// Get the public key from centralized DKG output (user public output)
-	const centralizedPublicKey = await publicKeyFromCentralizedDKGOutput(
+	const encodedCentralizedPublicKey = await publicKeyFromCentralizedDKGOutput(
 		curve,
 		importDWalletVerificationInput.userPublicOutput,
 	);
+	const centralizedPublicKey = decodePublicKey(curve, encodedCentralizedPublicKey);
 
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {

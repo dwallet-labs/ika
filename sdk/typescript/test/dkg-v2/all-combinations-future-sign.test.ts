@@ -8,11 +8,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	CoordinatorInnerModule,
+	createRandomSessionIdentifier,
 	Curve,
 	Hash,
 	IkaClient,
 	ImportedKeyDWallet,
 	ImportedSharedDWallet,
+	prepareImportedKeyDWalletVerification,
 	Presign,
 	publicKeyFromDWalletOutput,
 	SessionsManagerModule,
@@ -35,6 +37,7 @@ import {
 } from '../helpers/test-utils';
 import {
 	acceptUserShareAndActivate,
+	decodePublicKey,
 	executeDKGRequest,
 	prepareDKG,
 	waitForDWalletAwaitingSignature,
@@ -44,6 +47,32 @@ import {
  * DWallet type for testing
  */
 type DWalletType = 'zero-trust' | 'shared' | 'imported-key';
+
+/**
+ * Generate a private key for the given curve (for imported key testing)
+ */
+function generatePrivateKey(curve: Curve): Uint8Array {
+	switch (curve) {
+		case Curve.SECP256K1:
+			return Uint8Array.from(
+				Buffer.from('20255a048b64a9930517e91a2ee6b3aa6ea78131a4ad88f20cb3d351f28d6fe653', 'hex'),
+			);
+		case Curve.SECP256R1:
+			return Uint8Array.from(
+				Buffer.from('20c53afc96882df03726eba161dcddfc4a44c08dea525700692b99db108125ed5f', 'hex'),
+			);
+		case Curve.ED25519:
+			return Uint8Array.from(
+				Buffer.from('7aca0549f93cc4a2052a23f10fc8577d1aba9058766eeebdaa0a7f39bbe91606', 'hex'),
+			);
+		case Curve.RISTRETTO:
+			return Uint8Array.from(
+				Buffer.from('1ac94bd6e52bc134b6d482f6443d3c61bd987366dffc2c717bcb35dc62e5650b', 'hex'),
+			);
+		default:
+			throw new Error(`Unsupported curve: ${curve}`);
+	}
+}
 
 /**
  * Compute hash based on the hash scheme
@@ -123,11 +152,11 @@ async function setupDKGFlow(
 	const { userShareEncryptionKeys, signerAddress } = await generateTestKeypair(testName, curve);
 	await requestTestFaucetFunds(signerAddress);
 
-	// Prepare DKG
-	const dkgPrepare = await prepareDKG(ikaClient, curve, userShareEncryptionKeys, signerAddress);
+	// For shared types, use public user share DKG
+	if (dwalletType === 'shared') {
+		// Prepare DKG
+		const dkgPrepare = await prepareDKG(ikaClient, curve, userShareEncryptionKeys, signerAddress);
 
-	// For shared or imported-key types, use public user share DKG
-	if (dwalletType === 'shared' || dwalletType === 'imported-key') {
 		const transaction = new Transaction();
 		const ikaTransaction = createTestIkaTransaction(
 			ikaClient,
@@ -181,13 +210,130 @@ async function setupDKGFlow(
 		return {
 			ikaClient,
 			activeDWallet: activeDWallet as any,
-			encryptedUserSecretKeyShareId: '', // Not used for shared/imported-key
+			encryptedUserSecretKeyShareId: '', // Not used for shared
+			userShareEncryptionKeys,
+			signerAddress,
+		};
+	}
+
+	// For imported-key types, use imported key verification
+	if (dwalletType === 'imported-key') {
+		const privateKey = generatePrivateKey(curve);
+
+		// Prepare imported key DWallet verification
+		const sessionIdentifier = createRandomSessionIdentifier();
+		const importDWalletVerificationInput = await prepareImportedKeyDWalletVerification(
+			ikaClient,
+			curve,
+			sessionIdentifier,
+			signerAddress,
+			userShareEncryptionKeys,
+			privateKey,
+		);
+
+		expect(importDWalletVerificationInput).toBeDefined();
+
+		// Request imported key DWallet verification
+		const transaction = new Transaction();
+		const ikaTransaction = createTestIkaTransaction(
+			ikaClient,
+			transaction,
+			userShareEncryptionKeys,
+		);
+
+		await ikaTransaction.registerEncryptionKey({ curve });
+
+		const ikaToken = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
+
+		const registeredSessionIdentifier = ikaTransaction.registerSessionIdentifier(sessionIdentifier);
+
+		const importedKeyDWalletCap = await ikaTransaction.requestImportedKeyDWalletVerification({
+			importDWalletVerificationRequestInput: importDWalletVerificationInput,
+			curve,
+			signerPublicKey: userShareEncryptionKeys.getSigningPublicKeyBytes(),
+			sessionIdentifier: registeredSessionIdentifier,
+			ikaCoin: ikaToken,
+			suiCoin: transaction.gas,
+		});
+
+		transaction.transferObjects([importedKeyDWalletCap], signerAddress);
+		destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, ikaToken);
+
+		const result = await executeTestTransaction(suiClient, transaction, testName);
+
+		const verificationEvent = result.events?.find((event) =>
+			event.type.includes('DWalletImportedKeyVerificationRequestEvent'),
+		);
+		expect(verificationEvent).toBeDefined();
+
+		const parsedVerificationEvent = SessionsManagerModule.DWalletSessionEvent(
+			CoordinatorInnerModule.DWalletImportedKeyVerificationRequestEvent,
+		).fromBase64(verificationEvent?.bcs as string);
+
+		const dWalletID = parsedVerificationEvent.event_data.dwallet_id;
+		expect(dWalletID).toBeDefined();
+
+		const encryptedUserSecretKeyShareId = parsedVerificationEvent.event_data
+			.encrypted_user_secret_key_share_id as string;
+		expect(encryptedUserSecretKeyShareId).toBeDefined();
+
+		// Wait for DWallet to be verified and awaiting signature
+		const importedKeyDWallet = (await retryUntil(
+			() => ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature'),
+			(wallet) => wallet !== null,
+			30,
+			1000,
+		)) as ImportedKeyDWallet;
+
+		expect(importedKeyDWallet).toBeDefined();
+		expect(importedKeyDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
+		expect(importedKeyDWallet.is_imported_key_dwallet).toBe(true);
+
+		// Get the encrypted user secret key share
+		const encryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeyShare(
+			encryptedUserSecretKeyShareId,
+		);
+		expect(encryptedUserSecretKeyShare).toBeDefined();
+
+		// Accept encrypted user share
+		const acceptShareTransaction = new Transaction();
+		const acceptShareIkaTransaction = createTestIkaTransaction(
+			ikaClient,
+			acceptShareTransaction,
+			userShareEncryptionKeys,
+		);
+
+		await acceptShareIkaTransaction.acceptEncryptedUserShare({
+			dWallet: importedKeyDWallet,
+			encryptedUserSecretKeyShareId: encryptedUserSecretKeyShare.id.id,
+			userPublicOutput: importDWalletVerificationInput.userPublicOutput,
+		});
+
+		await executeTestTransaction(suiClient, acceptShareTransaction, testName);
+
+		// Wait for wallet to become Active
+		const activeDWallet = (await retryUntil(
+			() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
+			(wallet) => wallet !== null,
+			30,
+			2000,
+		)) as ImportedKeyDWallet;
+
+		expect(activeDWallet).toBeDefined();
+		expect(activeDWallet.state.$kind).toBe('Active');
+
+		return {
+			ikaClient,
+			activeDWallet,
+			encryptedUserSecretKeyShareId,
 			userShareEncryptionKeys,
 			signerAddress,
 		};
 	}
 
 	// For zero-trust type, use regular encrypted DKG
+	const dkgPrepare = await prepareDKG(ikaClient, curve, userShareEncryptionKeys, signerAddress);
+
 	const dkgResult = await executeDKGRequest(
 		{ suiClient, ikaClient, userShareEncryptionKeys, signerAddress, testName },
 		dkgPrepare,
@@ -391,16 +537,16 @@ async function futureSignAndVerify(
 
 	const emptyIKACoin2 = createEmptyTestIkaToken(transaction2, ikaClient.ikaConfig);
 
-	let signId;
 	if (dwalletType === 'imported-key') {
 		const importedKeyMessageApproval = ikaTransaction2.approveImportedKeyMessage({
 			dWalletCap: activeDWallet.dwallet_cap_id,
+			curve,
 			signatureAlgorithm,
 			hashScheme,
 			message,
 		});
 
-		signId = ikaTransaction2.futureSignWithImportedKey({
+		ikaTransaction2.futureSignWithImportedKey({
 			partialUserSignatureCap: partialCap.cap_id,
 			importedKeyMessageApproval,
 			ikaCoin: emptyIKACoin2,
@@ -409,12 +555,13 @@ async function futureSignAndVerify(
 	} else {
 		const messageApproval = ikaTransaction2.approveMessage({
 			dWalletCap: activeDWallet.dwallet_cap_id,
+			curve,
 			signatureAlgorithm,
 			hashScheme,
 			message,
 		});
 
-		signId = ikaTransaction2.futureSign({
+		ikaTransaction2.futureSign({
 			partialUserSignatureCap: partialCap.cap_id,
 			messageApproval,
 			ikaCoin: emptyIKACoin2,
@@ -438,6 +585,7 @@ async function futureSignAndVerify(
 
 	const sign = await ikaClient.getSignInParticularState(
 		signEventData.event_data.sign_id,
+		curve,
 		signatureAlgorithm,
 		'Completed',
 		{ timeout: 60000, interval: 1000 },
@@ -454,10 +602,11 @@ async function futureSignAndVerify(
 
 	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
 
-	const pkOutput = await publicKeyFromDWalletOutput(
+	const encodedPkOutput = await publicKeyFromDWalletOutput(
 		curve,
 		Uint8Array.from(dWallet.state.Active?.public_output ?? []),
 	);
+	const pkOutput = decodePublicKey(curve, encodedPkOutput);
 
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {
@@ -535,7 +684,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					'ecdsa-secp256k1-keccak256',
 				);
 			});
-
 			it('should work with SHA256', async () => {
 				await testCombination(
 					'zero-trust',
@@ -545,7 +693,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					'ecdsa-secp256k1-sha256',
 				);
 			});
-
 			it('should work with DoubleSHA256', async () => {
 				await testCombination(
 					'zero-trust',
@@ -556,7 +703,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 				);
 			});
 		});
-
 		describe('Shared', () => {
 			it('should work with KECCAK256', async () => {
 				await testCombination(
@@ -567,7 +713,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					'ecdsa-secp256k1-keccak256',
 				);
 			});
-
 			it('should work with SHA256', async () => {
 				await testCombination(
 					'shared',
@@ -577,7 +722,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					'ecdsa-secp256k1-sha256',
 				);
 			});
-
 			it('should work with DoubleSHA256', async () => {
 				await testCombination(
 					'shared',
@@ -588,7 +732,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 				);
 			});
 		});
-
 		describe('Imported Key', () => {
 			it('should work with KECCAK256', async () => {
 				await testCombination(
@@ -599,7 +742,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					'ecdsa-secp256k1-keccak256',
 				);
 			});
-
 			it('should work with SHA256', async () => {
 				await testCombination(
 					'imported-key',
@@ -609,7 +751,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					'ecdsa-secp256k1-sha256',
 				);
 			});
-
 			it('should work with DoubleSHA256', async () => {
 				await testCombination(
 					'imported-key',
@@ -661,7 +802,7 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 		});
 	});
 
-	// ECDSASecp256r1 + SECP256R1 combinations (2 hashes × 3 dwallet types = 6 tests)
+	// ECDSASecp256r1 + SECP256R1 combinations (1 hash × 3 dwallet types = 3 tests)
 	describe('ECDSASecp256r1 on SECP256R1', () => {
 		describe('Zero Trust', () => {
 			it('should work with SHA256', async () => {
@@ -671,16 +812,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					SignatureAlgorithm.ECDSASecp256r1,
 					Hash.SHA256,
 					'ecdsa-secp256r1-sha256',
-				);
-			});
-
-			it('should work with DoubleSHA256', async () => {
-				await testCombination(
-					'zero-trust',
-					Curve.SECP256R1,
-					SignatureAlgorithm.ECDSASecp256r1,
-					Hash.DoubleSHA256,
-					'ecdsa-secp256r1-double-sha256',
 				);
 			});
 		});
@@ -695,16 +826,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					'ecdsa-secp256r1-sha256',
 				);
 			});
-
-			it('should work with DoubleSHA256', async () => {
-				await testCombination(
-					'shared',
-					Curve.SECP256R1,
-					SignatureAlgorithm.ECDSASecp256r1,
-					Hash.DoubleSHA256,
-					'ecdsa-secp256r1-double-sha256',
-				);
-			});
 		});
 
 		describe('Imported Key', () => {
@@ -715,16 +836,6 @@ describe('All Valid DWallet-Curve-SignatureAlgorithm-Hash Combinations (Future S
 					SignatureAlgorithm.ECDSASecp256r1,
 					Hash.SHA256,
 					'ecdsa-secp256r1-sha256',
-				);
-			});
-
-			it('should work with DoubleSHA256', async () => {
-				await testCombination(
-					'imported-key',
-					Curve.SECP256R1,
-					SignatureAlgorithm.ECDSASecp256r1,
-					Hash.DoubleSHA256,
-					'ecdsa-secp256r1-double-sha256',
 				);
 			});
 		});

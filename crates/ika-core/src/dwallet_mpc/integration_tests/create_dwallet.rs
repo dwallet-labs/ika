@@ -223,7 +223,7 @@ async fn create_imported_dwallet() {
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
     let protocol_pp =
-        network_dkg_public_output_to_protocol_pp_inner(network_key_bytes.clone()).unwrap();
+        network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes.clone()).unwrap();
     let (dwallet_secret_key, dwallet_public_key) =
         sample_dwallet_keypair_inner(protocol_pp.clone()).unwrap();
     let import_dwallet_session_id = [2; 32];
@@ -304,7 +304,7 @@ async fn create_imported_dwallet_v2() {
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
     let protocol_pp =
-        network_dkg_public_output_to_protocol_pp_inner(network_key_bytes.clone()).unwrap();
+        network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes.clone()).unwrap();
     let (dwallet_secret_key, dwallet_public_key) =
         sample_dwallet_keypair_inner(protocol_pp.clone()).unwrap();
     let import_dwallet_session_id = [2; 32];
@@ -384,7 +384,7 @@ pub(crate) async fn create_dwallet_test(
         panic!("Expected DWallet DKG first round output message");
     };
     info!("DWallet DKG first round completed");
-    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
+    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes).unwrap();
     let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output_v1(
         protocol_pp.clone(),
         dwallet_dkg_first_round_output.output.clone(),

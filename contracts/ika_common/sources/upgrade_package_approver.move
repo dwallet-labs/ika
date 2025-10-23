@@ -80,7 +80,7 @@ public fun approve_upgrade_package_by_witness<Witness: drop>(
     _: Witness,
 ): ID {
     assert!(upgrade_package_approver.new_package_id.is_some(), ECommitUpgradeFirst);
-    let witness_type = type_name::get_with_original_ids<Witness>();
+    let witness_type = type_name::with_original_ids<Witness>();
     let witness_type_name = witness_type.into_string().to_string();
     let (is_found, index) = upgrade_package_approver
         .remaining_witnesses_to_approve

@@ -39,7 +39,7 @@ public struct PublisherKey() has copy, drop, store;
 public(package) fun create(p: Publisher, staked_ika_image_url: String, ctx: &mut TxContext) {
     let mut inner = object_bag::new(ctx);
 
-    inner.add(type_name::get<StakedIka>(), init_staked_ika_display(&p, staked_ika_image_url, ctx));
+    inner.add(type_name::with_defining_ids<StakedIka>(), init_staked_ika_display(&p, staked_ika_image_url, ctx));
     inner.add(PublisherKey(), p);
 
     transfer::share_object(ObjectDisplay { id: object::new(ctx), inner })

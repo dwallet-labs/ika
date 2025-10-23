@@ -1,6 +1,6 @@
 use crate::messages_dwallet_mpc::SessionIdentifier;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureScheme, DwalletNetworkMPCError,
+    DWalletCurve, DWalletSignatureAlgorithm, DwalletNetworkMPCError,
 };
 use group::PartyID;
 use sui_types::base_types::{EpochId, ObjectID};
@@ -186,6 +186,9 @@ pub enum DwalletMPCError {
     #[error("Internal error: {0}")]
     InternalError(String),
 
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
     #[error("missing protocol public parameters for curve: {0:?}")]
     MissingProtocolPublicParametersForCurve(DWalletCurve),
 
@@ -204,7 +207,7 @@ pub enum DwalletMPCError {
     #[error("dWallet curve and protocol mismatch: curve {curve:?}, protocol {protocol:?}")]
     CurveToProtocolMismatch {
         curve: DWalletCurve,
-        protocol: DWalletSignatureScheme,
+        protocol: DWalletSignatureAlgorithm,
     },
     #[error("unsupported protocol version: {0}")]
     UnsupportedProtocolVersion(u64),

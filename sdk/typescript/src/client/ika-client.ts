@@ -16,6 +16,11 @@ import {
 	reconfigurationPublicOutputToProtocolPublicParameters,
 } from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
+import {
+	fromNumberToCurve,
+	validateCurveSignatureAlgorithm,
+	type ValidSignatureAlgorithmForCurve,
+} from './hash-signature-validation.js';
 import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
 	CoordinatorInner,
@@ -38,7 +43,6 @@ import type {
 	PresignState,
 	SharedObjectOwner,
 	Sign,
-	SignatureAlgorithm,
 	SignState,
 	SystemInner,
 } from './types.js';
@@ -506,13 +510,21 @@ export class IkaClient {
 	 * Retrieve a sign session object by its ID.
 	 *
 	 * @param signID - The unique identifier of the sign session to retrieve
-	 * @param signatureAlgorithm - The signature algorithm to use for parsing
+	 * @param curve - The curve to use for parsing
+	 * @param signatureAlgorithm - The signature algorithm to use for parsing (must be valid for the curve)
+	 *
 	 * @returns Promise resolving to the Sign object
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getSign(signID: string, signatureAlgorithm: SignatureAlgorithm): Promise<Sign> {
+	async getSign<C extends Curve>(
+		signID: string,
+		curve: C,
+		signatureAlgorithm: ValidSignatureAlgorithmForCurve<C>,
+	): Promise<Sign> {
 		await this.ensureInitialized();
+
+		validateCurveSignatureAlgorithm(curve, signatureAlgorithm);
 
 		const unparsedSign = await this.client.getObject({
 			id: signID,
@@ -524,6 +536,7 @@ export class IkaClient {
 		if (sign.state.$kind === 'Completed') {
 			sign.state.Completed.signature = Array.from(
 				await parseSignatureFromSignOutput(
+					curve,
 					signatureAlgorithm,
 					Uint8Array.from(sign.state.Completed.signature),
 				),
@@ -538,7 +551,8 @@ export class IkaClient {
 	 * This method polls the sign until it matches the specified state.
 	 *
 	 * @param signID - The unique identifier of the sign session to retrieve
-	 * @param signatureAlgorithm - The signature algorithm to use for parsing
+	 * @param curve - The curve to use for parsing
+	 * @param signatureAlgorithm - The signature algorithm to use for parsing (must be valid for the curve)
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
 	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
@@ -551,9 +565,10 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
-	async getSignInParticularState(
+	async getSignInParticularState<C extends Curve>(
 		signID: string,
-		signatureAlgorithm: SignatureAlgorithm,
+		curve: C,
+		signatureAlgorithm: ValidSignatureAlgorithmForCurve<C>,
 		state: SignState,
 		options: {
 			timeout?: number;
@@ -564,7 +579,7 @@ export class IkaClient {
 		} = {},
 	): Promise<Sign> {
 		return this.#pollUntilState(
-			() => this.getSign(signID, signatureAlgorithm),
+			() => this.getSign(signID, curve, signatureAlgorithm),
 			state,
 			`sign ${signID} to reach state ${state}`,
 			options,
@@ -748,9 +763,9 @@ export class IkaClient {
 		let selectedCurve: Curve;
 
 		if (dWallet) {
-			selectedCurve = dWallet.curve as Curve;
+			selectedCurve = fromNumberToCurve(dWallet.curve);
 		} else {
-			selectedCurve = curve !== undefined ? curve : (0 as Curve);
+			selectedCurve = curve !== undefined ? curve : fromNumberToCurve(0);
 		}
 
 		// Check if we have cached parameters for this specific encryption key and curve
