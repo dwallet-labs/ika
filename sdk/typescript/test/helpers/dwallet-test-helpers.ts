@@ -91,6 +91,7 @@ export async function createCompleteDWallet(
 		ikaClient,
 		dWallet,
 		userShareEncryptionKeys,
+		sessionIdentifierPreimage
 	);
 
 	// Step 5: Request DKG second round

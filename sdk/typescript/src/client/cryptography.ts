@@ -125,6 +125,7 @@ export async function createClassGroupsKeypair(
 export async function createDKGUserOutput(
 	protocolPublicParameters: Uint8Array,
 	networkFirstRoundOutput: Uint8Array,
+	sessionIdentifier: Uint8Array,
 ): Promise<{
 	userDKGMessage: Uint8Array;
 	userPublicOutput: Uint8Array;
@@ -133,6 +134,7 @@ export async function createDKGUserOutput(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
+		sessionIdentifier,
 	);
 
 	return {
@@ -174,6 +176,7 @@ export async function encryptSecretShare(
  * @param protocolPublicParameters - The protocol public parameters
  * @param dWallet - The DWallet object containing first round output
  * @param encryptionKey - The user's public encryption key
+ * @param sessionID
  * @returns Complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available in the DWallet
  *
@@ -183,6 +186,7 @@ export async function prepareDKGSecondRound(
 	protocolPublicParameters: Uint8Array,
 	dWallet: DWallet,
 	encryptionKey: Uint8Array,
+	sessionID: Uint8Array,
 ): Promise<DKGRequestInput> {
 	const networkFirstRoundOutput =
 		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
@@ -194,6 +198,7 @@ export async function prepareDKGSecondRound(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
+		sessionID
 	);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(
@@ -260,6 +265,7 @@ export async function prepareDKG(
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param dWallet - The DWallet object containing first round output
  * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
+ * @param sessionID
  * @returns Promise resolving to complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available or network parameters cannot be fetched
  *
@@ -269,6 +275,7 @@ export async function prepareDKGSecondRoundAsync(
 	ikaClient: IkaClient,
 	dWallet: DWallet,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
+	sessionID: Uint8Array,
 ): Promise<DKGRequestInput> {
 	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
 
@@ -276,6 +283,7 @@ export async function prepareDKGSecondRoundAsync(
 		protocolPublicParameters,
 		dWallet,
 		userShareEncryptionKeys.encryptionKey,
+		sessionID,
 	);
 }
 

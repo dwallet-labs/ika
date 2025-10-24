@@ -19,7 +19,6 @@ import {
 	requestTestFaucetFunds,
 	runSignFullFlowWithDWallet,
 	runSignFullFlowWithV1Dwallet,
-	runSignFullFlowWithV2Dwallet,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
 import {
