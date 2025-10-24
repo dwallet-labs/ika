@@ -198,7 +198,7 @@ export async function prepareDKGSecondRound(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
-		sessionID
+		sessionID,
 	);
 
 	const encryptedUserShareAndProof = await encryptSecretShare(
