@@ -769,7 +769,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    let decrypters = advance_request.senders_for_round(1)?;
                     update_expected_decrypters_metrics(
                         &public_input.expected_decrypters,
                         decrypters,
@@ -798,7 +798,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    let decrypters = advance_request.senders_for_round(1)?;
                     update_expected_decrypters_metrics(
                         &public_input.expected_decrypters,
                         decrypters,
@@ -826,7 +826,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    let decrypters = advance_request.senders_for_round(1)?;
                     update_expected_decrypters_metrics(
                         &public_input.expected_decrypters,
                         decrypters,
@@ -854,7 +854,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    let decrypters = advance_request.senders_for_round(1)?;
                     update_expected_decrypters_metrics(
                         &public_input.expected_decrypters,
                         decrypters,
@@ -882,7 +882,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    let decrypters = advance_request.senders_for_round(1)?;
                     update_expected_decrypters_metrics(
                         &public_input.expected_decrypters,
                         decrypters,
@@ -918,7 +918,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    let decrypters = advance_request.senders_for_round(1)?;
                     update_expected_decrypters_metrics(
                         &public_input.expected_decrypters,
                         decrypters,
@@ -946,7 +946,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    let decrypters = advance_request.senders_for_round(1)?;
                     update_expected_decrypters_metrics(
                         &public_input.expected_decrypters,
                         decrypters,
@@ -974,7 +974,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    let decrypters = advance_request.senders_for_round(1)?;
                     update_expected_decrypters_metrics(
                         &public_input.expected_decrypters,
                         decrypters,
@@ -1002,7 +1002,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    let decrypters = advance_request.senders_for_round(1)?;
                     update_expected_decrypters_metrics(
                         &public_input.expected_decrypters,
                         decrypters,
@@ -1030,7 +1030,7 @@ impl ProtocolCryptographicData {
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
-                    let decrypters = advance_request.senders_for_round(mpc_round as usize)?;
+                    let decrypters = advance_request.senders_for_round(1)?;
                     update_expected_decrypters_metrics(
                         &public_input.expected_decrypters,
                         decrypters,
