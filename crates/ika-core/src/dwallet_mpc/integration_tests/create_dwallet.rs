@@ -18,10 +18,7 @@ use dwallet_mpc_centralized_party::{
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
 use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGSecondRoundOutput};
-use ika_types::messages_dwallet_mpc::{
-     IkaNetworkConfig,
-    SessionIdentifier, SessionType,
-};
+use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, SessionType};
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
 use tracing::info;

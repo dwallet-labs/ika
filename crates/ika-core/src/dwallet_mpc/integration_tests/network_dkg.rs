@@ -88,8 +88,7 @@ async fn test_network_key_reconfiguration() {
         committee: committee.clone(),
         sui_data_senders,
     };
-    let (consensus_round, _, key_id) =
-        create_network_key_test(&mut test_state).await;
+    let (consensus_round, _, key_id) = create_network_key_test(&mut test_state).await;
     let (
         next_epoch_dwallet_mpc_services,
         _next_epoch_sui_data_senders,

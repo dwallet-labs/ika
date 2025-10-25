@@ -548,7 +548,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                     <Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput,
                 >(
                     output.as_slice()
-                )?
+                )?,
             };
 
             let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =

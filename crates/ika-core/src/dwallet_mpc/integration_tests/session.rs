@@ -45,8 +45,7 @@ async fn test_handle_mpc_request_with_invalid_protocol_data_returns_failed() {
         _notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
 
-    let (_, network_key_bytes, key_id) =
-        create_network_key_test(&mut test_state).await;
+    let (_, network_key_bytes, key_id) = create_network_key_test(&mut test_state).await;
     let protocol_pp =
         network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes.clone()).unwrap();
 
