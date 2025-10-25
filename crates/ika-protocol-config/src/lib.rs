@@ -80,7 +80,19 @@ impl std::ops::Add<u64> for ProtocolVersion {
 pub enum Chain {
     Mainnet,
     Testnet,
+    Devnet,
     Unknown,
+}
+
+impl From<String> for Chain {
+    fn from(s: String) -> Self {
+        match s.to_lowercase().as_str() {
+            "devnet" => Chain::Devnet,
+            "testnet" => Chain::Testnet,
+            "mainnet" => Chain::Mainnet,
+            _ => Chain::Unknown,
+        }
+    }
 }
 
 impl Default for Chain {
@@ -94,6 +106,7 @@ impl Chain {
         match self {
             Chain::Mainnet => "mainnet",
             Chain::Testnet => "testnet",
+            Chain::Devnet => "devnet",
             Chain::Unknown => "unknown",
         }
     }
@@ -248,7 +261,7 @@ pub struct ProtocolConfig {
     consensus_gc_depth: Option<u32>,
     decryption_key_reconfiguration_third_round_delay: Option<u64>,
     network_dkg_third_round_delay: Option<u64>,
-    pub network_encryption_key_version: Option<u64>,
+    network_encryption_key_version: Option<u64>,
 }
 
 // feature flags
@@ -299,6 +312,10 @@ impl ProtocolConfig {
 
     pub fn consensus_zstd_compression(&self) -> bool {
         self.feature_flags.consensus_zstd_compression
+    }
+
+    pub fn is_network_encryption_key_version_v2(&self) -> bool {
+        self.network_encryption_key_version.is_some_and(|v| v == 2)
     }
 }
 

@@ -3,6 +3,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { dwallet_version } from '@ika.xyz/ika-wasm';
 import { toHex } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
@@ -17,13 +18,20 @@ import { IkaTransaction } from '../../src/client/ika-transaction.js';
 import { getNetworkConfig } from '../../src/client/network-configs.js';
 import {
 	Curve,
+	DWallet,
+	EncryptedUserSecretKeyShare,
 	Hash,
 	IkaConfig,
 	SignatureAlgorithm,
 	ZeroTrustDWallet,
 } from '../../src/client/types.js';
 import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
-import { createCompleteDWallet, testPresign, testSign } from './dwallet-test-helpers';
+import {
+	createCompleteDWallet,
+	createCompleteDWalletV2,
+	testPresign,
+	testSign,
+} from './dwallet-test-helpers';
 
 // Store random seeds per test to ensure deterministic behavior within each test
 const testSeeds = new Map<string, Uint8Array>();
@@ -240,14 +248,11 @@ export async function executeTestTransactionWithKeypair(
 /**
  * Generates deterministic keypair for testing
  */
-export async function generateTestKeypair(testName: string) {
+export async function generateTestKeypair(testName: string, curve: Curve = Curve.SECP256K1) {
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
-		seed,
-		Curve.SECP256K1,
-	);
+	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve);
 
 	return {
 		userShareEncryptionKeys,
@@ -336,7 +341,12 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Retry utility for tests that need to wait for network state changes
+ * Retry utility for tests that need to wait for network state changes.
+ * Note: This is now a simple wrapper since IkaClient methods like getPresignInParticularState
+ * already handle polling internally with exponential backoff.
+ *
+ * @deprecated Consider using IkaClient's *InParticularState methods directly instead,
+ * which have built-in polling with exponential backoff and AbortSignal support.
  */
 export async function retryUntil<T>(
 	fn: () => Promise<T>,
@@ -344,20 +354,28 @@ export async function retryUntil<T>(
 	maxAttempts: number = 30,
 	delayMs: number = 1000,
 ): Promise<T> {
-	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+	// If the function being called is already a polling method (like getPresignInParticularState),
+	// it will handle its own retries internally. Just call it once and verify the result.
+	const result = await fn();
+
+	if (condition(result)) {
+		return result;
+	}
+
+	// If the condition isn't met, the inner polling method should have thrown an error.
+	// If we get here, it means we need to do manual retries (for non-polling methods).
+	for (let attempt = 1; attempt < maxAttempts; attempt++) {
+		await sleep(delayMs);
+
 		try {
 			const result = await fn();
 			if (condition(result)) {
 				return result;
 			}
 		} catch (error) {
-			if (attempt === maxAttempts) {
+			if (attempt === maxAttempts - 1) {
 				throw error;
 			}
-		}
-
-		if (attempt < maxAttempts) {
-			await sleep(delayMs);
 		}
 	}
 
@@ -368,9 +386,15 @@ export function delay(seconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
 }
 
-export async function runSignFullFlow(
+export async function runSignFullFlowWithDWallet(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
+	createDWalletResponse: {
+		dWallet: DWallet;
+		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
+		userShareEncryptionKeys: UserShareEncryptionKeys;
+		signerAddress: string;
+	},
 	testName: string,
 ) {
 	const {
@@ -378,8 +402,116 @@ export async function runSignFullFlow(
 		encryptedUserSecretKeyShare,
 		userShareEncryptionKeys,
 		signerAddress,
-	} = await createCompleteDWallet(ikaClient, suiClient, testName);
+	} = createDWalletResponse;
+	const presignRequestEvent = await testPresign(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		SignatureAlgorithm.ECDSA,
+		signerAddress,
+		testName,
+	);
 
+	expect(presignRequestEvent).toBeDefined();
+	expect(presignRequestEvent.event_data.presign_id).toBeDefined();
+
+	// Step 3: Wait for presign to complete
+	const presignObject = await retryUntil(
+		() =>
+			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
+		(presign) => presign !== null,
+		30,
+		2000,
+	);
+
+	expect(presignObject).toBeDefined();
+	expect(presignObject.state.$kind).toBe('Completed');
+
+	await delay(2); // Small delay to ensure network state is fully consistent
+
+	// Step 4: Sign a message
+	const message = createTestMessage(testName);
+	await testSign(
+		ikaClient,
+		suiClient,
+		activeDWallet as ZeroTrustDWallet,
+		userShareEncryptionKeys,
+		presignObject,
+		encryptedUserSecretKeyShare,
+		message,
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
+		testName,
+	);
+}
+
+export async function runSignFullFlowWithV1Dwallet(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	testName: string,
+	registerEncryptionKey: boolean = true,
+) {
+	const {
+		dWallet: activeDWallet,
+		encryptedUserSecretKeyShare,
+		userShareEncryptionKeys,
+		signerAddress,
+	} = await createCompleteDWallet(ikaClient, suiClient, testName, registerEncryptionKey);
+
+	// Step 2: Create presign
+	const presignRequestEvent = await testPresign(
+		ikaClient,
+		suiClient,
+		activeDWallet,
+		SignatureAlgorithm.ECDSA,
+		signerAddress,
+		testName,
+	);
+
+	expect(presignRequestEvent).toBeDefined();
+	expect(presignRequestEvent.event_data.presign_id).toBeDefined();
+
+	// Step 3: Wait for presign to complete
+	const presignObject = await retryUntil(
+		() =>
+			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
+		(presign) => presign !== null,
+		30,
+		2000,
+	);
+
+	expect(presignObject).toBeDefined();
+	expect(presignObject.state.$kind).toBe('Completed');
+
+	// Step 4: Sign a message
+	const message = createTestMessage(testName);
+	await testSign(
+		ikaClient,
+		suiClient,
+		activeDWallet as ZeroTrustDWallet,
+		userShareEncryptionKeys,
+		presignObject,
+		encryptedUserSecretKeyShare,
+		message,
+		Hash.KECCAK256,
+		SignatureAlgorithm.ECDSA,
+		testName,
+	);
+}
+
+export async function runSignFullFlowWithV2Dwallet(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	testName: string,
+	registerEncryptionKey: boolean = true,
+) {
+	const {
+		dWallet: activeDWallet,
+		encryptedUserSecretKeyShare,
+		userShareEncryptionKeys,
+		signerAddress,
+	} = await createCompleteDWalletV2(ikaClient, suiClient, testName, registerEncryptionKey);
+	expect(dwallet_version(Uint8Array.from(activeDWallet.state.Active.public_output))).toBe(2);
 	// Step 2: Create presign
 	const presignRequestEvent = await testPresign(
 		ikaClient,
@@ -425,6 +557,7 @@ export async function waitForEpochSwitch(ikaClient: IkaClient) {
 	const startEpoch = await ikaClient.getEpoch();
 	let epochSwitched = false;
 	while (!epochSwitched) {
+		ikaClient.invalidateCache();
 		if ((await ikaClient.getEpoch()) > startEpoch) {
 			epochSwitched = true;
 		} else {

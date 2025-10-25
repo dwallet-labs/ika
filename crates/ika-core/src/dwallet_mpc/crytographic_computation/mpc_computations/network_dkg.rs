@@ -6,11 +6,8 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::mpc_session::PublicInput;
-use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationParty,
-    instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output,
-};
+use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
+use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::dkg::{Secp256k1Party, Secp256k1PublicInput};
 use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
@@ -20,16 +17,14 @@ use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataTrait,
-    NetworkEncryptionKeyPublicDataV1, NetworkEncryptionKeyPublicDataV2,
+    NetworkEncryptionKeyPublicDataV1, NetworkEncryptionKeyPublicDataV2, ReconfigurationParty,
     SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData,
 };
-use group::{GroupElement, OsCsRng, PartyID, secp256k1};
+use group::{GroupElement, PartyID, secp256k1};
 use homomorphic_encryption::GroupsPublicParametersAccessors;
-use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::Secp256K1ECDSAProtocol;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
@@ -47,7 +42,6 @@ use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
 };
-use twopc_mpc::sign::Protocol;
 
 /// Holds the network (decryption) keys of the network MPC protocols.
 pub struct DwalletMPCNetworkKeys {
@@ -280,8 +274,9 @@ impl DwalletMPCNetworkKeys {
     /// Retrieves the protocol public parameters for the specified key ID.
     pub fn get_protocol_public_parameters(
         &self,
+        curve: &DWalletCurve,
         key_id: &ObjectID,
-    ) -> DwalletMPCResult<twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters> {
+    ) -> DwalletMPCResult<ProtocolPublicParametersByCurve> {
         let Some(result) = self.network_encryption_keys.get(key_id) else {
             error!(
                 ?key_id,
@@ -289,7 +284,23 @@ impl DwalletMPCNetworkKeys {
             );
             return Err(DwalletMPCError::WaitingForNetworkKey(*key_id));
         };
-        Ok(result.secp256k1_protocol_public_parameters().clone())
+
+        let protocol_public_parameters = match curve {
+            DWalletCurve::Secp256k1 => ProtocolPublicParametersByCurve::Secp256k1(
+                result.secp256k1_protocol_public_parameters().clone(),
+            ),
+            DWalletCurve::Secp256r1 => ProtocolPublicParametersByCurve::Secp256r1(
+                result.secp256r1_protocol_public_parameters()?.clone(),
+            ),
+            DWalletCurve::Ristretto => ProtocolPublicParametersByCurve::Ristretto(
+                result.ristretto_protocol_public_parameters()?.clone(),
+            ),
+            DWalletCurve::Curve25519 => ProtocolPublicParametersByCurve::Curve25519(
+                result.curve25519_protocol_public_parameters()?.clone(),
+            ),
+        };
+
+        Ok(protocol_public_parameters)
     }
 
     pub fn get_network_dkg_public_output(

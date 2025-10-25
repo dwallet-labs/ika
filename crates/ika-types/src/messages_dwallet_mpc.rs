@@ -42,17 +42,6 @@ pub const NETWORK_ENCRYPTION_KEY_RECONFIGURATION_STR_KEY: &str =
 pub const NETWORK_ENCRYPTION_KEY_DKG_STR_KEY: &str = "NetworkEncryptionKeyDkg";
 pub const SIGN_STR_KEY: &str = "Sign";
 
-pub const DKG_FIRST_ROUND_PROTOCOL_FLAG: u32 = 0;
-pub const DKG_SECOND_ROUND_PROTOCOL_FLAG: u32 = 1;
-pub const RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG: u32 = 2;
-pub const MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG: u32 = 3;
-pub const IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG: u32 = 4;
-pub const PRESIGN_PROTOCOL_FLAG: u32 = 5;
-pub const SIGN_PROTOCOL_FLAG: u32 = 6;
-pub const FUTURE_SIGN_PROTOCOL_FLAG: u32 = 7;
-pub const SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG: u32 = 8;
-pub const DWALLET_DKG_PROTOCOL_FLAG: u32 = 9;
-
 /// This is a wrapper type for the [`SuiEvent`] type that is being used to write it to the local RocksDB.
 /// This is needed because the [`SuiEvent`] cannot be directly written to the RocksDB.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +221,7 @@ impl Ord for SessionIdentifier {
 }
 
 pub type Secp256K1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
+pub type Secp256K1TaprootProtocol = twopc_mpc::secp256k1::class_groups::TaprootProtocol;
 pub type Secp256R1ECDSAProtocol = twopc_mpc::secp256r1::class_groups::ECDSAProtocol;
 pub type Curve25519EdDSAProtocol = twopc_mpc::curve25519::class_groups::EdDSAProtocol;
 pub type RistrettoSchnorrkelSubstrateProtocol =
@@ -443,6 +433,7 @@ impl IkaNetworkConfig {
         ika_package_id: ObjectID,
         ika_common_package_id: ObjectID,
         ika_dwallet_2pc_mpc_package_id: ObjectID,
+        ika_dwallet_2pc_mpc_package_id_v2: Option<ObjectID>,
         ika_system_package_id: ObjectID,
         ika_system_object_id: ObjectID,
         ika_dwallet_coordinator_object_id: ObjectID,
@@ -452,6 +443,7 @@ impl IkaNetworkConfig {
                 ika_package_id,
                 ika_common_package_id,
                 ika_dwallet_2pc_mpc_package_id,
+                ika_dwallet_2pc_mpc_package_id_v2,
                 ika_system_package_id,
             },
             objects: IkaObjectsConfig {
@@ -467,6 +459,7 @@ impl IkaNetworkConfig {
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
+            None,
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
             ObjectID::from_single_byte(1),
@@ -482,6 +475,9 @@ pub struct IkaPackageConfig {
     pub ika_common_package_id: ObjectID,
     /// The move package id of ika_dwallet_2pc_mpc on sui.
     pub ika_dwallet_2pc_mpc_package_id: ObjectID,
+    /// The move package id of ika_dwallet_2pc_mpc on sui.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ika_dwallet_2pc_mpc_package_id_v2: Option<ObjectID>,
     /// The move package id of ika_system on sui.
     pub ika_system_package_id: ObjectID,
 }
@@ -504,21 +500,51 @@ pub struct DWalletDKGFirstRoundRequestEvent {
     pub curve: u32,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
+pub struct SignDuringDKGRequestEvent {
+    pub sign_id: ObjectID,
+    pub presign_id: ObjectID,
+    pub presign: Vec<u8>,
+    pub signature_algorithm: u32,
+    pub hash_scheme: u32,
+    pub message: Vec<u8>,
+    pub message_centralized_signature: Vec<u8>,
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash, Ord, PartialOrd,
+)]
+pub enum UserSecretKeyShareEventType {
+    Encrypted {
+        /// ID of the encrypted user secret key share being created
+        encrypted_user_secret_key_share_id: ObjectID,
+        /// User's encrypted secret key share with zero-knowledge proof
+        encrypted_centralized_secret_share_and_proof: Vec<u8>,
+        /// Serialized encryption key used to encrypt the user's secret share
+        encryption_key: Vec<u8>,
+        /// ObjectID of the encryption key object
+        encryption_key_id: ObjectID,
+        /// Address of the encryption key owner
+        encryption_key_address: SuiAddress,
+        /// Ed25519 public key for verifying the user's signature
+        signer_public_key: Vec<u8>,
+    },
+    Public {
+        public_user_secret_key_share: Vec<u8>,
+    },
+}
+
 /// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletDKGFirstRoundRequestEvent`.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
 pub struct DWalletDKGRequestEvent {
-    pub encrypted_user_secret_key_share_id: ObjectID,
     pub dwallet_id: ObjectID,
     pub centralized_public_key_share_and_proof: Vec<u8>,
-    pub dwallet_cap_id: ObjectID,
-    pub encrypted_centralized_secret_share_and_proof: Vec<u8>,
-    pub encryption_key: Vec<u8>,
-    pub encryption_key_id: ObjectID,
-    pub encryption_key_address: SuiAddress,
     pub user_public_output: Vec<u8>,
-    pub signer_public_key: Vec<u8>,
+    pub dwallet_cap_id: ObjectID,
     pub dwallet_network_encryption_key_id: ObjectID,
     pub curve: u32,
+    pub user_secret_key_share: UserSecretKeyShareEventType,
+    pub sign_during_dkg_request: Option<SignDuringDKGRequestEvent>,
 }
 
 impl DWalletSessionEventTrait for DWalletDKGFirstRoundRequestEvent {

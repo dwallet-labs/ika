@@ -10,6 +10,7 @@ import {
 	userAndNetworkDKGOutputMatch,
 	verifyAndGetDWalletDKGPublicOutput,
 } from './cryptography.js';
+import { fromCurveToNumber, fromNumberToCurve } from './hash-signature-validation.js';
 import type { Curve, DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './types.js';
 import { encodeToASCII } from './utils.js';
 import { decrypt_user_share } from './wasm-loader.js';
@@ -187,7 +188,13 @@ export class UserShareEncryptionKeys {
 			dWallet.state.AwaitingKeyHolderSignature?.public_output,
 		);
 
-		if (!userAndNetworkDKGOutputMatch(userPublicOutput, dWalletPublicOutput)) {
+		if (
+			!userAndNetworkDKGOutputMatch(
+				fromNumberToCurve(dWallet.curve),
+				userPublicOutput,
+				dWalletPublicOutput,
+			)
+		) {
 			throw new Error('User public output does not match the DWallet public output');
 		}
 
@@ -251,8 +258,8 @@ export class UserShareEncryptionKeys {
 			verifiedPublicOutput: dWalletPublicOutput,
 			secretShare: Uint8Array.from(
 				await decrypt_user_share(
+					fromCurveToNumber(this.curve),
 					this.decryptionKey,
-					this.encryptionKey,
 					dWalletPublicOutput,
 					Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
 					protocolPublicParameters,
@@ -282,7 +289,7 @@ export class UserShareEncryptionKeys {
 				secretShareSigningSecretKey: Uint8Array.from(
 					this.#encryptedSecretShareSigningKeypair.getSecretKey(),
 				),
-				curve: this.curve,
+				curve: fromCurveToNumber(this.curve),
 			},
 		}).toBytes();
 	}
@@ -296,7 +303,7 @@ export class UserShareEncryptionKeys {
 			encryptionKey: new Uint8Array(encryptionKey),
 			decryptionKey: new Uint8Array(decryptionKey),
 			secretShareSigningSecretKey: new Uint8Array(secretShareSigningSecretKey),
-			curve: Number(curve) as Curve,
+			curve: fromNumberToCurve(Number(curve)),
 		};
 	}
 }

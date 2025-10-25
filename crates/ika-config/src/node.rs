@@ -79,6 +79,8 @@ pub struct SuiConnectorConfig {
     pub ika_common_package_id: ObjectID,
     /// The move package id of ika_dwallet_2pc_mpc on sui.
     pub ika_dwallet_2pc_mpc_package_id: ObjectID,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ika_dwallet_2pc_mpc_package_id_v2: Option<ObjectID>,
     /// The move package ID of `ika_system` on sui.
     pub ika_system_package_id: ObjectID,
     /// The object ID of the Ika system on sui.
@@ -107,7 +109,7 @@ pub struct SuiConnectorConfig {
 #[serde(rename_all = "kebab-case")]
 pub struct NodeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub root_seed_key_pair: Option<RootSeedWithPath>,
+    pub root_seed: Option<RootSeedWithPath>,
     #[serde(default = "default_authority_key_pair")]
     pub protocol_key_pair: AuthorityKeyPairWithPath,
     #[serde(default = "default_key_pair")]

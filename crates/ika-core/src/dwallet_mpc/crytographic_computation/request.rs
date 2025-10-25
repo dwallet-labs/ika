@@ -7,7 +7,6 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use dwallet_rng::RootSeed;
 use group::PartyID;
-use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use mpc::{GuaranteedOutputDeliveryRoundResult, WeightedThresholdAccessStructure};
@@ -32,7 +31,7 @@ impl Request {
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         info!(
-            mpc_protocol=?self.protocol_data.to_string(),
+            mpc_protocol=?self.protocol_data,
             validator=?self.validator_name,
             session_identifier=?computation_id.session_identifier,
             current_round=?computation_id.mpc_round,
