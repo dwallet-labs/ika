@@ -663,7 +663,7 @@ pub async fn ika_system_initialize(
     {
         let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
 
-        for (sig_algo, _) in signature_algorithms_to_hash_schemes {
+        for sig_algo in signature_algorithms_to_hash_schemes.keys() {
             let sig_algo_option = ptb.input(CallArg::Pure(bcs::to_bytes(&Some(*sig_algo))?))?;
 
             for protocol in &protocols_with_sig_algo {

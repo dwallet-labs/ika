@@ -3,7 +3,7 @@ use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     IntegrationTestState, send_start_dwallet_dkg_first_round_event,
-    send_start_dwallet_dkg_second_round_event, send_start_network_dkg_event_to_all_parties,
+    send_start_dwallet_dkg_second_round_event,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
@@ -18,16 +18,10 @@ use dwallet_mpc_centralized_party::{
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
 use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGSecondRoundOutput};
-use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletImportedKeyVerificationRequestEvent,
-    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
-    DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,
-    EncryptedShareVerificationRequestEvent, IkaNetworkConfig,
-    MakeDWalletUserSecretKeySharesPublicRequestEvent, SessionIdentifier, SessionType,
+     IkaNetworkConfig,
+    SessionIdentifier, SessionType,
 };
-use std::collections::HashMap;
-use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
 use tracing::info;
@@ -280,10 +274,10 @@ async fn create_imported_dwallet_v2() {
     let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
-        mut dwallet_mpc_services,
-        mut sui_data_senders,
-        mut sent_consensus_messages_collectors,
-        mut epoch_stores,
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {

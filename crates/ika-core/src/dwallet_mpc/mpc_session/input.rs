@@ -310,7 +310,7 @@ pub(crate) fn session_input_from_request(
 
             Ok((
                 PublicInput::Presign(PresignPublicInputByProtocol::try_new(
-                    signature_algorithm.clone(),
+                    *signature_algorithm,
                     encryption_key_public_data,
                     dwallet_public_output.clone(),
                 )?),
@@ -332,7 +332,7 @@ pub(crate) fn session_input_from_request(
                 message.clone(),
                 presign,
                 message_centralized_signature,
-                data.hash_scheme.clone(),
+                data.hash_scheme,
                 access_structure,
                 network_keys
                     .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?,

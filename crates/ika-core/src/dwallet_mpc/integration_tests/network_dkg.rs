@@ -45,13 +45,11 @@ use tracing::{error, info};
 async fn test_network_dkg_full_flow() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
-    let epoch_id = 1;
     let (
-        mut dwallet_mpc_services,
-        mut sui_data_senders,
-        mut sent_consensus_messages_collectors,
-        mut epoch_stores,
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = utils::IntegrationTestState {
@@ -72,7 +70,6 @@ async fn test_network_dkg_full_flow() {
 async fn test_network_key_reconfiguration() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
         dwallet_mpc_services,
@@ -91,14 +88,14 @@ async fn test_network_key_reconfiguration() {
         committee: committee.clone(),
         sui_data_senders,
     };
-    let (consensus_round, network_key_bytes, key_id) =
+    let (consensus_round, _, key_id) =
         create_network_key_test(&mut test_state).await;
     let (
         next_epoch_dwallet_mpc_services,
-        next_epoch_sui_data_senders,
-        next_epoch_sent_consensus_messages_collectors,
-        next_epoch_epoch_stores,
-        next_epoch_notify_services,
+        _next_epoch_sui_data_senders,
+        _next_epoch_sent_consensus_messages_collectors,
+        _next_epoch_epoch_stores,
+        _next_epoch_notify_services,
     ) = utils::create_dwallet_mpc_services(4);
     let mut next_committee = (*next_epoch_dwallet_mpc_services[0].committee.clone()).clone();
     next_committee.epoch = epoch_id + 1;
@@ -117,7 +114,7 @@ async fn test_network_key_reconfiguration() {
         3,
         key_id,
     );
-    let (consensus_round, reconfiguration_checkpoint) =
+    let (_, reconfiguration_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
     info!(
         ?reconfiguration_checkpoint,
@@ -200,7 +197,7 @@ pub(crate) fn send_start_network_key_reconfiguration_event(
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID,
 ) {
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
+    sui_data_senders.iter().for_each(|sui_data_sender| {
         info!(
             "Sending DWalletEncryptionKeyReconfigurationRequestEvent to epoch {}",
             epoch_id
