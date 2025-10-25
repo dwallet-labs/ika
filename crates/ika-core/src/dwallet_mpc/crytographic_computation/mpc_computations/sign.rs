@@ -180,9 +180,8 @@ impl SignAdvanceRequestByProtocol {
         consensus_round: u64,
         serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
     ) -> DwalletMPCResult<Option<Self>> {
-        let advance_request = match curve {
-            DWalletCurve::Secp256k1 => match protocol {
-                DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+        let advance_request = match protocol {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     let advance_request = mpc_computations::try_ready_to_advance::<
                         SignParty<Secp256k1ECDSAProtocol>,
                     >(
@@ -206,20 +205,7 @@ impl SignAdvanceRequestByProtocol {
 
                     advance_request.map(SignAdvanceRequestByProtocol::Secp256k1Taproot)
                 }
-                _ => {
-                    return Err(DwalletMPCError::CurveToProtocolMismatch {
-                        curve: curve.clone(),
-                        protocol: protocol.clone(),
-                    });
-                }
-            },
-            DWalletCurve::Ristretto => {
-                if protocol != &DWalletSignatureAlgorithm::SchnorrkelSubstrate {
-                    return Err(DwalletMPCError::CurveToProtocolMismatch {
-                        curve: curve.clone(),
-                        protocol: protocol.clone(),
-                    });
-                }
+                DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     SignParty<RistrettoSchnorrkelSubstrateProtocol>,
                 >(
@@ -231,13 +217,7 @@ impl SignAdvanceRequestByProtocol {
 
                 advance_request.map(SignAdvanceRequestByProtocol::Ristretto)
             }
-            DWalletCurve::Curve25519 => {
-                if protocol != &DWalletSignatureAlgorithm::EdDSA {
-                    return Err(DwalletMPCError::CurveToProtocolMismatch {
-                        curve: curve.clone(),
-                        protocol: protocol.clone(),
-                    });
-                }
+            DWalletSignatureAlgorithm::EdDSA => {
                 let advance_request =
                     mpc_computations::try_ready_to_advance::<SignParty<Curve25519EdDSAProtocol>>(
                         party_id,
@@ -248,13 +228,7 @@ impl SignAdvanceRequestByProtocol {
 
                 advance_request.map(SignAdvanceRequestByProtocol::Curve25519)
             }
-            DWalletCurve::Secp256r1 => {
-                if protocol != &DWalletSignatureAlgorithm::ECDSASecp256r1 {
-                    return Err(DwalletMPCError::CurveToProtocolMismatch {
-                        curve: curve.clone(),
-                        protocol: protocol.clone(),
-                    });
-                }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let advance_request =
                     mpc_computations::try_ready_to_advance::<SignParty<Secp256r1ECDSAProtocol>>(
                         party_id,
@@ -266,6 +240,7 @@ impl SignAdvanceRequestByProtocol {
                 advance_request.map(SignAdvanceRequestByProtocol::Secp256r1)
             }
         };
+
         Ok(advance_request)
     }
 }
@@ -279,8 +254,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
         consensus_round: u64,
         serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
     ) -> DwalletMPCResult<Option<Self>> {
-        let advance_request = match curve {
-            DWalletCurve::Secp256k1 => match protocol {
+        let advance_request = match protocol {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     let advance_request = mpc_computations::try_ready_to_advance::<
                         DKGAndSignParty<Secp256k1ECDSAProtocol>,
@@ -305,20 +279,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
 
                     advance_request.map(Self::Secp256k1Taproot)
                 }
-                _ => {
-                    return Err(DwalletMPCError::CurveToProtocolMismatch {
-                        curve: curve.clone(),
-                        protocol: protocol.clone(),
-                    });
-                }
-            },
-            DWalletCurve::Ristretto => {
-                if protocol != &DWalletSignatureAlgorithm::SchnorrkelSubstrate {
-                    return Err(DwalletMPCError::CurveToProtocolMismatch {
-                        curve: curve.clone(),
-                        protocol: protocol.clone(),
-                    });
-                }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol>,
                 >(
@@ -330,13 +291,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
 
                 advance_request.map(Self::Ristretto)
             }
-            DWalletCurve::Curve25519 => {
-                if protocol != &DWalletSignatureAlgorithm::EdDSA {
-                    return Err(DwalletMPCError::CurveToProtocolMismatch {
-                        curve: curve.clone(),
-                        protocol: protocol.clone(),
-                    });
-                }
+            DWalletSignatureAlgorithm::EdDSA => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     DKGAndSignParty<Curve25519EdDSAProtocol>,
                 >(
@@ -348,13 +303,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
 
                 advance_request.map(Self::Curve25519)
             }
-            DWalletCurve::Secp256r1 => {
-                if protocol != &DWalletSignatureAlgorithm::ECDSASecp256r1 {
-                    return Err(DwalletMPCError::CurveToProtocolMismatch {
-                        curve: curve.clone(),
-                        protocol: protocol.clone(),
-                    });
-                }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     DKGAndSignParty<Secp256r1ECDSAProtocol>,
                 >(
@@ -367,6 +316,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                 advance_request.map(Self::Secp256r1)
             }
         };
+
         Ok(advance_request)
     }
 }
@@ -392,6 +342,7 @@ impl SignPublicInputByProtocol {
                     .secp256k1_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
+
                 Ok(SignPublicInputByProtocol::Secp256k1ECDSA(
                     match bcs::from_bytes(presign).map_err(|e| {
                         DwalletMPCError::BcsError(bcs::Error::Custom(
@@ -406,6 +357,7 @@ impl SignPublicInputByProtocol {
                                         .to_string(),
                                 ))
                             })?;
+
                             let centralized_signed_message =
                                 bcs::from_bytes(message_centralized_signature).map_err(|e| {
                                     DwalletMPCError::BcsError(bcs::Error::Custom(
@@ -413,6 +365,7 @@ impl SignPublicInputByProtocol {
                                             .to_string(),
                                     ))
                                 })?;
+
                             let decentralized_dkg_output = match dkg_output {
                                 VersionedDwalletDKGPublicOutput::V1(output) => {
                                     bcs::from_bytes::<<Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice()).map_err(
@@ -437,6 +390,7 @@ impl SignPublicInputByProtocol {
                                     centralized_signed_message
                                 }
                             };
+
                             let presign: twopc_mpc::ecdsa::presign::Presign<
                                 group::secp256k1::group_element::Value,
                                 group::Value<
@@ -449,6 +403,7 @@ impl SignPublicInputByProtocol {
                                     "Failed to deserialize presign V1".to_string(),
                                 ))
                             })?;
+
                             let public_input = <SignParty<Secp256k1ECDSAProtocol> as Party>::PublicInput::from((
                                 expected_decrypters,
                                 protocol_public_parameters,
@@ -588,6 +543,7 @@ impl DKGAndSignPublicInputByProtocol {
                 else {
                     unreachable!("Curve and DKG public input type mismatch");
                 };
+
                 Ok(DKGAndSignPublicInputByProtocol::Secp256k1ECDSA(
                     generate_dkg_and_sign_public_input::<Secp256k1ECDSAProtocol>(
                         protocol_public_parameters,
@@ -611,6 +567,7 @@ impl DKGAndSignPublicInputByProtocol {
                 else {
                     unreachable!("Curve and DKG public input type mismatch ");
                 };
+
                 let public_input = generate_dkg_and_sign_public_input::<Secp256k1TaprootProtocol>(
                     protocol_public_parameters,
                     public_input,
@@ -636,6 +593,7 @@ impl DKGAndSignPublicInputByProtocol {
                 else {
                     unreachable!("Curve and DKG public input type mismatch ");
                 };
+
                 let public_input =
                     generate_dkg_and_sign_public_input::<RistrettoSchnorrkelSubstrateProtocol>(
                         protocol_public_parameters,
@@ -660,6 +618,7 @@ impl DKGAndSignPublicInputByProtocol {
                 else {
                     unreachable!("Curve and DKG public input type mismatch ");
                 };
+
                 let public_input = generate_dkg_and_sign_public_input::<Curve25519EdDSAProtocol>(
                     protocol_public_parameters,
                     public_input,
@@ -683,6 +642,7 @@ impl DKGAndSignPublicInputByProtocol {
                 else {
                     unreachable!("Curve and DKG public input type mismatch ");
                 };
+
                 let public_input = generate_dkg_and_sign_public_input::<Secp256r1ECDSAProtocol>(
                     protocol_public_parameters,
                     public_input,
@@ -822,17 +782,20 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
             }
             VersionedPresignOutput::V2(presign) => presign,
         };
+
         let dkg_output = bcs::from_bytes(dkg_output).map_err(|e| {
             DwalletMPCError::BcsError(bcs::Error::Custom(format!(
                 "Failed to deserialize decentralized DKG versioned output: {e}"
             )))
         })?;
+
         let centralized_signed_message =
             bcs::from_bytes(centralized_signed_message).map_err(|e| {
                 DwalletMPCError::BcsError(bcs::Error::Custom(format!(
                     "Failed to deserialize centralized signed message: {e}"
                 )))
             })?;
+
         let decentralized_dkg_output = match dkg_output {
             VersionedDwalletDKGPublicOutput::V1(output) => {
                 bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())
@@ -901,19 +864,11 @@ impl<P: twopc_mpc::sign::Protocol> DKGAndSignPartyPublicInputGenerator<P> for DK
     ) -> DwalletMPCResult<<DKGAndSignParty<P> as Party>::PublicInput> {
         let presign = match bcs::from_bytes(&presign)? {
             VersionedPresignOutput::V1(_) => {
-                unreachable!(
-                    "Presign
-                V1
-                should
-                have
-                been
-                handled
-                separately
-                "
-                )
+                unreachable!("Presign V1 should have been handled separately")
             }
             VersionedPresignOutput::V2(presign) => presign,
         };
+
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
         let centralized_signed_message = match centralized_signed_message {
             VersionedUserSignedMessage::V1(centralized_signed_message) => {
@@ -951,7 +906,7 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
 ) -> DwalletMPCResult<()> {
     let presign = match bcs::from_bytes::<VersionedPresignOutput>(&presign)? {
         VersionedPresignOutput::V1(_) => {
-            unreachable!()
+            unreachable!("Presign V1 should have been handled separately")
         }
         VersionedPresignOutput::V2(presign) => presign,
     };
@@ -1023,6 +978,7 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
                     &sign_data.signature_algorithm,
                     public_output_value,
                 );
+
             if parsed_signature_result.is_err() {
                 error!(
                     session_identifier=?session_id,
@@ -1032,8 +988,10 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
                     should_never_happen = true,
                     "failed to deserialize sign session result "
                 );
+
                 return Err(parsed_signature_result.err().unwrap());
             }
+
             // For Sign protocol, we don't need to wrap the output with version like presign does
             // since the output is already in the correct format
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
@@ -1082,6 +1040,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
                     &sign_data.signature_algorithm,
                     bcs::to_bytes(&signature_output)?,
                 );
+
             if parsed_signature_result.is_err() {
                 error!(
                     session_identifier=?session_id,
@@ -1093,6 +1052,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
                 );
                 return Err(parsed_signature_result.err().unwrap());
             }
+
             // For Sign protocol, we don't need to wrap the output with version like presign does
             // since the output is a standardized signature
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {

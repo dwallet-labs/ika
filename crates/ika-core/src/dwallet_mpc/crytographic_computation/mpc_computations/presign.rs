@@ -138,6 +138,7 @@ impl PresignAdvanceRequestByProtocol {
                 advance_request.map(PresignAdvanceRequestByProtocol::Secp256r1ECDSA)
             }
         };
+
         Ok(advance_request)
     }
 }
@@ -178,6 +179,7 @@ impl PresignPublicInputByProtocol {
             Some(decentralized_party_dkg_output),
         )
             .into();
+
         Ok(PresignPublicInputByProtocol::Secp256k1ECDSA(public_input))
     }
 
@@ -190,6 +192,7 @@ impl PresignPublicInputByProtocol {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
+
                 let public_input =
                     <PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
@@ -198,6 +201,7 @@ impl PresignPublicInputByProtocol {
                                 let versioned_output = bcs::from_bytes::<
                                     <Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
+
                                 let output = match versioned_output {
                                     VersionedOutput::TargetedPublicDKGOutput(output) => output,
                                     VersionedOutput::UniversalPublicDKGOutput {
@@ -208,6 +212,7 @@ impl PresignPublicInputByProtocol {
                                         ))
                                     }
                                 };
+
                                 Some(output)
                             }
                             None => None,
@@ -227,6 +232,7 @@ impl PresignPublicInputByProtocol {
                                 let versioned_output = bcs::from_bytes::<
                                     <RistrettoSchnorrkelSubstrateProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
+
                                 let output = match versioned_output {
                                     VersionedOutput::TargetedPublicDKGOutput(output) => output,
                                     VersionedOutput::UniversalPublicDKGOutput {
@@ -237,6 +243,7 @@ impl PresignPublicInputByProtocol {
                                         ))
                                     }
                                 };
+
                                 Some(output)
                             },
                             None => None,
@@ -257,6 +264,7 @@ impl PresignPublicInputByProtocol {
                                 let versioned_output = bcs::from_bytes::<
                                     <Curve25519EdDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
+
                                 let output = match versioned_output {
                                     VersionedOutput::TargetedPublicDKGOutput(output) => output,
                                     VersionedOutput::UniversalPublicDKGOutput {
@@ -265,7 +273,9 @@ impl PresignPublicInputByProtocol {
                                         return Err(DwalletMPCError::InvalidInput(
                                             "Universal DKG output is not supported for v2 non-global presign".to_string(),
                                         ))
-                                    }                                };
+                                    }
+                                };
+
                                 Some(output)
                             }
                             None => None,
@@ -286,6 +296,7 @@ impl PresignPublicInputByProtocol {
                                 let versioned_output = bcs::from_bytes::<
                                     <Secp256r1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
+
                                 let output = match versioned_output {
                                     VersionedOutput::TargetedPublicDKGOutput(output) => output,
                                     VersionedOutput::UniversalPublicDKGOutput {
@@ -296,6 +307,7 @@ impl PresignPublicInputByProtocol {
                                         ))
                                     }
                                 };
+
                                 Some(output)
                             }
                             None => None,
@@ -316,6 +328,7 @@ impl PresignPublicInputByProtocol {
                                 let versioned_output = bcs::from_bytes::<
                                     <Secp256k1TaprootProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
+
                                 let output = match versioned_output {
                                     VersionedOutput::TargetedPublicDKGOutput(output) => output,
                                     VersionedOutput::UniversalPublicDKGOutput {
@@ -326,6 +339,7 @@ impl PresignPublicInputByProtocol {
                                         ))
                                     }
                                 };
+
                                 Some(output)
                             }
                             None => None,
@@ -377,12 +391,12 @@ pub fn compute_presign<P: presign::Protocol>(
                         bcs::from_bytes(&public_output_value.clone())?;
 
                     let targeted_presign = match versioned_presign {
+                        twopc_mpc::ecdsa::presign::VersionedPresign::TargetedPresign(presign) => {
+                            presign
+                        },
                         twopc_mpc::ecdsa::presign::VersionedPresign::UniversalPresign(_) => {
                             // In protocol version 1, we never generate universal presigns
                             unreachable!()
-                        }
-                        twopc_mpc::ecdsa::presign::VersionedPresign::TargetedPresign(presign) => {
-                            presign
                         }
                     };
 
@@ -397,6 +411,7 @@ pub fn compute_presign<P: presign::Protocol>(
                     ));
                 }
             };
+
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
                 malicious_parties,

@@ -86,6 +86,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                                     .to_string(),
                             ));
                         };
+
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
                                 &current_access_structure,
@@ -98,6 +99,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                                 bcs::from_bytes(&latest_reconfiguration_public_output)?,
                             )
                                 .map_err(DwalletMPCError::from)?;
+
                         Ok(public_input)
                     }
                 }
@@ -107,6 +109,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                     None => {
                         let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
                             bcs::from_bytes(&network_dkg_public_output)?;
+
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_dkg_output(
                                 &current_access_structure,
@@ -131,8 +134,10 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                                     .to_string(),
                             ));
                         };
+
                         let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
                             bcs::from_bytes(&network_dkg_public_output)?;
+
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
                                 &current_access_structure,

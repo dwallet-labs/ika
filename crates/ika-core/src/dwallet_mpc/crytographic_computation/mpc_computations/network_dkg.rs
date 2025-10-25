@@ -346,6 +346,7 @@ pub(crate) fn advance_network_dkg_v1(
         &public_input,
         rng,
     );
+
     let res = match result.clone() {
         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
             public_output_value,
@@ -386,6 +387,7 @@ pub(crate) fn advance_network_dkg_v2(
         &public_input,
         rng,
     );
+
     let res = match result.clone() {
         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
             public_output_value,
