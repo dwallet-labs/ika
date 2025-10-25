@@ -605,7 +605,6 @@ impl DWalletDKGSecondPartyPublicInputGenerator for Secp256K1DWalletDKGParty {
         first_round_output_buf: &SerializedWrappedMPCPublicOutput,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
     ) -> DwalletMPCResult<<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput> {
-        // TODO (#1482): Use this hack only for V1 dWallet DKG outputs
         let first_round_output_buf: VersionedDwalletDKGFirstRoundPublicOutput =
             bcs::from_bytes(first_round_output_buf).map_err(DwalletMPCError::BcsError)?;
 
@@ -615,10 +614,8 @@ impl DWalletDKGSecondPartyPublicInputGenerator for Secp256K1DWalletDKGParty {
 
         match first_round_output_buf {
             VersionedDwalletDKGFirstRoundPublicOutput::V1(first_round_output) => {
-                let (first_round_output, _) =
-                    bcs::from_bytes::<(Vec<u8>, CommitmentSizedNumber)>(&first_round_output)?;
-                let [first_part, second_part]: <DWalletDKGFirstParty as Party>::PublicOutput =
-                    bcs::from_bytes(&first_round_output).map_err(DwalletMPCError::BcsError)?;
+                let ([first_part, second_part], _): (<DWalletDKGFirstParty as mpc::Party>::PublicOutputValue, CommitmentSizedNumber) =
+                    bcs::from_bytes(&first_round_output)?;
                 let (first_first_part, first_second_part) = first_part.into();
                 let (second_first_part, second_second_part) = second_part.into();
                 // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.
@@ -752,8 +749,6 @@ pub fn compute_imported_key_verification<P: Protocol>(
     access_structure: &WeightedThresholdAccessStructure,
     advance_request: AdvanceRequest<<P::TrustedDealerDKGDecentralizedParty as Party>::Message>,
     public_input: &<P::TrustedDealerDKGDecentralizedParty as Party>::PublicInput,
-    protocol_public_parameters: ProtocolPublicParametersByCurve,
-    data: &ImportedKeyVerificationData,
     protocol_version: ProtocolVersion,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
