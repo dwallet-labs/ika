@@ -89,7 +89,6 @@ pub(crate) enum ProtocolCryptographicData {
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
     NetworkEncryptionKeyDkgV2 {
-        data: NetworkEncryptionKeyDkgData,
         public_input: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
         advance_request:
             AdvanceRequest<<twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::Message>,

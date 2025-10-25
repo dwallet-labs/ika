@@ -28,7 +28,7 @@ use crate::dwallet_mpc::sign::{
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
     NetworkEncryptionKeyDkgData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
-    NetworkEncryptionKeyV2ReconfigurationData, ProtocolData, SignData,
+    NetworkEncryptionKeyV2ReconfigurationData, ProtocolData,
 };
 use class_groups::dkg::Secp256k1Party;
 use commitment::CommitmentSizedNumber;
@@ -215,7 +215,6 @@ impl ProtocolCryptographicData {
                 };
 
                 let advance_request_result = SignAdvanceRequestByProtocol::try_new(
-                    &data.curve,
                     &data.signature_algorithm,
                     party_id,
                     access_structure,
@@ -247,7 +246,6 @@ impl ProtocolCryptographicData {
                 };
 
                 let advance_request_result = DWalletDKGAndSignAdvanceRequestByProtocol::try_new(
-                    &data.curve,
                     &data.signature_algorithm,
                     party_id,
                     access_structure,
@@ -311,7 +309,6 @@ impl ProtocolCryptographicData {
                         return Ok(None);
                     };
                     ProtocolCryptographicData::NetworkEncryptionKeyDkgV2 {
-                        data: NetworkEncryptionKeyDkgData {},
                         public_input: public_input.clone(),
                         advance_request,
                         class_groups_decryption_key,

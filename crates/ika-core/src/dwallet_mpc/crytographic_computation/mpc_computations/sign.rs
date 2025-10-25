@@ -13,7 +13,7 @@ use crate::request_protocol_data::{DWalletDKGAndSignData, SignData};
 use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureAlgorithm, MPCPublicOutput, NetworkEncryptionKeyPublicDataTrait,
+    DWalletSignatureAlgorithm, MPCPublicOutput, NetworkEncryptionKeyPublicDataTrait,
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
     VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput, VersionedUserSignedMessage,
 };
@@ -34,10 +34,8 @@ use tracing::error;
 use twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS;
 use twopc_mpc::{dkg, sign};
 
-pub(crate) type SignParty<P: twopc_mpc::sign::Protocol> =
-    <P as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
-pub(crate) type DKGAndSignParty<P: twopc_mpc::sign::Protocol> =
-    <P as twopc_mpc::sign::Protocol>::DKGSignDecentralizedParty;
+pub(crate) type SignParty<P> = <P as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
+pub(crate) type DKGAndSignParty<P> = <P as twopc_mpc::sign::Protocol>::DKGSignDecentralizedParty;
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub(crate) enum SignPublicInputByProtocol {
@@ -173,7 +171,6 @@ fn generate_expected_decrypters(
 
 impl SignAdvanceRequestByProtocol {
     pub fn try_new(
-        curve: &DWalletCurve,
         protocol: &DWalletSignatureAlgorithm,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
@@ -245,7 +242,6 @@ impl SignAdvanceRequestByProtocol {
 
 impl DWalletDKGAndSignAdvanceRequestByProtocol {
     pub fn try_new(
-        curve: &DWalletCurve,
         protocol: &DWalletSignatureAlgorithm,
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
@@ -342,14 +338,14 @@ impl SignPublicInputByProtocol {
                     .secp256k1_protocol_public_parameters();
 
                 Ok(SignPublicInputByProtocol::Secp256k1ECDSA(
-                    match bcs::from_bytes(presign).map_err(|e| {
+                    match bcs::from_bytes(presign).map_err(|_| {
                         DwalletMPCError::BcsError(bcs::Error::Custom(
                             "Failed to deserialize presign output".to_string(),
                         ))
                     })? {
                         VersionedPresignOutput::V1(presign) => {
                             let dkg_output = bcs::from_bytes(dwallet_decentralized_public_output)
-                                .map_err(|e| {
+                                .map_err(|_| {
                                 DwalletMPCError::BcsError(bcs::Error::Custom(
                                     "Failed to deserialize decentralized DKG versioned output v1"
                                         .to_string(),
@@ -357,7 +353,7 @@ impl SignPublicInputByProtocol {
                             })?;
 
                             let centralized_signed_message =
-                                bcs::from_bytes(message_centralized_signature).map_err(|e| {
+                                bcs::from_bytes(message_centralized_signature).map_err(|_| {
                                     DwalletMPCError::BcsError(bcs::Error::Custom(
                                         "Failed to deserialize centralized signed message"
                                             .to_string(),
@@ -367,7 +363,7 @@ impl SignPublicInputByProtocol {
                             let decentralized_dkg_output = match dkg_output {
                                 VersionedDwalletDKGPublicOutput::V1(output) => {
                                     bcs::from_bytes::<<Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice()).map_err(
-                                        |e| DwalletMPCError::BcsError(bcs::Error::Custom(
+                                        |_| DwalletMPCError::BcsError(bcs::Error::Custom(
                                             "Failed to deserialize decentralized DKG output V1"
                                                 .to_string(),
                                         )),
@@ -375,7 +371,7 @@ impl SignPublicInputByProtocol {
                                 }
                                 VersionedDwalletDKGPublicOutput::V2(output) => {
                                     bcs::from_bytes::<<Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(output.as_slice()).map_err(
-                                        |e| DwalletMPCError::BcsError(bcs::Error::Custom(
+                                        |_| DwalletMPCError::BcsError(bcs::Error::Custom(
                                             "Failed to deserialize decentralized DKG output V2"
                                                 .to_string(),
                                         ))
@@ -396,7 +392,7 @@ impl SignPublicInputByProtocol {
                                         { NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
                                     >,
                                 >,
-                            > = bcs::from_bytes(&presign).map_err(|e| {
+                            > = bcs::from_bytes(&presign).map_err(|_| {
                                 DwalletMPCError::BcsError(bcs::Error::Custom(
                                     "Failed to deserialize presign V1".to_string(),
                                 ))
@@ -411,7 +407,7 @@ impl SignPublicInputByProtocol {
                                 presign.into(),
                                 bcs::from_bytes::<<Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage>(
                                     &centralized_signed_message,
-                                ).map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(
+                                ).map_err(|_| DwalletMPCError::BcsError(bcs::Error::Custom(
                                     "Failed to deserialize sign message".to_string(),
                                 )))?,
                                 decryption_pp,

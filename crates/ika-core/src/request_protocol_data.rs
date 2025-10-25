@@ -1,4 +1,3 @@
-use crate::request_protocol_data::ProtocolData::DWalletDKGAndSign;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, SerializedWrappedMPCPublicOutput,
 };
@@ -6,7 +5,7 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
 use group::HashScheme;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent, DWalletDKGSecondRoundRequestEvent,
     DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,

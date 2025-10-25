@@ -15,7 +15,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletSignatureAlgorithm, VersionedDwalletDKGPublicOutput, VersionedPresignOutput,
     VersionedUserSignedMessage,
 };
-use group::{HashScheme, OsCsRng};
+use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
@@ -127,9 +127,6 @@ impl ProtocolCryptographicData {
                     let partially_signed_message = match partially_signed_message {
                         VersionedUserSignedMessage::V1(partially_signed_message) => {
                             partially_signed_message
-                        }
-                        _ => {
-                            return Err(DwalletMPCError::InvalidPartiallySignedMessageVersion);
                         }
                     };
                     let partial: <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage =

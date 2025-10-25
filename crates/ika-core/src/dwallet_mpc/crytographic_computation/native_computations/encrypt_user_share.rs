@@ -66,10 +66,10 @@ fn verify_centralized_secret_key_share_proof_v1(
     let ProtocolPublicParametersByCurve::Secp256k1(protocol_public_parameters) =
         protocol_public_parameters
     else {
-        return anyhow::bail!(
+        return Err(anyhow::format_err!(
             "Secret key share proof verification for the given curve is not implemented for v1 {}",
             protocol_public_parameters.to_string()
-        );
+        ));
     };
 
     let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyTargetedDKGOutput = bcs::from_bytes(&dkg_public_output).map_err(|e| anyhow::anyhow!("Failed to deserialize dkg public output: {}", e))?;

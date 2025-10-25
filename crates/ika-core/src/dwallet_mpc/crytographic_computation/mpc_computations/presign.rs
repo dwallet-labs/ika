@@ -18,21 +18,19 @@ use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
-    RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol,
-    Secp256r1ECDSAProtocol, SessionIdentifier,
+    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
+    Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
-use tracing::error;
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
 
-pub(crate) type PresignParty<P: Protocol> = <P as Protocol>::PresignParty;
+pub(crate) type PresignParty<P> = <P as Protocol>::PresignParty;
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub(crate) enum PresignPublicInputByProtocol {

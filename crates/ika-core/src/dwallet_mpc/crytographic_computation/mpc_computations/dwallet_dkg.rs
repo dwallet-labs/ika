@@ -5,15 +5,9 @@
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
-use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
-use crate::dwallet_mpc::encrypt_user_share::verify_encrypted_share;
-use crate::request_protocol_data::ImportedKeyVerificationData;
-use class_groups::publicly_verifiable_secret_sharing::BaseProtocolContext;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DKGDecentralizedPartyVersionedOutputSecp256k1, DWalletCurve,
-    NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
-    VersionedCentralizedPartyImportedDWalletPublicOutput,
+    DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
     VersionedImportedDwalletOutgoingMessage, VersionedNetworkEncryptionKeyPublicData,
@@ -24,7 +18,7 @@ use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
-    Secp256r1AsyncDKGProtocol, SessionIdentifier, UserSecretKeyShareEventType,
+    Secp256r1AsyncDKGProtocol, UserSecretKeyShareEventType,
 };
 use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
 use mpc::{
@@ -254,12 +248,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                         .map_err(DwalletMPCError::BcsError)?;
 
                 let VersionedImportedDwalletOutgoingMessage::V1(centralized_party_message) =
-                    centralized_party_message
-                else {
-                    return Err(
-                        DwalletMPCError::InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
-                    );
-                };
+                    centralized_party_message;
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
                 let public_input = (
@@ -280,12 +269,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                         .map_err(DwalletMPCError::BcsError)?;
 
                 let VersionedImportedDwalletOutgoingMessage::V1(centralized_party_message) =
-                    centralized_party_message
-                else {
-                    return Err(
-                        DwalletMPCError::InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
-                    );
-                };
+                    centralized_party_message;
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
                 let public_input = (
@@ -306,12 +290,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                         .map_err(DwalletMPCError::BcsError)?;
 
                 let VersionedImportedDwalletOutgoingMessage::V1(centralized_party_message) =
-                    centralized_party_message
-                else {
-                    return Err(
-                        DwalletMPCError::InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
-                    );
-                };
+                    centralized_party_message;
                 let centralized_party_message = bcs::from_bytes(&centralized_party_message)?;
 
                 let public_input = (
@@ -405,13 +384,13 @@ where
                 let VersionedEncryptedUserShare::V1(encrypted_secret_key_share_message) =
                     bcs::from_bytes(&encrypted_secret_key_share_message)?;
                 CentralizedPartyKeyShareVerification::Encrypted {
-                    encryption_key: bcs::from_bytes(&encryption_key).map_err(|e| {
+                    encryption_key: bcs::from_bytes(&encryption_key).map_err(|_| {
                         bcs::Error::Custom("failed to deserialize encryption key".to_string())
                     })?,
                     encrypted_secret_key_share_message: bcs::from_bytes(
                         &encrypted_secret_key_share_message,
                     )
-                    .map_err(|e| {
+                    .map_err(|_| {
                         bcs::Error::Custom(
                             "failed to deserialize encrypted secret key share message".to_string(),
                         )
@@ -427,7 +406,7 @@ where
                     centralized_party_secret_key_share: bcs::from_bytes(
                         &centralized_party_secret_key_share,
                     )
-                    .map_err(|e| {
+                    .map_err(|_| {
                         bcs::Error::Custom(
                             "failed to deserialize centralized party secret key share".to_string(),
                         )
@@ -446,7 +425,7 @@ impl DWalletDKGPublicInputByCurve {
         centralized_party_key_share_verification: BytesCentralizedPartyKeyShareVerification,
     ) -> DwalletMPCResult<Self> {
         let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
-            bcs::from_bytes(centralized_party_public_key_share_buf).map_err(|e| {
+            bcs::from_bytes(centralized_party_public_key_share_buf).map_err(|_| {
                 bcs::Error::Custom(
                     "failed to deserialize centralized party public key share".to_string(),
                 )
@@ -456,7 +435,7 @@ impl DWalletDKGPublicInputByCurve {
             DWalletCurve::Secp256k1 => {
                 let centralized_party_public_key_share = match centralized_party_public_key_share {
                     VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share) => {
-                        bcs::from_bytes(&centralized_party_public_key_share).map_err(|e| {
+                        bcs::from_bytes(&centralized_party_public_key_share).map_err(|_| {
                             DwalletMPCError::BcsError(bcs::Error::Custom(
                                 "failed to deserialize centralized party public key share"
                                     .to_string(),

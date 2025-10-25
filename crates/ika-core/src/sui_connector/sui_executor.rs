@@ -13,7 +13,6 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
 };
 use fastcrypto::traits::ToFromBytes;
 use ika_config::node::RunWithRange;
-use ika_protocol_config::ProtocolConfig;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::EpochId;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -29,8 +28,7 @@ use ika_types::sui::{
     ADVANCE_EPOCH_FUNCTION_NAME, APPEND_VECTOR_FUNCTION_NAME,
     CREATE_SYSTEM_CURRENT_STATUS_INFO_FUNCTION_NAME, DWalletCoordinator, DWalletCoordinatorInner,
     INITIATE_ADVANCE_EPOCH_FUNCTION_NAME, INITIATE_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME,
-    PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, PricingInfoKey,
-    REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME,
+    PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME,
     REQUEST_NETWORK_ENCRYPTION_KEY_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME, SYSTEM_MODULE_NAME,
     System, SystemInner, SystemInnerTrait, VECTOR_MODULE_NAME,
 };

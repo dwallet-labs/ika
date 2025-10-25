@@ -15,7 +15,6 @@ use ika_types::messages_dwallet_mpc::{
     DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent,
     FutureSignRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent,
     PresignRequestEvent, SESSIONS_MANAGER_MODULE_NAME, SignDuringDKGRequestEvent, SignRequestEvent,
-    UserSecretKeyShareEventType,
 };
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;
