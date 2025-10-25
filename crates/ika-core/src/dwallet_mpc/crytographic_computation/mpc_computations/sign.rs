@@ -14,7 +14,7 @@ use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, MPCPublicOutput, NetworkEncryptionKeyPublicDataTrait,
-    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
     VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput, VersionedUserSignedMessage,
 };
 use group::CsRng;
@@ -414,7 +414,7 @@ impl SignPublicInputByProtocol {
                                     ))
                                 })?;
                             let decentralized_dkg_output = match dkg_output {
-                                VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+                                VersionedDwalletDKGPublicOutput::V1(output) => {
                                     bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice()).map_err(
                                         |e| DwalletMPCError::BcsError(bcs::Error::Custom(
                                             "Failed to deserialize decentralized DKG output V1"
@@ -422,7 +422,7 @@ impl SignPublicInputByProtocol {
                                         )),
                                     )?.into()
                                 }
-                                VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+                                VersionedDwalletDKGPublicOutput::V2(output) => {
                                     bcs::from_bytes::<<Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(output.as_slice()).map_err(
                                         |e| DwalletMPCError::BcsError(bcs::Error::Custom(
                                             "Failed to deserialize decentralized DKG output V2"
@@ -834,7 +834,7 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
                 )))
             })?;
         let decentralized_dkg_output = match dkg_output {
-            VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+            VersionedDwalletDKGPublicOutput::V1(output) => {
                 bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())
                     .map_err(|e| {
                         DwalletMPCError::BcsError(bcs::Error::Custom(format!(
@@ -843,7 +843,7 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
                     })?
                     .into()
             }
-            VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+            VersionedDwalletDKGPublicOutput::V2(output) => {
                 bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice()).map_err(
                     |e| {
                         DwalletMPCError::BcsError(bcs::Error::Custom(format!(
@@ -955,15 +955,15 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
         }
         VersionedPresignOutput::V2(presign) => presign,
     };
-    let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput =
+    let dkg_output: VersionedDwalletDKGPublicOutput =
         bcs::from_bytes(dwallet_decentralized_output)?;
     let partially_signed_message: VersionedUserSignedMessage =
         bcs::from_bytes(partially_signed_message)?;
     let decentralized_dkg_output = match dkg_output {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+        VersionedDwalletDKGPublicOutput::V1(output) => {
             bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
         }
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+        VersionedDwalletDKGPublicOutput::V2(output) => {
             bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
         }
     };
@@ -1097,7 +1097,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
             // since the output is a standardized signature
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value: bcs::to_bytes(&(
-                    bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V2(
+                    bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2(
                         bcs::to_bytes(&dwallet_dkg_output)?,
                     ))?,
                     &parsed_signature_result.unwrap(),

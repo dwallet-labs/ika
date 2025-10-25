@@ -36,7 +36,7 @@ use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletSignatureAlgorithm, ReconfigurationParty, ReconfigurationV2Party,
     VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput,
+    VersionedDwalletDKGPublicOutput,
 };
 use dwallet_rng::RootSeed;
 use group::PartyID;
@@ -591,7 +591,7 @@ impl ProtocolCryptographicData {
                         &data.encrypted_centralized_secret_share_and_proof,
                         // TODO (#1482): Check the protocol config and use this hack only for V1
                         // DWallets.
-                        &bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
+                        &bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V1(
                             public_output_value.clone(),
                         ))?,
                         &data.encryption_key,
@@ -615,7 +615,7 @@ impl ProtocolCryptographicData {
                         let decentralized_output: <Secp256K1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput = decentralized_output.into();
 
                         let public_output_value =
-                            bcs::to_bytes(&VersionedDwalletDKGSecondRoundPublicOutput::V1(
+                            bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V1(
                                 bcs::to_bytes(&decentralized_output).unwrap(),
                             ))?;
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {

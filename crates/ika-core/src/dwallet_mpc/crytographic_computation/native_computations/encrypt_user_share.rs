@@ -3,7 +3,7 @@
 
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use dwallet_mpc_types::dwallet_mpc::{
-    MPCPublicOutput, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    MPCPublicOutput, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
     VersionedEncryptedUserShare,
 };
 use group::OsCsRng;
@@ -27,7 +27,7 @@ pub(crate) fn verify_encrypted_share(
 ) -> DwalletMPCResult<()> {
     let encrypted_centralized_secret_share_and_proof: VersionedEncryptedUserShare =
         bcs::from_bytes(encrypted_centralized_secret_share_and_proof)?;
-    let decentralized_public_output: VersionedDwalletDKGSecondRoundPublicOutput =
+    let decentralized_public_output: VersionedDwalletDKGPublicOutput =
         bcs::from_bytes(decentralized_public_output)?;
 
     match (
@@ -36,7 +36,7 @@ pub(crate) fn verify_encrypted_share(
     ) {
         (
             VersionedEncryptedUserShare::V1(encrypted_centralized_secret_share_and_proof),
-            VersionedDwalletDKGSecondRoundPublicOutput::V1(decentralized_public_output),
+            VersionedDwalletDKGPublicOutput::V1(decentralized_public_output),
         ) => verify_centralized_secret_key_share_proof_v1(
             encrypted_centralized_secret_share_and_proof,
             decentralized_public_output,
@@ -46,7 +46,7 @@ pub(crate) fn verify_encrypted_share(
         .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string())),
         (
             VersionedEncryptedUserShare::V1(encrypted_centralized_secret_share_and_proof),
-            VersionedDwalletDKGSecondRoundPublicOutput::V2(decentralized_public_output),
+            VersionedDwalletDKGPublicOutput::V2(decentralized_public_output),
         ) => verify_centralized_secret_key_share_proof_v2(
             encrypted_centralized_secret_share_and_proof,
             decentralized_public_output,

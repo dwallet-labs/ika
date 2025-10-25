@@ -12,7 +12,7 @@ use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::ProtocolData;
 use class_groups::CiphertextSpaceGroupElement;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletSignatureAlgorithm, VersionedDwalletDKGSecondRoundPublicOutput, VersionedPresignOutput,
+    DWalletSignatureAlgorithm, VersionedDwalletDKGPublicOutput, VersionedPresignOutput,
     VersionedUserSignedMessage,
 };
 use group::{HashScheme, OsCsRng};
@@ -110,10 +110,10 @@ impl ProtocolCryptographicData {
                     let message = &data.message;
                     let hash_scheme = data.hash_scheme.clone();
                     let decentralized_dkg_output = match dkg_output {
-                            VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
+                            VersionedDwalletDKGPublicOutput::V1(output) => {
                                 bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
                             }
-                            VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
+                            VersionedDwalletDKGPublicOutput::V2(output) => {
                                 bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(output.as_slice())?
                             }
                         };

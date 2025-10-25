@@ -4,7 +4,7 @@
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, MPCPublicOutput, SerializedWrappedMPCPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedImportedSecretShare,
+    VersionedDwalletDKGPublicOutput, VersionedImportedSecretShare,
 };
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
@@ -23,12 +23,12 @@ pub fn verify_secret_share(
     protocol_public_parameters: ProtocolPublicParametersByCurve,
 ) -> DwalletMPCResult<()> {
     let secret_share: VersionedImportedSecretShare = bcs::from_bytes(&secret_share)?;
-    let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput = bcs::from_bytes(&dkg_output)?;
+    let dkg_output: VersionedDwalletDKGPublicOutput = bcs::from_bytes(&dkg_output)?;
 
     match (secret_share, dkg_output) {
         (
             VersionedImportedSecretShare::V1(secret_share),
-            VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output),
+            VersionedDwalletDKGPublicOutput::V1(dkg_output),
         ) => verify_centralized_party_secret_key_share_v1(
             secret_share,
             dkg_output,
@@ -37,7 +37,7 @@ pub fn verify_secret_share(
         .map_err(|e| DwalletMPCError::SecretShareVerificationFailed(e.to_string())),
         (
             VersionedImportedSecretShare::V1(secret_share),
-            VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output),
+            VersionedDwalletDKGPublicOutput::V2(dkg_output),
         ) => verify_centralized_party_secret_key_share_v2(
             secret_share,
             dkg_output,

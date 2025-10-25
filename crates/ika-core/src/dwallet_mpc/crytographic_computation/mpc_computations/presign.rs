@@ -9,7 +9,7 @@ use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DWalletSignatureAlgorithm, MPCPublicOutput,
-    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGSecondRoundPublicOutput,
+    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
     VersionedNetworkEncryptionKeyPublicData,
 };
 use dwallet_mpc_types::dwallet_mpc::{NetworkEncryptionKeyPublicDataTrait, VersionedPresignOutput};
@@ -153,10 +153,10 @@ impl PresignPublicInputByProtocol {
         }
         // Safe to unwrap as we checked for None above
         match bcs::from_bytes(&dwallet_public_output.unwrap())? {
-            VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
+            VersionedDwalletDKGPublicOutput::V1(dkg_output) => {
                 Self::try_new_v1(versioned_network_encryption_key_public_data, dkg_output)
             }
-            VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => Self::try_new_v2(
+            VersionedDwalletDKGPublicOutput::V2(output) => Self::try_new_v2(
                 protocol,
                 versioned_network_encryption_key_public_data,
                 Some(output),

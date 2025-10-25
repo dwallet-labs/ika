@@ -15,7 +15,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedCentralizedPartyImportedDWalletPublicOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedDwalletUserSecretShare,
+    VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare,
     VersionedEncryptedUserShare, VersionedImportedDwalletOutgoingMessage,
     VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
 };
@@ -734,7 +734,7 @@ pub fn compute_dwallet_dkg<P: Protocol>(
             private_output,
         } => {
             let public_output_value = bcs::to_bytes(
-                &VersionedDwalletDKGSecondRoundPublicOutput::V2(public_output_value),
+                &VersionedDwalletDKGPublicOutput::V2(public_output_value),
             )?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
