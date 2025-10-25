@@ -24,7 +24,6 @@ use tracing::info;
 async fn some_parties_receive_mpc_message_before_session_start_event() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
 
     let parties_that_receive_session_message_before_start_event = vec![0, 1];
     let parties_that_receive_session_message_after_start_event = (0..committee.voting_rights.len())
@@ -41,7 +40,6 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
     let network_key_id = ObjectID::random();
 
     send_start_network_dkg_event_to_some_parties(
-        &ika_network_config,
         epoch_id,
         &mut sui_data_senders,
         &parties_that_receive_session_message_after_start_event,
@@ -82,7 +80,6 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         ));
     }
     send_start_network_dkg_event_to_some_parties(
-        &ika_network_config,
         epoch_id,
         &mut sui_data_senders,
         &parties_that_receive_session_message_before_start_event,

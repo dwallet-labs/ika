@@ -4,7 +4,7 @@
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
-    DWalletImportedKeyVerificationPublicInputByCurve, Secp256K1DWalletDKGParty,
+    DWalletImportedKeyVerificationPublicInputByCurve, Secp256k1DWalletDKGParty,
     dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
 };
 use crate::dwallet_mpc::network_dkg::{
@@ -24,8 +24,8 @@ use crate::request_protocol_data::{
 use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletSignatureAlgorithm, MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait,
-    ReconfigurationParty, ReconfigurationV2Party, VersionedEncryptedUserShare,
+    MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty,
+    ReconfigurationV2Party,
 };
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
@@ -43,7 +43,7 @@ pub(crate) enum PublicInput {
     // Used only for V1 dWallets
     DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
     // Used only for V1 dWallets
-    Secp256K1DWalletDKG(<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput),
+    Secp256k1DWalletDKG(<Secp256k1DWalletDKGParty as mpc::Party>::PublicInput),
     Presign(PresignPublicInputByProtocol),
     Sign(SignPublicInputByProtocol),
     NetworkEncryptionKeyDkgV1(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
@@ -287,7 +287,7 @@ pub(crate) fn session_input_from_request(
                 .clone();
 
             Ok((
-                PublicInput::Secp256K1DWalletDKG(dwallet_dkg_second_public_input(
+                PublicInput::Secp256k1DWalletDKG(dwallet_dkg_second_public_input(
                     first_round_output,
                     centralized_public_key_share_and_proof,
                     protocol_public_parameters,
@@ -310,7 +310,7 @@ pub(crate) fn session_input_from_request(
 
             Ok((
                 PublicInput::Presign(PresignPublicInputByProtocol::try_new(
-                    signature_algorithm.clone(),
+                    *signature_algorithm,
                     encryption_key_public_data,
                     dwallet_public_output.clone(),
                 )?),
@@ -332,7 +332,7 @@ pub(crate) fn session_input_from_request(
                 message.clone(),
                 presign,
                 message_centralized_signature,
-                data.hash_scheme.clone(),
+                data.hash_scheme,
                 access_structure,
                 network_keys
                     .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?,

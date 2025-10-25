@@ -125,6 +125,7 @@ pub trait NetworkEncryptionKeyPublicDataTrait {
 
 #[enum_dispatch(NetworkEncryptionKeyPublicDataTrait)]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum VersionedNetworkEncryptionKeyPublicData {
     V1(NetworkEncryptionKeyPublicDataV1),
     V2(NetworkEncryptionKeyPublicDataV2),
@@ -268,7 +269,7 @@ pub enum VersionedDwalletDKGFirstRoundPublicOutput {
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
-pub enum VersionedDwalletDKGSecondRoundPublicOutput {
+pub enum VersionedDwalletDKGPublicOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
 }

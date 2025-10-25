@@ -69,6 +69,7 @@ pub(crate) struct DWalletSession {
 ///   The session has failed due to an unrecoverable error.
 ///   This status indicates that the session cannot proceed further.
 #[derive(Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum SessionStatus {
     Active {
         public_input: PublicInput,

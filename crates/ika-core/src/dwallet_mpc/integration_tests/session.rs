@@ -17,13 +17,11 @@ use sui_types::base_types::ObjectID;
 async fn test_handle_mpc_request_with_invalid_protocol_data_returns_failed() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
-    let epoch_id = 1;
     let (
-        mut dwallet_mpc_services,
-        mut sui_data_senders,
-        mut sent_consensus_messages_collectors,
-        mut epoch_stores,
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
@@ -38,21 +36,18 @@ async fn test_handle_mpc_request_with_invalid_protocol_data_returns_failed() {
     };
 
     let committee_size = 4;
-    let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
+    let (_committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
     let (
-        mut dwallet_mpc_services,
+        _dwallet_mpc_services,
         _sui_data_senders,
         _sent_consensus_messages_collectors,
         _epoch_stores,
         _notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
 
-    let (consensus_round, network_key_bytes, key_id) =
-        create_network_key_test(&mut test_state).await;
+    let (_, network_key_bytes, key_id) = create_network_key_test(&mut test_state).await;
     let protocol_pp =
         network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes.clone()).unwrap();
-    let (dwallet_secret_key, dwallet_public_key) =
-        sample_dwallet_keypair_inner(protocol_pp.clone()).unwrap();
 
     for service in &mut test_state.dwallet_mpc_services {
         let mpc_manager = service.dwallet_mpc_manager_mut();
