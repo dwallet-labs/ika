@@ -216,10 +216,10 @@ pub fn create_dkg_output_v1(
                 match bcs::from_bytes::<(Vec<u8>, _)>(&decentralized_first_round_public_output) {
                     Ok(v) => v,
                     Err(_) => (
-                        bcs::from_bytes(&decentralized_first_round_public_output)
-                            .expect("failed to deserialize decentralized first round DKG output"),
-                        bcs::from_bytes(&session_id)
-                            .expect("failed to deserialize session identifier"),
+                        bcs::from_bytes(&decentralized_first_round_public_output).context(
+                            "failed to deserialize decentralized first round DKG output",
+                        )?,
+                        CommitmentSizedNumber::from_le_slice(&session_id),
                     ),
                 };
 
