@@ -393,7 +393,7 @@ pub fn compute_presign<P: presign::Protocol>(
                     let targeted_presign = match versioned_presign {
                         twopc_mpc::ecdsa::presign::VersionedPresign::TargetedPresign(presign) => {
                             presign
-                        },
+                        }
                         twopc_mpc::ecdsa::presign::VersionedPresign::UniversalPresign(_) => {
                             // In protocol version 1, we never generate universal presigns
                             unreachable!()

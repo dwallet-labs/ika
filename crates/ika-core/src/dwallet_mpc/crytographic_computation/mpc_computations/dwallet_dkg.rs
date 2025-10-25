@@ -15,9 +15,9 @@ use dwallet_mpc_types::dwallet_mpc::{
     NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedCentralizedPartyImportedDWalletPublicOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare,
-    VersionedEncryptedUserShare, VersionedImportedDwalletOutgoingMessage,
-    VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
+    VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
+    VersionedImportedDwalletOutgoingMessage, VersionedNetworkEncryptionKeyPublicData,
+    VersionedPublicKeyShareAndProof,
 };
 use group::{CsRng, PartyID};
 use ika_protocol_config::ProtocolVersion;
@@ -609,8 +609,10 @@ impl DWalletDKGSecondPartyPublicInputGenerator for Secp256k1DWalletDKGParty {
 
         match first_round_output_buf {
             VersionedDwalletDKGFirstRoundPublicOutput::V1(first_round_output) => {
-                let ([first_part, second_part], _): (<DWalletDKGFirstParty as mpc::Party>::PublicOutputValue, CommitmentSizedNumber) =
-                    bcs::from_bytes(&first_round_output)?;
+                let ([first_part, second_part], _): (
+                    <DWalletDKGFirstParty as mpc::Party>::PublicOutputValue,
+                    CommitmentSizedNumber,
+                ) = bcs::from_bytes(&first_round_output)?;
                 let (first_first_part, first_second_part) = first_part.into();
                 let (second_first_part, second_second_part) = second_part.into();
                 // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.
@@ -725,9 +727,8 @@ pub fn compute_dwallet_dkg<P: Protocol>(
             malicious_parties,
             private_output,
         } => {
-            let public_output_value = bcs::to_bytes(
-                &VersionedDwalletDKGPublicOutput::V2(public_output_value),
-            )?;
+            let public_output_value =
+                bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2(public_output_value))?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,

@@ -182,30 +182,28 @@ impl SignAdvanceRequestByProtocol {
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match protocol {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                    let advance_request = mpc_computations::try_ready_to_advance::<
-                        SignParty<Secp256k1ECDSAProtocol>,
-                    >(
+                let advance_request =
+                    mpc_computations::try_ready_to_advance::<SignParty<Secp256k1ECDSAProtocol>>(
                         party_id,
                         access_structure,
                         consensus_round,
                         &serialized_messages_by_consensus_round,
                     )?;
 
-                    advance_request.map(SignAdvanceRequestByProtocol::Secp256k1ECDSA)
-                }
-                DWalletSignatureAlgorithm::Taproot => {
-                    let advance_request = mpc_computations::try_ready_to_advance::<
-                        SignParty<Secp256k1TaprootProtocol>,
-                    >(
+                advance_request.map(SignAdvanceRequestByProtocol::Secp256k1ECDSA)
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                let advance_request =
+                    mpc_computations::try_ready_to_advance::<SignParty<Secp256k1TaprootProtocol>>(
                         party_id,
                         access_structure,
                         consensus_round,
                         &serialized_messages_by_consensus_round,
                     )?;
 
-                    advance_request.map(SignAdvanceRequestByProtocol::Secp256k1Taproot)
-                }
-                DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                advance_request.map(SignAdvanceRequestByProtocol::Secp256k1Taproot)
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     SignParty<RistrettoSchnorrkelSubstrateProtocol>,
                 >(
@@ -255,30 +253,30 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
         serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match protocol {
-                DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                    let advance_request = mpc_computations::try_ready_to_advance::<
-                        DKGAndSignParty<Secp256k1ECDSAProtocol>,
-                    >(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        &serialized_messages_by_consensus_round,
-                    )?;
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    DKGAndSignParty<Secp256k1ECDSAProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    &serialized_messages_by_consensus_round,
+                )?;
 
-                    advance_request.map(Self::Secp256k1ECDSA)
-                }
-                DWalletSignatureAlgorithm::Taproot => {
-                    let advance_request = mpc_computations::try_ready_to_advance::<
-                        DKGAndSignParty<Secp256k1TaprootProtocol>,
-                    >(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        &serialized_messages_by_consensus_round,
-                    )?;
+                advance_request.map(Self::Secp256k1ECDSA)
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    DKGAndSignParty<Secp256k1TaprootProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    &serialized_messages_by_consensus_round,
+                )?;
 
-                    advance_request.map(Self::Secp256k1Taproot)
-                }
+                advance_request.map(Self::Secp256k1Taproot)
+            }
             DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
                     DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol>,
@@ -806,15 +804,14 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
                     })?
                     .into()
             }
-            VersionedDwalletDKGPublicOutput::V2(output) => {
-                bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice()).map_err(
-                    |e| {
-                        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                            "Failed to deserialize decentralized DKG output V2: {e}"
-                        )))
-                    },
-                )?
-            }
+            VersionedDwalletDKGPublicOutput::V2(output) => bcs::from_bytes::<
+                P::DecentralizedPartyDKGOutput,
+            >(output.as_slice())
+            .map_err(|e| {
+                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                    "Failed to deserialize decentralized DKG output V2: {e}"
+                )))
+            })?,
         };
 
         let centralized_signed_message = match centralized_signed_message {
@@ -1057,9 +1054,9 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
             // since the output is a standardized signature
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value: bcs::to_bytes(&(
-                    bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2(
-                        bcs::to_bytes(&dwallet_dkg_output)?,
-                    ))?,
+                    bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2(bcs::to_bytes(
+                        &dwallet_dkg_output,
+                    )?))?,
                     &parsed_signature_result.unwrap(),
                 ))?,
                 malicious_parties,

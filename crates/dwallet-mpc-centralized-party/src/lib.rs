@@ -18,10 +18,9 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, SerializedWrappedMPCPublicOutput,
     VersionedCentralizedDKGPublicOutput, VersionedCentralizedPartyImportedDWalletPublicOutput,
     VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare,
-    VersionedEncryptedUserShare, VersionedImportedDwalletOutgoingMessage,
-    VersionedNetworkDkgOutput, VersionedPresignOutput, VersionedPublicKeyShareAndProof,
-    VersionedSignOutput, VersionedUserSignedMessage,
+    VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
+    VersionedImportedDwalletOutgoingMessage, VersionedNetworkDkgOutput, VersionedPresignOutput,
+    VersionedPublicKeyShareAndProof, VersionedSignOutput, VersionedUserSignedMessage,
 };
 use group::{CyclicGroupElement, GroupElement, HashScheme, OsCsRng, Samplable, secp256k1};
 use homomorphic_encryption::GroupsPublicParametersAccessors;
@@ -902,8 +901,7 @@ pub fn network_key_version_inner(
 pub fn dwallet_version_inner(
     dwallet_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<u32> {
-    let dwallet_output: VersionedDwalletDKGPublicOutput =
-        bcs::from_bytes(&dwallet_output)?;
+    let dwallet_output: VersionedDwalletDKGPublicOutput = bcs::from_bytes(&dwallet_output)?;
 
     match &dwallet_output {
         VersionedDwalletDKGPublicOutput::V1(_) => Ok(1),
