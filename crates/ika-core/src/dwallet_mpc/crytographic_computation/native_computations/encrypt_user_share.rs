@@ -9,7 +9,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256K1AsyncDKGProtocol,
+    Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
     Secp256R1AsyncDKGProtocol,
 };
 use twopc_mpc::dkg;
@@ -72,8 +72,8 @@ fn verify_centralized_secret_key_share_proof_v1(
         );
     };
 
-    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyTargetedDKGOutput = bcs::from_bytes(&dkg_public_output).map_err(|e| anyhow::anyhow!("Failed to deserialize dkg public output: {}", e))?;
-    let decentralized_output: <Secp256K1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput =
+    let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyTargetedDKGOutput = bcs::from_bytes(&dkg_public_output).map_err(|e| anyhow::anyhow!("Failed to deserialize dkg public output: {}", e))?;
+    let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput =
         decentralized_output.into();
 
     <ECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
@@ -102,7 +102,7 @@ fn verify_centralized_secret_key_share_proof_v2(
 ) -> anyhow::Result<()> {
     match protocol_public_parameters {
         ProtocolPublicParametersByCurve::Secp256k1(pp) => {
-            verify_centralized_secret_key_share_proof::<Secp256K1AsyncDKGProtocol>(
+            verify_centralized_secret_key_share_proof::<Secp256k1AsyncDKGProtocol>(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
                 encryption_key,

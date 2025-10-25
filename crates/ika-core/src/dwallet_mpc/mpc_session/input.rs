@@ -4,7 +4,7 @@
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
-    DWalletImportedKeyVerificationPublicInputByCurve, Secp256K1DWalletDKGParty,
+    DWalletImportedKeyVerificationPublicInputByCurve, Secp256k1DWalletDKGParty,
     dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
 };
 use crate::dwallet_mpc::network_dkg::{
@@ -43,7 +43,7 @@ pub(crate) enum PublicInput {
     // Used only for V1 dWallets
     DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
     // Used only for V1 dWallets
-    Secp256K1DWalletDKG(<Secp256K1DWalletDKGParty as mpc::Party>::PublicInput),
+    Secp256k1DWalletDKG(<Secp256k1DWalletDKGParty as mpc::Party>::PublicInput),
     Presign(PresignPublicInputByProtocol),
     Sign(SignPublicInputByProtocol),
     NetworkEncryptionKeyDkgV1(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
@@ -287,7 +287,7 @@ pub(crate) fn session_input_from_request(
                 .clone();
 
             Ok((
-                PublicInput::Secp256K1DWalletDKG(dwallet_dkg_second_public_input(
+                PublicInput::Secp256k1DWalletDKG(dwallet_dkg_second_public_input(
                     first_round_output,
                     centralized_public_key_share_and_proof,
                     protocol_public_parameters,

@@ -19,7 +19,7 @@ use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
-    RistrettoSchnorrkelSubstrateProtocol, Secp256K1ECDSAProtocol, Secp256K1TaprootProtocol,
+    RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol,
     Secp256R1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
@@ -37,9 +37,9 @@ pub(crate) type PresignParty<P: Protocol> = <P as Protocol>::PresignParty;
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 pub(crate) enum PresignPublicInputByProtocol {
     #[strum(to_string = "Presign Public Input - curve: Secp256k1, protocol: ECDSA")]
-    Secp256k1ECDSA(<PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput),
+    Secp256k1ECDSA(<PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Presign Public Input - curve: Secp256k1, protocol: Taproot")]
-    Taproot(<PresignParty<Secp256K1TaprootProtocol> as mpc::Party>::PublicInput),
+    Taproot(<PresignParty<Secp256k1TaprootProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Presign Public Input - curve: Secp256r1, protocol: ECDSA")]
     Secp256r1ECDSA(<PresignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Presign Public Input - curve: Curve25519, protocol: EdDSA")]
@@ -55,9 +55,9 @@ pub(crate) enum PresignPublicInputByProtocol {
 #[derive(strum_macros::Display)]
 pub(crate) enum PresignAdvanceRequestByProtocol {
     #[strum(to_string = "Presign Advance Request - curve: Secp256k1, protocol: ECDSA")]
-    Secp256k1ECDSA(AdvanceRequest<<PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::Message>),
+    Secp256k1ECDSA(AdvanceRequest<<PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::Message>),
     #[strum(to_string = "Presign Advance Request - curve: Secp256k1, protocol: Taproot")]
-    Taproot(AdvanceRequest<<PresignParty<Secp256K1TaprootProtocol> as mpc::Party>::Message>),
+    Taproot(AdvanceRequest<<PresignParty<Secp256k1TaprootProtocol> as mpc::Party>::Message>),
     #[strum(to_string = "Presign Advance Request - curve: Secp256r1, protocol: ECDSA")]
     Secp256r1ECDSA(AdvanceRequest<<PresignParty<Secp256R1ECDSAProtocol> as mpc::Party>::Message>),
     #[strum(to_string = "Presign Advance Request - curve: Curve25519, protocol: EdDSA")]
@@ -81,7 +81,7 @@ impl PresignAdvanceRequestByProtocol {
         let advance_request = match protocol {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let advance_request =
-                    mpc_computations::try_ready_to_advance::<PresignParty<Secp256K1ECDSAProtocol>>(
+                    mpc_computations::try_ready_to_advance::<PresignParty<Secp256k1ECDSAProtocol>>(
                         party_id,
                         access_structure,
                         consensus_round,
@@ -92,7 +92,7 @@ impl PresignAdvanceRequestByProtocol {
             }
             DWalletSignatureAlgorithm::Taproot => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
-                    PresignParty<Secp256K1TaprootProtocol>,
+                    PresignParty<Secp256k1TaprootProtocol>,
                 >(
                     party_id,
                     access_structure,
@@ -173,7 +173,7 @@ impl PresignPublicInputByProtocol {
         let protocol_public_parameters =
             versioned_network_encryption_key_public_data.secp256k1_protocol_public_parameters();
 
-        let public_input: <PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput = (
+        let public_input: <PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput = (
             protocol_public_parameters,
             Some(decentralized_party_dkg_output),
         )
@@ -191,12 +191,12 @@ impl PresignPublicInputByProtocol {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256k1_protocol_public_parameters();
                 let public_input =
-                    <PresignParty<Secp256K1ECDSAProtocol> as mpc::Party>::PublicInput::from((
+                    <PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
                         match dwallet_dkg_output {
                             Some(dkg_output) => {
                                 let versioned_output = bcs::from_bytes::<
-                                    <Secp256K1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                    <Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
                                 let output = match versioned_output {
                                     VersionedOutput::TargetedPublicDKGOutput(output) => output,
@@ -309,12 +309,12 @@ impl PresignPublicInputByProtocol {
                     .secp256k1_protocol_public_parameters();
 
                 let pub_input =
-                    <PresignParty<Secp256K1TaprootProtocol> as mpc::Party>::PublicInput::from((
+                    <PresignParty<Secp256k1TaprootProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
                         match dwallet_dkg_output {
                             Some(dkg_output) => {
                                 let versioned_output = bcs::from_bytes::<
-                                    <Secp256K1TaprootProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                    <Secp256k1TaprootProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
                                 let output = match versioned_output {
                                     VersionedOutput::TargetedPublicDKGOutput(output) => output,
@@ -373,7 +373,7 @@ pub fn compute_presign<P: presign::Protocol>(
             // Wrap the public output with its version.
             let public_output_value = match protocol_version.as_u64() {
                 1 => {
-                    let versioned_presign: <Secp256K1ECDSAProtocol as Protocol>::Presign =
+                    let versioned_presign: <Secp256k1ECDSAProtocol as Protocol>::Presign =
                         bcs::from_bytes(&public_output_value.clone())?;
 
                     let targeted_presign = match versioned_presign {
