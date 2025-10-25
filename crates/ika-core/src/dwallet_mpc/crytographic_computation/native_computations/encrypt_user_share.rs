@@ -10,7 +10,7 @@ use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
-    Secp256R1AsyncDKGProtocol,
+    Secp256r1AsyncDKGProtocol,
 };
 use twopc_mpc::dkg;
 use twopc_mpc::dkg::Protocol;
@@ -110,7 +110,7 @@ fn verify_centralized_secret_key_share_proof_v2(
             )
         }
         ProtocolPublicParametersByCurve::Secp256r1(pp) => {
-            verify_centralized_secret_key_share_proof::<Secp256R1AsyncDKGProtocol>(
+            verify_centralized_secret_key_share_proof::<Secp256r1AsyncDKGProtocol>(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
                 encryption_key,

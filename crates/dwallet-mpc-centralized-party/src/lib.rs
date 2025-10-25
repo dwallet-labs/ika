@@ -48,7 +48,7 @@ use twopc_mpc::{curve25519, ristretto, secp256r1};
 type Secp256k1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
 type Secp256k1DKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
-type Secp256R1DKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
+type Secp256r1DKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
 type Curve25519DKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
 type RistrettoDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
 
@@ -126,7 +126,7 @@ pub fn create_dkg_output_by_curve_v2(
             centralized_dkg_output_v2::<Curve25519DKGProtocol>(protocol_pp, session_id)
         }
         DWalletCurve::Secp256r1 => {
-            centralized_dkg_output_v2::<Secp256R1DKGProtocol>(protocol_pp, session_id)
+            centralized_dkg_output_v2::<Secp256r1DKGProtocol>(protocol_pp, session_id)
         }
     }
 }
@@ -426,11 +426,11 @@ fn public_key_from_dwallet_output_inner_secp256r1(
 
     let public_key = match versioned_dkg_public_output {
         VersionedDwalletDKGPublicOutput::V1(dkg_output) => {
-            let output: <Secp256R1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput = bcs::from_bytes(&dkg_output)?;
+            let output: <Secp256r1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput = bcs::from_bytes(&dkg_output)?;
             output.public_key
         }
         VersionedDwalletDKGPublicOutput::V2(dkg_output) => {
-            let dkg_versioned_output: <Secp256R1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&dkg_output)?;
+            let dkg_versioned_output: <Secp256r1DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&dkg_output)?;
             match dkg_versioned_output {
                 VersionedOutput::TargetedPublicDKGOutput(o) => o.public_key,
                 VersionedOutput::UniversalPublicDKGOutput { output: o, .. } => o.public_key,
@@ -468,7 +468,7 @@ pub fn centralized_and_decentralized_parties_dkg_output_match_inner(
             >(centralized_dkg_output, decentralized_dkg_output)
         }
         DWalletCurve::Secp256r1 => {
-            centralized_and_decentralized_parties_dkg_output_match_by_protocol::<Secp256R1DKGProtocol>(
+            centralized_and_decentralized_parties_dkg_output_match_by_protocol::<Secp256r1DKGProtocol>(
                 centralized_dkg_output,
                 decentralized_dkg_output,
             )
@@ -609,7 +609,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                     )
                 }
                 DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                    advance_sign_by_protocol_with_centralized_party_dkg_output::<Secp256R1DKGProtocol>(
+                    advance_sign_by_protocol_with_centralized_party_dkg_output::<Secp256r1DKGProtocol>(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
@@ -735,7 +735,7 @@ pub fn advance_centralized_sign_party(
                 }
                 DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                     advance_sign_by_protocol_with_decentralized_party_dkg_output::<
-                        Secp256R1DKGProtocol,
+                        Secp256r1DKGProtocol,
                     >(
                         &centralized_party_secret_key_share,
                         &presign,
@@ -998,7 +998,7 @@ pub fn create_imported_dwallet_centralized_step_inner_v2(
             Curve25519DKGProtocol,
         >(protocol_pp, session_identifier, secret_key),
         DWalletCurve::Secp256r1 => create_imported_dwallet_centralized_step_inner::<
-            Secp256R1DKGProtocol,
+            Secp256r1DKGProtocol,
         >(protocol_pp, session_identifier, secret_key),
     };
 
@@ -1183,7 +1183,7 @@ pub fn generate_cg_keypair_from_seed(
             generate_cg_keypair_from_seed_inner::<Curve25519DKGProtocol>(seed)
         }
         DWalletCurve::Secp256r1 => {
-            generate_cg_keypair_from_seed_inner::<Secp256R1DKGProtocol>(seed)
+            generate_cg_keypair_from_seed_inner::<Secp256r1DKGProtocol>(seed)
         }
     }
 }
@@ -1245,7 +1245,7 @@ pub fn encrypt_secret_key_share_and_prove_v2(
             )
         }
         DWalletCurve::Secp256r1 => {
-            encrypt_secret_key_share_and_prove_inner::<Secp256R1DKGProtocol>(
+            encrypt_secret_key_share_and_prove_inner::<Secp256r1DKGProtocol>(
                 secret_key_share,
                 &encryption_key,
                 protocol_pp,
@@ -1317,7 +1317,7 @@ pub fn verify_secret_share_v2(
             versioned_decentralized_dkg_output,
             protocol_pp,
         ),
-        DWalletCurve::Secp256r1 => verify_secret_share_inner::<Secp256R1DKGProtocol>(
+        DWalletCurve::Secp256r1 => verify_secret_share_inner::<Secp256r1DKGProtocol>(
             versioned_secret_share,
             versioned_decentralized_dkg_output,
             protocol_pp,
@@ -1410,7 +1410,7 @@ pub fn decrypt_user_share_v2(
             &encrypted_user_share_and_proof,
             &protocol_pp,
         ),
-        DWalletCurve::Secp256r1 => decrypt_user_share_inner::<Secp256R1DKGProtocol>(
+        DWalletCurve::Secp256r1 => decrypt_user_share_inner::<Secp256r1DKGProtocol>(
             &decryption_key,
             &dwallet_dkg_output,
             &encrypted_user_share_and_proof,

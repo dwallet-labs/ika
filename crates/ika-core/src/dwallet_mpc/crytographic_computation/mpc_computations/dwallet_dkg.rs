@@ -24,7 +24,7 @@ use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
-    Secp256R1AsyncDKGProtocol, SessionIdentifier, UserSecretKeyShareEventType,
+    Secp256r1AsyncDKGProtocol, SessionIdentifier, UserSecretKeyShareEventType,
 };
 use mpc::guaranteed_output_delivery::{AdvanceRequest, ReadyToAdvanceResult};
 use mpc::{
@@ -41,8 +41,8 @@ pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOf
 
 pub(crate) type Secp256k1DWalletImportedKeyVerificationParty =
     <Secp256k1AsyncDKGProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
-pub(crate) type Secp256R1DWalletImportedKeyVerificationParty =
-    <Secp256R1AsyncDKGProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
+pub(crate) type Secp256r1DWalletImportedKeyVerificationParty =
+    <Secp256r1AsyncDKGProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
 pub(crate) type Curve25519DWalletImportedKeyVerificationParty =
     <Curve25519AsyncDKGProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
 pub(crate) type RistrettoDWalletImportedKeyVerificationParty =
@@ -51,8 +51,8 @@ pub(crate) type RistrettoDWalletImportedKeyVerificationParty =
 /// This struct represents the final round of the DKG protocol.
 pub(crate) type Secp256k1DWalletDKGParty =
     <Secp256k1AsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
-pub(crate) type Secp256R1DWalletDKGParty =
-    <Secp256R1AsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
+pub(crate) type Secp256r1DWalletDKGParty =
+    <Secp256r1AsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
 pub(crate) type Curve25519DWalletDKGParty =
     <Curve25519AsyncDKGProtocol as Protocol>::DKGDecentralizedParty;
 pub(crate) type RistrettoDWalletDKGParty =
@@ -65,8 +65,8 @@ pub(crate) enum DWalletImportedKeyVerificationAdvanceRequestByCurve {
         AdvanceRequest<<Secp256k1DWalletImportedKeyVerificationParty as mpc::Party>::Message>,
     ),
     #[strum(to_string = "dWallet Imported Key Verification Advance Request for curve Secp256r1")]
-    Secp256R1DWalletImportedKeyVerification(
-        AdvanceRequest<<Secp256R1DWalletImportedKeyVerificationParty as mpc::Party>::Message>,
+    Secp256r1DWalletImportedKeyVerification(
+        AdvanceRequest<<Secp256r1DWalletImportedKeyVerificationParty as mpc::Party>::Message>,
     ),
     #[strum(to_string = "dWallet Imported Key Verification Advance Request for curve Curve25519")]
     Curve25519DWalletImportedKeyVerification(
@@ -97,13 +97,13 @@ impl DWalletImportedKeyVerificationAdvanceRequestByCurve {
                 advance_request.map(DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256k1DWalletImportedKeyVerification)
             }
             DWalletCurve::Secp256r1 => {
-                let advance_request = try_ready_to_advance_imported_key::<Secp256R1AsyncDKGProtocol>(
+                let advance_request = try_ready_to_advance_imported_key::<Secp256r1AsyncDKGProtocol>(
                     party_id,
                     access_structure,
                     consensus_round,
                     &serialized_messages_by_consensus_round,
                 )?;
-                advance_request.map(DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification)
+                advance_request.map(DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256r1DWalletImportedKeyVerification)
             }
             DWalletCurve::Curve25519 => {
                 let advance_request =
@@ -135,7 +135,7 @@ pub(crate) enum DWalletDKGAdvanceRequestByCurve {
     #[strum(to_string = "dWallet DKG Advance Request for curve Secp256k1")]
     Secp256k1DWalletDKG(AdvanceRequest<<Secp256k1DWalletDKGParty as mpc::Party>::Message>),
     #[strum(to_string = "dWallet DKG Advance Request for curve Secp256r1")]
-    Secp256R1DWalletDKG(AdvanceRequest<<Secp256R1DWalletDKGParty as mpc::Party>::Message>),
+    Secp256r1DWalletDKG(AdvanceRequest<<Secp256r1DWalletDKGParty as mpc::Party>::Message>),
     #[strum(to_string = "dWallet DKG Advance Request for curve Curve25519")]
     Curve25519DWalletDKG(AdvanceRequest<<Curve25519DWalletDKGParty as mpc::Party>::Message>),
     #[strum(to_string = "dWallet DKG Advance Request for curve Ristretto")]
@@ -161,13 +161,13 @@ impl DWalletDKGAdvanceRequestByCurve {
                 advance_request.map(DWalletDKGAdvanceRequestByCurve::Secp256k1DWalletDKG)
             }
             DWalletCurve::Secp256r1 => {
-                let advance_request = try_ready_to_advance::<Secp256R1AsyncDKGProtocol>(
+                let advance_request = try_ready_to_advance::<Secp256r1AsyncDKGProtocol>(
                     party_id,
                     access_structure,
                     consensus_round,
                     &serialized_messages_by_consensus_round,
                 )?;
-                advance_request.map(DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG)
+                advance_request.map(DWalletDKGAdvanceRequestByCurve::Secp256r1DWalletDKG)
             }
             DWalletCurve::Curve25519 => {
                 let advance_request = try_ready_to_advance::<Curve25519AsyncDKGProtocol>(
@@ -200,8 +200,8 @@ pub enum DWalletImportedKeyVerificationPublicInputByCurve {
         <Secp256k1DWalletImportedKeyVerificationParty as Party>::PublicInput,
     ),
     #[strum(to_string = "dWallet Imported Key Verification Public Input for curve Secp256r1")]
-    Secp256R1DWalletImportedKeyVerification(
-        <Secp256R1DWalletImportedKeyVerificationParty as Party>::PublicInput,
+    Secp256r1DWalletImportedKeyVerification(
+        <Secp256r1DWalletImportedKeyVerificationParty as Party>::PublicInput,
     ),
     #[strum(to_string = "dWallet Imported Key Verification Public Input for curve Curve25519")]
     Curve25519DWalletImportedKeyVerification(
@@ -270,7 +270,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
                 )
                     .into();
 
-                DWalletImportedKeyVerificationPublicInputByCurve::Secp256R1DWalletImportedKeyVerification(public_input)
+                DWalletImportedKeyVerificationPublicInputByCurve::Secp256r1DWalletImportedKeyVerification(public_input)
             }
             DWalletCurve::Curve25519 => {
                 let protocol_public_parameters =
@@ -335,7 +335,7 @@ pub enum DWalletDKGPublicInputByCurve {
     #[strum(to_string = "dWallet DKG Public Input for curve Secp256k1")]
     Secp256k1DWalletDKG(<Secp256k1DWalletDKGParty as Party>::PublicInput),
     #[strum(to_string = "dWallet DKG Public Input for curve Secp256r1")]
-    Secp256R1DWalletDKG(<Secp256R1DWalletDKGParty as Party>::PublicInput),
+    Secp256r1DWalletDKG(<Secp256r1DWalletDKGParty as Party>::PublicInput),
     #[strum(to_string = "dWallet DKG Public Input for curve Curve25519")]
     Curve25519DWalletDKG(<Curve25519DWalletDKGParty as Party>::PublicInput),
     #[strum(to_string = "dWallet DKG Public Input for curve Ristretto")]
@@ -487,7 +487,7 @@ impl DWalletDKGPublicInputByCurve {
                 )
                     .into();
 
-                DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(input)
+                DWalletDKGPublicInputByCurve::Secp256r1DWalletDKG(input)
             }
             DWalletCurve::Curve25519 => {
                 let centralized_party_public_key_share = match centralized_party_public_key_share {

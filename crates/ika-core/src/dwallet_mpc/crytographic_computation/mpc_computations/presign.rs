@@ -20,7 +20,7 @@ use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
     RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol,
-    Secp256R1ECDSAProtocol, SessionIdentifier,
+    Secp256r1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{
@@ -41,7 +41,7 @@ pub(crate) enum PresignPublicInputByProtocol {
     #[strum(to_string = "Presign Public Input - curve: Secp256k1, protocol: Taproot")]
     Taproot(<PresignParty<Secp256k1TaprootProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Presign Public Input - curve: Secp256r1, protocol: ECDSA")]
-    Secp256r1ECDSA(<PresignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput),
+    Secp256r1ECDSA(<PresignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Presign Public Input - curve: Curve25519, protocol: EdDSA")]
     EdDSA(<PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(
@@ -59,7 +59,7 @@ pub(crate) enum PresignAdvanceRequestByProtocol {
     #[strum(to_string = "Presign Advance Request - curve: Secp256k1, protocol: Taproot")]
     Taproot(AdvanceRequest<<PresignParty<Secp256k1TaprootProtocol> as mpc::Party>::Message>),
     #[strum(to_string = "Presign Advance Request - curve: Secp256r1, protocol: ECDSA")]
-    Secp256r1ECDSA(AdvanceRequest<<PresignParty<Secp256R1ECDSAProtocol> as mpc::Party>::Message>),
+    Secp256r1ECDSA(AdvanceRequest<<PresignParty<Secp256r1ECDSAProtocol> as mpc::Party>::Message>),
     #[strum(to_string = "Presign Advance Request - curve: Curve25519, protocol: EdDSA")]
     EdDSA(AdvanceRequest<<PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::Message>),
     #[strum(
@@ -128,7 +128,7 @@ impl PresignAdvanceRequestByProtocol {
             }
             DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let advance_request =
-                    mpc_computations::try_ready_to_advance::<PresignParty<Secp256R1ECDSAProtocol>>(
+                    mpc_computations::try_ready_to_advance::<PresignParty<Secp256r1ECDSAProtocol>>(
                         party_id,
                         access_structure,
                         consensus_round,
@@ -279,12 +279,12 @@ impl PresignPublicInputByProtocol {
                     .secp256r1_protocol_public_parameters()?;
 
                 let pub_input =
-                    <PresignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput::from((
+                    <PresignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput::from((
                         protocol_public_parameters,
                         match dwallet_dkg_output {
                             Some(dkg_output) => {
                                 let versioned_output = bcs::from_bytes::<
-                                    <Secp256R1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                                    <Secp256r1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
                                 let output = match versioned_output {
                                     VersionedOutput::TargetedPublicDKGOutput(output) => output,

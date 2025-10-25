@@ -22,7 +22,7 @@ use group::{HashScheme, OsCsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
-    Secp256k1TaprootProtocol, Secp256R1ECDSAProtocol, SessionIdentifier,
+    Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{AsynchronouslyAdvanceable, GuaranteesOutputDelivery};
@@ -46,7 +46,7 @@ pub(crate) enum SignPublicInputByProtocol {
     #[strum(to_string = "Sign Public Input - curve: Secp256k1, protocol: Taproot")]
     Secp256k1Taproot(<SignParty<Secp256k1TaprootProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Sign Public Input - curve: Secp256r1, protocol: ECDSA")]
-    Secp256r1(<SignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput),
+    Secp256r1(<SignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Sign Public Input - curve: Curve25519, protocol: EdDSA")]
     Curve25519(<SignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrate")]
@@ -60,7 +60,7 @@ pub(crate) enum DKGAndSignPublicInputByProtocol {
     #[strum(to_string = "DKG and Sign Public Input - curve: Secp256k1, protocol: Taproot")]
     Secp256k1Taproot(<DKGAndSignParty<Secp256k1TaprootProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "DKG and Sign Public Input - curve: Secp256r1, protocol: ECDSA")]
-    Secp256r1(<DKGAndSignParty<Secp256R1ECDSAProtocol> as mpc::Party>::PublicInput),
+    Secp256r1(<DKGAndSignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "DKG and Sign Public Input - curve: Curve25519, protocol: EdDSA")]
     Curve25519(<DKGAndSignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(
@@ -86,7 +86,7 @@ pub(crate) enum SignAdvanceRequestByProtocol {
     #[strum(to_string = "Sign Advance Request - curve: Secp256r1, protocol: ECDSA")]
     Secp256r1(
         mpc::guaranteed_output_delivery::AdvanceRequest<
-            <SignParty<Secp256R1ECDSAProtocol> as mpc::Party>::Message,
+            <SignParty<Secp256r1ECDSAProtocol> as mpc::Party>::Message,
         >,
     ),
     #[strum(to_string = "Sign Advance Request - curve: Curve25519, protocol: EdDSA")]
@@ -120,7 +120,7 @@ pub(crate) enum DWalletDKGAndSignAdvanceRequestByProtocol {
     #[strum(to_string = "DKG and Sign Advance Request - curve: Secp256r1, protocol: ECDSA")]
     Secp256r1(
         mpc::guaranteed_output_delivery::AdvanceRequest<
-            <DKGAndSignParty<Secp256R1ECDSAProtocol> as mpc::Party>::Message,
+            <DKGAndSignParty<Secp256r1ECDSAProtocol> as mpc::Party>::Message,
         >,
     ),
     #[strum(to_string = "DKG and Sign Advance Request - curve: Curve25519, protocol: EdDSA")]
@@ -256,7 +256,7 @@ impl SignAdvanceRequestByProtocol {
                     });
                 }
                 let advance_request =
-                    mpc_computations::try_ready_to_advance::<SignParty<Secp256R1ECDSAProtocol>>(
+                    mpc_computations::try_ready_to_advance::<SignParty<Secp256r1ECDSAProtocol>>(
                         party_id,
                         access_structure,
                         consensus_round,
@@ -356,7 +356,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                     });
                 }
                 let advance_request = mpc_computations::try_ready_to_advance::<
-                    DKGAndSignParty<Secp256R1ECDSAProtocol>,
+                    DKGAndSignParty<Secp256r1ECDSAProtocol>,
                 >(
                     party_id,
                     access_structure,
@@ -545,7 +545,7 @@ impl SignPublicInputByProtocol {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256r1_protocol_public_parameters()?;
 
-                let public_input = generate_sign_public_input::<Secp256R1ECDSAProtocol>(
+                let public_input = generate_sign_public_input::<Secp256r1ECDSAProtocol>(
                     protocol_public_parameters,
                     dwallet_decentralized_public_output,
                     message,
@@ -678,12 +678,12 @@ impl DKGAndSignPublicInputByProtocol {
                     .secp256r1_decryption_key_share_public_parameters()?;
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
                     .secp256r1_protocol_public_parameters()?;
-                let DWalletDKGPublicInputByCurve::Secp256R1DWalletDKG(public_input) =
+                let DWalletDKGPublicInputByCurve::Secp256r1DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
                     unreachable!("Curve and DKG public input type mismatch ");
                 };
-                let public_input = generate_dkg_and_sign_public_input::<Secp256R1ECDSAProtocol>(
+                let public_input = generate_dkg_and_sign_public_input::<Secp256r1ECDSAProtocol>(
                     protocol_public_parameters,
                     public_input,
                     message,

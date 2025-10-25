@@ -19,7 +19,7 @@ use group::{HashScheme, OsCsRng};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
-    Secp256R1ECDSAProtocol, SessionIdentifier,
+    Secp256r1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::GuaranteedOutputDeliveryRoundResult;
 use std::sync::Arc;
@@ -192,7 +192,7 @@ impl ProtocolCryptographicData {
                     });
                 }
 
-                verify_partial_signature::<Secp256R1ECDSAProtocol>(
+                verify_partial_signature::<Secp256r1ECDSAProtocol>(
                     &data.message,
                     &data.hash_scheme,
                     &data.dwallet_decentralized_output,

@@ -9,7 +9,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
-    Secp256R1AsyncDKGProtocol,
+    Secp256r1AsyncDKGProtocol,
 };
 use twopc_mpc::dkg;
 use twopc_mpc::dkg::Protocol;
@@ -87,7 +87,7 @@ fn verify_centralized_party_secret_key_share_v2(
             )
         }
         ProtocolPublicParametersByCurve::Secp256r1(pp) => {
-            verify_centralized_party_secret_key_share::<Secp256R1AsyncDKGProtocol>(
+            verify_centralized_party_secret_key_share::<Secp256r1AsyncDKGProtocol>(
                 &secret_share,
                 bcs::from_bytes(&dkg_output)?,
                 pp,

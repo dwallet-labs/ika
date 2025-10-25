@@ -211,7 +211,7 @@ impl ProtocolCryptographicData {
                 advance_request, ..
             } => match advance_request {
                 DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256k1DWalletImportedKeyVerification(req) => req.attempt_number,
-                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification(req) => req.attempt_number,
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256r1DWalletImportedKeyVerification(req) => req.attempt_number,
                 DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519DWalletImportedKeyVerification(req) => req.attempt_number,
                 DWalletImportedKeyVerificationAdvanceRequestByCurve::RistrettoDWalletImportedKeyVerification(req) => req.attempt_number,
             },
@@ -230,7 +230,7 @@ impl ProtocolCryptographicData {
             }
             | ProtocolCryptographicData::DWalletDKG {
                 advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
+                    DWalletDKGAdvanceRequestByCurve::Secp256r1DWalletDKG(advance_request),
                 ..
             }
             | ProtocolCryptographicData::DWalletDKG {
@@ -261,7 +261,7 @@ impl ProtocolCryptographicData {
             }
             | ProtocolCryptographicData::DWalletDKG {
                 advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
+                    DWalletDKGAdvanceRequestByCurve::Secp256r1DWalletDKG(advance_request),
                 ..
             }
             | ProtocolCryptographicData::DWalletDKG {
@@ -349,7 +349,7 @@ impl ProtocolCryptographicData {
                 advance_request, ..
             } => match advance_request {
                 DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256k1DWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
-                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256r1DWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
                 DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519DWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
                 DWalletImportedKeyVerificationAdvanceRequestByCurve::RistrettoDWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
             },
