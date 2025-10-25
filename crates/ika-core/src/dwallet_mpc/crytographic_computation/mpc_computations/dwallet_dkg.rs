@@ -581,11 +581,6 @@ impl DWalletDKGFirstPartyPublicInputGenerator for DWalletDKGFirstParty {
     fn generate_public_input(
         protocol_public_parameters: ProtocolPublicParameters,
     ) -> DwalletMPCResult<<DWalletDKGFirstParty as Party>::PublicInput> {
-        let base_protocol_context = BaseProtocolContext {
-            protocol_name: "2PC-MPC DKG".to_string(),
-            round: 1,
-            proof_name: "Encryption of Secret Key Share and Public Key Share Proof".to_string(),
-        };
         let secp256k1_public_input =
             twopc_mpc::dkg::encryption_of_secret_key_share::PublicInput::new_targeted_dkg(
                 protocol_public_parameters
