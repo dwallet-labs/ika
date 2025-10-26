@@ -30,7 +30,7 @@ import {
 	createCompleteDWallet,
 	createCompleteDWalletV2,
 	testPresign, testPresignV1,
-	testSign,
+	testSign, testSignV1,
 } from './dwallet-test-helpers';
 
 // Store random seeds per test to ensure deterministic behavior within each test
@@ -431,7 +431,7 @@ export async function runSignFullFlowWithDWallet(
 
 	// Step 4: Sign a message
 	const message = createTestMessage(testName);
-	await testSign(
+	await testSignV1(
 		ikaClient,
 		suiClient,
 		activeDWallet as ZeroTrustDWallet,
@@ -485,7 +485,7 @@ export async function runSignFullFlowWithV1Dwallet(
 
 	// Step 4: Sign a message
 	const message = createTestMessage(testName);
-	await testSign(
+	await testSignV1(
 		ikaClient,
 		suiClient,
 		activeDWallet as ZeroTrustDWallet,
