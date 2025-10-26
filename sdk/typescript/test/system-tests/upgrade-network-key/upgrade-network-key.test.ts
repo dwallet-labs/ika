@@ -122,6 +122,15 @@ async function testSignFullFlowWithAllCurves() {
 }
 
 describe('system tests', () => {
+	it('run sign full flow with v1 dwallet', async () => {
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+
+		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, 'sign-full-flow-v1-dwallet');
+	});
+
+
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
 		const v2NetworkKeyDockerTag = 'itaylevy134/ika-node:v2key6';
 
