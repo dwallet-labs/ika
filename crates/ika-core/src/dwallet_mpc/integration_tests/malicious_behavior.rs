@@ -2,12 +2,10 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
-use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
-use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
+use ika_types::messages_consensus::{ConsensusTransactionKind};
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent,
-    DWalletSessionEventTrait, IkaNetworkConfig, SessionIdentifier, SessionType,
+    IkaNetworkConfig, SessionIdentifier, SessionType,
 };
 use itertools::Itertools;
 use std::collections::HashMap;

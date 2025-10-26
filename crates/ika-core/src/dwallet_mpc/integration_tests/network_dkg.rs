@@ -7,13 +7,9 @@
 //! and forward them to the [`DWalletMPCManager`].
 
 use crate::SuiDataSenders;
-use crate::consensus_adapter::SubmitToConsensus;
-use crate::dwallet_checkpoints::PendingDWalletCheckpoint;
-use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    IntegrationTestState, TestingAuthorityPerEpochStore, TestingDWalletCheckpointNotify,
-    TestingSubmitToConsensus, send_start_network_dkg_event_to_all_parties,
+    IntegrationTestState, send_start_network_dkg_event_to_all_parties,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_session_request::DWalletSessionRequest;

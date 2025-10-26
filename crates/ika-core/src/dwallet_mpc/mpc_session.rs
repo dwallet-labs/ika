@@ -84,6 +84,7 @@ pub(crate) enum SessionStatus {
 
 #[derive(Clone, Debug)]
 pub enum SessionComputationType {
+    #[allow(clippy::upper_case_acronyms)]
     MPC {
         /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
         /// Used to build the input of messages to advance each round of the session.
@@ -436,8 +437,8 @@ impl DWalletMPCManager {
             return None;
         }
 
-        if request.requires_network_key_data {
-            if let Some(network_encryption_key_id) =
+        if request.requires_network_key_data
+            && let Some(network_encryption_key_id) =
                 request.protocol_data.network_encryption_key_id()
             {
                 if !self
@@ -468,7 +469,6 @@ impl DWalletMPCManager {
 
                     return None;
                 }
-            }
         }
 
         if request.requires_next_active_committee && self.next_active_committee.is_none() {

@@ -1221,8 +1221,7 @@ impl SystemCheckpointServiceNotify for SystemCheckpointService {
             .tables
             .get_highest_verified_system_checkpoint()?
             .map(|x| *x.sequence_number())
-        {
-            if sequence <= highest_verified_checkpoint {
+            && sequence <= highest_verified_checkpoint {
                 debug!(
                     checkpoint_seq = sequence,
                     "Ignore system checkpoint signature from {} - already certified", signer,
@@ -1231,7 +1230,6 @@ impl SystemCheckpointServiceNotify for SystemCheckpointService {
                     .last_ignored_system_checkpoint_signature_received
                     .set(sequence as i64);
                 return Ok(());
-            }
         }
         debug!(
             checkpoint_seq = sequence,
