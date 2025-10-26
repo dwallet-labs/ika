@@ -253,7 +253,6 @@ pub fn create_dwallet_mpc_services(
             class_groups_key_pair.encryption_key_and_proof(),
         );
     }
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
     let dwallet_mpc_services = committee
         .names()
         .map(|authority_name| {
@@ -506,7 +505,7 @@ pub(crate) fn override_legit_messages_with_false_messages(
 ) {
     for malicious_party_index in malicious_parties {
         // Create a malicious message for round 1, and set it as the patty's message.
-        let mut original_message = sent_consensus_messages_collectors[*malicious_party_index]
+        let original_message = sent_consensus_messages_collectors[*malicious_party_index]
             .submitted_messages
             .lock()
             .unwrap()
@@ -551,13 +550,10 @@ pub(crate) async fn send_start_network_dkg_event_to_all_parties(
     );
     for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
         dwallet_mpc_service.run_service_loop_iteration().await;
-        assert_eq!(
-            dwallet_mpc_service.dwallet_mpc_manager().mpc_sessions.len(),
-            1
-        );
+        assert_eq!(dwallet_mpc_service.dwallet_mpc_manager().sessions.len(), 1);
         let session = dwallet_mpc_service
             .dwallet_mpc_manager()
-            .mpc_sessions
+            .sessions
             .values()
             .next()
             .unwrap();
@@ -569,7 +565,6 @@ pub(crate) async fn send_start_network_dkg_event_to_all_parties(
 }
 
 pub(crate) fn send_start_network_dkg_event_to_some_parties(
-    ika_network_config: &IkaNetworkConfig,
     epoch_id: EpochId,
     sui_data_senders: &mut Vec<SuiDataSenders>,
     parties: &[usize],
@@ -597,7 +592,7 @@ pub(crate) fn send_configurable_start_network_dkg_event(
         .iter()
         .enumerate()
         .filter(|(i, _)| parties.contains(i))
-        .for_each(|(_, mut sui_data_sender)| {
+        .for_each(|(_, sui_data_sender)| {
             let _ = sui_data_sender.uncompleted_events_sender.send((
                 vec![DWalletSessionRequest {
                     session_type: SessionType::System,
@@ -628,7 +623,7 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
     dwallet_network_encryption_key_id: ObjectID,
 ) {
     let dwallet_id = ObjectID::random();
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
+    sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
                 session_type: SessionType::User,
@@ -758,7 +753,7 @@ pub(crate) fn replace_party_message_with_other_party_message(
     else {
         panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
     };
-    let ConsensusTransactionKind::DWalletMPCMessage(mut original_message) = original_message.kind
+    let ConsensusTransactionKind::DWalletMPCMessage(original_message) = original_message.kind
     else {
         panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
     };

@@ -32,17 +32,16 @@ async fn test_some_malicious_validators_flows_succeed() {
         committee_size,
         "Committee size should match the expected size"
     );
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
         mut dwallet_mpc_services,
         sui_data_senders,
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
-        mut notify_services,
+        notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let network_key_id = ObjectID::random();
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
+    sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
                 session_type: SessionType::System,
@@ -144,7 +143,6 @@ async fn test_party_copies_other_party_message_dkg_round() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
     let all_malicious_parties = copying_parties.keys().collect_vec();
-    let all_flow_malicious_parties_len = all_malicious_parties.len();
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     assert!(
         committee_size - all_malicious_parties.len() >= committee.quorum_threshold as usize,
@@ -162,10 +160,10 @@ async fn test_party_copies_other_party_message_dkg_round() {
         sui_data_senders,
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
-        mut notify_services,
+        notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let network_key_id = ObjectID::random();
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
+    sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
                 session_type: SessionType::System,
@@ -197,7 +195,6 @@ async fn test_party_copies_other_party_message_dkg_round() {
         replace_party_message_with_other_party_message(
             *copying_party as usize,
             *copied_party as usize,
-            mpc_round,
             &mut sent_consensus_messages_collectors,
         );
     }
@@ -249,7 +246,6 @@ async fn test_party_copies_other_party_message_dkg_round() {
 pub(crate) fn replace_party_message_with_other_party_message(
     party_to_replace: usize,
     other_party: usize,
-    crypto_round: u64,
     sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
 ) {
     let original_message = sent_consensus_messages_collectors[party_to_replace]
@@ -271,7 +267,7 @@ pub(crate) fn replace_party_message_with_other_party_message(
     else {
         panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
     };
-    let ConsensusTransactionKind::DWalletMPCMessage(mut original_message) = original_message.kind
+    let ConsensusTransactionKind::DWalletMPCMessage(original_message) = original_message.kind
     else {
         panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
     };

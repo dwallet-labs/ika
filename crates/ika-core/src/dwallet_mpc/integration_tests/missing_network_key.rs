@@ -22,7 +22,6 @@ use tracing::info;
 async fn network_key_received_after_start_event() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
 
     let parties_that_receive_network_key_after_start_event = vec![0, 1];
 
@@ -163,7 +162,7 @@ pub(crate) fn send_network_key_to_parties(
         .iter()
         .enumerate()
         .filter(|(i, _)| parties_to_send_network_key_to.contains(i))
-        .for_each(|(i, mut sui_data_sender)| {
+        .for_each(|(_, sui_data_sender)| {
             let _ = sui_data_sender
                 .network_keys_sender
                 .send(Arc::new(HashMap::from([(

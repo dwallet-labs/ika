@@ -44,13 +44,12 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         committee_size,
         "Committee size should match the expected size"
     );
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
-        mut dwallet_mpc_services,
-        mut sui_data_senders,
-        mut sent_consensus_messages_collectors,
-        mut epoch_stores,
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let mut test_state = utils::IntegrationTestState {

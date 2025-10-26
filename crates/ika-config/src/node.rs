@@ -109,7 +109,7 @@ pub struct SuiConnectorConfig {
 #[serde(rename_all = "kebab-case")]
 pub struct NodeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub root_seed_key_pair: Option<RootSeedWithPath>,
+    pub root_seed: Option<RootSeedWithPath>,
     #[serde(default = "default_authority_key_pair")]
     pub protocol_key_pair: AuthorityKeyPairWithPath,
     #[serde(default = "default_key_pair")]
