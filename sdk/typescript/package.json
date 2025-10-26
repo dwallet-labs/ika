@@ -71,6 +71,7 @@
 		"@mysten/bcs": "^1.7.0",
 		"@mysten/sui": "^1.43.0",
 		"@noble/curves": "^2.0.1",
-		"@noble/hashes": "^1.8.0"
+		"@noble/hashes": "^1.8.0",
+		"sha3": "^2.1.4"
 	}
 }

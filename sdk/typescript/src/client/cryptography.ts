@@ -5,6 +5,7 @@ import { bcs } from '@mysten/sui/bcs';
 import { PublicKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { randomBytes } from '@noble/hashes/utils.js';
+import sha3 from 'sha3';
 
 import {
 	fromCurveAndSignatureAlgorithmAndHashToNumbers,
@@ -710,6 +711,15 @@ export function sessionIdentifierDigest(
 	]);
 	// Compute the SHA3-256 digest of the serialized data
 	const digest = keccak_256(data);
+	return Uint8Array.from(digest);
+}
+
+export function sessionIdentifierDigestV1(sessionIdentifier: Uint8Array): Uint8Array {
+	const version = 0; // Version of the session identifier
+	// Calculate the user session identifier for digest
+	const data = [...u64ToBytesBigEndian(version), ...encodeToASCII('USER'), ...sessionIdentifier];
+	// Compute the SHA3-256 digest of the serialized data
+	const digest = sha3.keccak256.digest(data);
 	return Uint8Array.from(digest);
 }
 
