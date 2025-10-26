@@ -403,11 +403,10 @@ export async function runSignFullFlowWithDWallet(
 		userShareEncryptionKeys,
 		signerAddress,
 	} = createDWalletResponse;
-	const presignRequestEvent = await testPresign(
+	const presignRequestEvent = await testPresignV1(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		Curve.SECP256K1,
 		SignatureAlgorithm.ECDSASecp256k1,
 		signerAddress,
 		testName,
