@@ -9,7 +9,7 @@ import {
 	ImportDWalletVerificationRequestInput,
 	prepareDKGAsync,
 	prepareDKGSecondRoundAsync,
-	sessionIdentifierDigest,
+	sessionIdentifierDigest, sessionIdentifierDigestV1,
 } from '../../src/client/cryptography.js';
 import type { IkaClient } from '../../src/client/ika-client.js';
 import {
@@ -91,7 +91,7 @@ export async function createCompleteDWallet(
 		ikaClient,
 		dWallet,
 		userShareEncryptionKeys,
-		sessionIdentifierDigest(sessionIdentifierPreimage, signerAddress),
+		sessionIdentifierDigestV1(sessionIdentifierPreimage),
 	);
 
 	// Step 5: Request DKG second round

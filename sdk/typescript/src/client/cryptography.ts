@@ -719,7 +719,7 @@ export function sessionIdentifierDigestV1(sessionIdentifier: Uint8Array): Uint8A
 	// Calculate the user session identifier for digest
 	const data = [...u64ToBytesBigEndian(version), ...encodeToASCII('USER'), ...sessionIdentifier];
 	// Compute the SHA3-256 digest of the serialized data
-	const digest = sha3.keccak256.digest(data);
+	const digest = keccak_256(Uint8Array.from(data));
 	return Uint8Array.from(digest);
 }
 
