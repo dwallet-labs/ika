@@ -1281,7 +1281,7 @@ export class IkaClient {
 		await this.ensureInitialized();
 
 		const {
-			timeout = 30000,
+			timeout = 60000,
 			interval = 1000,
 			maxInterval = 5000,
 			backoffMultiplier = 1.5,

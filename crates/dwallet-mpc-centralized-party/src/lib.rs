@@ -210,18 +210,15 @@ pub fn create_dkg_output_v1(
         )?;
     match decentralized_first_round_public_output {
         VersionedDwalletDKGFirstRoundPublicOutput::V1(decentralized_first_round_public_output) => {
-            let (output, session_identifier) =
-                match bcs::from_bytes::<(Vec<u8>, _)>(&decentralized_first_round_public_output) {
-                    Ok(v) => v,
-                    Err(_) => (
-                        decentralized_first_round_public_output,
-                        CommitmentSizedNumber::from_le_slice(&session_id),
-                    ),
-                };
+            let (output, session_identifier) = bcs::from_bytes::<(<DWalletDKGFirstParty as Party>::PublicOutput, CommitmentSizedNumber)>(&decentralized_first_round_public_output)
+                .map_err(|e| {
+                    anyhow!(
+                        "failed to deserialize decentralized first round DKG output into public output and session identifier: {:?}",
+                        e
+                    )
+                })?;
 
-            let [first_part, second_part]: <DWalletDKGFirstParty as Party>::PublicOutput =
-                bcs::from_bytes(&output)
-                    .context("failed to deserialize decentralized first round DKG output")?;
+            let [first_part, second_part] = output;
             let (first_first_part, first_second_part) = first_part.into();
             let (second_first_part, second_second_part) = second_part.into();
             // This is a temporary hack to keep working with the existing 2-round dWallet DKG mechanism.
