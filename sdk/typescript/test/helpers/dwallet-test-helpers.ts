@@ -850,15 +850,16 @@ export async function testSignV1(
 	presign: Presign,
 	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
 	message: Uint8Array,
-	hashScheme: Hash,
-	signatureAlgorithm: SignatureAlgorithm,
 	testName: string,
 ) {
+	let hashScheme = Hash.SHA256;
+	let signatureAlgorithm = SignatureAlgorithm.ECDSASecp256k1;
 	const transaction = new Transaction();
 	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
 
 	const messageApproval = ikaTransaction.approveMessage({
 		dWalletCap: dWallet.dwallet_cap_id,
+		curve: Curve.SECP256K1,
 		signatureAlgorithm,
 		hashScheme,
 		message,
@@ -900,7 +901,8 @@ export async function testSignV1(
 			presign,
 			encryptedUserSecretKeyShare,
 			message,
-
+			signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+			publicOutput: Uint8Array.from(dWallet.state.Active.public_output),
 			ikaCoin: emptyIKACoin,
 			suiCoin: transaction.gas,
 		});
