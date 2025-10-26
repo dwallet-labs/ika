@@ -7,7 +7,9 @@ import { KubeConfig } from '@kubernetes/client-node';
 import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 
-import { IkaClient } from '../../../src';
+import { Curve, Hash, IkaClient, SignatureAlgorithm } from '../../../src';
+import { testSignCombination } from '../../dkg-v2/all-combinations.test';
+import { testImportedKeyScenario } from '../../dkg-v2/imported-key.test';
 import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
@@ -17,7 +19,6 @@ import {
 	requestTestFaucetFunds,
 	runSignFullFlowWithDWallet,
 	runSignFullFlowWithV1Dwallet,
-	runSignFullFlowWithV2Dwallet,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
 import {
@@ -29,6 +30,96 @@ import {
 import { createConfigMaps } from '../config-map';
 import { deployIkaNetwork, NAMESPACE_NAME, NETWORK_SERVICE_NAME, TEST_ROOT_DIR } from '../globals';
 import { createPods, createValidatorPod, killAllPods, killValidatorPod } from '../pods';
+
+async function testImportedDWalletFullFlowWithAllCurves() {
+	await testImportedKeyScenario(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.KECCAK256,
+		'ecdsa-secp256k1-keccak256',
+	);
+
+	await testImportedKeyScenario(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.SHA256,
+		'ecdsa-secp256k1-sha256',
+	);
+
+	await testImportedKeyScenario(
+		Curve.SECP256K1,
+		SignatureAlgorithm.Taproot,
+		Hash.SHA256,
+		'taproot-sha256',
+	);
+
+	await testImportedKeyScenario(
+		Curve.SECP256R1,
+		SignatureAlgorithm.ECDSASecp256r1,
+		Hash.SHA256,
+		'ecdsa-secp256r1-sha256',
+	);
+
+	await testImportedKeyScenario(
+		Curve.ED25519,
+		SignatureAlgorithm.EdDSA,
+		Hash.SHA512,
+		'eddsa-sha512',
+	);
+
+	await testImportedKeyScenario(
+		Curve.RISTRETTO,
+		SignatureAlgorithm.SchnorrkelSubstrate,
+		Hash.Merlin,
+		'schnorrkel-merlin',
+	);
+}
+
+async function testSignFullFlowWithAllCurves() {
+	await testSignCombination(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.KECCAK256,
+		'ecdsa-secp256k1-keccak256',
+	);
+
+	await testSignCombination(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.SHA256,
+		'ecdsa-secp256k1-sha256',
+	);
+
+	await testSignCombination(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.DoubleSHA256,
+		'ecdsa-secp256k1-double-sha256',
+	);
+
+	await testSignCombination(
+		Curve.SECP256K1,
+		SignatureAlgorithm.Taproot,
+		Hash.SHA256,
+		'taproot-sha256',
+	);
+
+	await testSignCombination(
+		Curve.SECP256R1,
+		SignatureAlgorithm.ECDSASecp256r1,
+		Hash.SHA256,
+		'ecdsa-secp256r1-sha256',
+	);
+
+	await testSignCombination(Curve.ED25519, SignatureAlgorithm.EdDSA, Hash.SHA512, 'eddsa-sha512');
+
+	await testSignCombination(
+		Curve.RISTRETTO,
+		SignatureAlgorithm.SchnorrkelSubstrate,
+		Hash.Merlin,
+		'schnorrkel-merlin',
+	);
+}
 
 describe('system tests', () => {
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
@@ -161,15 +252,16 @@ describe('system tests', () => {
 		await delay(30);
 		await createPods(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM));
 
-		console.log('Move contracts upgraded to V2, running sign full flow and verifying it works');
-		ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage = upgradedPackageID;
-		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, testName, false);
-		console.log('V2 dWallet full flow works, test completed successfully');
-
 		console.log(
-			'Imported dWallet full flow works, creating a new v2 dWallet and verifying it works',
+			'Move contracts upgraded to V2, running sign full flow with all curves and verifying it works',
 		);
-		// TODO (#1530): Verify sign works with all supported curves in the network key update system test
+		ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage = upgradedPackageID;
+		await testSignFullFlowWithAllCurves();
+		console.log(
+			'sign works with all curves, checking full flow with an imported dWallet with all curves',
+		);
+		await testImportedDWalletFullFlowWithAllCurves();
+		console.log('Imported dWallet full flow works with all curves, test complete successfully');
 	}, 3_600_000);
 });
 

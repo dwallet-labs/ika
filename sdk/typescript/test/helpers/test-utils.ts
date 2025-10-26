@@ -407,7 +407,8 @@ export async function runSignFullFlowWithDWallet(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		SignatureAlgorithm.ECDSA,
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
 		signerAddress,
 		testName,
 	);
@@ -440,7 +441,7 @@ export async function runSignFullFlowWithDWallet(
 		encryptedUserSecretKeyShare,
 		message,
 		Hash.KECCAK256,
-		SignatureAlgorithm.ECDSA,
+		SignatureAlgorithm.ECDSASecp256k1,
 		testName,
 	);
 }
@@ -463,7 +464,8 @@ export async function runSignFullFlowWithV1Dwallet(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		SignatureAlgorithm.ECDSA,
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
 		signerAddress,
 		testName,
 	);
@@ -494,61 +496,7 @@ export async function runSignFullFlowWithV1Dwallet(
 		encryptedUserSecretKeyShare,
 		message,
 		Hash.KECCAK256,
-		SignatureAlgorithm.ECDSA,
-		testName,
-	);
-}
-
-export async function runSignFullFlowWithV2Dwallet(
-	ikaClient: IkaClient,
-	suiClient: SuiClient,
-	testName: string,
-	registerEncryptionKey: boolean = true,
-) {
-	const {
-		dWallet: activeDWallet,
-		encryptedUserSecretKeyShare,
-		userShareEncryptionKeys,
-		signerAddress,
-	} = await createCompleteDWalletV2(ikaClient, suiClient, testName, registerEncryptionKey);
-	expect(dwallet_version(Uint8Array.from(activeDWallet.state.Active.public_output))).toBe(2);
-	// Step 2: Create presign
-	const presignRequestEvent = await testPresign(
-		ikaClient,
-		suiClient,
-		activeDWallet,
-		SignatureAlgorithm.ECDSA,
-		signerAddress,
-		testName,
-	);
-
-	expect(presignRequestEvent).toBeDefined();
-	expect(presignRequestEvent.event_data.presign_id).toBeDefined();
-
-	// Step 3: Wait for presign to complete
-	const presignObject = await retryUntil(
-		() =>
-			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
-		(presign) => presign !== null,
-		30,
-		2000,
-	);
-
-	expect(presignObject).toBeDefined();
-	expect(presignObject.state.$kind).toBe('Completed');
-
-	// Step 4: Sign a message
-	const message = createTestMessage(testName);
-	await testSign(
-		ikaClient,
-		suiClient,
-		activeDWallet as ZeroTrustDWallet,
-		userShareEncryptionKeys,
-		presignObject,
-		encryptedUserSecretKeyShare,
-		message,
-		Hash.KECCAK256,
-		SignatureAlgorithm.ECDSA,
+		SignatureAlgorithm.ECDSASecp256k1,
 		testName,
 	);
 }

@@ -60,7 +60,7 @@ export SUI_CHAIN_IDENTIFIER="custom"
 
 RUST_MIN_STACK=16777216
 
-cp ./old_mainnet_binaries/mainnet-release-ika ../../../../target/release/"$BINARY_NAME" .
+cp ./upgrade-network-key/old_mainnet_binaries/mainnet-release-ika ../../../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
 echo "Creating validators from prefix '$VALIDATOR_PREFIX' and number '$VALIDATOR_NUM'"
@@ -156,7 +156,7 @@ done
 ###############################
 rm -rf "$SUI_CONFIG_PATH"
 
-cp ../old_mainnet_binaries/mainnet-release-ika-swarm-config ./ika-swarm-config
+cp ../upgrade-network-key/old_mainnet_binaries/mainnet-release-ika-swarm-config ./ika-swarm-config
 
 # Publish IKA Modules (Creates the publisher config).
 # echo the parameters to the next call

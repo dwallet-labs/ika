@@ -125,6 +125,7 @@ export async function createClassGroupsKeypair(
 export async function createDKGUserOutput(
 	protocolPublicParameters: Uint8Array,
 	networkFirstRoundOutput: Uint8Array,
+	sessionIdentifier: Uint8Array,
 ): Promise<{
 	userDKGMessage: Uint8Array;
 	userPublicOutput: Uint8Array;
@@ -133,6 +134,7 @@ export async function createDKGUserOutput(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
+		sessionIdentifier,
 	);
 
 	return {
@@ -171,20 +173,47 @@ export async function encryptSecretShare(
 /**
  * @deprecated Use prepareDKG instead
  *
- * @param _protocolPublicParameters - The protocol public parameters
- * @param _dWallet - The DWallet object containing first round output
- * @param _encryptionKey - The user's public encryption key
+ * @param protocolPublicParameters - The protocol public parameters
+ * @param dWallet - The DWallet object containing first round output
+ * @param encryptionKey - The user's public encryption key
+ * @param sessionID
  * @returns Complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available in the DWallet
  *
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
 export async function prepareDKGSecondRound(
-	_protocolPublicParameters: Uint8Array,
-	_dWallet: DWallet,
-	_encryptionKey: Uint8Array,
+	protocolPublicParameters: Uint8Array,
+	dWallet: DWallet,
+	encryptionKey: Uint8Array,
+	sessionID: Uint8Array,
 ): Promise<DKGRequestInput> {
-	throw new Error('prepareDKGSecondRound is deprecated. Use prepareDKG instead');
+	const networkFirstRoundOutput =
+		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
+
+	if (!networkFirstRoundOutput) {
+		throw new Error('First round output is undefined');
+	}
+
+	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
+		protocolPublicParameters,
+		Uint8Array.from(networkFirstRoundOutput),
+		sessionID,
+	);
+
+	const encryptedUserShareAndProof = await encryptSecretShare(
+		Curve.SECP256K1,
+		userSecretKeyShare,
+		encryptionKey,
+		protocolPublicParameters,
+	);
+
+	return {
+		userDKGMessage: Uint8Array.from(userDKGMessage),
+		userPublicOutput: Uint8Array.from(userPublicOutput),
+		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
+		userSecretKeyShare: Uint8Array.from(userSecretKeyShare),
+	};
 }
 
 /**
@@ -236,17 +265,26 @@ export async function prepareDKG(
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param dWallet - The DWallet object containing first round output
  * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
+ * @param sessionID
  * @returns Promise resolving to complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available or network parameters cannot be fetched
  *
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
 export async function prepareDKGSecondRoundAsync(
-	_ikaClient: IkaClient,
-	_dWallet: DWallet,
-	_userShareEncryptionKeys: UserShareEncryptionKeys,
+	ikaClient: IkaClient,
+	dWallet: DWallet,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
+	sessionID: Uint8Array,
 ): Promise<DKGRequestInput> {
-	throw new Error('prepareDKGSecondRoundAsync is deprecated. Use prepareDKGAsync instead');
+	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
+
+	return prepareDKGSecondRound(
+		protocolPublicParameters,
+		dWallet,
+		userShareEncryptionKeys.encryptionKey,
+		sessionID,
+	);
 }
 
 /**

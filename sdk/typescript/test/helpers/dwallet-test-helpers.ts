@@ -91,6 +91,7 @@ export async function createCompleteDWallet(
 		ikaClient,
 		dWallet,
 		userShareEncryptionKeys,
+		sessionIdentifierDigest(sessionIdentifierPreimage, signerAddress),
 	);
 
 	// Step 5: Request DKG second round
@@ -294,7 +295,7 @@ export async function requestTestDKGFirstRound(
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
 	const dwalletCap = await ikaTransaction.requestDWalletDKGFirstRoundAsync({
-		curve: Curve.SECP256K1,
+		curve: 0,
 		ikaCoin: emptyIKACoin,
 		suiCoin: transaction.gas,
 	});
