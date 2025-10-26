@@ -1,7 +1,5 @@
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::{
-    send_start_network_dkg_event_to_some_parties,
-};
+use crate::dwallet_mpc::integration_tests::utils::send_start_network_dkg_event_to_some_parties;
 use crate::dwallet_mpc::mpc_session::SessionStatus;
 use ika_types::committee::Committee;
 use sui_types::base_types::ObjectID;
@@ -61,7 +59,6 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
             .sessions
             .values()
             .next()
-            .clone()
             .unwrap();
         assert!(matches!(
             pending_event_session.status,

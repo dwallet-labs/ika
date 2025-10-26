@@ -11,7 +11,7 @@ use dwallet_mpc_centralized_party::{
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, SessionType};
+use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::info;
 
@@ -20,7 +20,6 @@ use tracing::info;
 async fn encrypt_secret_share() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
         dwallet_mpc_services,
@@ -62,7 +61,7 @@ async fn encrypt_secret_share() {
     .unwrap();
     send_start_encrypt_secret_share_event(
         epoch_id,
-        &mut test_state.sui_data_senders,
+        &test_state.sui_data_senders,
         [4; 32],
         4,
         key_id,
@@ -77,12 +76,11 @@ async fn encrypt_secret_share() {
         dwallet_test_result.dkg_second_round_output.output,
         dwallet_test_result.class_groups_encryption_key.clone(),
     );
-    let (consensus_round, encrypted_secret_share_checkpoint) =
-        utils::advance_mpc_flow_until_completion(
-            &mut test_state,
-            dwallet_test_result.flow_completion_consensus_round,
-        )
-        .await;
+    let (_, encrypted_secret_share_checkpoint) = utils::advance_mpc_flow_until_completion(
+        &mut test_state,
+        dwallet_test_result.flow_completion_consensus_round,
+    )
+    .await;
     let DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(
         encrypted_secret_share_output,
     ) = encrypted_secret_share_checkpoint
@@ -102,7 +100,7 @@ async fn encrypt_secret_share() {
 
 pub(crate) fn send_start_encrypt_secret_share_event(
     epoch_id: EpochId,
-    sui_data_senders: &Vec<SuiDataSenders>,
+    sui_data_senders: &[SuiDataSenders],
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID,

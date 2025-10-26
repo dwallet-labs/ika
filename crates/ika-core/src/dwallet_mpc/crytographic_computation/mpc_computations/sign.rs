@@ -38,6 +38,7 @@ pub(crate) type SignParty<P> = <P as twopc_mpc::sign::Protocol>::SignDecentraliz
 pub(crate) type DKGAndSignParty<P> = <P as twopc_mpc::sign::Protocol>::DKGSignDecentralizedParty;
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum SignPublicInputByProtocol {
     #[strum(to_string = "Sign Public Input - curve: Secp256k1, protocol: ECDSA")]
     Secp256k1ECDSA(<SignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput),
@@ -52,6 +53,7 @@ pub(crate) enum SignPublicInputByProtocol {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum DKGAndSignPublicInputByProtocol {
     #[strum(to_string = "DKG and Sign Public Input - curve: Secp256k1, protocol: ECDSA")]
     Secp256k1ECDSA(<DKGAndSignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput),
@@ -379,11 +381,8 @@ impl SignPublicInputByProtocol {
                                 }
                             };
 
-                            let centralized_signed_message = match centralized_signed_message {
-                                VersionedUserSignedMessage::V1(centralized_signed_message) => {
-                                    centralized_signed_message
-                                }
-                            };
+                            let VersionedUserSignedMessage::V1(centralized_signed_message) =
+                                centralized_signed_message;
 
                             let presign: twopc_mpc::ecdsa::presign::Presign<
                                 group::secp256k1::group_element::Value,
@@ -398,7 +397,7 @@ impl SignPublicInputByProtocol {
                                 ))
                             })?;
 
-                            let public_input = <SignParty<Secp256k1ECDSAProtocol> as Party>::PublicInput::from((
+                            <SignParty<Secp256k1ECDSAProtocol> as Party>::PublicInput::from((
                                 expected_decrypters,
                                 protocol_public_parameters,
                                 message,
@@ -411,16 +410,14 @@ impl SignPublicInputByProtocol {
                                     "Failed to deserialize sign message".to_string(),
                                 )))?,
                                 decryption_pp,
-                            ));
-
-                            public_input
+                            ))
                         }
                         VersionedPresignOutput::V2(_) => {
                             generate_sign_public_input::<Secp256k1ECDSAProtocol>(
                                 protocol_public_parameters,
                                 dwallet_decentralized_public_output,
                                 message,
-                                &presign,
+                                presign,
                                 message_centralized_signature,
                                 decryption_pp,
                                 expected_decrypters,
@@ -543,7 +540,7 @@ impl DKGAndSignPublicInputByProtocol {
                         protocol_public_parameters,
                         public_input,
                         message,
-                        &presign,
+                        presign,
                         message_centralized_signature,
                         decryption_pp,
                         expected_decrypters,
@@ -766,7 +763,7 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
         expected_decrypters: HashSet<PartyID>,
         hash_scheme: HashScheme,
     ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
-        let presign = match bcs::from_bytes(&presign).map_err(|e| {
+        let presign = match bcs::from_bytes(presign).map_err(|e| {
             DwalletMPCError::BcsError(bcs::Error::Custom(format!(
                 "Failed to deserialize presign output: {e}"
             )))
@@ -810,11 +807,7 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
             })?,
         };
 
-        let centralized_signed_message = match centralized_signed_message {
-            VersionedUserSignedMessage::V1(centralized_signed_message) => {
-                centralized_signed_message
-            }
-        };
+        let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
 
         let public_input = <SignParty<P> as Party>::PublicInput::from((
             expected_decrypters,
@@ -855,7 +848,7 @@ impl<P: twopc_mpc::sign::Protocol> DKGAndSignPartyPublicInputGenerator<P> for DK
         expected_decrypters: HashSet<PartyID>,
         hash_scheme: HashScheme,
     ) -> DwalletMPCResult<<DKGAndSignParty<P> as Party>::PublicInput> {
-        let presign = match bcs::from_bytes(&presign)? {
+        let presign = match bcs::from_bytes(presign)? {
             VersionedPresignOutput::V1(_) => {
                 unreachable!("Presign V1 should have been handled separately")
             }
@@ -863,11 +856,7 @@ impl<P: twopc_mpc::sign::Protocol> DKGAndSignPartyPublicInputGenerator<P> for DK
         };
 
         let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
-        let centralized_signed_message = match centralized_signed_message {
-            VersionedUserSignedMessage::V1(centralized_signed_message) => {
-                centralized_signed_message
-            }
-        };
+        let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
 
         let public_input = <DKGAndSignParty<P> as Party>::PublicInput::from((
             expected_decrypters,
@@ -897,7 +886,7 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     partially_signed_message: &SerializedWrappedMPCPublicOutput,
     protocol_public_parameters: &P::ProtocolPublicParameters,
 ) -> DwalletMPCResult<()> {
-    let presign = match bcs::from_bytes::<VersionedPresignOutput>(&presign)? {
+    let presign = match bcs::from_bytes::<VersionedPresignOutput>(presign)? {
         VersionedPresignOutput::V1(_) => {
             unreachable!("Presign V1 should have been handled separately")
         }
@@ -917,15 +906,13 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     };
 
     let presign: <P as twopc_mpc::presign::Protocol>::Presign = bcs::from_bytes(&presign)?;
-    let partially_signed_message = match partially_signed_message {
-        VersionedUserSignedMessage::V1(partially_signed_message) => partially_signed_message,
-    };
+    let VersionedUserSignedMessage::V1(partially_signed_message) = partially_signed_message;
     let partial: <P as twopc_mpc::sign::Protocol>::SignMessage =
         bcs::from_bytes(&partially_signed_message)?;
 
     <P as sign::Protocol>::verify_centralized_party_partial_signature(
         message,
-        hash_scheme.clone(),
+        *hash_scheme,
         decentralized_dkg_output,
         presign,
         partial,

@@ -3,10 +3,8 @@ use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
 use ika_types::committee::Committee;
-use ika_types::messages_consensus::{ConsensusTransactionKind};
-use ika_types::messages_dwallet_mpc::{
-    IkaNetworkConfig, SessionIdentifier, SessionType,
-};
+use ika_types::messages_consensus::ConsensusTransactionKind;
+use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -151,7 +149,6 @@ async fn test_party_copies_other_party_message_dkg_round() {
         committee_size,
         "Committee size should match the expected size"
     );
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
         mut dwallet_mpc_services,
@@ -244,7 +241,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
 pub(crate) fn replace_party_message_with_other_party_message(
     party_to_replace: usize,
     other_party: usize,
-    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
+    sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
 ) {
     let original_message = sent_consensus_messages_collectors[party_to_replace]
         .submitted_messages

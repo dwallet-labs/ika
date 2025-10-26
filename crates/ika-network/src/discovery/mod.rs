@@ -417,9 +417,9 @@ impl DiscoveryEventLoop {
 async fn try_to_connect_to_peer(network: Network, info: NodeInfo) {
     info!("Connecting to peer {info:?}");
     for multiaddr in &info.addresses {
-        if let Ok(address) = multiaddr.to_anemo_address() {
+        if let Ok(address) = multiaddr.to_anemo_address()
             // Ignore the result and log the error if there is one.
-            if network
+            && network
                 .connect_with_peer_id(address, info.peer_id)
                 .await
                 .tap_err(|e| {
@@ -430,9 +430,8 @@ async fn try_to_connect_to_peer(network: Network, info: NodeInfo) {
                     )
                 })
                 .is_ok()
-            {
-                return;
-            }
+        {
+            return;
         }
     }
 }

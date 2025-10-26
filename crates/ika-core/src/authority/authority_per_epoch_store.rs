@@ -826,12 +826,13 @@ impl AuthorityPerEpochStore {
 
         // Read-compare-write pattern assumes we are only called from the consensus handler task.
         if let Some(cap) = tables.authority_capabilities_v1.get(authority)?
-            && cap.generation >= capabilities.generation {
-                debug!(
-                    "ignoring new capabilities {:?} in favor of previous capabilities {:?}",
-                    capabilities, cap
-                );
-                return Ok(());
+            && cap.generation >= capabilities.generation
+        {
+            debug!(
+                "ignoring new capabilities {:?} in favor of previous capabilities {:?}",
+                capabilities, cap
+            );
+            return Ok(());
         }
         tables
             .authority_capabilities_v1

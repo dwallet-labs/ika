@@ -110,17 +110,15 @@ where
             .sui_client
             .ika_network_config
             .packages
-            .ika_dwallet_2pc_mpc_package_id
-            .clone();
+            .ika_dwallet_2pc_mpc_package_id;
         let ika_dwallet_2pc_mpc_package_id_v2 = self
             .sui_client
             .ika_network_config
             .packages
-            .ika_dwallet_2pc_mpc_package_id_v2
-            .clone();
+            .ika_dwallet_2pc_mpc_package_id_v2;
         let mut package_ids = vec![ika_dwallet_2pc_mpc_package_id];
-        if ika_dwallet_2pc_mpc_package_id_v2.is_some() {
-            package_ids.push(ika_dwallet_2pc_mpc_package_id_v2.unwrap());
+        if let Some(ika_dwallet_2pc_mpc_package_id_v2) = ika_dwallet_2pc_mpc_package_id_v2 {
+            package_ids.push(ika_dwallet_2pc_mpc_package_id_v2);
         }
         for package_id in package_ids {
             for module in self.modules.clone() {
@@ -491,10 +489,9 @@ where
                     .pricing_and_fee_management
                     .calculation_votes
                     .is_none()
+                && let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch))
             {
-                if let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch)) {
-                    error!(error=?err, "failed to send end of publish epoch to the channel");
-                }
+                error!(error=?err, "failed to send end of publish epoch to the channel");
             }
         }
     }
@@ -542,7 +539,7 @@ where
         loop {
             // Fetching the epoch start TX digest less frequently
             // as it is unexpected to change often.
-            if loop_index % 10 == 0 {
+            if loop_index.is_multiple_of(10) {
                 debug!("Querying epoch start cursor from Sui");
                 let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned()
                 else {
@@ -591,7 +588,7 @@ where
                         match sui_event_into_session_request(
                             &sui_client.ika_network_config,
                             event.type_.clone(),
-                            &event.bcs.bytes(),
+                            event.bcs.bytes(),
                             false,
                         ) {
                             Ok(Some(request)) => Some(request),

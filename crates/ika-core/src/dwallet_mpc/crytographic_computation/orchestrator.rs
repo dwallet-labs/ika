@@ -182,7 +182,7 @@ impl CryptographicComputationsOrchestrator {
                         );
                         dwallet_mpc_metrics.set_last_completion_duration(
                             &computation_update.protocol_metadata,
-                            &"1".to_string(),
+                            "1",
                             elapsed_ms as i64,
                         );
                     }
