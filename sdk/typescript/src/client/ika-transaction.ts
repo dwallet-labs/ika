@@ -972,6 +972,150 @@ export class IkaTransaction {
 	}
 
 	/**
+	 * Sign a message using a DWallet.
+	 * This performs the actual signing operation using the presign and user's share (encrypted, secret, or public).
+	 * Only supports ZeroTrust and Shared DWallets. For Imported Key DWallets, use requestSignWithImportedKey instead.
+	 *
+	 * SECURITY WARNING: When using unencrypted shares, this method does not verify `secretShare` and `publicOutput`,
+	 * which must be verified by the caller in order to guarantee zero-trust security.
+	 *
+	 * @param params.dWallet - The DWallet to sign with (ZeroTrust or Shared DWallet)
+	 * @param params.messageApproval - Message approval
+	 * @param params.hashScheme - The hash scheme used for the message (must be valid for the signature algorithm)
+	 * @param params.verifiedPresignCap - The verified presign capability
+	 * @param params.presign - The completed presign object
+	 * @param params.encryptedUserSecretKeyShare - Optional: encrypted user secret key share (for ZeroTrust DWallets)
+	 * @param params.secretShare - Optional: unencrypted secret share (requires publicOutput, for ZeroTrust DWallets)
+	 * @param params.publicOutput - Optional: public output (required when using secretShare, for ZeroTrust DWallets)
+	 * @param params.message - The message bytes to sign
+	 * @param params.signatureScheme - The signature algorithm to use
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Promise resolving to the signature ID
+	 *
+	 * @example
+	 * // ZeroTrust DWallet - Zero-trust signing (encrypted shares)
+	 * const signatureId = await tx.requestSign({
+	 *   dWallet, // ZeroTrustDWallet
+	 *   messageApproval,
+	 *   encryptedUserSecretKeyShare,
+	 *   // ... other params
+	 * });
+	 *
+	 * @example
+	 * // ZeroTrust DWallet - Secret share signing
+	 * const signatureId = await tx.requestSign({
+	 *   dWallet, // ZeroTrustDWallet
+	 *   messageApproval,
+	 *   secretShare,
+	 *   publicOutput,
+	 *   // ... other params
+	 * });
+	 *
+	 * @example
+	 * // Shared DWallet - Public share signing (no secret params needed)
+	 * const signatureId = await tx.requestSign({
+	 *   dWallet, // SharedDWallet
+	 *   messageApproval,
+	 *   // ... other params (no secretShare/publicOutput needed)
+	 * });
+	 */
+	async requestSignV1<S extends SignatureAlgorithm>({
+		dWallet,
+		messageApproval,
+		hashScheme,
+		verifiedPresignCap,
+		presign,
+		encryptedUserSecretKeyShare,
+		secretShare,
+		publicOutput,
+		message,
+		signatureScheme,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: ZeroTrustDWallet | SharedDWallet;
+		messageApproval: TransactionObjectArgument;
+		hashScheme: ValidHashForSignature<S>;
+		verifiedPresignCap: TransactionObjectArgument;
+		presign: Presign;
+		encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
+		secretShare?: Uint8Array;
+		publicOutput?: Uint8Array;
+		message: Uint8Array;
+		signatureScheme: S;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): Promise<TransactionObjectArgument> {
+		// Auto-detect share availability
+		const hasPublicShares = !!dWallet.public_user_secret_key_share;
+
+		// Regular DWallet signing (ZeroTrust and Shared only)
+		if (encryptedUserSecretKeyShare) {
+			// Encrypted shares
+			return this.#requestSign({
+				verifiedPresignCap,
+				messageApproval,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					encryptedUserSecretKeyShare,
+					message,
+					hash: hashScheme,
+					signatureScheme: signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
+				},
+				ikaCoin,
+				suiCoin,
+			});
+		} else if (secretShare && publicOutput) {
+			// Secret share provided
+			return this.#requestSign({
+				verifiedPresignCap,
+				messageApproval,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					secretShare,
+					publicOutput,
+					message,
+					hash: hashScheme,
+					signatureScheme: signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
+				},
+				ikaCoin,
+				suiCoin,
+			});
+		} else if (hasPublicShares) {
+			// Public shares available on DWallet
+			this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
+			this.#assertDWalletPublicOutputSet(dWallet);
+
+			return this.#requestSign({
+				verifiedPresignCap,
+				messageApproval,
+				userSignatureInputs: {
+					activeDWallet: dWallet,
+					presign,
+					// No need to verify public output in public user-share flows, as there is no zero-trust security in this model.
+					publicOutput: Uint8Array.from(dWallet.state.Active?.public_output),
+					secretShare: Uint8Array.from(dWallet.public_user_secret_key_share),
+					message,
+					hash: hashScheme,
+					signatureScheme: signatureScheme,
+					curve: fromNumberToCurve(dWallet.curve),
+				},
+				ikaCoin,
+				suiCoin,
+			});
+		} else {
+			throw new Error(
+				'DWallet signing requires either encryptedUserSecretKeyShare, (secretShare + publicOutput), or public_user_secret_key_share on the DWallet',
+			);
+		}
+	}
+
+	/**
 	 * Sign a message using an Imported Key DWallet.
 	 * This performs the actual signing operation using the presign and user's share (encrypted, secret, or public).
 	 *

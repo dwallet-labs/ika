@@ -877,6 +877,7 @@ export async function testSignV1(
 			signatureAlgorithm,
 			hashScheme,
 			message,
+			curve: Curve.SECP256K1
 		});
 
 		await ikaTransaction.requestSignWithImportedKey({
@@ -891,7 +892,7 @@ export async function testSignV1(
 			suiCoin: transaction.gas,
 		});
 	} else {
-		await ikaTransaction.requestSign({
+		await ikaTransaction.requestSignV1({
 			dWallet,
 			messageApproval,
 			verifiedPresignCap,
@@ -899,6 +900,7 @@ export async function testSignV1(
 			presign,
 			encryptedUserSecretKeyShare,
 			message,
+
 			ikaCoin: emptyIKACoin,
 			suiCoin: transaction.gas,
 		});
