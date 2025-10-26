@@ -611,6 +611,40 @@ export class IkaTransaction {
 	}
 
 	/**
+	 * Request a presign operation for a DWallet.
+	 * Presigning allows for faster signature generation by pre-computing part of the signature.
+	 *
+	 * If you are using ecdsa(k1,r1) and imported key dwallet, you must call this function always
+	 * If you are using schnor, schnorrkell, eddsa, taproot, call requestGlobalPresign instead
+	 *
+	 * @param params.dWallet - The DWallet to create the presign for
+	 * @param params.signatureAlgorithm - The signature algorithm identifier to use
+	 * @param params.ikaCoin - The IKA coin object to use for transaction fees
+	 * @param params.suiCoin - The SUI coin object to use for gas fees
+	 * @returns Unverified presign capability
+	 */
+	requestPresignV1({
+		dWallet,
+		signatureAlgorithm,
+		ikaCoin,
+		suiCoin,
+	}: {
+		dWallet: DWallet;
+		signatureAlgorithm: SignatureAlgorithm;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}): TransactionObjectArgument {
+		const unverifiedPresignCap = this.#requestPresign({
+			dWallet,
+			signatureAlgorithm,
+			ikaCoin,
+			suiCoin,
+		});
+
+		return unverifiedPresignCap;
+	}
+
+	/**
 	 * Request a global presign operation.
 	 * If you are using ecdsa(k1,r1) and imported key dwallet, instead call requestPresign
 	 * If you are using schnor, schnorrkell, eddsa, taproot, call this function always

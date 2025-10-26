@@ -686,7 +686,7 @@ export async function testPresignV1(
 
 	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
 
-	let unverifiedPresignCap = ikaTransaction.requestPresign({
+	let unverifiedPresignCap = ikaTransaction.requestPresignV1({
 		dWallet,
 		signatureAlgorithm,
 		ikaCoin: emptyIKACoin,
