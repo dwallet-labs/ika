@@ -3,13 +3,10 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
 use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{DWalletDKGData, ProtocolData};
-use dwallet_mpc_centralized_party::{
-    network_dkg_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
-};
+use crate::request_protocol_data::ProtocolData;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
-use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, SessionType};
+use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use sui_types::base_types::ObjectID;
 
 #[tokio::test]
@@ -45,9 +42,7 @@ async fn test_handle_mpc_request_with_invalid_protocol_data_returns_failed() {
         _notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
 
-    let (_, network_key_bytes, key_id) = create_network_key_test(&mut test_state).await;
-    let protocol_pp =
-        network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes.clone()).unwrap();
+    let (_, _, key_id) = create_network_key_test(&mut test_state).await;
 
     for service in &mut test_state.dwallet_mpc_services {
         let mpc_manager = service.dwallet_mpc_manager_mut();
