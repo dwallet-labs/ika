@@ -84,7 +84,7 @@ async fn get_decryption_key_shares_from_public_output(
                 match &shares.network_dkg_output() {
                     VersionedNetworkDkgOutput::V1(public_output) => {
                         match bcs::from_bytes::<<Secp256k1Party as mpc::Party>::PublicOutput>(
-                            &public_output,
+                            public_output,
                         ) {
                             Ok(dkg_public_output) => dkg_public_output
                                 .default_decryption_key_shares::<secp256k1::GroupElement>(
@@ -98,7 +98,7 @@ async fn get_decryption_key_shares_from_public_output(
                     }
                     VersionedNetworkDkgOutput::V2(public_output) => {
                         match bcs::from_bytes::<<dkg::Party as mpc::Party>::PublicOutput>(
-                            &public_output,
+                            public_output,
                         ) {
                             Ok(dkg_public_output) => dkg_public_output
                                 .decrypt_decryption_key_shares(
@@ -120,7 +120,7 @@ async fn get_decryption_key_shares_from_public_output(
                     VersionedDecryptionKeyReconfigurationOutput::V1(public_output) => {
                         match bcs::from_bytes::<
                             <ReconfigurationParty as mpc::Party>::PublicOutput,
-                        >(&public_output)
+                        >(public_output)
                         {
                             Ok(public_output) => public_output
                                 .decrypt_decryption_key_shares::<secp256k1::GroupElement>(
@@ -135,7 +135,7 @@ async fn get_decryption_key_shares_from_public_output(
                     VersionedDecryptionKeyReconfigurationOutput::V2(public_output) => {
                         match bcs::from_bytes::<
                             <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput,
-                        >(&public_output)
+                        >(public_output)
                         {
                             Ok(public_output) => public_output
                                 .decrypt_decryption_key_shares(
@@ -319,11 +319,8 @@ impl DwalletMPCNetworkKeys {
         &self,
         key_id: &ObjectID,
     ) -> Option<VersionedDecryptionKeyReconfigurationOutput> {
-        let key = self.network_encryption_keys.get(key_id);
-        if key.is_none() {
-            return None;
-        }
-        key.unwrap().latest_network_reconfiguration_public_output()
+        let key = self.network_encryption_keys.get(key_id)?;
+        key.latest_network_reconfiguration_public_output()
     }
 }
 
@@ -346,6 +343,7 @@ pub(crate) fn advance_network_dkg_v1(
         &public_input,
         rng,
     );
+
     let res = match result.clone() {
         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
             public_output_value,
@@ -386,6 +384,7 @@ pub(crate) fn advance_network_dkg_v2(
         &public_input,
         rng,
     );
+
     let res = match result.clone() {
         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
             public_output_value,

@@ -606,8 +606,8 @@ impl From<u128> for BenchMoveCallArg {
     }
 }
 
-impl From<&Vec<u8>> for BenchMoveCallArg {
-    fn from(v: &Vec<u8>) -> Self {
+impl From<&[u8]> for BenchMoveCallArg {
+    fn from(v: &[u8]) -> Self {
         // unwrap safe because every vec<u8> value is BCS-serializable
         BenchMoveCallArg::Pure(bcs::to_bytes(v).unwrap())
     }

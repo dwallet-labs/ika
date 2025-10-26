@@ -1,6 +1,8 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+#![allow(deprecated)]
+
 use crate::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm, DwalletNetworkMPCError};
 use group::HashScheme;
 use lazy_static::lazy_static;

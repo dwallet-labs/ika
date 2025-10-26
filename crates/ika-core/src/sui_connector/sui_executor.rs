@@ -13,7 +13,6 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
 };
 use fastcrypto::traits::ToFromBytes;
 use ika_config::node::RunWithRange;
-use ika_protocol_config::ProtocolConfig;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::EpochId;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -29,8 +28,7 @@ use ika_types::sui::{
     ADVANCE_EPOCH_FUNCTION_NAME, APPEND_VECTOR_FUNCTION_NAME,
     CREATE_SYSTEM_CURRENT_STATUS_INFO_FUNCTION_NAME, DWalletCoordinator, DWalletCoordinatorInner,
     INITIATE_ADVANCE_EPOCH_FUNCTION_NAME, INITIATE_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME,
-    PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, PricingInfoKey,
-    REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME,
+    PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME,
     REQUEST_NETWORK_ENCRYPTION_KEY_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME, SYSTEM_MODULE_NAME,
     System, SystemInner, SystemInnerTrait, VECTOR_MODULE_NAME,
 };
@@ -191,12 +189,7 @@ where
                 .supported_curves_to_signature_algorithms_to_hash_schemes
                 .contents
                 .iter()
-                .map(|c| {
-                    (
-                        c.key.clone(),
-                        c.value.contents.iter().map(|c| c.key.clone()).collect_vec(),
-                    )
-                })
+                .map(|c| (c.key, c.value.contents.iter().map(|c| c.key).collect_vec()))
                 .collect::<HashMap<_, _>>();
             let result = retry_with_max_elapsed_time!(
                 Self::request_mid_epoch_reconfiguration_and_calculate_protocols_pricing(
@@ -447,60 +440,57 @@ where
                     }
                 }
 
-                if Some(next_system_checkpoint_sequence_number) > last_submitted_system_checkpoint {
-                    if let Ok(Some(system_checkpoint)) = self
+                if Some(next_system_checkpoint_sequence_number) > last_submitted_system_checkpoint
+                    && let Ok(Some(system_checkpoint)) = self
                         .system_checkpoint_store
                         .get_system_checkpoint_by_sequence_number(
                             next_system_checkpoint_sequence_number,
                         )
-                    {
-                        self.metrics
-                            .system_checkpoint_sequence
-                            .set(next_dwallet_checkpoint_sequence_number as i64);
+                {
+                    self.metrics
+                        .system_checkpoint_sequence
+                        .set(next_dwallet_checkpoint_sequence_number as i64);
 
-                        let active_members: BlsCommittee =
-                            system_inner.validator_set().clone().active_committee;
-                        let auth_sig = system_checkpoint.auth_sig();
-                        let signature = auth_sig.signature.as_bytes().to_vec();
-                        let signers_bitmap =
-                            Self::calculate_signers_bitmap(&auth_sig.signers_map, &active_members);
-                        let message = bcs::to_bytes::<SystemCheckpointMessage>(
-                            &system_checkpoint.into_message(),
-                        )
-                        .expect("Serializing `system_checkpoint` message cannot fail");
+                    let active_members: BlsCommittee =
+                        system_inner.validator_set().clone().active_committee;
+                    let auth_sig = system_checkpoint.auth_sig();
+                    let signature = auth_sig.signature.as_bytes().to_vec();
+                    let signers_bitmap =
+                        Self::calculate_signers_bitmap(&auth_sig.signers_map, &active_members);
+                    let message =
+                        bcs::to_bytes::<SystemCheckpointMessage>(&system_checkpoint.into_message())
+                            .expect("Serializing `system_checkpoint` message cannot fail");
 
-                        info!("Signers_bitmap: {:?}", signers_bitmap);
-                        self.metrics.system_checkpoint_write_requests_total.inc();
-                        let response = retry_with_max_elapsed_time!(
-                            Self::handle_system_checkpoint_execution_task(
-                                ika_system_package_id,
-                                signature.clone(),
-                                signers_bitmap.clone(),
-                                message.clone(),
-                                sui_notifier,
-                                &self.sui_client.clone(),
-                                &self.metrics.clone(),
-                                self.notifier_tx_lock.clone(),
-                            ),
-                            Duration::from_secs(ONE_HOUR_IN_SECONDS)
-                        );
-                        if response.is_err() {
-                            panic!(
-                                "failed to submit system checkpoint for over an hour, err: {:?}",
-                                response.err()
-                            );
-                        }
-                        self.metrics.system_checkpoint_writes_success_total.inc();
-                        self.metrics
-                            .last_written_system_checkpoint_sequence
-                            .set(next_dwallet_checkpoint_sequence_number as i64);
-                        last_submitted_system_checkpoint =
-                            Some(next_system_checkpoint_sequence_number);
-                        info!(
-                            "Sui transaction successfully executed for system_checkpoint sequence number: {}",
-                            next_system_checkpoint_sequence_number
+                    info!("Signers_bitmap: {:?}", signers_bitmap);
+                    self.metrics.system_checkpoint_write_requests_total.inc();
+                    let response = retry_with_max_elapsed_time!(
+                        Self::handle_system_checkpoint_execution_task(
+                            ika_system_package_id,
+                            signature.clone(),
+                            signers_bitmap.clone(),
+                            message.clone(),
+                            sui_notifier,
+                            &self.sui_client.clone(),
+                            &self.metrics.clone(),
+                            self.notifier_tx_lock.clone(),
+                        ),
+                        Duration::from_secs(ONE_HOUR_IN_SECONDS)
+                    );
+                    if response.is_err() {
+                        panic!(
+                            "failed to submit system checkpoint for over an hour, err: {:?}",
+                            response.err()
                         );
                     }
+                    self.metrics.system_checkpoint_writes_success_total.inc();
+                    self.metrics
+                        .last_written_system_checkpoint_sequence
+                        .set(next_dwallet_checkpoint_sequence_number as i64);
+                    last_submitted_system_checkpoint = Some(next_system_checkpoint_sequence_number);
+                    info!(
+                        "Sui transaction successfully executed for system_checkpoint sequence number: {}",
+                        next_system_checkpoint_sequence_number
+                    );
                 }
             }
         }

@@ -139,6 +139,7 @@ impl DWalletMPCService {
     }
 
     #[cfg(feature = "test-utils")]
+    #[allow(dead_code)]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         seed: RootSeed,
@@ -156,7 +157,7 @@ impl DWalletMPCService {
             state: authority_state,
             dwallet_checkpoint_service: checkpoint_service,
             dwallet_mpc_manager: DWalletMPCManager::new(
-                authority_name.clone(),
+                authority_name,
                 Arc::new(committee.clone()),
                 1,
                 seed,
@@ -178,21 +179,22 @@ impl DWalletMPCService {
     }
 
     #[cfg(feature = "test-utils")]
+    #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager(&self) -> &DWalletMPCManager {
         &self.dwallet_mpc_manager
     }
 
     #[cfg(feature = "test-utils")]
+    #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager_mut(&mut self) -> &mut DWalletMPCManager {
         &mut self.dwallet_mpc_manager
     }
 
     async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
-        let (ika_current_epoch_on_sui, last_session_to_complete_in_current_epoch) = self
+        let (ika_current_epoch_on_sui, last_session_to_complete_in_current_epoch) = *self
             .sui_data_requests
             .last_session_to_complete_in_current_epoch_receiver
-            .borrow()
-            .clone();
+            .borrow();
         if ika_current_epoch_on_sui == self.epoch {
             self.dwallet_mpc_manager
                 .sync_last_session_to_complete_in_current_epoch(

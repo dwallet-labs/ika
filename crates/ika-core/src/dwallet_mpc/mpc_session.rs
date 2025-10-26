@@ -69,6 +69,7 @@ pub(crate) struct DWalletSession {
 ///   The session has failed due to an unrecoverable error.
 ///   This status indicates that the session cannot proceed further.
 #[derive(Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum SessionStatus {
     Active {
         public_input: PublicInput,
@@ -83,6 +84,7 @@ pub(crate) enum SessionStatus {
 
 #[derive(Clone, Debug)]
 pub enum SessionComputationType {
+    #[allow(clippy::upper_case_acronyms)]
     MPC {
         /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
         /// Used to build the input of messages to advance each round of the session.
@@ -93,7 +95,10 @@ pub enum SessionComputationType {
 
 #[derive(Clone, Debug)]
 pub enum ComputationResultData {
-    MPC { mpc_round: u64 },
+    #[allow(clippy::upper_case_acronyms)]
+    MPC {
+        mpc_round: u64,
+    },
     Native,
 }
 
@@ -435,39 +440,36 @@ impl DWalletMPCManager {
             return None;
         }
 
-        if request.requires_network_key_data {
-            if let Some(network_encryption_key_id) =
+        if request.requires_network_key_data
+            && let Some(network_encryption_key_id) =
                 request.protocol_data.network_encryption_key_id()
+            && !self
+                .network_keys
+                .key_public_data_exists(&network_encryption_key_id)
+        {
+            // We don't yet have the data for this network encryption key,
+            // so we add it to the queue.
+            debug!(
+                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+                session_source=?request.session_type,
+                network_encryption_key_id=?network_encryption_key_id,
+                "Adding request to pending for the network key"
+            );
+
+            let request_pending_for_this_network_key = self
+                .requests_pending_for_network_key
+                .entry(network_encryption_key_id)
+                .or_default();
+
+            if request_pending_for_this_network_key
+                .iter()
+                .all(|e| e.session_identifier != session_identifier)
             {
-                if !self
-                    .network_keys
-                    .key_public_data_exists(&network_encryption_key_id)
-                {
-                    // We don't yet have the data for this network encryption key,
-                    // so we add it to the queue.
-                    debug!(
-                        session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                        session_source=?request.session_type,
-                        network_encryption_key_id=?network_encryption_key_id,
-                        "Adding request to pending for the network key"
-                    );
-
-                    let request_pending_for_this_network_key = self
-                        .requests_pending_for_network_key
-                        .entry(network_encryption_key_id)
-                        .or_default();
-
-                    if request_pending_for_this_network_key
-                        .iter()
-                        .all(|e| e.session_identifier != session_identifier)
-                    {
-                        // Add an event with this session ID only if it doesn't exist.
-                        request_pending_for_this_network_key.push(request);
-                    }
-
-                    return None;
-                }
+                // Add an event with this session ID only if it doesn't exist.
+                request_pending_for_this_network_key.push(request);
             }
+
+            return None;
         }
 
         if request.requires_next_active_committee && self.next_active_committee.is_none() {
@@ -492,11 +494,11 @@ impl DWalletMPCManager {
             return None;
         }
 
-        if let Some(session) = self.sessions.get(&session_identifier) {
-            if !matches!(session.status, SessionStatus::WaitingForSessionRequest) {
-                // The corresponding session already has its data set, nothing to do.
-                return None;
-            }
+        if let Some(session) = self.sessions.get(&session_identifier)
+            && !matches!(session.status, SessionStatus::WaitingForSessionRequest)
+        {
+            // The corresponding session already has its data set, nothing to do.
+            return None;
         }
 
         let status = match session_input_from_request(

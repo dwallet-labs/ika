@@ -15,7 +15,6 @@ use ika_types::messages_dwallet_mpc::{
     DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent,
     FutureSignRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent,
     PresignRequestEvent, SESSIONS_MANAGER_MODULE_NAME, SignDuringDKGRequestEvent, SignRequestEvent,
-    UserSecretKeyShareEventType,
 };
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;
@@ -65,7 +64,7 @@ pub fn sui_event_into_session_request(
     ) {
         dwallet_imported_key_verification_request_event_session_request(
             deserialize_event_contents::<DWalletImportedKeyVerificationRequestEvent>(
-                &contents, pulled,
+                contents, pulled,
             )?,
             pulled,
         )?
@@ -76,7 +75,7 @@ pub fn sui_event_into_session_request(
     ) {
         make_dwallet_user_secret_key_shares_public_request_event_session_request(
             deserialize_event_contents::<MakeDWalletUserSecretKeySharesPublicRequestEvent>(
-                &contents, pulled,
+                contents, pulled,
             )?,
             pulled,
         )?
@@ -86,7 +85,7 @@ pub fn sui_event_into_session_request(
             .to_string(),
     ) {
         dwallet_dkg_first_party_session_request(
-            deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(&contents, pulled)?,
+            deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(contents, pulled)?,
             pulled,
         )?
     } else if event_type.to_string().contains(
@@ -94,7 +93,7 @@ pub fn sui_event_into_session_request(
             .name
             .to_string(),
     ) {
-        let parsed_event = deserialize_event_contents::<DWalletDKGRequestEvent>(&contents, pulled)?;
+        let parsed_event = deserialize_event_contents::<DWalletDKGRequestEvent>(contents, pulled)?;
         match &parsed_event.event_data.sign_during_dkg_request {
             None => dwallet_dkg_session_request(parsed_event, pulled)?,
             Some(sign_during_dkg_request) => dwallet_dkg_with_sign_session_request(
@@ -109,7 +108,7 @@ pub fn sui_event_into_session_request(
             .to_string(),
     ) {
         dwallet_dkg_second_party_session_request(
-            deserialize_event_contents::<DWalletDKGSecondRoundRequestEvent>(&contents, pulled)?,
+            deserialize_event_contents::<DWalletDKGSecondRoundRequestEvent>(contents, pulled)?,
             pulled,
         )?
     } else if event_type
@@ -117,7 +116,7 @@ pub fn sui_event_into_session_request(
         .contains(&PresignRequestEvent::type_(packages_config).name.to_string())
     {
         let deserialized_event: DWalletSessionEvent<PresignRequestEvent> =
-            deserialize_event_contents(&contents, pulled)?;
+            deserialize_event_contents(contents, pulled)?;
 
         presign_party_session_request(deserialized_event, pulled)?
     } else if event_type.to_string().contains(
@@ -126,7 +125,7 @@ pub fn sui_event_into_session_request(
             .to_string(),
     ) {
         let deserialized_event: DWalletSessionEvent<FutureSignRequestEvent> =
-            deserialize_event_contents(&contents, pulled)?;
+            deserialize_event_contents(contents, pulled)?;
 
         get_verify_partial_signatures_session_request(&deserialized_event, pulled)?
     } else if event_type
@@ -134,7 +133,7 @@ pub fn sui_event_into_session_request(
         .contains(&SignRequestEvent::type_(packages_config).name.to_string())
     {
         let deserialized_event: DWalletSessionEvent<SignRequestEvent> =
-            deserialize_event_contents(&contents, pulled)?;
+            deserialize_event_contents(contents, pulled)?;
 
         sign_party_session_request(&deserialized_event, pulled)?
     } else if event_type.to_string().contains(
@@ -143,7 +142,7 @@ pub fn sui_event_into_session_request(
             .to_string(),
     ) {
         let deserialized_event: DWalletSessionEvent<DWalletNetworkDKGEncryptionKeyRequestEvent> =
-            deserialize_event_contents(&contents, pulled)?;
+            deserialize_event_contents(contents, pulled)?;
 
         network_dkg_session_request(deserialized_event, pulled)?
     } else if event_type.to_string().contains(
@@ -153,7 +152,7 @@ pub fn sui_event_into_session_request(
     ) {
         let deserialized_event: DWalletSessionEvent<
             DWalletEncryptionKeyReconfigurationRequestEvent,
-        > = deserialize_event_contents(&contents, pulled)?;
+        > = deserialize_event_contents(contents, pulled)?;
 
         network_decryption_key_reconfiguration_session_request_from_event(
             deserialized_event,
@@ -165,7 +164,7 @@ pub fn sui_event_into_session_request(
             .to_string(),
     ) {
         let deserialized_event: DWalletSessionEvent<EncryptedShareVerificationRequestEvent> =
-            deserialize_event_contents(&contents, pulled)?;
+            deserialize_event_contents(contents, pulled)?;
 
         start_encrypted_share_verification_session_request(deserialized_event, pulled)?
     } else {
