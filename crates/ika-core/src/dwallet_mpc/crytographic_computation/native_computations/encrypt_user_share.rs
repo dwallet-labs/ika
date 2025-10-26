@@ -10,6 +10,7 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletSessionEvent, EncryptedShareVerificationRequestEvent, MPCRequestInput, MPCSessionRequest,
 };
+use tracing::error;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::secp256k1::class_groups::AsyncProtocol;
 
@@ -44,7 +45,7 @@ pub(crate) fn verify_encrypted_share(
         &verification_data.encryption_key,
         protocol_public_parameters,
     )
-    .map_err(|_| DwalletMPCError::EncryptedUserShareVerificationFailed)
+    .map_err(|err| DwalletMPCError::EncryptedUserShareVerificationFailed(err.to_string()))
 }
 
 /// Verifies that the given centralized secret key share
@@ -58,11 +59,41 @@ fn verify_centralized_secret_key_share_proof(
     let dkg_public_output = bcs::from_bytes(serialized_dkg_public_output)?;
     match dkg_public_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_public_output) => {
+            let parsed_dwallet_dkg_output = match bcs::from_bytes(&dkg_public_output) {
+                Ok(output) => output,
+                Err(err) => {
+                    error!(
+                        "Failed to parse dWallet DKG public output, error: {:?}",
+                        err
+                    );
+                    return Err(err.into());
+                }
+            };
+            let encryption_key = match bcs::from_bytes(encryption_key) {
+                Ok(key) => key,
+                Err(err) => {
+                    error!("Failed to parse encryption key, error: {:?}", err);
+                    return Err(err.into());
+                }
+            };
+            let encrypted_secret_key_share_message = match bcs::from_bytes(
+                encrypted_centralized_secret_share_and_proof,
+            ) {
+                Ok(message) => message,
+                Err(err) => {
+                    error!(
+                        "Failed to parse encrypted centralized secret key share and proof, error: {:?}",
+                        err
+                    );
+                    return Err(err.into());
+                }
+            };
+
             <AsyncProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
                 &protocol_public_parameters,
-                bcs::from_bytes(&dkg_public_output)?,
-                bcs::from_bytes(encryption_key)?,
-                bcs::from_bytes(encrypted_centralized_secret_share_and_proof)?,
+                parsed_dwallet_dkg_output,
+                encryption_key,
+                encrypted_secret_key_share_message,
                 &mut OsCsRng,
             )
             .map_err(Into::<anyhow::Error>::into)?;

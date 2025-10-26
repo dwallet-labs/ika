@@ -83,8 +83,8 @@ pub enum DwalletMPCError {
     #[error("failed to lock the mutex")]
     LockError,
 
-    #[error("verification of the encrypted user share failed")]
-    EncryptedUserShareVerificationFailed,
+    #[error("verification of the encrypted user share failed {0}")]
+    EncryptedUserShareVerificationFailed(String),
 
     #[error("the sent public key does not match the sender's address")]
     EncryptedUserSharePublicKeyDoesNotMatchAddress,
