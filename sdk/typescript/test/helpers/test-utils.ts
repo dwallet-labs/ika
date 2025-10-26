@@ -29,7 +29,7 @@ import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-
 import {
 	createCompleteDWallet,
 	createCompleteDWalletV2,
-	testPresign,
+	testPresign, testPresignV1,
 	testSign,
 } from './dwallet-test-helpers';
 
@@ -460,11 +460,10 @@ export async function runSignFullFlowWithV1Dwallet(
 	} = await createCompleteDWallet(ikaClient, suiClient, testName, registerEncryptionKey);
 
 	// Step 2: Create presign
-	const presignRequestEvent = await testPresign(
+	const presignRequestEvent = await testPresignV1(
 		ikaClient,
 		suiClient,
 		activeDWallet,
-		Curve.SECP256K1,
 		SignatureAlgorithm.ECDSASecp256k1,
 		signerAddress,
 		testName,

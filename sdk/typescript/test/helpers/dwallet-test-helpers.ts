@@ -673,6 +673,48 @@ export async function makeTestImportedKeyDWalletUserSecretKeySharesPublic(
 /**
  * Presign for testing
  */
+export async function testPresignV1(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: DWallet,
+	signatureAlgorithm: SignatureAlgorithm,
+	signerAddress: string,
+	testName: string,
+) {
+	const transaction = new Transaction();
+	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction);
+
+	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
+
+	let unverifiedPresignCap = ikaTransaction.requestPresign({
+		dWallet,
+		signatureAlgorithm,
+		ikaCoin: emptyIKACoin,
+		suiCoin: transaction.gas,
+	});
+	transaction.transferObjects([unverifiedPresignCap], signerAddress);
+
+	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
+
+	const result = await executeTestTransaction(suiClient, transaction, testName);
+
+	const presignRequestEvent = result.events?.find((event) => {
+		return event.type.includes('PresignRequestEvent') && event.type.includes('DWalletSessionEvent');
+	});
+
+	if (!presignRequestEvent) {
+		throw new Error('Failed to find PresignRequestEvent');
+	}
+
+	return SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.PresignRequestEvent,
+	).fromBase64(presignRequestEvent.bcs as string);
+}
+
+
+/**
+ * Presign for testing
+ */
 export async function testPresign(
 	ikaClient: IkaClient,
 	suiClient: SuiClient,
