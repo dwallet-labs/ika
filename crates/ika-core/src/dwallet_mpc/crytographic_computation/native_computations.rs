@@ -108,7 +108,7 @@ impl ProtocolCryptographicData {
                     let dkg_output = bcs::from_bytes(&data.dwallet_decentralized_output)?;
                     let partially_signed_message = bcs::from_bytes(&data.partially_signed_message)?;
                     let message = &data.message;
-                    let hash_scheme = data.hash_scheme.clone();
+                    let hash_scheme = data.hash_scheme;
                     let decentralized_dkg_output = match dkg_output {
                             VersionedDwalletDKGPublicOutput::V1(output) => {
                                 bcs::from_bytes::<<Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
@@ -124,17 +124,14 @@ impl ProtocolCryptographicData {
                             CiphertextSpaceGroupElement<{ NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>,
                         >,
                     > = bcs::from_bytes(&presign)?;
-                    let partially_signed_message = match partially_signed_message {
-                        VersionedUserSignedMessage::V1(partially_signed_message) => {
-                            partially_signed_message
-                        }
-                    };
+                    let VersionedUserSignedMessage::V1(partially_signed_message) =
+                        partially_signed_message;
                     let partial: <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage =
                             bcs::from_bytes(&partially_signed_message)?;
 
                     <Secp256k1ECDSAProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
                         message,
-                        hash_scheme.clone(),
+                        hash_scheme,
                         decentralized_dkg_output,
                         presign.into(),
                         partial,
@@ -153,7 +150,7 @@ impl ProtocolCryptographicData {
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
-                                &protocol_public_parameters,
+                                protocol_public_parameters,
                             )?;
                         }
                         DWalletSignatureAlgorithm::Taproot => {
@@ -163,7 +160,7 @@ impl ProtocolCryptographicData {
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
-                                &protocol_public_parameters,
+                                protocol_public_parameters,
                             )?;
                         }
                         _ => {
@@ -195,7 +192,7 @@ impl ProtocolCryptographicData {
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
-                    &protocol_public_parameters,
+                    protocol_public_parameters,
                 )?;
                 Vec::new()
             }
@@ -218,7 +215,7 @@ impl ProtocolCryptographicData {
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
-                    &protocol_public_parameters,
+                    protocol_public_parameters,
                 )?;
                 Vec::new()
             }
@@ -241,7 +238,7 @@ impl ProtocolCryptographicData {
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
-                    &protocol_public_parameters,
+                    protocol_public_parameters,
                 )?;
                 Vec::new()
             }

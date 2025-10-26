@@ -1187,15 +1187,14 @@ where
                         if let Ok(pinned_digest_index) = pinned_checkpoints.binary_search_by_key(
                             checkpoint.sequence_number(),
                             |(seq_num, _digest)| *seq_num
-                        ) {
-                            if pinned_checkpoints[pinned_digest_index].1 != *checkpoint_digest {
+                        )
+                            && pinned_checkpoints[pinned_digest_index].1 != *checkpoint_digest {
                                 debug!(
                                     "peer returned checkpoint with digest that does not match pinned digest: expected {:?}, got {:?}",
                                     pinned_checkpoints[pinned_digest_index].1,
                                     checkpoint_digest
                                 );
                                 continue;
-                            }
                         }
 
                         // Insert in our store in the event that things fail and we need to retry
@@ -1540,15 +1539,14 @@ where
                         if let Ok(pinned_digest_index) = pinned_system_checkpoints.binary_search_by_key(
                             system_checkpoint.sequence_number(),
                             |(seq_num, _digest)| *seq_num
-                        ) {
-                            if pinned_system_checkpoints[pinned_digest_index].1 != *system_checkpoint_digest {
+                        )
+                            && pinned_system_checkpoints[pinned_digest_index].1 != *system_checkpoint_digest {
                                 debug!(
                                     "peer returned system_checkpoint with digest that does not match pinned digest: expected {:?}, got {:?}",
                                     pinned_system_checkpoints[pinned_digest_index].1,
                                     system_checkpoint_digest
                                 );
                                 continue;
-                            }
                         }
 
                         // Insert in our store in the event that things fail and we need to retry

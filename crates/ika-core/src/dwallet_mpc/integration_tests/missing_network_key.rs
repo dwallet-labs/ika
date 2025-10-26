@@ -3,14 +3,10 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     send_start_dwallet_dkg_first_round_event, send_start_network_dkg_event_to_all_parties,
 };
-use crate::dwallet_mpc::mpc_session::SessionStatus;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletNetworkEncryptionKeyData,
-    DWalletNetworkEncryptionKeyState, DWalletSessionEvent, DWalletSessionEventTrait,
-    IkaNetworkConfig,
+    DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,7 +42,7 @@ async fn network_key_received_after_start_event() {
 
     send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state).await;
     let mut consensus_round = 1;
-    let mut network_key_checkpoint = None;
+    let network_key_checkpoint;
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
             &committee,
@@ -154,7 +150,7 @@ async fn network_key_received_after_start_event() {
 
 pub(crate) fn send_network_key_to_parties(
     parties_to_send_network_key_to: Vec<usize>,
-    sui_data_senders: &mut Vec<SuiDataSenders>,
+    sui_data_senders: &mut [SuiDataSenders],
     network_key_bytes: Vec<u8>,
     key_id: Option<ObjectID>,
 ) {
@@ -166,9 +162,9 @@ pub(crate) fn send_network_key_to_parties(
             let _ = sui_data_sender
                 .network_keys_sender
                 .send(Arc::new(HashMap::from([(
-                    key_id.clone().unwrap(),
+                    key_id.unwrap(),
                     DWalletNetworkEncryptionKeyData {
-                        id: key_id.clone().unwrap(),
+                        id: key_id.unwrap(),
                         current_epoch: 1,
                         current_reconfiguration_public_output: vec![],
                         network_dkg_public_output: network_key_bytes.clone(),

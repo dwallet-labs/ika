@@ -143,7 +143,7 @@ pub(crate) fn session_input_from_request(
                 session_id,
                 &data.curve,
                 encryption_key_public_data,
-                &centralized_party_message,
+                centralized_party_message,
                 BytesCentralizedPartyKeyShareVerification::Encrypted {
                     encryption_key: data.encryption_key.clone(),
                     encrypted_secret_key_share_message: data

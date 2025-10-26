@@ -92,10 +92,8 @@ where
 
         // If this checkpoint is higher than our highest verified checkpoint notify the
         // event loop to potentially sync it
-        if should_sync {
-            if let Some(sender) = self.sender.upgrade() {
-                sender.send(StateSyncMessage::StartSyncJob).await.unwrap();
-            }
+        if should_sync && let Some(sender) = self.sender.upgrade() {
+            sender.send(StateSyncMessage::StartSyncJob).await.unwrap();
         }
 
         Ok(Response::new(()))
@@ -164,10 +162,8 @@ where
 
         // If this system_checkpoint is higher than our highest verified system_checkpoint notify the
         // event loop to potentially sync it
-        if should_sync {
-            if let Some(sender) = self.sender.upgrade() {
-                sender.send(StateSyncMessage::StartSyncJob).await.unwrap();
-            }
+        if should_sync && let Some(sender) = self.sender.upgrade() {
+            sender.send(StateSyncMessage::StartSyncJob).await.unwrap();
         }
 
         Ok(Response::new(()))
