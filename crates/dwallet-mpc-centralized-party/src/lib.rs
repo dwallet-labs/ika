@@ -449,6 +449,8 @@ pub fn bitcoin_address_from_dwallet_output_inner(
     dwallet_output: Vec<u8>,
 ) -> anyhow::Result<String> {
     let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput = bcs::from_bytes(&dwallet_output)?;
+
+    let public_key =
     match dkg_output {
         VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
             let output: DKGDecentralizedPartyOutputSecp256k1 = bcs::from_bytes(&dkg_output)?;
