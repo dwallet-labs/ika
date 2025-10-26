@@ -114,7 +114,7 @@ export async function createCompleteDWallet(
 
 	// Step 7: Accept encrypted user share
 	// Type assertion: DKG flow only creates ZeroTrust DWallets
-	await acceptTestEncryptedUserShare(
+	await acceptTestEncryptedUserShareV1(
 		ikaClient,
 		suiClient,
 		awaitingKeyHolderSignatureDWallet as ZeroTrustDWallet,
@@ -554,6 +554,37 @@ export async function acceptTestEncryptedUserShare(
 
 	await executeTestTransaction(suiClient, transaction, testName);
 }
+
+/**
+ * Accept encrypted user share for testing
+ */
+export async function acceptTestEncryptedUserShareV1(
+	ikaClient: IkaClient,
+	suiClient: SuiClient,
+	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
+	userPublicOutput: Uint8Array,
+	secondRoundMoveResponse: {
+		event_data: {
+			encrypted_user_secret_key_share_id: string;
+		};
+	},
+	userShareEncryptionKeys: UserShareEncryptionKeys,
+	testName: string,
+) {
+	const transaction = new Transaction();
+	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
+
+	await ikaTransaction.acceptEncryptedUserShare({
+		dWallet,
+		userPublicOutput,
+		encryptedUserSecretKeyShareId:
+		secondRoundMoveResponse.event_data.encrypted_user_secret_key_share_id,
+	});
+
+	await executeTestTransaction(suiClient, transaction, testName);
+}
+
+
 
 /**
  * Accept encrypted user share for transferred DWallet for testing
