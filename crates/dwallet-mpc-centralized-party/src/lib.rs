@@ -210,7 +210,8 @@ pub fn create_dkg_output_v1(
         )?;
     match decentralized_first_round_public_output {
         VersionedDwalletDKGFirstRoundPublicOutput::V1(decentralized_first_round_public_output) => {
-            let (output, session_identifier) = bcs::from_bytes::<(<DWalletDKGFirstParty as Party>::PublicOutput, CommitmentSizedNumber)>(&decentralized_first_round_public_output)
+            let session_identifier = CommitmentSizedNumber::from_le_slice(&session_id);
+            let (output, _) = bcs::from_bytes::<(<DWalletDKGFirstParty as Party>::PublicOutput, CommitmentSizedNumber)>(&decentralized_first_round_public_output)
                 .map_err(|e| {
                     anyhow!(
                         "failed to deserialize decentralized first round DKG output into public output and session identifier: {:?}",
