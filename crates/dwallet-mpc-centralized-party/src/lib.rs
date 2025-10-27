@@ -731,7 +731,7 @@ pub fn advance_centralized_sign_party(
                 { group::secp256k1::SCALAR_LIMBS },
                 group::secp256k1::GroupElement,
             >::from(decentralized_dkg_output);
-            let presign: <Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
+            let presign: <Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>:: =
                 bcs::from_bytes(&presign).map_err(|e| {
                     anyhow!(
                         "failed to deserialize presign into Secp256k1ECDSAProtocol presign: {:?}",
