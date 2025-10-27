@@ -4,7 +4,7 @@
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use dwallet_mpc_types::dwallet_mpc::{
     MPCPublicOutput, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
-    VersionedEncryptedUserShare,
+    VersionedEncryptedUserShare, VersionedEncryptionKeyValue,
 };
 use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -22,7 +22,7 @@ use twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 pub(crate) fn verify_encrypted_share(
     encrypted_centralized_secret_share_and_proof: &[u8],
     decentralized_public_output: &SerializedWrappedMPCPublicOutput,
-    encryption_key: &[u8],
+    encryption_key_value: &[u8],
     protocol_public_parameters: ProtocolPublicParametersByCurve,
 ) -> DwalletMPCResult<()> {
     let encrypted_centralized_secret_share_and_proof: VersionedEncryptedUserShare =
@@ -40,7 +40,7 @@ pub(crate) fn verify_encrypted_share(
         ) => verify_centralized_secret_key_share_proof_v1(
             encrypted_centralized_secret_share_and_proof,
             decentralized_public_output,
-            encryption_key,
+            encryption_key_value,
             protocol_public_parameters,
         )
         .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string())),
@@ -50,7 +50,7 @@ pub(crate) fn verify_encrypted_share(
         ) => verify_centralized_secret_key_share_proof_v2(
             encrypted_centralized_secret_share_and_proof,
             decentralized_public_output,
-            encryption_key,
+            encryption_key_value,
             protocol_public_parameters,
         )
         .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string())),
@@ -60,7 +60,7 @@ pub(crate) fn verify_encrypted_share(
 fn verify_centralized_secret_key_share_proof_v1(
     encrypted_centralized_secret_share_and_proof: MPCPublicOutput,
     dkg_public_output: MPCPublicOutput,
-    encryption_key: &[u8],
+    encryption_key_value: &[u8],
     protocol_public_parameters: ProtocolPublicParametersByCurve,
 ) -> anyhow::Result<()> {
     let ProtocolPublicParametersByCurve::Secp256k1(protocol_public_parameters) =
@@ -76,10 +76,13 @@ fn verify_centralized_secret_key_share_proof_v1(
     let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput =
         decentralized_output.into();
 
+    let VersionedEncryptionKeyValue::V1(encryption_key_value) =
+        bcs::from_bytes(encryption_key_value)?;
+
     <ECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_parameters,
         decentralized_output,
-        bcs::from_bytes(encryption_key)
+        bcs::from_bytes(&encryption_key_value)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize encryption key: {}", e))?,
         bcs::from_bytes(&encrypted_centralized_secret_share_and_proof).map_err(|e| {
             anyhow::anyhow!(
@@ -97,7 +100,7 @@ fn verify_centralized_secret_key_share_proof_v1(
 fn verify_centralized_secret_key_share_proof_v2(
     encrypted_centralized_secret_share_and_proof: MPCPublicOutput,
     dkg_public_output: MPCPublicOutput,
-    encryption_key: &[u8],
+    encryption_key_value: &[u8],
     protocol_public_parameters: ProtocolPublicParametersByCurve,
 ) -> anyhow::Result<()> {
     match protocol_public_parameters {
@@ -105,7 +108,7 @@ fn verify_centralized_secret_key_share_proof_v2(
             verify_centralized_secret_key_share_proof::<Secp256k1AsyncDKGProtocol>(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
-                encryption_key,
+                encryption_key_value,
                 pp,
             )
         }
@@ -113,7 +116,7 @@ fn verify_centralized_secret_key_share_proof_v2(
             verify_centralized_secret_key_share_proof::<Secp256r1AsyncDKGProtocol>(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
-                encryption_key,
+                encryption_key_value,
                 pp,
             )
         }
@@ -121,7 +124,7 @@ fn verify_centralized_secret_key_share_proof_v2(
             verify_centralized_secret_key_share_proof::<Curve25519AsyncDKGProtocol>(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
-                encryption_key,
+                encryption_key_value,
                 pp,
             )
         }
@@ -129,7 +132,7 @@ fn verify_centralized_secret_key_share_proof_v2(
             verify_centralized_secret_key_share_proof::<RistrettoAsyncDKGProtocol>(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
-                encryption_key,
+                encryption_key_value,
                 pp,
             )
         }
@@ -141,13 +144,16 @@ fn verify_centralized_secret_key_share_proof_v2(
 fn verify_centralized_secret_key_share_proof<P: dkg::Protocol>(
     encrypted_centralized_secret_share_and_proof: &[u8],
     decentralized_dkg_output: P::DecentralizedPartyDKGOutput,
-    encryption_key: &[u8],
+    encryption_key_value: &[u8],
     protocol_public_parameters: P::ProtocolPublicParameters,
 ) -> anyhow::Result<()> {
+    let VersionedEncryptionKeyValue::V1(encryption_key_value) =
+        bcs::from_bytes(encryption_key_value)?;
+
     P::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_parameters,
         decentralized_dkg_output,
-        bcs::from_bytes(encryption_key)?,
+        bcs::from_bytes(&encryption_key_value)?,
         bcs::from_bytes(encrypted_centralized_secret_share_and_proof)?,
         &mut OsCsRng,
     )

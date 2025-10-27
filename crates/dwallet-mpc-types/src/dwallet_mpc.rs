@@ -258,6 +258,11 @@ pub enum DwalletNetworkMPCError {
 pub type ClassGroupsPublicKeyAndProofBytes = Vec<u8>;
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
+pub enum VersionedEncryptionKeyValue {
+    V1(Vec<u8>),
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedDWalletImportedKeyVerificationOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),

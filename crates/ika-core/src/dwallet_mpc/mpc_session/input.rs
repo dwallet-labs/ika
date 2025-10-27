@@ -145,7 +145,7 @@ pub(crate) fn session_input_from_request(
                 encryption_key_public_data,
                 centralized_party_message,
                 BytesCentralizedPartyKeyShareVerification::Encrypted {
-                    encryption_key: data.encryption_key.clone(),
+                    encryption_key_value: data.encryption_key.clone(),
                     encrypted_secret_key_share_message: data
                         .encrypted_centralized_secret_share_and_proof
                         .clone(),
