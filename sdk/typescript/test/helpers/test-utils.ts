@@ -427,7 +427,7 @@ export async function runSignFullFlowWithDWallet(
 	expect(presignObject).toBeDefined();
 	expect(presignObject.state.$kind).toBe('Completed');
 
-	await delay(2); // Small delay to ensure network state is fully consistent
+	await delay(5); // Small delay to ensure network state is fully consistent
 
 	// Step 4: Sign a message
 	const message = createTestMessage(testName);

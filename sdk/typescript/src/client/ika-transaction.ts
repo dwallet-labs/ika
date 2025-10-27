@@ -1053,7 +1053,7 @@ export class IkaTransaction {
 		// Regular DWallet signing (ZeroTrust and Shared only)
 		if (encryptedUserSecretKeyShare) {
 			// Encrypted shares
-			this.#requestSignV1({
+			await this.#requestSignV1({
 				verifiedPresignCap,
 				messageApproval,
 				userSignatureInputs: {
