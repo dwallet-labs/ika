@@ -135,14 +135,15 @@ use ika_system::{
     validator_set::ValidatorSet
 };
 use std::string::String;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::dynamic_field;
-use sui::package::{UpgradeCap, UpgradeReceipt, UpgradeTicket};
-use sui::table::Table;
-use sui::table_vec::TableVec;
-use ika_common::upgrade_package_approver::UpgradePackageApprover;
-use sui::coin_registry::Currency;
+use sui::{
+    clock::Clock,
+    coin::Coin,
+    coin_registry::Currency,
+    dynamic_field,
+    package::{UpgradeCap, UpgradeReceipt, UpgradeTicket},
+    table::Table,
+    table_vec::TableVec
+};
 
 // === Errors ===
 

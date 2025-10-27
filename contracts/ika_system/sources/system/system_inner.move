@@ -28,18 +28,20 @@ use ika_system::{
     validator_set::ValidatorSet
 };
 use std::string::String;
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::bcs;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
-use sui::package::{UpgradeCap, UpgradeTicket, UpgradeReceipt};
-use sui::table::Table;
-use sui::table_vec::TableVec;
-use sui::vec_map::{Self, VecMap};
-use sui::vec_set::VecSet;
-use sui::coin_registry::Currency;
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    bcs,
+    clock::Clock,
+    coin::Coin,
+    coin_registry::Currency,
+    event,
+    package::{UpgradeCap, UpgradeTicket, UpgradeReceipt},
+    table::Table,
+    table_vec::TableVec,
+    vec_map::{Self, VecMap},
+    vec_set::VecSet
+};
 
 // === Constants ===
 
