@@ -196,7 +196,7 @@ export async function createPVCs(kc: KubeConfig, namespaceName: string, numOfVal
 	});
 }
 
-async function createFullnodePod(namespaceName: string, kc: KubeConfig) {
+export async function createFullnodePod(namespaceName: string, kc: KubeConfig) {
 	const k8sApi = kc.makeApiClient(CoreV1Api);
 	const fullnodePod = {
 		metadata: {

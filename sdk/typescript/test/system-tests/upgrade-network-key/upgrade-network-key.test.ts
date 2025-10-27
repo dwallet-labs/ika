@@ -29,7 +29,14 @@ import {
 } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { createConfigMaps } from '../config-map';
 import { deployIkaNetwork, NAMESPACE_NAME, NETWORK_SERVICE_NAME, TEST_ROOT_DIR } from '../globals';
-import { createPods, createValidatorPod, killAllPods, killValidatorPod } from '../pods';
+import {
+	createFullnodePod,
+	createPods,
+	createValidatorPod,
+	killAllPods,
+	killFullnodePod,
+	killValidatorPod
+} from '../pods';
 
 async function testImportedDWalletFullFlowWithAllCurves() {
 	await testImportedKeyScenario(
@@ -183,6 +190,9 @@ describe('system tests', () => {
 			await delay(15);
 			await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
 		}
+		await killFullnodePod(kc, NAMESPACE_NAME);
+		await delay(15);
+		await createFullnodePod(NAMESPACE_NAME, kc);
 		console.log(
 			'All validators upgraded, running a full sign flow with the previously created v1 dWallet',
 		);
