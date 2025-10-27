@@ -1,7 +1,10 @@
 import type { KubeConfig, V1Pod } from '@kubernetes/client-node';
 import { CoreV1Api } from '@kubernetes/client-node';
 
+
+
 import { CONFIG_MAP_NAME, NETWORK_SERVICE_NAME } from './globals.js';
+
 
 export function getPodNameForValidatorID(validatorID: number): string {
 	return `ika-val-${validatorID}`;
@@ -193,11 +196,8 @@ export async function createPVCs(kc: KubeConfig, namespaceName: string, numOfVal
 	});
 }
 
-export async function createPods(kc: KubeConfig, namespaceName: string, numOfValidators: number) {
+async function createFullnodePod(namespaceName: string, kc: KubeConfig) {
 	const k8sApi = kc.makeApiClient(CoreV1Api);
-	for (let i = 0; i < numOfValidators; i++) {
-		await createValidatorPod(kc, namespaceName, i + 1);
-	}
 	const fullnodePod = {
 		metadata: {
 			name: `ika-fullnode`,
@@ -266,4 +266,11 @@ export async function createPods(kc: KubeConfig, namespaceName: string, numOfVal
 		namespace: namespaceName,
 		body: fullnodePod,
 	});
+}
+
+export async function createPods(kc: KubeConfig, namespaceName: string, numOfValidators: number) {
+	for (let i = 0; i < numOfValidators; i++) {
+		await createValidatorPod(kc, namespaceName, i + 1);
+	}
+	await createFullnodePod(namespaceName, kc);
 }

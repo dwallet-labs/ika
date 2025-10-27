@@ -172,6 +172,7 @@ describe('system tests', () => {
 		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
 		console.log('V1 dWallet full flow works, upgrading the validators docker image');
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
+		process.env.NOTIFIER_DOCKER_TAG = v2NetworkKeyDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
 		// Restart each validator pod one by one to pick up the docker tag change
