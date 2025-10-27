@@ -246,7 +246,7 @@ async function requestPresignForImportedKey(
 /**
  * Test imported key DWallet creation and signing with verification
  */
-async function testImportedKeyScenario(
+export async function testImportedKeyScenario(
 	curve: Curve,
 	signatureAlgorithm: SignatureAlgorithm,
 	hashScheme: Hash,

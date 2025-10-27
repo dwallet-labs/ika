@@ -46,6 +46,14 @@ describe('Network keys creation tests', () => {
 		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, 'network-key-full-flow');
 	});
 
+	it('run sign full flow with v1 dwallet', async () => {
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+
+		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, 'sign-full-flow-v1-dwallet');
+	});
+
 	it(
 		'create multiple network keys and run multiple full flows with each of them',
 		async () => {
