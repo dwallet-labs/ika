@@ -22,9 +22,12 @@ pub fn create_dkg_centralized_output_v1(
     decentralized_first_round_public_output: Vec<u8>,
     session_id: Vec<u8>,
 ) -> Result<JsValue, JsError> {
-    let dkg_centralized_result =
-        &create_dkg_output_v1(protocol_pp, decentralized_first_round_public_output, session_id)
-            .map_err(|e| JsError::new(&e.to_string()))?;
+    let dkg_centralized_result = &create_dkg_output_v1(
+        protocol_pp,
+        decentralized_first_round_public_output,
+        session_id,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))?;
     serde_wasm_bindgen::to_value(&(
         dkg_centralized_result.public_key_share_and_proof.clone(),
         dkg_centralized_result.public_output.clone(),
