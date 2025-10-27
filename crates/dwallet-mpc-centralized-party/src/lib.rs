@@ -658,8 +658,6 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
     }
 }
 
-type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
-
 /// Executes the centralized phase of the Sign protocol,
 ///  the first part of the protocol.
 ///
