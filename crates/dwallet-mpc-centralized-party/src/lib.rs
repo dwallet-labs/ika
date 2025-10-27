@@ -9,9 +9,9 @@
 use anyhow::{Context, anyhow};
 use class_groups::dkg::Secp256k1Party;
 use class_groups::{
-    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_SCALAR_LIMBS,
-    setup::DeriveFromPlaintextPublicParameters,
+    CiphertextSpaceGroupElement, DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
+    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    SECP256K1_SCALAR_LIMBS, setup::DeriveFromPlaintextPublicParameters,
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
@@ -733,13 +733,19 @@ pub fn advance_centralized_sign_party(
                 { group::secp256k1::SCALAR_LIMBS },
                 group::secp256k1::GroupElement,
             >::from(decentralized_dkg_output);
-            let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
-                bcs::from_bytes(&presign).map_err(|e| {
-                    anyhow!(
-                        "failed to deserialize presign into Secp256k1ECDSAProtocol presign: {:?}",
-                        e
-                    )
-                })?;
+            let presign: twopc_mpc::ecdsa::Presign<
+                group::Value<secp256k1::group_element::GroupElement>,
+                group::Value<
+                    CiphertextSpaceGroupElement<
+                        { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                    >,
+                >,
+            > = bcs::from_bytes(&presign).map_err(|e| {
+                anyhow!(
+                    "failed to deserialize presign into Secp256k1ECDSAProtocol presign: {:?}",
+                    e
+                )
+            })?;
             let centralized_party_public_input =
                 <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
                     message,
