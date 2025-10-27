@@ -595,6 +595,7 @@ impl ProtocolCryptographicData {
                             ProtocolPublicParametersByCurve::Secp256k1(
                                 public_input.protocol_public_parameters.clone(),
                             ),
+                            ProtocolVersion::from(1),
                         )?;
 
                         let decentralized_output: <Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
