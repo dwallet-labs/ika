@@ -30,17 +30,17 @@ Without your user share, the network cannot create any signatures. You maintain 
 
 ## Shared dWallets
 
-<Info title="Network-Controlled">
-The user share is public, meaning the network can create signatures on your behalf.
+<Info title="Network-Controlled for Automation">
+The user share is public, enabling the network to create signatures autonomously. Perfect for DAOs, smart contracts, and automated systems.
 </Info>
 
-A Shared dWallet has a public user share, allowing anyone to provide it. This means:
+A Shared dWallet has a public user share stored on-chain. This means:
 
-- **User share**: Public and accessible by anyone
+- **User share**: Public and accessible on the network
 - **Network share**: Held by the Ika network
 
 **What this means:**
-Since the user share is public, the network can create signatures without your participation. You fully trust the Ika network to manage signing operations.
+Since both shares are accessible to the network, it can create signatures without user interaction. This enables powerful automation use cases like DAO treasuries, smart contract-controlled wallets, and automated trading systems.
 
 ---
 
@@ -71,13 +71,21 @@ Your original private key still exists outside the dWallet system. If compromise
 ## Which One Should You Pick?
 
 **Go with Zero-Trust if:**
-You want to maintain control over signing operations. Both your user share and the network share are required, so the network cannot sign without your participation.
+- You need user-controlled wallets where users maintain full signing authority
+- Building custody solutions or personal wallets
+- Regulatory or compliance requirements mandate user participation in signing
+- You want maximum security with the zero-trust 2PC model
 
 **Pick Shared if:**
-You want the network to handle signing on your behalf. Good for DAOs, automated systems, or scenarios where you fully trust the network to manage signatures.
+- Building DAOs that need automated treasury management
+- Creating smart contract systems that sign programmatically
+- Developing automated trading bots or autonomous systems
+- You want to delegate signing authority to the network or smart contracts
 
 **Choose Imported Key if:**
-You need to bring existing keys into the dWallet system. You can configure it as Zero-Trust (both shares required) or Shared (network can sign on your behalf). Be aware that your original private key remains a security consideration.
+- You need to bring existing keys into the dWallet system
+- You can configure it as Zero-Trust (user control) or Shared (network control)
+- Be aware that your original private key remains a security consideration
 
 ## Ready to Get Started?
 

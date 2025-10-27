@@ -10,6 +10,10 @@ sidebar_label: Zero-Trust dWallet
 
 A Zero-Trust dWallet is a dWallet that operates under a zero-trust security model, created using a two-party computation (2PC) protocol.
 
+:::tip Need automated signing?
+If you're building DAOs, smart contracts, or automated systems that need network-controlled signing, consider using a [Shared dWallet](./shared-dwallet.md) instead.
+:::
+
 ## Architecture
 
 The dWallet consists of two cryptographic shares:
