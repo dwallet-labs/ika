@@ -100,16 +100,12 @@ impl DWalletMPCService {
         let decryption_key_reconfiguration_third_round_delay =
             protocol_config.decryption_key_reconfiguration_third_round_delay();
 
-        let root_seed = match node_config.root_seed_key_pair {
+        let root_seed = match node_config.root_seed {
             None => {
-                error!(
-                    "root_seed_key_pair is not set in the node config, cannot start DWallet MPC service"
-                );
-                panic!(
-                    "root_seed_key_pair is not set in the node config, cannot start DWallet MPC service"
-                );
+                error!("root_seed is not set in the node config, cannot start DWallet MPC service");
+                panic!("root_seed is not set in the node config, cannot start DWallet MPC service");
             }
-            Some(root_seed_keypair) => root_seed_keypair.root_seed().clone(),
+            Some(root_seed) => root_seed.root_seed().clone(),
         };
 
         let dwallet_mpc_manager = DWalletMPCManager::new(
@@ -143,6 +139,7 @@ impl DWalletMPCService {
     }
 
     #[cfg(feature = "test-utils")]
+    #[allow(dead_code)]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         seed: RootSeed,
@@ -160,7 +157,7 @@ impl DWalletMPCService {
             state: authority_state,
             dwallet_checkpoint_service: checkpoint_service,
             dwallet_mpc_manager: DWalletMPCManager::new(
-                authority_name.clone(),
+                authority_name,
                 Arc::new(committee.clone()),
                 1,
                 seed,
@@ -182,21 +179,22 @@ impl DWalletMPCService {
     }
 
     #[cfg(feature = "test-utils")]
+    #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager(&self) -> &DWalletMPCManager {
         &self.dwallet_mpc_manager
     }
 
     #[cfg(feature = "test-utils")]
+    #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager_mut(&mut self) -> &mut DWalletMPCManager {
         &mut self.dwallet_mpc_manager
     }
 
     async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
-        let (ika_current_epoch_on_sui, last_session_to_complete_in_current_epoch) = self
+        let (ika_current_epoch_on_sui, last_session_to_complete_in_current_epoch) = *self
             .sui_data_requests
             .last_session_to_complete_in_current_epoch_receiver
-            .borrow()
-            .clone();
+            .borrow();
         if ika_current_epoch_on_sui == self.epoch {
             self.dwallet_mpc_manager
                 .sync_last_session_to_complete_in_current_epoch(
@@ -305,18 +303,22 @@ impl DWalletMPCService {
         };
         let requests = [uncompleted_requests, pulled_requests].concat();
 
-        let requests_session_identifiers: HashMap<SessionIdentifier, &DWalletSessionRequest> =
+        let requests_by_session_identifiers: HashMap<SessionIdentifier, &DWalletSessionRequest> =
             requests.iter().map(|e| (e.session_identifier, e)).collect();
 
-        match self.state.get_dwallet_mpc_sessions_completed_status(
-            requests_session_identifiers.keys().cloned().collect(),
-        ) {
+        let requests_session_identifiers =
+            requests_by_session_identifiers.keys().copied().collect();
+
+        match self
+            .state
+            .get_dwallet_mpc_sessions_completed_status(requests_session_identifiers)
+        {
             Ok(mpc_session_identifier_to_computation_completed) => {
                 for (session_identifier, session_completed) in
                     mpc_session_identifier_to_computation_completed
                 {
                     // Safe to unwrap, as we just inserted the session identifier into the map.
-                    let request = requests_session_identifiers
+                    let request = requests_by_session_identifiers
                         .get(&session_identifier)
                         .unwrap();
 
@@ -336,7 +338,7 @@ impl DWalletMPCService {
             }
             Err(e) => {
                 error!(
-                    ?requests_session_identifiers,
+                    ?requests_by_session_identifiers,
                     error=?e,
                     "Could not read from the DB completed sessions, got error"
                 );
@@ -475,14 +477,12 @@ impl DWalletMPCService {
             self.dwallet_mpc_manager
                 .handle_consensus_round_messages(consensus_round, mpc_messages);
 
-            // Now we have the MPC messages for the current round, we can
-            // process the MPC outputs for the current round.
+            // Process the MPC outputs for the current round.
             let (mut checkpoint_messages, completed_sessions) = self
                 .dwallet_mpc_manager
                 .handle_consensus_round_outputs(consensus_round, mpc_outputs);
 
-            // Now we have the MPC outputs for the current round, we can
-            // add messages from the consensus output such as EndOfPublish.
+            // Add messages from the consensus output such as EndOfPublish.
             checkpoint_messages.extend(verified_dwallet_checkpoint_messages);
 
             if !self.end_of_publish {
@@ -589,11 +589,7 @@ impl DWalletMPCService {
                 ComputationResultData::Native
             };
 
-            let Some(session) = self
-                .dwallet_mpc_manager
-                .mpc_sessions
-                .get(&session_identifier)
-            else {
+            let Some(session) = self.dwallet_mpc_manager.sessions.get(&session_identifier) else {
                 error!(
                     should_never_happen =? true,
                     ?session_identifier,
@@ -609,7 +605,7 @@ impl DWalletMPCService {
                     ?session_identifier,
                     validator=?validator_name,
                     ?computation_result_data,
-                    "received a computation update for an non-active session"
+                    "received a computation update for a non-active session"
                 );
                 return;
             };
@@ -661,9 +657,6 @@ impl DWalletMPCService {
                     } else {
                         vec![]
                     };
-
-                    self.dwallet_mpc_manager
-                        .record_malicious_actors(&malicious_authorities);
 
                     let rejected = false;
 
@@ -803,7 +796,7 @@ impl DWalletMPCService {
         rejected: bool,
     ) -> Vec<DWalletCheckpointMessageKind> {
         info!(
-            mpc_protocol=? DWalletSessionRequestMetricData::from(&session_request.protocol_data).to_string(),
+            mpc_protocol=?DWalletSessionRequestMetricData::from(&session_request.protocol_data),
             session_identifier=?session_identifier,
             "Creating session output message for checkpoint"
         );
@@ -826,6 +819,46 @@ impl DWalletMPCService {
                     rejected,
                     session_sequence_number: session_request.session_sequence_number,
                 });
+                vec![tx]
+            }
+            ProtocolData::DWalletDKGAndSign {
+                dwallet_id, data, ..
+            } => {
+                let tx = if rejected {
+                    DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
+                        output,
+                        dwallet_id: dwallet_id.to_vec(),
+                        encrypted_secret_share_id: match data.user_secret_key_share {
+                            UserSecretKeyShareEventType::Encrypted {
+                                encrypted_user_secret_key_share_id,
+                                ..
+                            } => Some(encrypted_user_secret_key_share_id.to_vec()),
+                            UserSecretKeyShareEventType::Public { .. } => None,
+                        },
+                        sign_id: None,
+                        signature: vec![],
+                        rejected,
+                        session_sequence_number: session_request.session_sequence_number,
+                    })
+                } else {
+                    let (dwallet_dkg_output, signature): (Vec<u8>, Vec<u8>) =
+                        bcs::from_bytes(&output).expect("invalid dwallet dkg + sign output format");
+                    DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
+                        output: dwallet_dkg_output,
+                        dwallet_id: dwallet_id.to_vec(),
+                        encrypted_secret_share_id: match data.user_secret_key_share {
+                            UserSecretKeyShareEventType::Encrypted {
+                                encrypted_user_secret_key_share_id,
+                                ..
+                            } => Some(encrypted_user_secret_key_share_id.to_vec()),
+                            UserSecretKeyShareEventType::Public { .. } => None,
+                        },
+                        sign_id: Some(data.sign_id.to_vec()),
+                        signature,
+                        rejected,
+                        session_sequence_number: session_request.session_sequence_number,
+                    })
+                };
                 vec![tx]
             }
             ProtocolData::DKGFirst { dwallet_id, .. } => {
@@ -922,12 +955,43 @@ impl DWalletMPCService {
                 dwallet_network_encryption_key_id,
                 ..
             } => {
+                let supported_curves = if output.is_empty() {
+                    vec![DWalletCurve::Secp256k1 as u32]
+                } else {
+                    match bcs::from_bytes::<dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput>(
+                        &output,
+                    ) {
+                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V1(_)) => {
+                            // V1 only supports Secp256k1
+                            vec![DWalletCurve::Secp256k1 as u32]
+                        }
+                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V2(_)) => {
+                            // V2 supports all curves
+                            vec![
+                                DWalletCurve::Secp256k1 as u32,
+                                DWalletCurve::Secp256r1 as u32,
+                                DWalletCurve::Ristretto as u32,
+                                DWalletCurve::Curve25519 as u32,
+                            ]
+                        }
+                        Err(e) => {
+                            error!(
+                                error=?e,
+                                session_identifier=?session_identifier,
+                                "failed to deserialize network DKG output to determine version, defaulting to V1 curves"
+                            );
+                            // Default to V1 curves for safety
+                            vec![DWalletCurve::Secp256k1 as u32]
+                        }
+                    }
+                };
+
                 let slices = if rejected {
                     vec![MPCNetworkDKGOutput {
                         dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                             .to_vec(),
                         public_output: vec![],
-                        supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                        supported_curves: supported_curves.clone(),
                         is_last: true,
                         rejected: true,
                         session_sequence_number: session_request.session_sequence_number,
@@ -939,7 +1003,7 @@ impl DWalletMPCService {
                             dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                                 .to_vec(),
                             public_output: public_output_chunk,
-                            supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                            supported_curves: supported_curves.clone(),
                             is_last,
                             rejected: false,
                             session_sequence_number: session_request.session_sequence_number,
@@ -957,12 +1021,41 @@ impl DWalletMPCService {
                 dwallet_network_encryption_key_id,
                 ..
             } => {
+                let supported_curves = if output.is_empty() {
+                    vec![DWalletCurve::Secp256k1 as u32]
+                } else {
+                    match bcs::from_bytes::<dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput>(&output) {
+                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V1(_)) => {
+                            // V1 only supports Secp256k1
+                            vec![DWalletCurve::Secp256k1 as u32]
+                        }
+                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V2(_)) => {
+                            // V2 supports all curves
+                            vec![
+                                DWalletCurve::Secp256k1 as u32,
+                                DWalletCurve::Secp256r1 as u32,
+                                DWalletCurve::Ristretto as u32,
+                                DWalletCurve::Curve25519 as u32,
+                            ]
+                        }
+                        Err(e) => {
+                            error!(
+                                error=?e,
+                                session_identifier=?session_identifier,
+                                "failed to deserialize network reconfiguration output to determine version, defaulting to V1 curves"
+                            );
+                            // Default to V1 curves for safety
+                            vec![DWalletCurve::Secp256k1 as u32]
+                        }
+                    }
+                };
+
                 let slices = if rejected {
                     vec![MPCNetworkReconfigurationOutput {
                         dwallet_network_encryption_key_id: dwallet_network_encryption_key_id
                             .to_vec(),
                         public_output: vec![],
-                        supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                        supported_curves: supported_curves.clone(),
                         is_last: true,
                         rejected: true,
                         session_sequence_number: session_request.session_sequence_number,
@@ -975,7 +1068,7 @@ impl DWalletMPCService {
                                 .clone()
                                 .to_vec(),
                             public_output: public_output_chunk,
-                            supported_curves: vec![DWalletCurve::Secp256k1 as u32],
+                            supported_curves: supported_curves.clone(),
                             is_last,
                             rejected: false,
                             session_sequence_number: session_request.session_sequence_number,
@@ -1071,7 +1164,7 @@ impl DWalletMPCService {
         }
 
         let root_seed = config
-            .root_seed_key_pair
+            .root_seed
             .clone()
             .ok_or(DwalletMPCError::MissingRootSeed)?
             .root_seed()

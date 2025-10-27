@@ -1,6 +1,12 @@
 use crate::validator_initialization_config::ValidatorInitializationConfig;
 use anyhow::bail;
 use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
+use dwallet_mpc_types::mpc_protocol_configuration::{
+    GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG,
+    GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_IMPORTED_KEY,
+    MPC_PROTOCOLS_WITH_SIGNATURE_ALGORITHM, MPC_PROTOCOLS_WITHOUT_SIGNATURE_ALGORITHM,
+    SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES,
+};
 use fastcrypto::traits::ToFromBytes;
 use ika_config::Config;
 use ika_config::initiation::{InitiationParameters, MIN_VALIDATOR_JOINING_STAKE_INKU};
@@ -11,14 +17,7 @@ use ika_move_contracts::{
 };
 use ika_protocol_config::Chain;
 use ika_types::ika_coin::IKACoin;
-use ika_types::messages_dwallet_mpc::{
-    DKG_FIRST_ROUND_PROTOCOL_FLAG, DKG_SECOND_ROUND_PROTOCOL_FLAG, DWALLET_DKG_PROTOCOL_FLAG,
-    DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG, FUTURE_SIGN_PROTOCOL_FLAG,
-    IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG, IkaNetworkConfig, IkaObjectsConfig,
-    IkaPackageConfig, MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG,
-    PRESIGN_PROTOCOL_FLAG, RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG, SIGN_PROTOCOL_FLAG,
-    SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG,
-};
+use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig};
 use ika_types::sui::system_inner_v1::ValidatorCapV1;
 use ika_types::sui::{
     ADVANCE_EPOCH_FUNCTION_NAME, CREATE_BYTES_TABLE_VEC_FUNCTION_NAME,
@@ -29,9 +28,7 @@ use ika_types::sui::{
     REQUEST_ADD_VALIDATOR_FUNCTION_NAME,
     REQUEST_DWALLET_NETWORK_DECRYPTION_KEY_DKG_BY_CAP_FUNCTION_NAME, SYSTEM_MODULE_NAME, System,
     TABLE_VEC_MODULE_NAME, VALIDATOR_CAP_MODULE_NAME, VALIDATOR_CAP_STRUCT_NAME,
-    VALIDATOR_METADATA_MODULE_NAME, VEC_MAP_FROM_KEYS_VALUES_FUNCTION_NAME,
-    VEC_MAP_INSERT_FUNCTION_NAME, VEC_MAP_MODULE_NAME, VEC_MAP_NEW_FUNCTION_NAME,
-    VEC_MAP_STRUCT_NAME,
+    VALIDATOR_METADATA_MODULE_NAME, VEC_MAP_FROM_KEYS_VALUES_FUNCTION_NAME, VEC_MAP_MODULE_NAME,
 };
 use move_core_types::ident_str;
 use move_core_types::language_storage::{StructTag, TypeTag};
@@ -64,10 +61,7 @@ use sui_types::transaction::{
     Argument, CallArg, ObjectArg, SenderSignedData, Transaction, TransactionData,
     TransactionDataAPI, TransactionKind,
 };
-use sui_types::{
-    MOVE_STDLIB_PACKAGE_ID, SUI_CLOCK_OBJECT_ID, SUI_CLOCK_OBJECT_SHARED_VERSION,
-    SUI_FRAMEWORK_PACKAGE_ID,
-};
+use sui_types::{SUI_CLOCK_OBJECT_ID, SUI_CLOCK_OBJECT_SHARED_VERSION, SUI_FRAMEWORK_PACKAGE_ID};
 use tempfile::TempDir;
 
 const STAKED_IKA_ICON_URL: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAwIiBoZWlnaHQ9IjEwMDAiIHZpZXdCb3g9IjAgMCAxMDAwIDEwMDAiIGZpbGw9Im5vbmUiPiA8ZyBjbGlwLXBhdGg9InVybCgjY2xpcDBfNjk5XzIyKSI+IDxwYXRoIGQ9Ik0wIDMwLjAwMTZDMCAxMy40MzMgMTMuNDMxNCAwIDMwIDBDMzQwLjI5NCAwIDY1MC44NTYgMCA5NjkuOTk4IDBDOTg2LjU2NyAwIDEwMDAgMTMuNDMxNCAxMDAwIDMwQzEwMDAgMzQwLjI5NCAxMDAwIDY1MC44NTYgMTAwMCA5NjkuOTk4QzEwMDAgOTg2LjU2NyA5ODYuNTY5IDEwMDAgOTcwIDEwMDBDNjU5LjcwNiAxMDAwIDM0OS4xNDQgMTAwMCAzMC4wMDE2IDEwMDBDMTMuNDMzIDEwMDAgMCA5ODYuNTY5IDAgOTcwQzAgNjU5LjcwNiAwIDM0OS4xNDQgMCAzMC4wMDE2WiIgZmlsbD0iI0VFMkI1QiIvPiA8cGF0aCBkPSJNNDUyIDE5NEM0ODMuNjggMTk0IDUxNS4zNiAxOTQgNTQ4IDE5NEM1NDggMjA0LjU2IDU0OCAyMTUuMTIgNTQ4IDIyNkM1NjkuNDUgMjI2IDU5MC45IDIyNiA2MTMgMjI2QzYxMyAyMzYuNTYgNjEzIDI0Ny4xMiA2MTMgMjU4QzYyMy41NiAyNTggNjM0LjEyIDI1OCA2NDUgMjU4QzY0NSAyNjguNTYgNjQ1IDI3OS4xMiA2NDUgMjkwQzY1NS41NiAyOTAgNjY2LjEyIDI5MCA2NzcgMjkwQzY3NyAzMDAuODkgNjc3IDMxMS43OCA2NzcgMzIzQzY4Ny44OSAzMjMgNjk4Ljc4IDMyMyA3MTAgMzIzQzcxMCA0MjkuMjYgNzEwIDUzNS41MiA3MTAgNjQ1QzczMS4xMiA2NDUgNzUyLjI0IDY0NSA3NzQgNjQ1Qzc3NCA2MDIuNDMgNzc0IDU1OS44NiA3NzQgNTE2Qzc5NS40NSA1MTYgODE2LjkgNTE2IDgzOSA1MTZDODM5IDU2OS4xMyA4MzkgNjIyLjI2IDgzOSA2NzdDODE3LjU1IDY3NyA3OTYuMSA2NzcgNzc0IDY3N0M3NzQgNjg3Ljg5IDc3NCA2OTguNzggNzc0IDcxMEM3NTIuODggNzEwIDczMS43NiA3MTAgNzEwIDcxMEM3MTAgNjk5LjExIDcxMCA2ODguMjIgNzEwIDY3N0M2OTkuMTEgNjc3IDY4OC4yMiA2NzcgNjc3IDY3N0M2NzcgNjY2LjQ0IDY3NyA2NTUuODggNjc3IDY0NUM2NjYuNDQgNjQ1IDY1NS44OCA2NDUgNjQ1IDY0NUM2NDUgNTM4Ljc0IDY0NSA0MzIuNDggNjQ1IDMyM0M2MzQuNDQgMzIzIDYyMy44OCAzMjMgNjEzIDMyM0M2MTMgMzEyLjExIDYxMyAzMDEuMjIgNjEzIDI5MEM1OTEuNTUgMjkwIDU3MC4xIDI5MCA1NDggMjkwQzU0OCAyNzkuNDQgNTQ4IDI2OC44OCA1NDggMjU4QzUxNi4zMiAyNTggNDg0LjY0IDI1OCA0NTIgMjU4QzQ1MiAyNjguNTYgNDUyIDI3OS4xMiA0NTIgMjkwQzQzMC41NSAyOTAgNDA5LjEgMjkwIDM4NyAyOTBDMzg3IDMwMC44OSAzODcgMzExLjc4IDM4NyAzMjNDMzc2LjQ0IDMyMyAzNjUuODggMzIzIDM1NSAzMjNDMzU1IDQyOS4yNiAzNTUgNTM1LjUyIDM1NSA2NDVDMzQ0LjQ0IDY0NSAzMzMuODggNjQ1IDMyMyA2NDVDMzIzIDY1NS41NiAzMjMgNjY2LjEyIDMyMyA2NzdDMzEyLjExIDY3NyAzMDEuMjIgNjc3IDI5MCA2NzdDMjkwIDY4Ny44OSAyOTAgNjk4Ljc4IDI5MCA3MTBDMjY4Ljg4IDcxMCAyNDcuNzYgNzEwIDIyNiA3MTBDMjI2IDY5OS4xMSAyMjYgNjg4LjIyIDIyNiA2NzdDMjA0LjU1IDY3NyAxODMuMSA2NzcgMTYxIDY3N0MxNjEgNjIzLjg3IDE2MSA1NzAuNzQgMTYxIDUxNkMxODIuNDUgNTE2IDIwMy45IDUxNiAyMjYgNTE2QzIyNiA1NTguNTcgMjI2IDYwMS4xNCAyMjYgNjQ1QzI0Ny4xMiA2NDUgMjY4LjI0IDY0NSAyOTAgNjQ1QzI5MCA1MzguNzQgMjkwIDQzMi40OCAyOTAgMzIzQzMwMC44OSAzMjMgMzExLjc4IDMyMyAzMjMgMzIzQzMyMyAzMTIuMTEgMzIzIDMwMS4yMiAzMjMgMjkwQzMzMy41NiAyOTAgMzQ0LjEyIDI5MCAzNTUgMjkwQzM1NSAyNzkuNDQgMzU1IDI2OC44OCAzNTUgMjU4QzM2NS41NiAyNTggMzc2LjEyIDI1OCAzODcgMjU4QzM4NyAyNDcuNDQgMzg3IDIzNi44OCAzODcgMjI2QzQwOC40NSAyMjYgNDI5LjkgMjI2IDQ1MiAyMjZDNDUyIDIxNS40NCA0NTIgMjA0Ljg4IDQ1MiAxOTRaIiBmaWxsPSJ3aGl0ZSIvPiA8cGF0aCBkPSJNNDg0IDU0OEM0OTQuNTYgNTQ4IDUwNS4xMiA1NDggNTE2IDU0OEM1MTYgNTU4Ljg5IDUxNiA1NjkuNzggNTE2IDU4MUM1MzcuNDUgNTgxIDU1OC45IDU4MSA1ODEgNTgxQzU4MSA2MDIuMTIgNTgxIDYyMy4yNCA1ODEgNjQ1QzU5MS41NiA2NDUgNjAyLjEyIDY0NSA2MTMgNjQ1QzYxMyA2ODcuNTcgNjEzIDczMC4xNCA2MTMgNzc0QzU5MS41NSA3NzQgNTcwLjEgNzc0IDU0OCA3NzRDNTQ4IDczMS40MyA1NDggNjg4Ljg2IDU0OCA2NDVDNTM3LjQ0IDY0NSA1MjYuODggNjQ1IDUxNiA2NDVDNTE2IDYzNC40NCA1MTYgNjIzLjg4IDUxNiA2MTNDNTA1LjQ0IDYxMyA0OTQuODggNjEzIDQ4NCA2MTNDNDg0IDYyMy41NiA0ODQgNjM0LjEyIDQ4NCA2NDVDNDczLjQ0IDY0NSA0NjIuODggNjQ1IDQ1MiA2NDVDNDUyIDY4Ny41NyA0NTIgNzMwLjE0IDQ1MiA3NzRDNDMwLjU1IDc3NCA0MDkuMSA3NzQgMzg3IDc3NEMzODcgNzMxLjQzIDM4NyA2ODguODYgMzg3IDY0NUMzOTcuNTYgNjQ1IDQwOC4xMiA2NDUgNDE5IDY0NUM0MTkgNjIzLjg4IDQxOSA2MDIuNzYgNDE5IDU4MUM0NDAuNDUgNTgxIDQ2MS45IDU4MSA0ODQgNTgxQzQ4NCA1NzAuMTEgNDg0IDU1OS4yMiA0ODQgNTQ4WiIgZmlsbD0id2hpdGUiLz4gPHBhdGggZD0iTTQ1MiAzODdDNDgzLjY4IDM4NyA1MTUuMzYgMzg3IDU0OCAzODdDNTQ4IDQxOS4wMSA1NDggNDUxLjAyIDU0OCA0ODRDNTM3LjQ0IDQ4NCA1MjYuODggNDg0IDUxNiA0ODRDNTE2IDQ3My40NCA1MTYgNDYyLjg4IDUxNiA0NTJDNTA1LjQ0IDQ1MiA0OTQuODggNDUyIDQ4NCA0NTJDNDg0IDQ0MS4xMSA0ODQgNDMwLjIyIDQ4NCA0MTlDNDczLjQ0IDQxOSA0NjIuODggNDE5IDQ1MiA0MTlDNDUyIDQwOC40NCA0NTIgMzk3Ljg4IDQ1MiAzODdaIiBmaWxsPSJ3aGl0ZSIvPiA8L2c+IDxkZWZzPiA8Y2xpcFBhdGggaWQ9ImNsaXAwXzY5OV8yMiI+IDxyZWN0IHdpZHRoPSIxMDAwIiBoZWlnaHQ9IjEwMDAiIGZpbGw9IndoaXRlIi8+IDwvY2xpcFBhdGg+IDwvZGVmcz4gPC9zdmc+";
@@ -545,10 +539,15 @@ pub async fn set_global_presign_config(
         vec![system_arg, protocol_cap_arg],
     );
 
-    let curve_to_signature_algorithms_for_dkg =
-        new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
-    let curve_to_signature_algorithms_for_imported_key =
-        new_curve_to_signature_algorithm_vecmap(&mut ptb, HashMap::from([(0u32, vec![0u32])]))?;
+    let curve_to_signature_algorithms_for_dkg = new_curve_to_signature_algorithm_vecmap(
+        &mut ptb,
+        GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG.clone(),
+    )?;
+    let curve_to_signature_algorithms_for_imported_key = new_curve_to_signature_algorithm_vecmap(
+        &mut ptb,
+        GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_IMPORTED_KEY.clone(),
+    )?;
+
     ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
         ident_str!("coordinator").into(),
@@ -599,44 +598,6 @@ pub async fn ika_system_initialize(
         .get_object_ref(ika_dwallet_2pc_mpc_init_id)
         .await?;
 
-    let supported_curves = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![0u32])?))?;
-    let supported_hashes = ptb.input(CallArg::Pure(bcs::to_bytes(&vec![vec![
-        0u32, 1u32, 2u32, 3u32, 4u32,
-    ]])?))?;
-    let zero = ptb.input(CallArg::Pure(bcs::to_bytes(&0u32)?))?;
-    let zero_option = ptb.input(CallArg::Pure(bcs::to_bytes(&Some(0u32))?))?;
-    let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
-
-    let dkg_first_round_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
-        &DKG_FIRST_ROUND_PROTOCOL_FLAG,
-    )?))?;
-    let dkg_second_round_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
-        &DKG_SECOND_ROUND_PROTOCOL_FLAG,
-    )?))?;
-    let re_encrypt_user_share_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
-        &RE_ENCRYPT_USER_SHARE_PROTOCOL_FLAG,
-    )?))?;
-    let make_dwallet_user_secret_key_share_public_protocol_flag = ptb.input(CallArg::Pure(
-        bcs::to_bytes(&MAKE_DWALLET_USER_SECRET_KEY_SHARE_PUBLIC_PROTOCOL_FLAG)?,
-    ))?;
-    let imported_key_dwallet_verification_protocol_flag = ptb.input(CallArg::Pure(
-        bcs::to_bytes(&IMPORTED_KEY_DWALLET_VERIFICATION_PROTOCOL_FLAG)?,
-    ))?;
-    let presign_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(&PRESIGN_PROTOCOL_FLAG)?))?;
-    let sign_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(&SIGN_PROTOCOL_FLAG)?))?;
-    let future_sign_protocol_flag =
-        ptb.input(CallArg::Pure(bcs::to_bytes(&FUTURE_SIGN_PROTOCOL_FLAG)?))?;
-    let sign_with_partial_user_signature_protocol_flag = ptb.input(CallArg::Pure(
-        bcs::to_bytes(&SIGN_WITH_PARTIAL_USER_SIGNATURE_PROTOCOL_FLAG)?,
-    ))?;
-    let dwallet_dkg_protocol_flag =
-        ptb.input(CallArg::Pure(bcs::to_bytes(&DWALLET_DKG_PROTOCOL_FLAG)?))?;
-    let dwallet_dkg_with_sign_protocol_flag = ptb.input(CallArg::Pure(bcs::to_bytes(
-        &DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG,
-    )?))?;
-
-    let zero_price = ptb.input(CallArg::Pure(bcs::to_bytes(&0u64)?))?;
-
     let ika_system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version: init_system_shared_version,
@@ -651,236 +612,147 @@ pub async fn ika_system_initialize(
         vec![],
     );
 
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            none_option,
-            dkg_first_round_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
+    let zero_price = ptb.input(CallArg::Pure(bcs::to_bytes(&0u64)?))?;
 
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            none_option,
-            dkg_second_round_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
+    // Convert protocol flags to PTB arguments
+    let protocols_without_sig_algo: Vec<Argument> = MPC_PROTOCOLS_WITHOUT_SIGNATURE_ALGORITHM
+        .iter()
+        .map(|flag| {
+            ptb.input(CallArg::Pure(bcs::to_bytes(flag).unwrap()))
+                .unwrap()
+        })
+        .collect();
 
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            none_option,
-            re_encrypt_user_share_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
+    let protocols_with_sig_algo: Vec<Argument> = MPC_PROTOCOLS_WITH_SIGNATURE_ALGORITHM
+        .iter()
+        .map(|flag| {
+            ptb.input(CallArg::Pure(bcs::to_bytes(flag).unwrap()))
+                .unwrap()
+        })
+        .collect();
 
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            none_option,
-            make_dwallet_user_secret_key_share_public_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
+    // Insert pricing for all curves for protocols without signature algorithms
+    for (curve, _signature_algorithms_to_hash_schemes) in
+        SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.iter()
+    {
+        let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
+        let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
 
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            none_option,
-            imported_key_dwallet_verification_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
+        for protocol in &protocols_without_sig_algo {
+            ptb.programmable_move_call(
+                ika_dwallet_2pc_mpc_package_id,
+                ident_str!("pricing").into(),
+                ident_str!("insert_or_update_pricing").into(),
+                vec![],
+                vec![
+                    pricing,
+                    curve_arg,
+                    none_option,
+                    *protocol,
+                    zero_price,
+                    zero_price,
+                    zero_price,
+                ],
+            );
+        }
+    }
 
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            zero_option,
-            presign_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
+    // Insert pricing for each curve with its supported signature algorithms for protocols with signature algorithms
+    for (curve, signature_algorithms_to_hash_schemes) in
+        SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.iter()
+    {
+        let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
 
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            zero_option,
-            sign_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
+        for sig_algo in signature_algorithms_to_hash_schemes.keys() {
+            let sig_algo_option = ptb.input(CallArg::Pure(bcs::to_bytes(&Some(*sig_algo))?))?;
 
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            zero_option,
-            future_sign_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
+            for protocol in &protocols_with_sig_algo {
+                ptb.programmable_move_call(
+                    ika_dwallet_2pc_mpc_package_id,
+                    ident_str!("pricing").into(),
+                    ident_str!("insert_or_update_pricing").into(),
+                    vec![],
+                    vec![
+                        pricing,
+                        curve_arg,
+                        sig_algo_option,
+                        *protocol,
+                        zero_price,
+                        zero_price,
+                        zero_price,
+                    ],
+                );
+            }
+        }
+    }
 
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            zero_option,
-            sign_with_partial_user_signature_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
+    // Create a VecMap<SignatureAlgorithm, Vec<Hash>> for each curve with specific supported hashes
+    let vec_map_type = TypeTag::Struct(Box::new(StructTag {
+        address: SUI_FRAMEWORK_PACKAGE_ID.into(),
+        module: ident_str!("vec_map").into(),
+        name: ident_str!("VecMap").into(),
+        type_params: vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+    }));
 
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            none_option,
-            dwallet_dkg_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            zero_option,
-            dwallet_dkg_with_sign_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
-
-    ptb.programmable_move_call(
-        ika_dwallet_2pc_mpc_package_id,
-        ident_str!("pricing").into(),
-        ident_str!("insert_or_update_pricing").into(),
-        vec![],
-        vec![
-            pricing,
-            zero,
-            none_option,
-            dwallet_dkg_with_sign_protocol_flag,
-            zero_price,
-            zero_price,
-            zero_price,
-        ],
-    );
-
-    let supported_signature_algorithms_to_hash_schemes = ptb.programmable_move_call(
-        SUI_FRAMEWORK_PACKAGE_ID,
-        ident_str!("vec_map").into(),
-        ident_str!("from_keys_values").into(),
-        vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
-        vec![supported_curves, supported_hashes],
-    );
-
-    let supported_signature_algorithms_to_hash_schemes_vec = ptb.programmable_move_call(
-        MOVE_STDLIB_PACKAGE_ID,
-        ident_str!("vector").into(),
-        ident_str!("singleton").into(),
-        vec![TypeTag::Struct(Box::new(StructTag {
-            address: SUI_FRAMEWORK_PACKAGE_ID.into(),
-            module: ident_str!("vec_map").into(),
-            name: ident_str!("VecMap").into(),
-            type_params: vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
-        }))],
-        vec![supported_signature_algorithms_to_hash_schemes],
-    );
+    // Build hash maps for each curve using protocol configuration
+    let mut curve_hash_maps = Vec::new();
 
     let supported_curves_to_signature_algorithms_to_hash_schemes = ptb.programmable_move_call(
         SUI_FRAMEWORK_PACKAGE_ID,
         ident_str!("vec_map").into(),
-        ident_str!("from_keys_values").into(),
-        vec![
-            TypeTag::U32,
-            TypeTag::Struct(Box::new(StructTag {
-                address: SUI_FRAMEWORK_PACKAGE_ID.into(),
-                module: ident_str!("vec_map").into(),
-                name: ident_str!("VecMap").into(),
-                type_params: vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
-            })),
-        ],
-        vec![
-            supported_curves,
-            supported_signature_algorithms_to_hash_schemes_vec,
-        ],
+        ident_str!("empty").into(),
+        vec![TypeTag::U32, vec_map_type],
+        vec![],
     );
+
+    for (curve, signature_algorithms_to_hash_schemes) in
+        SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.iter()
+    {
+        let sig_algos_vec: Vec<u32> = signature_algorithms_to_hash_schemes
+            .keys()
+            .cloned()
+            .collect();
+
+        // Each signature algorithm for this curve gets the same hash algorithms
+        let hash_values: Vec<_> = signature_algorithms_to_hash_schemes
+            .values()
+            .cloned()
+            .collect();
+
+        let sig_algo_keys = ptb.input(CallArg::Pure(bcs::to_bytes(&sig_algos_vec)?))?;
+        let hash_values_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&hash_values)?))?;
+
+        let curve_map = ptb.programmable_move_call(
+            SUI_FRAMEWORK_PACKAGE_ID,
+            ident_str!("vec_map").into(),
+            ident_str!("from_keys_values").into(),
+            vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+            vec![sig_algo_keys, hash_values_arg],
+        );
+
+        let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
+
+        let vec_map_type = TypeTag::Struct(Box::new(StructTag {
+            address: SUI_FRAMEWORK_PACKAGE_ID.into(),
+            module: ident_str!("vec_map").into(),
+            name: ident_str!("VecMap").into(),
+            type_params: vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+        }));
+
+        ptb.programmable_move_call(
+            SUI_FRAMEWORK_PACKAGE_ID,
+            ident_str!("vec_map").into(),
+            ident_str!("insert").into(),
+            vec![TypeTag::U32, vec_map_type],
+            vec![
+                supported_curves_to_signature_algorithms_to_hash_schemes,
+                curve_arg,
+                curve_map,
+            ],
+        );
+
+        curve_hash_maps.push(curve_map);
+    }
 
     let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         protocol_cap_ref,

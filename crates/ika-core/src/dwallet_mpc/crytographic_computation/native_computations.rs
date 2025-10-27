@@ -12,18 +12,19 @@ use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::ProtocolData;
 use class_groups::CiphertextSpaceGroupElement;
 use dwallet_mpc_types::dwallet_mpc::{
-    VersionedDwalletDKGSecondRoundPublicOutput, VersionedPresignOutput, VersionedUserSignedMessage,
+    DWalletSignatureAlgorithm, VersionedDwalletDKGPublicOutput, VersionedPresignOutput,
+    VersionedUserSignedMessage,
 };
-use group::{HashType, OsCsRng};
+use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256K1ECDSAProtocol,
-    Secp256R1ECDSAProtocol, SessionIdentifier,
+    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
+    Secp256r1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::GuaranteedOutputDeliveryRoundResult;
 use std::sync::Arc;
 use tracing::error;
-use twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS;
+use twopc_mpc::secp256k1::class_groups::{NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, TaprootProtocol};
 use twopc_mpc::sign;
 
 pub(crate) mod encrypt_user_share;
@@ -107,14 +108,13 @@ impl ProtocolCryptographicData {
                     let dkg_output = bcs::from_bytes(&data.dwallet_decentralized_output)?;
                     let partially_signed_message = bcs::from_bytes(&data.partially_signed_message)?;
                     let message = &data.message;
-                    let hash_type = HashType::try_from(data.hash_type.clone() as u32)
-                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?;
+                    let hash_scheme = data.hash_scheme;
                     let decentralized_dkg_output = match dkg_output {
-                            VersionedDwalletDKGSecondRoundPublicOutput::V1(output) => {
-                                bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
+                            VersionedDwalletDKGPublicOutput::V1(output) => {
+                                bcs::from_bytes::<<Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
                             }
-                            VersionedDwalletDKGSecondRoundPublicOutput::V2(output) => {
-                                bcs::from_bytes::<<Secp256K1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(output.as_slice())?
+                            VersionedDwalletDKGPublicOutput::V2(output) => {
+                                bcs::from_bytes::<<Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(output.as_slice())?
                             }
                         };
 
@@ -124,39 +124,52 @@ impl ProtocolCryptographicData {
                             CiphertextSpaceGroupElement<{ NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>,
                         >,
                     > = bcs::from_bytes(&presign)?;
-                    let partially_signed_message = match partially_signed_message {
-                        VersionedUserSignedMessage::V1(partially_signed_message) => {
-                            partially_signed_message
-                        }
-                        _ => {
-                            return Err(DwalletMPCError::InvalidPartiallySignedMessageVersion);
-                        }
-                    };
-                    let partial: <Secp256K1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage =
+                    let VersionedUserSignedMessage::V1(partially_signed_message) =
+                        partially_signed_message;
+                    let partial: <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage =
                             bcs::from_bytes(&partially_signed_message)?;
 
-                    <Secp256K1ECDSAProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
-                            message,
-                            hash_type.clone(),
-                            decentralized_dkg_output,
-                            presign.into(),
-                            partial,
-                            protocol_public_parameters,
-                            &mut OsCsRng,
+                    <Secp256k1ECDSAProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
+                        message,
+                        hash_scheme,
+                        decentralized_dkg_output,
+                        presign.into(),
+                        partial,
+                        protocol_public_parameters,
+                        &mut OsCsRng,
                         )
                             .map_err(DwalletMPCError::from)?;
                     Vec::new()
                 }
                 VersionedPresignOutput::V2(_) => {
-                    verify_partial_signature::<Secp256K1ECDSAProtocol>(
-                        &data.message,
-                        &HashType::try_from(data.hash_type.clone() as u32)
-                            .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
-                        &data.dwallet_decentralized_output,
-                        &data.presign,
-                        &data.partially_signed_message,
-                        &protocol_public_parameters,
-                    )?;
+                    match data.signature_algorithm {
+                        DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                            verify_partial_signature::<Secp256k1ECDSAProtocol>(
+                                &data.message,
+                                &data.hash_scheme,
+                                &data.dwallet_decentralized_output,
+                                &data.presign,
+                                &data.partially_signed_message,
+                                protocol_public_parameters,
+                            )?;
+                        }
+                        DWalletSignatureAlgorithm::Taproot => {
+                            verify_partial_signature::<TaprootProtocol>(
+                                &data.message,
+                                &data.hash_scheme,
+                                &data.dwallet_decentralized_output,
+                                &data.presign,
+                                &data.partially_signed_message,
+                                protocol_public_parameters,
+                            )?;
+                        }
+                        _ => {
+                            return Err(DwalletMPCError::CurveToProtocolMismatch {
+                                curve: data.curve,
+                                protocol: data.signature_algorithm,
+                            });
+                        }
+                    }
                     Vec::new()
                 }
             },
@@ -166,14 +179,20 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Secp256r1(protocol_public_parameters),
                 ..
             } => {
-                verify_partial_signature::<Secp256R1ECDSAProtocol>(
+                if data.signature_algorithm != DWalletSignatureAlgorithm::ECDSASecp256r1 {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: data.curve,
+                        protocol: data.signature_algorithm,
+                    });
+                }
+
+                verify_partial_signature::<Secp256r1ECDSAProtocol>(
                     &data.message,
-                    &HashType::try_from(data.hash_type.clone() as u32)
-                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.hash_scheme,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
-                    &protocol_public_parameters,
+                    protocol_public_parameters,
                 )?;
                 Vec::new()
             }
@@ -183,14 +202,20 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Curve25519(protocol_public_parameters),
                 ..
             } => {
+                if data.signature_algorithm != DWalletSignatureAlgorithm::EdDSA {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: data.curve,
+                        protocol: data.signature_algorithm,
+                    });
+                }
+
                 verify_partial_signature::<Curve25519EdDSAProtocol>(
                     &data.message,
-                    &HashType::try_from(data.hash_type.clone() as u32)
-                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.hash_scheme,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
-                    &protocol_public_parameters,
+                    protocol_public_parameters,
                 )?;
                 Vec::new()
             }
@@ -200,14 +225,20 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Ristretto(protocol_public_parameters),
                 ..
             } => {
+                if data.signature_algorithm != DWalletSignatureAlgorithm::SchnorrkelSubstrate {
+                    return Err(DwalletMPCError::CurveToProtocolMismatch {
+                        curve: data.curve,
+                        protocol: data.signature_algorithm,
+                    });
+                }
+
                 verify_partial_signature::<RistrettoSchnorrkelSubstrateProtocol>(
                     &data.message,
-                    &HashType::try_from(data.hash_type.clone() as u32)
-                        .map_err(|err| DwalletMPCError::InternalError(err.to_string()))?,
+                    &data.hash_scheme,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
-                    &protocol_public_parameters,
+                    protocol_public_parameters,
                 )?;
                 Vec::new()
             }

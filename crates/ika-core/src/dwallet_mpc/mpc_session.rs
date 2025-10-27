@@ -28,7 +28,14 @@ pub(crate) struct DWalletMPCSessionOutput {
     pub(crate) malicious_authorities: Vec<AuthorityName>,
 }
 
-/// A dWallet MPC session.
+/// A dWallet session. Encapsulates computation done by validators,
+/// whose output is being agreed upon in consensus,
+/// then being transmitted onto the Sui chain as part of a checkpoint,
+/// in which a quorum of signatures by the current committee is validated before acceptance.
+///
+/// This computation could either be a Native one, meaning it is akin to a Rust function call whose result is agreed upon in a decentralized manner,
+/// or a special MPC computation, which could involve secrets distributed between the validators and span across multiple rounds,
+/// with messages being sent as part of the consensus in-between rounds.
 #[derive(Clone)]
 pub(crate) struct DWalletSession {
     pub(super) session_identifier: SessionIdentifier,
@@ -62,6 +69,7 @@ pub(crate) struct DWalletSession {
 ///   The session has failed due to an unrecoverable error.
 ///   This status indicates that the session cannot proceed further.
 #[derive(Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum SessionStatus {
     Active {
         public_input: PublicInput,
@@ -76,6 +84,7 @@ pub(crate) enum SessionStatus {
 
 #[derive(Clone, Debug)]
 pub enum SessionComputationType {
+    #[allow(clippy::upper_case_acronyms)]
     MPC {
         /// All the messages that have been received for this session from each party, by consensus round and then by MPC round.
         /// Used to build the input of messages to advance each round of the session.
@@ -86,7 +95,10 @@ pub enum SessionComputationType {
 
 #[derive(Clone, Debug)]
 pub enum ComputationResultData {
-    MPC { mpc_round: u64 },
+    #[allow(clippy::upper_case_acronyms)]
+    MPC {
+        mpc_round: u64,
+    },
     Native,
 }
 
@@ -109,18 +121,18 @@ impl DWalletSession {
     }
 
     pub(crate) fn clear_data(&mut self) {
-        match &mut self.computation_type {
-            SessionComputationType::MPC {
-                messages_by_consensus_round,
-                ..
-            } => messages_by_consensus_round.clear(),
-            SessionComputationType::Native => {}
-        }
+        self.computation_type = match self.computation_type {
+            SessionComputationType::MPC { .. } => SessionComputationType::MPC {
+                messages_by_consensus_round: HashMap::new(),
+            },
+            SessionComputationType::Native => SessionComputationType::Native,
+        };
+
         self.outputs_by_consensus_round = HashMap::new();
     }
 
     /// Adds an incoming message.
-    /// This guarantees we are in sync, as our state mutates in sync with the view of the
+    /// Done in sync, as our state mutates in sync with the view of the
     /// consensus, which is shared with the other validators.
     ///
     /// This function performs no checks, it simply stores the message in the map.
@@ -128,6 +140,7 @@ impl DWalletSession {
     /// If a party sent a message twice, the second message will be ignored.
     /// Whilst that is malicious, it has no effect since the messages come in order,
     /// so all validators end up seeing the same map.
+    ///
     /// Other malicious activities like sending a message for a wrong round are also not
     /// reported since they have no practical impact for similar reasons.
     pub(crate) fn add_message(
@@ -146,7 +159,7 @@ impl DWalletSession {
             SessionStatus::ComputationCompleted => {
                 "Unknown - session computation completed".to_string()
             }
-            _ => {
+            SessionStatus::Completed | SessionStatus::Failed => {
                 error!(
                     should_never_happen=true,
                     session_identifier=?self.session_identifier,
@@ -175,8 +188,9 @@ impl DWalletSession {
                 sender_authority=?message.authority,
                 receiver_authority=?self.validator_name,
                 consensus_round=?consensus_round,
-                "got a message for a non-MPC session",
+                "got a message for a non-MPC session, ignoring",
             );
+
             return;
         };
 
@@ -278,6 +292,7 @@ impl From<&ProtocolData> for SessionComputationType {
     fn from(value: &ProtocolData) -> Self {
         match value {
             ProtocolData::MakeDWalletUserSecretKeySharesPublic { .. }
+            | ProtocolData::EncryptedShareVerification { .. }
             | ProtocolData::PartialSignatureVerification { .. } => SessionComputationType::Native,
             _ => SessionComputationType::MPC {
                 messages_by_consensus_round: HashMap::new(),
@@ -324,7 +339,7 @@ impl DWalletMPCManager {
     /// check for uncompleted requests - in which case the event will be ignored.
     ///
     /// A new MPC session is only created once at the first time the request was received
-    /// (per-epoch, if it was uncompleted in the previous epoch,
+    /// (per-epoch and assuming we didn't crash; if it was uncompleted in the previous epoch,
     /// it will be created again for the next one.)
     ///
     /// If the request already exists in `self.mpc_sessions`, we do not add it.
@@ -357,7 +372,7 @@ impl DWalletMPCManager {
         let newly_updated_network_keys_ids = self.maybe_update_network_keys().await;
 
         // Now handle events for which we've just received the corresponding public data.
-        // Since events are only queued in `events_pending_for_network_key` within this function,
+        // Since events are only queued in `events_pending_for_network_key` in `handle_mpc_request()` calls from this function,
         // receiving the network key ensures no further events will be pending for that key.
         // Therefore, it's safe to process them now, as the queue will remain empty afterward.
         for key_id in newly_updated_network_keys_ids {
@@ -369,8 +384,8 @@ impl DWalletMPCManager {
             for request in events_pending_for_newly_updated_network_key {
                 // We know this won't fail on a missing network key,
                 // but it could be waiting for the next committee,
-                // in which case it would be added to that queue.
-                // in which case it would be added to that queue.
+                // in which case it would be added to that queue,
+                // and handled in a subsequent call to this function.
                 if Some(SessionStatus::Failed) == self.handle_mpc_request(request.clone()) {
                     failed_sessions_waiting_to_send_reject.push(request.clone());
                 }
@@ -378,10 +393,15 @@ impl DWalletMPCManager {
             tokio::task::yield_now().await;
         }
 
+        // Handle the new requests batch.
+        // `handle_mpc_request()` may fail on the condition of either waiting for the next committee or network key information,
+        // in which case it would be added to the corresponding queue,
+        // and handled in a subsequent call to this function.
         for request in requests {
             if Some(SessionStatus::Failed) == self.handle_mpc_request(request.clone()) {
                 failed_sessions_waiting_to_send_reject.push(request.clone());
             }
+
             tokio::task::yield_now().await;
         }
         failed_sessions_waiting_to_send_reject
@@ -420,39 +440,36 @@ impl DWalletMPCManager {
             return None;
         }
 
-        if request.requires_network_key_data {
-            if let Some(network_encryption_key_id) =
+        if request.requires_network_key_data
+            && let Some(network_encryption_key_id) =
                 request.protocol_data.network_encryption_key_id()
+            && !self
+                .network_keys
+                .key_public_data_exists(&network_encryption_key_id)
+        {
+            // We don't yet have the data for this network encryption key,
+            // so we add it to the queue.
+            debug!(
+                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+                session_source=?request.session_type,
+                network_encryption_key_id=?network_encryption_key_id,
+                "Adding request to pending for the network key"
+            );
+
+            let request_pending_for_this_network_key = self
+                .requests_pending_for_network_key
+                .entry(network_encryption_key_id)
+                .or_default();
+
+            if request_pending_for_this_network_key
+                .iter()
+                .all(|e| e.session_identifier != session_identifier)
             {
-                if !self
-                    .network_keys
-                    .key_public_data_exists(&network_encryption_key_id)
-                {
-                    // We don't yet have the data for this network encryption key,
-                    // so we add it to the queue.
-                    debug!(
-                        session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                        session_source=?request.session_type,
-                        network_encryption_key_id=?network_encryption_key_id,
-                        "Adding request to pending for the network key"
-                    );
-
-                    let request_pending_for_this_network_key = self
-                        .requests_pending_for_network_key
-                        .entry(network_encryption_key_id)
-                        .or_default();
-
-                    if request_pending_for_this_network_key
-                        .iter()
-                        .all(|e| e.session_identifier != session_identifier)
-                    {
-                        // Add an event with this session ID only if it doesn't exist.
-                        request_pending_for_this_network_key.push(request);
-                    }
-
-                    return None;
-                }
+                // Add an event with this session ID only if it doesn't exist.
+                request_pending_for_this_network_key.push(request);
             }
+
+            return None;
         }
 
         if request.requires_next_active_committee && self.next_active_committee.is_none() {
@@ -477,11 +494,11 @@ impl DWalletMPCManager {
             return None;
         }
 
-        if let Some(session) = self.mpc_sessions.get(&session_identifier) {
-            if !matches!(session.status, SessionStatus::WaitingForSessionRequest) {
-                // The corresponding session already has its data set, nothing to do.
-                return None;
-            }
+        if let Some(session) = self.sessions.get(&session_identifier)
+            && !matches!(session.status, SessionStatus::WaitingForSessionRequest)
+        {
+            // The corresponding session already has its data set, nothing to do.
+            return None;
         }
 
         let status = match session_input_from_request(
@@ -499,7 +516,7 @@ impl DWalletMPCManager {
                 request: request.clone(),
             },
             Err(e) => {
-                error!(should_never_happen=true, error=?e, ?request, "create session input from dWallet request with error");
+                error!(error=?e, ?request, "create session input from dWallet request with error");
                 SessionStatus::Failed
             }
         };
@@ -509,8 +526,15 @@ impl DWalletMPCManager {
 
         let new_type = SessionComputationType::from(&request.protocol_data);
 
-        if let Some(session) = self.mpc_sessions.get_mut(&session_identifier) {
+        if let Some(session) = self.sessions.get_mut(&session_identifier) {
             session.status = status.clone();
+
+            // We only trust the session type that we deduce ourselves from the session request.
+            // However, it is not safe to override the session status in all cases.
+            //
+            // Specifically, if this is an MPC session, it could be that we received the session request after we have already received messages for it,
+            // as the Ika consensus and Sui aren't in sync. In this case, we don't override the session type,
+            // as it encapsulates messages that we don't want to drop.
             if let SessionComputationType::MPC { .. } = &session.computation_type {
                 if !matches!(new_type, SessionComputationType::MPC { .. }) {
                     session.computation_type = new_type;
@@ -539,24 +563,30 @@ impl DWalletMPCService {
                     error=?err,
                     "failed to check if uncompleted requests receiver has changed"
                 );
+
                 false
             });
+
         if !new_requests_fetched {
             return vec![];
         }
+
         let (uncompleted_requests, epoch_id) = self
             .sui_data_requests
             .uncompleted_requests_receiver
             .borrow_and_update()
             .clone();
+
         if epoch_id != self.epoch {
             info!(
                 ?epoch_id,
                 our_epoch_id = self.epoch,
                 "Received uncompleted requests for a different epoch, ignoring"
             );
+
             return vec![];
         }
+
         uncompleted_requests
     }
 
@@ -571,10 +601,12 @@ impl DWalletMPCService {
                         "Received a request from Sui"
                     );
                 }
+
                 Ok(requests)
             }
             Err(broadcast::error::TryRecvError::Empty) => {
                 debug!("No new requests to process");
+
                 Ok(vec![])
             }
             Err(e) => Err(IkaError::ReceiverError(e.to_string())),

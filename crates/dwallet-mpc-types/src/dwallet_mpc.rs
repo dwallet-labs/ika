@@ -43,6 +43,48 @@ pub type DKGDecentralizedPartyVersionedOutputSecp256k1 = DKGDecentralizedPartyVe
     group::secp256k1::GroupElement,
 >;
 
+pub type DKGDecentralizedPartyOutputRistretto = DKGDecentralizedPartyOutput<
+    { twopc_mpc::ristretto::SCALAR_LIMBS },
+    { twopc_mpc::ristretto::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::ristretto::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::ristretto::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyVersionedOutputRistretto = DKGDecentralizedPartyVersionedOutput<
+    { twopc_mpc::ristretto::SCALAR_LIMBS },
+    { twopc_mpc::ristretto::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::ristretto::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::ristretto::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyOutputCurve25519 = DKGDecentralizedPartyOutput<
+    { twopc_mpc::curve25519::SCALAR_LIMBS },
+    { twopc_mpc::curve25519::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::curve25519::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::curve25519::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyVersionedOutputCurve25519 = DKGDecentralizedPartyVersionedOutput<
+    { twopc_mpc::curve25519::SCALAR_LIMBS },
+    { twopc_mpc::curve25519::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::curve25519::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::curve25519::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyOutputSecp256r1 = DKGDecentralizedPartyOutput<
+    { twopc_mpc::secp256r1::SCALAR_LIMBS },
+    { twopc_mpc::secp256r1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::secp256r1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::secp256r1::GroupElement,
+>;
+
+pub type DKGDecentralizedPartyVersionedOutputSecp256r1 = DKGDecentralizedPartyVersionedOutput<
+    { twopc_mpc::secp256r1::SCALAR_LIMBS },
+    { twopc_mpc::secp256r1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    { twopc_mpc::secp256r1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    group::secp256r1::GroupElement,
+>;
+
 #[enum_dispatch]
 pub trait NetworkEncryptionKeyPublicDataTrait {
     fn epoch(&self) -> u64;
@@ -83,6 +125,7 @@ pub trait NetworkEncryptionKeyPublicDataTrait {
 
 #[enum_dispatch(NetworkEncryptionKeyPublicDataTrait)]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum VersionedNetworkEncryptionKeyPublicData {
     V1(NetworkEncryptionKeyPublicDataV1),
     V2(NetworkEncryptionKeyPublicDataV2),
@@ -144,7 +187,6 @@ pub struct NetworkEncryptionKeyPublicDataV2 {
         class_groups::Curve25519DecryptionKeySharePublicParameters,
 }
 
-#[repr(u32)]
 #[derive(
     strum_macros::Display,
     Clone,
@@ -161,16 +203,15 @@ pub struct NetworkEncryptionKeyPublicDataV2 {
 // useful to tell which protocol public parameters to use
 pub enum DWalletCurve {
     #[strum(to_string = "Secp256k1")]
-    Secp256k1 = 0,
-    #[strum(to_string = "Ristretto")]
-    Ristretto = 1,
-    #[strum(to_string = "Curve25519")]
-    Curve25519 = 2,
+    Secp256k1,
     #[strum(to_string = "Secp256r1")]
-    Secp256r1 = 3,
+    Secp256r1,
+    #[strum(to_string = "Curve25519")]
+    Curve25519,
+    #[strum(to_string = "Ristretto")]
+    Ristretto,
 }
 
-#[repr(u32)]
 #[derive(
     strum_macros::Display,
     Clone,
@@ -184,62 +225,34 @@ pub enum DWalletCurve {
     Ord,
     PartialOrd,
 )]
-pub enum DWalletSignatureScheme {
+pub enum DWalletSignatureAlgorithm {
     #[strum(to_string = "ECDSASecp256k1")]
-    ECDSASecp256k1 = 0,
-    #[strum(to_string = "Taproot")]
-    Taproot = 1,
+    ECDSASecp256k1,
     #[strum(to_string = "ECDSASecp256r1")]
-    ECDSASecp256r1 = 2,
+    ECDSASecp256r1,
+    #[strum(to_string = "Taproot")]
+    Taproot,
     #[strum(to_string = "EdDSA")]
-    EdDSA = 3,
+    EdDSA,
     #[strum(to_string = "SchnorrkelSubstrate")]
-    SchnorrkelSubstrate = 4,
+    SchnorrkelSubstrate,
 }
 
 // We can't import ika-types here since we import this module in there.
 // Therefore, we use `thiserror` `#from` to convert this error.
 #[derive(Debug, Error, Clone)]
 pub enum DwalletNetworkMPCError {
-    #[error("invalid DWalletMPCNetworkKey value: {0}")]
+    #[error("invalid dwallet mpc curve value: {0}")]
     InvalidDWalletMPCCurve(u32),
 
-    #[error("invalid DWalletMPCSignatureAlgorithm value: {0}")]
-    InvalidDWalletMPCSignatureAlgorithm(u32),
+    #[error("invalid dwallet mpc signature algorithm (curve: {0}) value: {1}")]
+    InvalidDWalletMPCSignatureAlgorithm(u32, u32),
+
+    #[error("invalid dwallet mpc hash scheme (curve: {0}, signature algorithm: {1}) value: {2}")]
+    InvalidDWalletMPCHashScheme(u32, u32, u32),
 
     #[error("missing protocol public parameters for curve: {0}")]
     MissingProtocolPublicParametersForCurve(DWalletCurve),
-}
-
-impl TryFrom<u32> for DWalletCurve {
-    type Error = DwalletNetworkMPCError;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(DWalletCurve::Secp256k1),
-            1 => Ok(DWalletCurve::Ristretto),
-            2 => Ok(DWalletCurve::Curve25519),
-            3 => Ok(DWalletCurve::Secp256r1),
-            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCCurve(v)),
-        }
-    }
-}
-
-impl TryFrom<u32> for DWalletSignatureScheme {
-    type Error = DwalletNetworkMPCError;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(DWalletSignatureScheme::ECDSASecp256k1),
-            1 => Ok(DWalletSignatureScheme::Taproot),
-            2 => Ok(DWalletSignatureScheme::ECDSASecp256r1),
-            3 => Ok(DWalletSignatureScheme::EdDSA),
-            4 => Ok(DWalletSignatureScheme::SchnorrkelSubstrate),
-            v => Err(DwalletNetworkMPCError::InvalidDWalletMPCSignatureAlgorithm(
-                v,
-            )),
-        }
-    }
 }
 
 pub type ClassGroupsPublicKeyAndProofBytes = Vec<u8>;
@@ -256,7 +269,7 @@ pub enum VersionedDwalletDKGFirstRoundPublicOutput {
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
-pub enum VersionedDwalletDKGSecondRoundPublicOutput {
+pub enum VersionedDwalletDKGPublicOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
 }
@@ -303,7 +316,6 @@ pub enum VersionedDwalletUserSecretShare {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedUserSignedMessage {
     V1(MPCPublicOutput),
-    V2(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

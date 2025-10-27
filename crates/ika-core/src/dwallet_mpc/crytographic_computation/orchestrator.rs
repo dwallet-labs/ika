@@ -119,7 +119,7 @@ impl CryptographicComputationsOrchestrator {
         let mut completed_computation_results = HashMap::new();
         while let Ok(computation_update) = self.completed_computation_receiver.try_recv() {
             let party_id = computation_update.party_id;
-            let protocol_name = computation_update.protocol_metadata.to_string();
+            let protocol_metadata = computation_update.protocol_metadata.clone();
             let session_identifier = computation_update.computation_id.session_identifier;
             let mpc_round = computation_update.computation_id.mpc_round;
             let attempt_number = computation_update.computation_id.attempt_number;
@@ -145,7 +145,7 @@ impl CryptographicComputationsOrchestrator {
                     ?session_identifier,
                     ?computation_result_data,
                     attempt_number,
-                    mpc_protocol=?protocol_name,
+                    mpc_protocol=?protocol_metadata,
                     error=?err,
                     "Cryptographic computation failed"
                 );
@@ -155,7 +155,7 @@ impl CryptographicComputationsOrchestrator {
                     ?session_identifier,
                     ?computation_result_data,
                     attempt_number,
-                    mpc_protocol=?protocol_name,
+                    mpc_protocol =? protocol_metadata,
                     duration_ms = elapsed_ms,
                     duration_seconds = elapsed_ms / 1000,
                     "Cryptographic computation completed successfully"
@@ -182,7 +182,7 @@ impl CryptographicComputationsOrchestrator {
                         );
                         dwallet_mpc_metrics.set_last_completion_duration(
                             &computation_update.protocol_metadata,
-                            &"1".to_string(),
+                            "1",
                             elapsed_ms as i64,
                         );
                     }
@@ -236,7 +236,7 @@ impl CryptographicComputationsOrchestrator {
                 session_identifier=?computation_id.session_identifier,
                 mpc_round=?computation_id.mpc_round,
                 attempt_number=?computation_id.attempt_number,
-                mpc_protocol=?computation_request.protocol_data.to_string(),
+                mpc_protocol=?computation_request.protocol_data,
                 available_cores=?self.available_cores_for_cryptographic_computations,
                 currently_running_sessions_count =? self.currently_running_cryptographic_computations.len(),
                 "No available CPU cores to perform cryptographic computation"
@@ -255,7 +255,7 @@ impl CryptographicComputationsOrchestrator {
             session_identifier=?computation_id.session_identifier,
             current_round=?computation_id.mpc_round,
             attempt_number=?computation_id.attempt_number,
-            mpc_protocol=?protocol_metadata.to_string(),
+            mpc_protocol=?protocol_metadata,
             "Starting cryptographic computation",
         );
 

@@ -2,19 +2,23 @@ use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::Pr
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGAdvanceRequestByCurve, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationAdvanceRequestByCurve,
-    DWalletImportedKeyVerificationPublicInputByCurve, Secp256K1DWalletDKGParty,
+    DWalletImportedKeyVerificationPublicInputByCurve, Secp256k1DWalletDKGParty,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
 use crate::dwallet_mpc::presign::{PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol};
 use crate::dwallet_mpc::reconfiguration::ReconfigurationV1toV2Party;
-use crate::dwallet_mpc::sign::{SignAdvanceRequestByProtocol, SignPublicInputByProtocol};
+use crate::dwallet_mpc::sign::{
+    DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
+    SignAdvanceRequestByProtocol, SignPublicInputByProtocol,
+};
 use crate::request_protocol_data::{
-    DKGFirstData, DKGSecondData, DWalletDKGData, EncryptedShareVerificationData,
-    ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData,
-    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData,
-    NetworkEncryptionKeyV1ToV2ReconfigurationData, NetworkEncryptionKeyV2ReconfigurationData,
-    PartialSignatureVerificationData, PresignData, ProtocolData, SignData,
+    DKGFirstData, DKGSecondData, DWalletDKGAndSignData, DWalletDKGData,
+    EncryptedShareVerificationData, ImportedKeyVerificationData,
+    MakeDWalletUserSecretKeySharesPublicData, NetworkEncryptionKeyDkgData,
+    NetworkEncryptionKeyReconfigurationData, NetworkEncryptionKeyV1ToV2ReconfigurationData,
+    NetworkEncryptionKeyV2ReconfigurationData, PartialSignatureVerificationData, PresignData,
+    ProtocolData, SignData,
 };
 use class_groups::SecretKeyShareSizedInteger;
 use class_groups::dkg::Secp256k1Party;
@@ -26,6 +30,7 @@ use ika_types::dwallet_mpc_error::DwalletMPCError;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
 
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ProtocolCryptographicData {
     ImportedKeyVerification {
         data: ImportedKeyVerificationData,
@@ -47,8 +52,8 @@ pub(crate) enum ProtocolCryptographicData {
 
     DKGSecond {
         data: DKGSecondData,
-        public_input: <Secp256K1DWalletDKGParty as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<Secp256K1DWalletDKGParty as mpc::Party>::Message>,
+        public_input: <Secp256k1DWalletDKGParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<Secp256k1DWalletDKGParty as mpc::Party>::Message>,
         first_round_output: Vec<u8>,
     },
 
@@ -71,6 +76,12 @@ pub(crate) enum ProtocolCryptographicData {
         advance_request: SignAdvanceRequestByProtocol,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
+    DWalletDKGAndSign {
+        data: DWalletDKGAndSignData,
+        public_input: DKGAndSignPublicInputByProtocol,
+        advance_request: DWalletDKGAndSignAdvanceRequestByProtocol,
+        decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
+    },
     // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
     NetworkEncryptionKeyDkgV1 {
         data: NetworkEncryptionKeyDkgData,
@@ -79,7 +90,6 @@ pub(crate) enum ProtocolCryptographicData {
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
     NetworkEncryptionKeyDkgV2 {
-        data: NetworkEncryptionKeyDkgData,
         public_input: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
         advance_request:
             AdvanceRequest<<twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::Message>,
@@ -167,6 +177,31 @@ impl ProtocolCryptographicData {
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
+                ..
+            } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
                 advance_request, ..
             } => advance_request.attempt_number,
@@ -180,10 +215,18 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::ImportedKeyVerification {
                 advance_request, ..
             } => match advance_request {
-                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256K1DWalletImportedKeyVerification(req) => req.attempt_number,
-                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification(req) => req.attempt_number,
-                DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519DWalletImportedKeyVerification(req) => req.attempt_number,
-                DWalletImportedKeyVerificationAdvanceRequestByCurve::RistrettoDWalletImportedKeyVerification(req) => req.attempt_number,
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256k1(req) => {
+                    req.attempt_number
+                }
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256r1(req) => {
+                    req.attempt_number
+                }
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519(req) => {
+                    req.attempt_number
+                }
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Ristretto(req) => {
+                    req.attempt_number
+                }
             },
             ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
                 advance_request,
@@ -195,12 +238,12 @@ impl ProtocolCryptographicData {
             } => advance_request.attempt_number,
             ProtocolCryptographicData::DWalletDKG {
                 advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
+                    DWalletDKGAdvanceRequestByCurve::Secp256k1DWalletDKG(advance_request),
                 ..
             }
             | ProtocolCryptographicData::DWalletDKG {
                 advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
+                    DWalletDKGAdvanceRequestByCurve::Secp256r1DWalletDKG(advance_request),
                 ..
             }
             | ProtocolCryptographicData::DWalletDKG {
@@ -226,12 +269,12 @@ impl ProtocolCryptographicData {
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::DWalletDKG {
                 advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Secp256K1DWalletDKG(advance_request),
+                    DWalletDKGAdvanceRequestByCurve::Secp256k1DWalletDKG(advance_request),
                 ..
             }
             | ProtocolCryptographicData::DWalletDKG {
                 advance_request:
-                    DWalletDKGAdvanceRequestByCurve::Secp256R1DWalletDKG(advance_request),
+                    DWalletDKGAdvanceRequestByCurve::Secp256r1DWalletDKG(advance_request),
                 ..
             }
             | ProtocolCryptographicData::DWalletDKG {
@@ -288,6 +331,31 @@ impl ProtocolCryptographicData {
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
@@ -298,10 +366,18 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::ImportedKeyVerification {
                 advance_request, ..
             } => match advance_request {
-                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256K1DWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
-                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256R1DWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
-                DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519DWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
-                DWalletImportedKeyVerificationAdvanceRequestByCurve::RistrettoDWalletImportedKeyVerification(req) => Some(req.mpc_round_number),
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256k1(req) => {
+                    Some(req.mpc_round_number)
+                }
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256r1(req) => {
+                    Some(req.mpc_round_number)
+                }
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519(req) => {
+                    Some(req.mpc_round_number)
+                }
+                DWalletImportedKeyVerificationAdvanceRequestByCurve::Ristretto(req) => {
+                    Some(req.mpc_round_number)
+                }
             },
             ProtocolCryptographicData::EncryptedShareVerification { .. }
             | ProtocolCryptographicData::PartialSignatureVerification { .. }
@@ -348,8 +424,7 @@ impl DWalletMPCManager {
                 self.decryption_key_reconfiguration_third_round_delay,
                 self.network_keys
                     .validator_private_dec_key_data
-                    .class_groups_decryption_key
-                    .clone(),
+                    .class_groups_decryption_key,
                 &self.network_keys,
                 protocol_version,
             ),
