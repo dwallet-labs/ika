@@ -1046,14 +1046,14 @@ export class IkaTransaction {
 		signatureScheme: S;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
-	}): Promise<TransactionObjectArgument> {
+	}) {
 		// Auto-detect share availability
 		const hasPublicShares = !!dWallet.public_user_secret_key_share;
 
 		// Regular DWallet signing (ZeroTrust and Shared only)
 		if (encryptedUserSecretKeyShare) {
 			// Encrypted shares
-			return this.#requestSign({
+			this.#requestSignV1({
 				verifiedPresignCap,
 				messageApproval,
 				userSignatureInputs: {
@@ -1070,7 +1070,7 @@ export class IkaTransaction {
 			});
 		} else if (secretShare && publicOutput) {
 			// Secret share provided
-			return this.#requestSign({
+			return this.#requestSignV1({
 				verifiedPresignCap,
 				messageApproval,
 				userSignatureInputs: {
@@ -1091,7 +1091,7 @@ export class IkaTransaction {
 			this.#assertDWalletPublicUserSecretKeyShareSet(dWallet);
 			this.#assertDWalletPublicOutputSet(dWallet);
 
-			return this.#requestSign({
+			return this.#requestSignV1({
 				verifiedPresignCap,
 				messageApproval,
 				userSignatureInputs: {
@@ -2324,6 +2324,36 @@ export class IkaTransaction {
 		});
 
 		return coordinatorTx.requestSignAndReturnId(
+			this.#ikaClient.ikaConfig,
+			this.#getCoordinatorObjectRef(),
+			verifiedPresignCap,
+			messageApproval,
+			userSignMessage,
+			this.createSessionIdentifier(),
+			ikaCoin,
+			suiCoin,
+			this.#transaction,
+		);
+	}
+
+	async #requestSignV1({
+		verifiedPresignCap,
+		messageApproval,
+		userSignatureInputs,
+		ikaCoin,
+		suiCoin,
+	}: {
+		verifiedPresignCap: TransactionObjectArgument;
+		messageApproval: TransactionObjectArgument;
+		userSignatureInputs: UserSignatureInputs;
+		ikaCoin: TransactionObjectArgument;
+		suiCoin: TransactionObjectArgument;
+	}) {
+		const userSignMessage = await this.#getUserSignMessage({
+			userSignatureInputs,
+		});
+
+		coordinatorTx.requestSign(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
 			verifiedPresignCap,
