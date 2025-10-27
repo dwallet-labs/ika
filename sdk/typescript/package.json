@@ -71,6 +71,13 @@
 		"@mysten/bcs": "^1.7.0",
 		"@mysten/sui": "^1.43.0",
 		"@noble/curves": "^2.0.1",
-		"@noble/hashes": "^1.8.0"
+		"@noble/hashes": "^1.8.0",
+		"@types/axios": "^0.14.4",
+		"@types/bitcoinjs-lib": "^5.0.4",
+		"axios": "^1.11.0",
+		"bitcoinjs-lib": "^6.1.7",
+		"dotenv": "^17.2.1",
+		"execa": "^9.6.0",
+		"typedoc": "^0.28.9"
 	}
 }

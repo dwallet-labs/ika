@@ -78,6 +78,7 @@ commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev
 twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "3a7d690e"}
 group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "3a7d690e"}
 homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "3a7d690e"}
+k256 = { version = "0.14.0-pre.11", default-features = false }
 
 anyhow = "1.0.71"
 arc-swap = { version = "1.5.1", features = ["serde"] }
