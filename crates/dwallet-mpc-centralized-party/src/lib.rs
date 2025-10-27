@@ -658,6 +658,8 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
     }
 }
 
+type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
+
 /// Executes the centralized phase of the Sign protocol,
 ///  the first part of the protocol.
 ///
@@ -731,7 +733,7 @@ pub fn advance_centralized_sign_party(
                 { group::secp256k1::SCALAR_LIMBS },
                 group::secp256k1::GroupElement,
             >::from(decentralized_dkg_output);
-            let presign: <Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>:: =
+            let presign: <AsyncProtocol as twopc_mpc::presign::Protocol>::Presign =
                 bcs::from_bytes(&presign).map_err(|e| {
                     anyhow!(
                         "failed to deserialize presign into Secp256k1ECDSAProtocol presign: {:?}",
@@ -743,7 +745,7 @@ pub fn advance_centralized_sign_party(
                     message,
                     hash_scheme,
                     centralized_public_output.clone(),
-                    presign,
+                    presign.into(),
                     bcs::from_bytes(&protocol_pp).map_err(
                         |e| {
                             anyhow!(
