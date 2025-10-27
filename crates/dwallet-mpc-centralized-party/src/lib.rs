@@ -673,24 +673,58 @@ pub fn advance_centralized_sign_party(
     signature_algorithm: u32,
     hash_scheme: u32,
 ) -> anyhow::Result<SignedMessage> {
-    let presign = bcs::from_bytes(&presign)?;
-    let hash_scheme = try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?;
+    let presign = bcs::from_bytes(&presign).map_err(|e| {
+        anyhow!(
+            "failed to deserialize presign into versioned presign, {:?}",
+            e
+        )
+    })?;
+    let hash_scheme = try_into_hash_scheme(curve, signature_algorithm, hash_scheme)
+        .map_err(|e| anyhow!("failed to convert hash scheme: {:?}", e))?;
     match presign {
         VersionedPresignOutput::V1(presign) => {
             let decentralized_dkg_output =
-                match bcs::from_bytes(&decentralized_party_dkg_public_output)? {
+                match bcs::from_bytes(&decentralized_party_dkg_public_output).map_err(
+                    |e| {
+                        anyhow!(
+                            "failed to deserialize decentralized party DKG output into versioned output: {:?}",
+                            e
+                        )
+                    },
+                )? {
                     VersionedDwalletDKGPublicOutput::V1(output) => {
-                        bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice())?
+                        bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(output.as_slice()).map_err(
+                            |e| {
+                                anyhow!(
+                                    "failed to deserialize decentralized party DKG output into targeted crypto output: {:?}",
+                                    e
+                                )
+                            },
+                        )?
                             .into()
                     }
                     VersionedDwalletDKGPublicOutput::V2(output) => {
                         bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(
                             output.as_slice(),
+                        ).map_err(
+                            |e| {
+                                anyhow!(
+                                    "failed to deserialize decentralized party DKG output into versioned crypto output: {:?}",
+                                    e
+                                )
+                            },
                         )?
                     }
                 };
             let centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
-                bcs::from_bytes(&centralized_party_secret_key_share)?;
+                bcs::from_bytes(&centralized_party_secret_key_share).map_err(
+                    |e| {
+                        anyhow!(
+                            "failed to deserialize centralized party secret key share into versioned secret share: {:?}",
+                            e
+                        )
+                    },
+                )?;
             let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
                 centralized_party_secret_key_share;
             let centralized_public_output = DKGCentralizedPartyVersionedOutput::<
@@ -698,19 +732,40 @@ pub fn advance_centralized_sign_party(
                 group::secp256k1::GroupElement,
             >::from(decentralized_dkg_output);
             let presign: <Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
-                bcs::from_bytes(&presign)?;
+                bcs::from_bytes(&presign).map_err(
+                    |e| {
+                        anyhow!(
+                            "failed to deserialize presign into Secp256k1ECDSAProtocol presign: {:?}",
+                            e
+                        )
+                    },
+                )?;
             let centralized_party_public_input =
                 <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
                     message,
                     hash_scheme,
                     centralized_public_output.clone(),
                     presign,
-                    bcs::from_bytes(&protocol_pp)?,
+                    bcs::from_bytes(&protocol_pp).map_err(
+                        |e| {
+                            anyhow!(
+                                "failed to deserialize protocol public parameters: {:?}",
+                                e
+                            )
+                        },
+                    )?,
                 ));
 
             let round_result = SignCentralizedPartyV1::advance(
                 (),
-                &bcs::from_bytes(&centralized_party_secret_key_share)?,
+                &bcs::from_bytes(&centralized_party_secret_key_share).map_err(
+                    |e| {
+                        anyhow!(
+                            "failed to deserialize centralized party secret key share into Secp256k1ECDSAProtocol secret key share: {:?}",
+                            e
+                        )
+                    },
+                )?,
                 &centralized_party_public_input,
                 &mut OsCsRng,
             )

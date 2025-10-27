@@ -439,8 +439,6 @@ export async function runSignFullFlowWithDWallet(
 		presignObject,
 		encryptedUserSecretKeyShare,
 		message,
-		Hash.KECCAK256,
-		SignatureAlgorithm.ECDSASecp256k1,
 		testName,
 	);
 }
