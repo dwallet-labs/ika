@@ -16,11 +16,8 @@ import {
 	reconfigurationPublicOutputToProtocolPublicParameters,
 } from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
-import {
-	fromNumberToCurve,
-	validateCurveSignatureAlgorithm,
-	type ValidSignatureAlgorithmForCurve,
-} from './hash-signature-validation.js';
+import { fromNumberToCurve, validateCurveSignatureAlgorithm } from './hash-signature-validation.js';
+import type { ValidSignatureAlgorithmForCurve } from './hash-signature-validation.js';
 import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
 	CoordinatorInner,

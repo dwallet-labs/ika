@@ -23,11 +23,13 @@ import {
 	fromNumberToCurve,
 	validateCurveSignatureAlgorithm,
 	validateHashSignatureCombination,
-	type ValidHashForSignature,
-	type ValidSignatureAlgorithmForCurve,
+} from './hash-signature-validation.js';
+import type {
+	ValidHashForSignature,
+	ValidSignatureAlgorithmForCurve,
 } from './hash-signature-validation.js';
 import type { IkaClient } from './ika-client.js';
-import {
+import type {
 	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
@@ -37,10 +39,10 @@ import {
 	ImportedSharedDWallet,
 	Presign,
 	SharedDWallet,
-	SignatureAlgorithm,
 	UserSignatureInputs,
 	ZeroTrustDWallet,
 } from './types.js';
+import { SignatureAlgorithm } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
 import {
 	create_sign_centralized_party_message as create_sign,
