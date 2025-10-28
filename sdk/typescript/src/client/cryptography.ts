@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { bcs } from '@mysten/sui/bcs';
-import { PublicKey, SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
+import type { PublicKey } from '@mysten/sui/cryptography';
+import { SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { randomBytes } from '@noble/hashes/utils.js';
 
@@ -10,8 +11,10 @@ import {
 	fromCurveAndSignatureAlgorithmAndHashToNumbers,
 	fromCurveToNumber,
 	fromSignatureAlgorithmToNumber,
-	type ValidHashForSignature,
-	type ValidSignatureAlgorithmForCurve,
+} from './hash-signature-validation.js';
+import type {
+	ValidHashForSignature,
+	ValidSignatureAlgorithmForCurve,
 } from './hash-signature-validation.js';
 import type { IkaClient } from './ika-client.js';
 import type { DWallet, EncryptedUserSecretKeyShare } from './types.js';
