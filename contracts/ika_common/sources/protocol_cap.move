@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 module ika_common::protocol_cap;
+
 use ika_common::system_object_cap::SystemObjectCap;
 
 // === Structs ===

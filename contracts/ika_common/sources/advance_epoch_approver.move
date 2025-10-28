@@ -5,8 +5,7 @@ module ika_common::advance_epoch_approver;
 
 use ika::ika::IKA;
 use ika_common::system_object_cap::SystemObjectCap;
-use std::string::String;
-use std::type_name;
+use std::{string::String, type_name};
 use sui::balance::Balance;
 
 // === Structs ===

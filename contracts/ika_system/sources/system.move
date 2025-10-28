@@ -110,34 +110,40 @@
 module ika_system::system;
 
 use ika::ika::IKA;
-use ika_common::advance_epoch_approver::AdvanceEpochApprover;
-use ika_common::bls_committee::BlsCommittee;
-use ika_common::protocol_cap::{VerifiedProtocolCap, ProtocolCap};
-use ika_common::system_current_status_info::SystemCurrentStatusInfo;
-use ika_common::system_object_cap::SystemObjectCap;
-use ika_common::validator_cap::{
-    ValidatorCap,
-    ValidatorCommissionCap,
-    ValidatorOperationCap,
-    VerifiedValidatorCap,
-    VerifiedValidatorCommissionCap,
-    VerifiedValidatorOperationCap
+use ika_common::{
+    advance_epoch_approver::AdvanceEpochApprover,
+    bls_committee::BlsCommittee,
+    protocol_cap::{VerifiedProtocolCap, ProtocolCap},
+    system_current_status_info::SystemCurrentStatusInfo,
+    system_object_cap::SystemObjectCap,
+    upgrade_package_approver::UpgradePackageApprover,
+    validator_cap::{
+        ValidatorCap,
+        ValidatorCommissionCap,
+        ValidatorOperationCap,
+        VerifiedValidatorCap,
+        VerifiedValidatorCommissionCap,
+        VerifiedValidatorOperationCap
+    }
 };
-use ika_system::protocol_treasury::ProtocolTreasury;
-use ika_system::staked_ika::StakedIka;
-use ika_system::system_inner::{Self, SystemInner};
-use ika_system::token_exchange_rate::TokenExchangeRate;
-use ika_system::validator_metadata::ValidatorMetadata;
-use ika_system::validator_set::ValidatorSet;
+use ika_system::{
+    protocol_treasury::ProtocolTreasury,
+    staked_ika::StakedIka,
+    system_inner::{Self, SystemInner},
+    token_exchange_rate::TokenExchangeRate,
+    validator_metadata::ValidatorMetadata,
+    validator_set::ValidatorSet
+};
 use std::string::String;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::dynamic_field;
-use sui::package::{UpgradeCap, UpgradeReceipt, UpgradeTicket};
-use sui::table::Table;
-use sui::table_vec::TableVec;
-use ika_common::upgrade_package_approver::UpgradePackageApprover;
-use sui::coin_registry::Currency;
+use sui::{
+    clock::Clock,
+    coin::Coin,
+    coin_registry::Currency,
+    dynamic_field,
+    package::{UpgradeCap, UpgradeReceipt, UpgradeTicket},
+    table::Table,
+    table_vec::TableVec
+};
 
 // === Errors ===
 
@@ -551,11 +557,18 @@ public fun verify_commission_cap(
 
 // === Upgrades ===
 
-public fun authorize_upgrade(self: &mut System, package_id: ID): (UpgradeTicket, UpgradePackageApprover) {
+public fun authorize_upgrade(
+    self: &mut System,
+    package_id: ID,
+): (UpgradeTicket, UpgradePackageApprover) {
     self.inner_mut().authorize_upgrade(package_id)
 }
 
-public fun commit_upgrade(self: &mut System, receipt: UpgradeReceipt, upgrade_package_approver: &mut UpgradePackageApprover) {
+public fun commit_upgrade(
+    self: &mut System,
+    receipt: UpgradeReceipt,
+    upgrade_package_approver: &mut UpgradePackageApprover,
+) {
     self.inner_mut().commit_upgrade(receipt, upgrade_package_approver);
     if (self.package_id == upgrade_package_approver.old_package_id()) {
         self.migration_epoch = option::some(upgrade_package_approver.migration_epoch());
@@ -632,7 +645,10 @@ public fun try_migrate_by_cap(self: &mut System, cap: &ProtocolCap) {
 /// to migrate changes in the `system_inner` object if needed.
 /// Call this function after the migration epoch is reached.
 public fun try_migrate(self: &mut System) {
-    assert!(self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e), EInvalidMigration);
+    assert!(
+        self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e),
+        EInvalidMigration,
+    );
     self.try_migrate_impl();
 }
 
@@ -643,7 +659,7 @@ public fun try_migrate(self: &mut System) {
 fun try_migrate_impl(self: &mut System) {
     assert!(self.version < VERSION, EInvalidMigration);
     assert!(self.new_package_id.is_some(), EInvalidMigration);
-    
+
     // Move the old system inner to the new version.
     let system_inner: SystemInner = dynamic_field::remove(&mut self.id, self.version);
     dynamic_field::add(&mut self.id, VERSION, system_inner);

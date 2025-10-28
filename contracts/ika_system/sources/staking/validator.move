@@ -4,18 +4,19 @@
 module ika_system::validator;
 
 use ika::ika::IKA;
-use ika_common::system_object_cap::SystemObjectCap;
-use ika_common::validator_cap::{Self, ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap};
-use ika_system::pending_values::{Self, PendingValues};
-use ika_system::staked_ika::{Self, StakedIka};
-use ika_system::token_exchange_rate::{Self, TokenExchangeRate};
-use ika_system::validator_info::{Self, ValidatorInfo};
-use ika_system::validator_metadata::ValidatorMetadata;
+use ika_common::{
+    system_object_cap::SystemObjectCap,
+    validator_cap::{Self, ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap}
+};
+use ika_system::{
+    pending_values::{Self, PendingValues},
+    staked_ika::{Self, StakedIka},
+    token_exchange_rate::{Self, TokenExchangeRate},
+    validator_info::{Self, ValidatorInfo},
+    validator_metadata::ValidatorMetadata
+};
 use std::string::String;
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::table::{Self, Table};
-use sui::table_vec::TableVec;
+use sui::{bag::{Self, Bag}, balance::{Self, Balance}, table::{Self, Table}, table_vec::TableVec};
 
 // === Constants ===
 
@@ -618,9 +619,7 @@ public(package) fun set_next_epoch_mpc_data_bytes(
 ): Option<TableVec<vector<u8>>> {
     validator.verify_operation_cap(cap);
 
-    validator
-        .validator_info
-        .set_next_epoch_mpc_data_bytes(mpc_data_bytes)
+    validator.validator_info.set_next_epoch_mpc_data_bytes(mpc_data_bytes)
 }
 
 /// Destroy the validator if it is empty.

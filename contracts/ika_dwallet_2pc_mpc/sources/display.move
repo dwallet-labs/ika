@@ -23,11 +23,8 @@ use ika_dwallet_2pc_mpc::coordinator_inner::{
     VerifiedPartialUserSignatureCap,
     VerifiedPresignCap
 };
-use std::string::String;
-use std::type_name;
-use sui::display::{Self, Display};
-use sui::object_bag::{Self, ObjectBag};
-use sui::package::Publisher;
+use std::{string::String, type_name};
+use sui::{display::{Self, Display}, object_bag::{Self, ObjectBag}, package::Publisher};
 
 // === Structs ===
 
