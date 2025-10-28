@@ -115,6 +115,20 @@ Retrieve a partial user signature object:
 const partialUserSignature = await ikaClient.getPartialUserSignature(partialUserSignatureID);
 ```
 
+### Get Sign Session
+
+Retrieve a sign session object with signature parsing:
+
+```typescript
+const sign = await ikaClient.getSign(signID, 'SECP256K1', 'ECDSASecp256k1');
+console.log('Sign session state:', sign.state.$kind);
+
+// When completed, the signature is automatically parsed based on the curve and algorithm
+if (sign.state.$kind === 'Completed') {
+	console.log('Signature:', sign.state.Completed.signature);
+}
+```
+
 ## State-Based Queries
 
 ### Polling for State Changes
@@ -160,6 +174,22 @@ const partialSignature = await ikaClient.getPartialUserSignatureInParticularStat
 	partialUserSignatureID,
 	'Completed',
 );
+```
+
+### Sign Session State Polling
+
+```typescript
+const sign = await ikaClient.getSignInParticularState(
+	signID,
+	'SECP256K1',
+	'ECDSASecp256k1',
+	'Completed',
+	{
+		timeout: 30000,
+		interval: 1000,
+	},
+);
+console.log('Sign session completed:', sign.state.Completed.signature);
 ```
 
 ## Encryption Key Queries
@@ -219,18 +249,31 @@ const dwalletEncryptionKey = await ikaClient.getDWalletNetworkEncryptionKey(dWal
 console.log('dWallet uses encryption key:', dwalletEncryptionKey.id);
 ```
 
+### Get Configured Network Encryption Key
+
+Get the network encryption key based on client configuration:
+
+```typescript
+// Returns the configured encryption key if set, otherwise returns the latest
+const configuredKey = await ikaClient.getConfiguredNetworkEncryptionKey();
+console.log('Configured encryption key:', configuredKey.id);
+```
+
 ## Protocol Parameters and Configuration
 
 ### Get Protocol Public Parameters
 
-Retrieve cryptographic parameters for the network:
+Retrieve cryptographic parameters for the network. Parameters are cached by encryption key ID and curve:
 
 ```typescript
-// Get parameters for a specific dWallet
+// Get parameters for a specific dWallet (automatically detects encryption key and curve)
 const dWallet = await ikaClient.getDWallet(dWalletID);
 const parameters = await ikaClient.getProtocolPublicParameters(dWallet);
 
-// Or get parameters using client's configured encryption key
+// Get parameters using client's configured encryption key with a specific curve
+const parametersForCurve = await ikaClient.getProtocolPublicParameters(undefined, 'SECP256K1');
+
+// Get parameters using client's configured encryption key (defaults to SECP256K1)
 const defaultParameters = await ikaClient.getProtocolPublicParameters();
 ```
 
@@ -265,12 +308,13 @@ ikaClient.setEncryptionKeyOptions({
 
 ### Check Cached Parameters
 
-Check if protocol parameters are cached for an encryption key:
+Check if protocol parameters are cached for an encryption key and curve:
 
 ```typescript
-const isCached = ikaClient.isProtocolPublicParametersCached(encryptionKeyID);
+const isCached = ikaClient.isProtocolPublicParametersCached(encryptionKeyID, 'SECP256K1');
 if (isCached) {
-	const cachedParams = ikaClient.getCachedProtocolPublicParameters(encryptionKeyID);
+	const cachedParams = ikaClient.getCachedProtocolPublicParameters(encryptionKeyID, 'SECP256K1');
+	console.log('Using cached parameters');
 }
 ```
 
@@ -279,18 +323,21 @@ if (isCached) {
 Manage client cache for optimal performance:
 
 ```typescript
-// Invalidate all caches
+// Invalidate all caches (objects, encryption keys, and protocol parameters)
 ikaClient.invalidateCache();
 
-// Invalidate only object cache
+// Invalidate only object cache (coordinator and system inner objects)
 ikaClient.invalidateObjectCache();
 
 // Invalidate only encryption key cache
 ikaClient.invalidateEncryptionKeyCache();
 
-// Invalidate specific protocol parameters
+// Invalidate specific protocol parameters for a key and curve combination
+ikaClient.invalidateProtocolPublicParametersCache(encryptionKeyID, 'SECP256K1');
+
+// Invalidate all curves for a specific encryption key
 ikaClient.invalidateProtocolPublicParametersCache(encryptionKeyID);
 
-// Invalidate all protocol parameters
+// Invalidate all protocol parameters for all keys and curves
 ikaClient.invalidateProtocolPublicParametersCache();
 ```
