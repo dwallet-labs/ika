@@ -29,6 +29,7 @@
 		"test:watch": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest",
 		"test:coverage": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run --coverage",
 		"test:coverage:watch": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest --coverage",
+		"test:parallel": "NODE_OPTIONS=\"--max-old-space-size=8192\" scripts/run-tests-parallel.sh",
 		"coverage:report": "vitest run --coverage --reporter=html",
 		"pre-commit": "pnpm prettier:fix && pnpm lint && pnpm build",
 		"prepublishOnly": "pnpm turbo build",
