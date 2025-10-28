@@ -9,6 +9,15 @@ envs:
     objects:
       ika_system_object_id: "0x2172c6483ccd24930834e30102e33548b201d0607fb1fdc336ba3267d910dec6"
       ika_dwallet_coordinator_object_id: "0x4d157b7415a298c56ec2cb1dcab449525fa74aec17ddba376a83a7600f2062fc"
+  local:
+    packages:
+      ika_package_id: "0x72df31107050fa403a6a9d50199d5e40d77f2ea95e1dbe172ead404957007550"
+      ika_common_package_id: "0x1d19ebafc8d7509f529adee2029dfca48462a4ad90dbbba3b7b6aa178e7dd86b"
+      ika_dwallet_2pc_mpc_package_id: "0x04ad8d66a99cee7d723312deb127f4de378243e3306295727593ad5523b7d84b"
+      ika_system_package_id: "0xb5a37c87ac2f57c3d4db8afa963d04be7862331616b01e8986e534123d506e95"
+    objects:
+      ika_system_object_id: "0x06430cd1a1c80929db81f4755e837767b7bc3572a706c25bbc050e8e137be387"
+      ika_dwallet_coordinator_object_id: "0x417a7e79279c60c97a2903690b28db4f98f3e9b605005965d3d80d71bca3aae5"
   mainnet:
     packages:
       ika_package_id: "0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa"
