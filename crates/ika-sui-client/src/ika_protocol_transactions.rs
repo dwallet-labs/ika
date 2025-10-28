@@ -3,10 +3,6 @@ use crate::ika_validator_transactions::{
     add_ika_system_command_to_ptb, construct_unsigned_txn,
     get_dwallet_2pc_mpc_coordinator_call_arg, new_pricing_info,
 };
-use dwallet_mpc_types::mpc_protocol_configuration::{
-    GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG,
-    GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_IMPORTED_KEY,
-};
 use fastcrypto::encoding::Base64;
 use fastcrypto::encoding::Encoding;
 use ika_types::messages_dwallet_mpc::DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME;
