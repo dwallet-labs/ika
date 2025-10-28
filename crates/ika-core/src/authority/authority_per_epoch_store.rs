@@ -46,7 +46,7 @@ use crate::system_checkpoints::{
     SystemCheckpointServiceNotify,
 };
 use group::PartyID;
-use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
+use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use ika_types::digests::MessageDigest;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
@@ -1208,6 +1208,17 @@ impl AuthorityPerEpochStore {
                         system_transactions.push(
                             SystemCheckpointMessageKind::SetNextConfigVersion(new_version),
                         );
+                        if new_version.as_u64() == 2
+                            && self.chain_identifier.chain() == Chain::Testnet
+                        {
+                            system_transactions.push(
+                                SystemCheckpointMessageKind::SetMinValidatorJoiningStake(
+                                    40_000_000 * 1_000_000_000,
+                                ),
+                            );
+                            system_transactions
+                                .push(SystemCheckpointMessageKind::SetStakeSubsidyRate(200));
+                        }
                     }
 
                     if !move_contracts_to_upgrade.is_empty() {

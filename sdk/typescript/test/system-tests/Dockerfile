@@ -1,7 +1,7 @@
 # ==========================
 # Build stage
 # ==========================
-FROM rust:1.88-bullseye AS builder
+FROM rust:1.90-bullseye AS builder
 
 ARG GIT_REVISION=unknown
 ARG WORKDIR=/opt

@@ -757,6 +757,7 @@ pub(crate) async fn construct_unsigned_txn(
     if let SuiClientCommandResult::DryRun(dry_run) = dry_run
         && let Some(dry_run_err) = dry_run.execution_error_source
     {
+        println!("{}", dry_run.effects);
         return Err(IkaError::DryRunFailed(dry_run_err));
     };
 
