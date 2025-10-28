@@ -1308,8 +1308,9 @@ export class IkaClient {
 				lastError = error as Error;
 			}
 
+			const waitTime = currentInterval;
 			await new Promise((resolve, reject) => {
-				const timeoutId = setTimeout(resolve, currentInterval);
+				const timeoutId = setTimeout(resolve, waitTime);
 				signal?.addEventListener('abort', () => {
 					clearTimeout(timeoutId);
 					reject(new Error('Operation aborted'));
