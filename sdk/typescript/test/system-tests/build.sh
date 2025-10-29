@@ -45,6 +45,7 @@ echo
 docker build -f "$DOCKERFILE" "$REPO_ROOT" \
   --build-arg GIT_REVISION="$GIT_REVISION" \
   --build-arg BUILD_DATE="$BUILD_DATE" \
+  --build-arg WITH_NETWORK_DKG="$WITH_NETWORK_DKG" \
   --build-arg CARGO_BUILD_FLAGS="$1" \
   --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" \
   --tag "$DOCKER_TAG"
