@@ -30,6 +30,7 @@ fi
 
 # Validate required variables
 : "${DOCKER_TAG:?DOCKER_TAG is not set. Check your .env or environment.}"
+: "${GITHUB_TOKEN:?GITHUB_TOKEN is not set. Check your .env or environment.}"
 
 echo
 echo "Building ika-node docker image"
@@ -45,4 +46,5 @@ docker build -f "$DOCKERFILE" "$REPO_ROOT" \
   --build-arg GIT_REVISION="$GIT_REVISION" \
   --build-arg BUILD_DATE="$BUILD_DATE" \
   --build-arg CARGO_BUILD_FLAGS="$1" \
+  --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" \
   --tag "$DOCKER_TAG"

@@ -68,6 +68,8 @@ pub struct DynamicPeerValidationConfig {
     pub ika_common_package_id: ObjectID,
     /// The move package ID of ika_dwallet_2pc_mpc on sui.
     pub ika_dwallet_2pc_mpc_package_id: ObjectID,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ika_dwallet_2pc_mpc_package_id_v2: Option<ObjectID>,
     /// The move package ID of `ika_system` on sui.
     pub ika_system_package_id: ObjectID,
     /// The object ID of ika_system_state on sui.

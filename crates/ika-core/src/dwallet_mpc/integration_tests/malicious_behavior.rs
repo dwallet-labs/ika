@@ -2,13 +2,9 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
 use ika_types::committee::Committee;
-use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
-use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent,
-    DWalletSessionEventTrait, IkaNetworkConfig, SessionIdentifier, SessionType,
-};
+use ika_types::messages_consensus::ConsensusTransactionKind;
+use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,26 +28,23 @@ async fn test_some_malicious_validators_flows_succeed() {
         committee_size,
         "Committee size should match the expected size"
     );
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
         mut dwallet_mpc_services,
         sui_data_senders,
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
-        mut notify_services,
+        notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let network_key_id = ObjectID::random();
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
+    sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
                 session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
                 session_sequence_number: 1,
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
-                    data: NetworkEncryptionKeyDkgData {
-                        key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
-                    },
+                    data: NetworkEncryptionKeyDkgData {},
                     dwallet_network_encryption_key_id: network_key_id,
                 },
                 epoch: 1,
@@ -146,7 +139,6 @@ async fn test_party_copies_other_party_message_dkg_round() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee_of_size(committee_size);
     let all_malicious_parties = copying_parties.keys().collect_vec();
-    let all_flow_malicious_parties_len = all_malicious_parties.len();
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     assert!(
         committee_size - all_malicious_parties.len() >= committee.quorum_threshold as usize,
@@ -157,26 +149,23 @@ async fn test_party_copies_other_party_message_dkg_round() {
         committee_size,
         "Committee size should match the expected size"
     );
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
         mut dwallet_mpc_services,
         sui_data_senders,
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
-        mut notify_services,
+        notify_services,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let network_key_id = ObjectID::random();
-    sui_data_senders.iter().for_each(|mut sui_data_sender| {
+    sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
                 session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
                 session_sequence_number: 1,
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
-                    data: NetworkEncryptionKeyDkgData {
-                        key_scheme: DWalletMPCNetworkKeyScheme::Secp256k1,
-                    },
+                    data: NetworkEncryptionKeyDkgData {},
                     dwallet_network_encryption_key_id: network_key_id,
                 },
                 epoch: 1,
@@ -201,7 +190,6 @@ async fn test_party_copies_other_party_message_dkg_round() {
         replace_party_message_with_other_party_message(
             *copying_party as usize,
             *copied_party as usize,
-            mpc_round,
             &mut sent_consensus_messages_collectors,
         );
     }
@@ -253,8 +241,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
 pub(crate) fn replace_party_message_with_other_party_message(
     party_to_replace: usize,
     other_party: usize,
-    crypto_round: u64,
-    sent_consensus_messages_collectors: &mut Vec<Arc<TestingSubmitToConsensus>>,
+    sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
 ) {
     let original_message = sent_consensus_messages_collectors[party_to_replace]
         .submitted_messages
@@ -275,7 +262,7 @@ pub(crate) fn replace_party_message_with_other_party_message(
     else {
         panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
     };
-    let ConsensusTransactionKind::DWalletMPCMessage(mut original_message) = original_message.kind
+    let ConsensusTransactionKind::DWalletMPCMessage(original_message) = original_message.kind
     else {
         panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
     };

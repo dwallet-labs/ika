@@ -10,71 +10,84 @@ import { Info, Warning, Tip } from '../../../src/components/InfoBox';
 
 # dWallet Types Overview
 
-Think of dWallets like different types of safes, each designed for different situations and security needs. There are three main types, and picking the right one depends on what you're trying to protect and how you want to work with it.
+dWallets use 2PC-MPC (Two-Party Computation Multi-Party Computation) to split cryptographic keys into shares. There are three main types, each with different trust and control models.
 
 ## Zero-Trust dWallets
 
-<Tip title="Fort Knox Level Security">
-This is the gold standard, maximum security with your private key shares locked away behind your own encryption.
+<Tip title="Two-Share Model">
+The key is split between you (user share) and the network (network share). Both shares are required to create signatures.
 </Tip>
 
-Here's how it actually works: your user share is encrypted with your personal encryption key. When you want to sign something, you decrypt your share and use it to create the signature. The network never sees your unencrypted share, it stays locked behind your encryption.
+A Zero-Trust dWallet has two shares:
 
-**Why this matters:**
-Even if someone gets access to the dWallet system, they can't use your share without your encryption key. It's like having a safe deposit box where you need YOUR key to open YOUR box, and nobody else can peek inside.
+- **User share**: Encrypted and controlled by you
+- **Network share**: Held by the Ika network
 
-**[→ Learn more about Zero-Trust dWallets](./zero-trust)**
+**Why both shares matter:**
+Without your user share, the network cannot create any signatures. You maintain control because your share is always required for signing operations.
 
 ---
 
 ## Shared dWallets
 
-<Info title="Cap Owner Controls Everything">
-Your user share is public, but the real power is with whoever owns the dWalletCap.
+<Info title="Network-Controlled for Automation">
+The user share is public, enabling the network to create signatures autonomously. Perfect for DAOs, smart contracts, and automated systems.
 </Info>
 
-Whoever owns the dWalletCap can initiate transactions without even needing your user share, they have full signing control.
+A Shared dWallet has a public user share stored on-chain. This means:
 
-**What this means in practice:**
-The dWalletCap owner is in complete control. They can sign transactions whenever they want. This action is not reversible. You FULLY trust Ika network.
+- **User share**: Public and accessible on the network
+- **Network share**: Held by the Ika network
 
-**[→ Learn more about Shared dWallets](./shared)**
+**What this means:**
+Since both shares are accessible to the network, it can create signatures without user interaction. This enables powerful automation use cases like DAO treasuries, smart contract-controlled wallets, and automated trading systems.
 
 ---
 
 ## Imported Key dWallets
 
-<Warning title="Security Trade-off">
-Import existing keys, but know that you're creating two ways to control the same wallet.
+<Warning title="Existing Key Import">
+Import an existing private key into the dWallet system, with options for Zero-Trust or Shared configurations.
 </Warning>
 
-Here's what actually happens: you import your existing keypair into the dWallet system. Now both the dWallet AND your original private key can control the same wallet. It's encrypted like Zero-Trust, but there's a catch, it's inherently less secure.
+An Imported Key dWallet brings an existing private key into the dWallet system. You can import it as:
 
-**The security problem:**
-You still have your original private key sitting around, and the dWallet also has control. So now there are two ways to control the same wallet. If someone gets your original key, they can bypass the entire dWallet security model.
+**Zero-Trust Imported Key:**
 
-**[→ Learn more about Imported Key dWallets](./imported)**
+- Split into user share (encrypted, controlled by you) and network share
+- Both shares required for signing
+- Original private key remains a potential security concern
+
+**Shared Imported Key:**
+
+- User share is public, network can sign on your behalf
+- Original private key remains a potential security concern
+
+**The security consideration:**
+Your original private key still exists outside the dWallet system. If compromised, it bypasses the dWallet security model entirely.
 
 ---
 
 ## Which One Should You Pick?
 
 **Go with Zero-Trust if:**
-You want actual security where you control your own signing. This is the only option where you truly control your piece of the key.
+- You need user-controlled wallets where users maintain full signing authority
+- Building custody solutions or personal wallets
+- Regulatory or compliance requirements mandate user participation in signing
+- You want maximum security with the zero-trust 2PC model
 
 **Pick Shared if:**
-You want to give full control to a dWalletCap owner. Good when you specifically want someone else to have complete signing control. For example DAOs and automated smart contract systems.
+- Building DAOs that need automated treasury management
+- Creating smart contract systems that sign programmatically
+- Developing automated trading bots or autonomous systems
+- You want to delegate signing authority to the network or smart contracts
 
 **Choose Imported Key if:**
-You're stuck with existing keys and accept the security trade-off. Remember, your original keypair is still a weak point, but sometimes convenience wins over perfect security.
+- You need to bring existing keys into the dWallet system
+- You can configure it as Zero-Trust (user control) or Shared (network control)
+- Be aware that your original private key remains a security consideration
 
 ## Ready to Get Started?
 
-Alright, you've picked your flavor of dWallet. Here's what to do next:
-
-1. **[Get your dev environment set up](../setup-localnet.md)** - You'll need a local network to play with
-2. **[Set up encryption keys](../user-share-encryption-keys.md)** - This is important for Zero-Trust and Imported Key dWallets
-3. **Jump into your chosen guide:**
-   - **[Zero-Trust dWallets](./zero-trust)**
-   - **[Shared dWallets](./shared)**
-   - **[Imported Key dWallets](./imported)**
+1. **[Get your dev environment set up](../setup-localnet.md)** - Set up a local network for development
+2. **[Set up encryption keys](../user-share-encryption-keys.md)** - Required for Zero-Trust and Zero-Trust Imported Key dWallets

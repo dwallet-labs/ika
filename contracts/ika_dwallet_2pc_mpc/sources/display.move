@@ -56,23 +56,23 @@ public(package) fun create(
     let mut inner = object_bag::new(ctx);
 
     inner.add(
-        type_name::get<DWalletCap>(),
+        type_name::with_defining_ids<DWalletCap>(),
         init_dwallet_cap_display(&p, dwallet_cap_image_url, ctx),
     );
     inner.add(
-        type_name::get<ImportedKeyDWalletCap>(),
+        type_name::with_defining_ids<ImportedKeyDWalletCap>(),
         init_imported_key_dwallet_cap_display(&p, imported_key_dwallet_cap_image_url, ctx),
     );
     inner.add(
-        type_name::get<UnverifiedPresignCap>(),
+        type_name::with_defining_ids<UnverifiedPresignCap>(),
         init_unverified_presign_cap_display(&p, unverified_presign_cap_image_url, ctx),
     );
     inner.add(
-        type_name::get<VerifiedPresignCap>(),
+        type_name::with_defining_ids<VerifiedPresignCap>(),
         init_verified_presign_cap_display(&p, verified_presign_cap_image_url, ctx),
     );
     inner.add(
-        type_name::get<UnverifiedPartialUserSignatureCap>(),
+        type_name::with_defining_ids<UnverifiedPartialUserSignatureCap>(),
         init_unverified_partial_user_signature_cap_display(
             &p,
             unverified_partial_user_signature_cap_image_url,
@@ -80,7 +80,7 @@ public(package) fun create(
         ),
     );
     inner.add(
-        type_name::get<VerifiedPartialUserSignatureCap>(),
+        type_name::with_defining_ids<VerifiedPartialUserSignatureCap>(),
         init_verified_partial_user_signature_cap_display(
             &p,
             verified_partial_user_signature_cap_image_url,

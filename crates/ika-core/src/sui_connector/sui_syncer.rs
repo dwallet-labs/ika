@@ -106,22 +106,40 @@ where
             ));
         }
 
-        for module in self.modules {
-            let metrics = self.metrics.clone();
-            let sui_client_clone = self.sui_client.clone();
-            let new_requests_sender_clone = new_requests_sender.clone();
-            let system_object_receiver_clone = system_object_receiver.clone();
-            task_handles.push(spawn_logged_monitored_task!(
-                Self::run_event_listening_task(
-                    system_object_receiver_clone,
-                    module,
-                    sui_client_clone,
-                    query_interval,
-                    metrics,
-                    new_requests_sender_clone,
-                )
-            ));
+        let ika_dwallet_2pc_mpc_package_id = self
+            .sui_client
+            .ika_network_config
+            .packages
+            .ika_dwallet_2pc_mpc_package_id;
+        let ika_dwallet_2pc_mpc_package_id_v2 = self
+            .sui_client
+            .ika_network_config
+            .packages
+            .ika_dwallet_2pc_mpc_package_id_v2;
+        let mut package_ids = vec![ika_dwallet_2pc_mpc_package_id];
+        if let Some(ika_dwallet_2pc_mpc_package_id_v2) = ika_dwallet_2pc_mpc_package_id_v2 {
+            package_ids.push(ika_dwallet_2pc_mpc_package_id_v2);
         }
+        for package_id in package_ids {
+            for module in self.modules.clone() {
+                let metrics = self.metrics.clone();
+                let sui_client_clone = self.sui_client.clone();
+                let new_requests_sender_clone = new_requests_sender.clone();
+                let system_object_receiver_clone = system_object_receiver.clone();
+                task_handles.push(spawn_logged_monitored_task!(
+                    Self::run_event_listening_task(
+                        system_object_receiver_clone,
+                        module,
+                        package_id,
+                        sui_client_clone,
+                        query_interval,
+                        metrics,
+                        new_requests_sender_clone,
+                    )
+                ));
+            }
+        }
+
         Ok(task_handles)
     }
 
@@ -471,10 +489,9 @@ where
                     .pricing_and_fee_management
                     .calculation_votes
                     .is_none()
+                && let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch))
             {
-                if let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch)) {
-                    error!(error=?err, "failed to send end of publish epoch to the channel");
-                }
+                error!(error=?err, "failed to send end of publish epoch to the channel");
             }
         }
     }
@@ -484,6 +501,7 @@ where
         // Module is always of ika system package.
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         module: Identifier,
+        package_id: ObjectID,
         sui_client: Arc<SuiClient<C>>,
         query_interval: Duration,
         metrics: Arc<SuiConnectorMetrics>,
@@ -521,7 +539,7 @@ where
         loop {
             // Fetching the epoch start TX digest less frequently
             // as it is unexpected to change often.
-            if loop_index % 10 == 0 {
+            if loop_index.is_multiple_of(10) {
                 debug!("Querying epoch start cursor from Sui");
                 let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned()
                 else {
@@ -546,7 +564,7 @@ where
 
             interval.tick().await;
             let Ok(Ok(events)) = retry_with_max_elapsed_time!(
-                sui_client.query_events_by_module(module.clone(), cursor),
+                sui_client.query_events_by_module(module.clone(), package_id, cursor),
                 Duration::from_secs(120)
             ) else {
                 // todo(zeev): alert.
@@ -570,13 +588,13 @@ where
                         match sui_event_into_session_request(
                             &sui_client.ika_network_config,
                             event.type_.clone(),
-                            &event.bcs.bytes(),
+                            event.bcs.bytes(),
                             false,
                         ) {
                             Ok(Some(request)) => Some(request),
                             Ok(None) => None,
                             Err(e) => {
-                                error!(error=?e, ?module, "failed to parse Sui event");
+                                error!(error=?e, ?module, event_type =? event.type_, "failed to parse Sui event");
                                 None
                             }
                         }

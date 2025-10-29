@@ -27,7 +27,34 @@ In the Ika network, users need to securely manage their secret shares while main
 UserShareEncryptionKeys handles extremely sensitive cryptographic material. Always follow security best practices, conduct security reviews, and consider getting security audits for production applications.
 </Info>
 
-UserShareEncryptionKeys is only supported for SECP256K1 curve for now, and they share the same curve as the signing curve of the dWallet.
+## Supported Curves
+
+UserShareEncryptionKeys supports the following elliptic curves:
+
+- **`Curve.SECP256K1`** - Used by ECDSASecp256k1 and Taproot signature algorithms
+- **`Curve.SECP256R1`** - Used by ECDSASecp256r1 signature algorithm
+- **`Curve.ED25519`** - Used by EdDSA signature algorithm
+- **`Curve.RISTRETTO`** - Used by SchnorrkelSubstrate signature algorithm
+
+<Warning title="Curve Matching Required">
+**You must create UserShareEncryptionKeys BEFORE creating a dWallet, and the curve you choose MUST match the curve you'll use when creating the dWallet.**
+
+The workflow is:
+
+1. Choose a curve based on the signature algorithm you want to use
+2. Create UserShareEncryptionKeys with that curve
+3. Create your dWallet with the same curve/signature algorithm
+4. Use the UserShareEncryptionKeys for all operations with that dWallet
+
+For example:
+
+- To use `ECDSASecp256k1` or `Taproot`, create keys with `Curve.SECP256K1`
+- To use `EdDSA`, create keys with `Curve.ED25519`
+- To use `ECDSASecp256r1`, create keys with `Curve.SECP256R1`
+- To use `SchnorrkelSubstrate`, create keys with `Curve.RISTRETTO`
+
+Using mismatched curves will cause all operations to fail.
+</Warning>
 
 ## Creating UserShareEncryptionKeys
 
@@ -38,24 +65,41 @@ There are several ways to create a `UserShareEncryptionKeys` instance depending 
 The most common way is to create keys from a root seed. This method deterministically derives all necessary keys from a single seed:
 
 ```typescript
-import { UserShareEncryptionKeys } from '@ika.xyz/sdk';
+import { Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
 
 // Generate a random 32-byte seed (in practice, derive this securely)
 const rootSeedKey = new Uint8Array(32);
 crypto.getRandomValues(rootSeedKey);
 
 // Create UserShareEncryptionKeys from the seed
-const userShareKeys = UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, Curve.SECP256K1);
+// IMPORTANT: Use the curve that matches your dWallet's curve
+const userShareKeys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, Curve.SECP256K1);
 
 console.log('Sui address:', userShareKeys.getSuiAddress());
 ```
 
-<Info title="Key Derivation">
-When using a root seed key, the class automatically derives:
-- **Class groups encryption/decryption keys** using domain separator `CLASS_GROUPS_DECRYPTION_KEY_V1`
-- **Ed25519 signing keypair** using domain separator `ED25519_SIGNING_KEY_V1`
+**Examples with different curves:**
 
-This ensures deterministic key generation from the same seed.
+```typescript
+// For ECDSASecp256k1 or Taproot signature algorithms
+const secp256k1Keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
+
+// For EdDSA signature algorithm
+const ed25519Keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.ED25519);
+
+// For ECDSASecp256r1 signature algorithm
+const secp256r1Keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256R1);
+
+// For SchnorrkelSubstrate signature algorithm
+const ristrettoKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.RISTRETTO);
+```
+
+<Info title="Choosing the Right Curve">
+Choose your curve based on the signature algorithm you intend to use:
+- **SECP256K1**: Best for Ethereum, Bitcoin (ECDSA), and general ECDSA use cases
+- **ED25519**: Best for high-performance EdDSA signatures
+- **SECP256R1**: For NIST P-256 compliance requirements
+- **RISTRETTO**: For Substrate/Polkadot ecosystem compatibility
 </Info>
 
 ### From Serialized Bytes
@@ -73,7 +117,7 @@ const userShareKeys = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(seria
 You can serialize keys for persistent storage:
 
 ```typescript
-const userShareKeys = UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, Curve.SECP256K1);
+const userShareKeys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, Curve.SECP256K1);
 
 // Serialize keys to bytes for storage
 const serializedBytes = userShareKeys.toShareEncryptionKeysBytes();
@@ -93,7 +137,7 @@ Always store serialized keys securely. The serialized data contains sensitive cr
 Access basic information about your keys:
 
 ```typescript
-const userShareKeys = UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, Curve.SECP256K1);
+const userShareKeys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, Curve.SECP256K1);
 
 // Get the Ed25519 public key
 const publicKey = userShareKeys.getPublicKey();
@@ -169,7 +213,7 @@ const sourceEncryptedShare = await ikaClient.getEncryptedUserSecretKeyShare(shar
 const sourceEncryptionKey = await ikaClient.getActiveEncryptionKey(senderAddress);
 
 try {
-	const signature = await userShareKeys.getUserOutputSignatureForTransferreddWallet(
+	const signature = await userShareKeys.getUserOutputSignatureForTransferredDWallet(
 		dWallet,
 		sourceEncryptedShare,
 		sourceEncryptionKey,
@@ -198,6 +242,9 @@ const encryptedUserShare = await ikaClient.getEncryptedUserSecretKeyShare(shareI
 const protocolParameters = await ikaClient.getProtocolPublicParameters(dWallet);
 
 try {
+	// IMPORTANT: userShareKeys must have been created with the same curve as the dWallet
+	// For dWallets you created: this is automatic since you created the keys first
+	// For transferred dWallets: you must check the dWallet's curve and create matching keys
 	const { verifiedPublicOutput, secretShare } = await userShareKeys.decryptUserShare(
 		dWallet,
 		encryptedUserShare,
@@ -220,6 +267,16 @@ try {
 	}
 }
 ```
+
+<Warning title="Curve Matching Critical">
+The `UserShareEncryptionKeys` instance MUST have been created with the same curve as the dWallet.
+
+**For dWallets you created:** You already created the UserShareEncryptionKeys first with a specific curve, then used it to create the dWallet - so they match by design.
+
+**For transferred/existing dWallets:** You must check the dWallet's curve and create UserShareEncryptionKeys with the matching curve (see "For Existing or Transferred dWallets" section above).
+
+If the curves don't match, all operations including decryption will fail.
+</Warning>
 
 <Info title="Decryption Process">
 The `decryptUserShare` method performs several security checks:

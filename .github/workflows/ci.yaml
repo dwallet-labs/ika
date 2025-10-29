@@ -15,10 +15,10 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
   # Change to specific Rust release to pin or `stable` for the latest stable version.
-  rust_stable: 1.88
+  rust_stable: 1.90
   rust_nightly: nightly
   CARGO_NET_GIT_FETCH_WITH_CLI: true
-  GH_PRIVATE_REPO_TOKEN: ${{ secrets.GH_PRIVATE_REPO_TOKEN }}
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
 
 jobs:
   build:
@@ -28,9 +28,19 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure git with personal access token
+
+      - name: Setup SSH for manual git
+        if: env.GH_DEPLOY_KEY
         run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Globally rewrite any GitHub HTTPS to SSH
+        if: env.GH_DEPLOY_KEY
+        run: |
+          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+
       - name: Install Rust ${{ env.rust_stable }}
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -48,13 +58,19 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure git with personal access token
+      - name: Setup SSH for manual git
         run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
-      - name: Install Rust 1.88
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Globally rewrite any GitHub HTTPS to SSH
+        run: |
+          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+      - name: Install Rust 1.90
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88
+          toolchain: 1.90
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Fmt Check
@@ -69,13 +85,23 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure git with personal access token
+
+      - name: Setup SSH for manual git
+        if: env.GH_DEPLOY_KEY
         run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
-      - name: Install Rust 1.88
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Globally rewrite any GitHub HTTPS to SSH
+        if: env.GH_DEPLOY_KEY
+        run: |
+          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+
+      - name: Install Rust 1.90
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88
+          toolchain: 1.90
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run Clippy
@@ -87,9 +113,19 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Configure git with personal access token
+
+      - name: Setup SSH for manual git
+        if: env.GH_DEPLOY_KEY
         run: |
-          git config --global url."https://x-access-token:${{ env.GH_PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Globally rewrite any GitHub HTTPS to SSH
+        if: env.GH_DEPLOY_KEY
+        run: |
+          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+
       - name: Install Rust ${{ env.rust_stable }}
         uses: dtolnay/rust-toolchain@stable
         with:

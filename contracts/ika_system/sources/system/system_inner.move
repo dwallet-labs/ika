@@ -35,6 +35,7 @@ use sui::table::Table;
 use sui::table_vec::TableVec;
 use sui::vec_map::{Self, VecMap};
 use sui::vec_set::VecSet;
+use sui::coin_registry::Currency;
 
 // === Constants ===
 
@@ -1001,6 +1002,14 @@ public(package) fun process_checkpoint_message_by_cap(
 ) {
     self.verify_protocol_cap_impl(cap);
     self.process_checkpoint_message(message, ctx);
+}
+
+public(package) fun claim_metadata_cap(
+    self: &mut SystemInner,
+    currency: &mut Currency<IKA>,
+    ctx: &mut TxContext,
+) {
+    self.protocol_treasury.claim_metadata_cap(currency, ctx);
 }
 
 /// === Private Functions ===

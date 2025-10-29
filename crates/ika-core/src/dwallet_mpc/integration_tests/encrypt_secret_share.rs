@@ -6,16 +6,12 @@ use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{EncryptedShareVerificationData, ProtocolData};
 use dwallet_mpc_centralized_party::{
-    encrypt_secret_key_share_and_prove, network_dkg_public_output_to_protocol_pp_inner,
+    encrypt_secret_key_share_and_prove_v1, network_dkg_public_output_to_protocol_pp_inner,
 };
-use dwallet_mpc_types::dwallet_mpc::DWalletMPCNetworkKeyScheme;
+use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::test_helpers::new_dwallet_session_event;
-use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletSessionEvent, DWalletSessionEventTrait,
-    EncryptedShareVerificationRequestEvent, IkaNetworkConfig, SessionIdentifier, SessionType,
-};
+use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::info;
 
@@ -24,13 +20,12 @@ use tracing::info;
 async fn encrypt_secret_share() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
-    let ika_network_config = IkaNetworkConfig::new_for_testing();
     let epoch_id = 1;
     let (
-        mut dwallet_mpc_services,
-        mut sui_data_senders,
-        mut sent_consensus_messages_collectors,
-        mut epoch_stores,
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
         notify_services,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
@@ -57,8 +52,8 @@ async fn encrypt_secret_share() {
         network_key_bytes.clone(),
     )
     .await;
-    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(network_key_bytes).unwrap();
-    let encrypted_secret_share = encrypt_secret_key_share_and_prove(
+    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes).unwrap();
+    let encrypted_secret_share = encrypt_secret_key_share_and_prove_v1(
         dwallet_test_result.dwallet_secret_key_share.clone(),
         dwallet_test_result.class_groups_encryption_key.clone(),
         protocol_pp,
@@ -66,7 +61,7 @@ async fn encrypt_secret_share() {
     .unwrap();
     send_start_encrypt_secret_share_event(
         epoch_id,
-        &mut test_state.sui_data_senders,
+        &test_state.sui_data_senders,
         [4; 32],
         4,
         key_id,
@@ -81,12 +76,11 @@ async fn encrypt_secret_share() {
         dwallet_test_result.dkg_second_round_output.output,
         dwallet_test_result.class_groups_encryption_key.clone(),
     );
-    let (consensus_round, encrypted_secret_share_checkpoint) =
-        utils::advance_mpc_flow_until_completion(
-            &mut test_state,
-            dwallet_test_result.flow_completion_consensus_round,
-        )
-        .await;
+    let (_, encrypted_secret_share_checkpoint) = utils::advance_mpc_flow_until_completion(
+        &mut test_state,
+        dwallet_test_result.flow_completion_consensus_round,
+    )
+    .await;
     let DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(
         encrypted_secret_share_output,
     ) = encrypted_secret_share_checkpoint
@@ -106,7 +100,7 @@ async fn encrypt_secret_share() {
 
 pub(crate) fn send_start_encrypt_secret_share_event(
     epoch_id: EpochId,
-    sui_data_senders: &Vec<SuiDataSenders>,
+    sui_data_senders: &[SuiDataSenders],
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID,
@@ -127,7 +121,7 @@ pub(crate) fn send_start_encrypt_secret_share_event(
                 session_sequence_number,
                 protocol_data: ProtocolData::EncryptedShareVerification {
                     data: EncryptedShareVerificationData {
-                        curve: DWalletMPCNetworkKeyScheme::Secp256k1,
+                        curve: DWalletCurve::Secp256k1,
                         encrypted_centralized_secret_share_and_proof:
                             encrypted_centralized_secret_share_and_proof.clone(),
                         decentralized_public_output: decentralized_public_output.clone(),

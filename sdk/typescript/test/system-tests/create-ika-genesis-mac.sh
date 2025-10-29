@@ -162,13 +162,13 @@ echo "Publishing IKA modules with the following parameters:"
 echo "SUI_FULLNODE_RPC_URL: $SUI_FULLNODE_RPC_URL"
 echo "SUI_FAUCET_URL: $SUI_FAUCET_URL"
 
-./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL"
+./ika-swarm-config publish-ika-modules --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL" --chain mainnet
 
 # Mint IKA Tokens
 ./ika-swarm-config mint-ika-tokens --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --sui-faucet-addr "$SUI_FAUCET_URL" --ika-config-path ./ika_publish_config.json
 
 # Init IKA
-./ika-swarm-config init-env --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --ika-config-path ./ika_publish_config.json --epoch-duration-ms "$EPOCH_DURATION_TIME_MS"
+./ika-swarm-config init-env --sui-rpc-addr "$SUI_FULLNODE_RPC_URL" --ika-config-path ./ika_publish_config.json --epoch-duration-ms "$EPOCH_DURATION_TIME_MS" --protocol-version 1
 
 export PUBLISHER_DIR=publisher
 
@@ -195,23 +195,10 @@ echo "Ika dWallet 2PC MPC Package ID: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
 # Request Tokens and Create Validator.yaml (Max 5 Parallel + Retry)
 ############################
 
-# Concurrency control (compatible with bash < 4.3)
-MAX_JOBS=10
-JOB_COUNT=0
-
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-  request_and_generate_yaml "$i" &
-
-  (( JOB_COUNT++ ))
-
-  if [[ $JOB_COUNT -ge $MAX_JOBS ]]; then
-    wait  # wait for all background jobs
-    JOB_COUNT=0
-  fi
+  echo "Processing validator $i for token request and YAML generation..."
+  request_and_generate_yaml "$i"
 done
-
-# Wait for any remaining background jobs
-wait
 
 # This is needed later for the publisher, in oder to update the ika_sui_config.yaml.
 $BINARY_NAME validator config-env \
@@ -232,23 +219,9 @@ TUPLES_FILE="$TMP_OUTPUT_DIR/tuples.txt"
 mkdir -p "$TMP_OUTPUT_DIR"
 rm -f "$TUPLES_FILE"
 
-# Launch jobs with a max concurrency of 5 using a simple counter
-MAX_JOBS=10
-JOB_COUNT=0
-
 for ((i=1; i<=VALIDATOR_NUM; i++)); do
-    process_validator "$i" &
-
-    (( JOB_COUNT++ ))
-
-    if [[ $JOB_COUNT -ge $MAX_JOBS ]]; then
-        wait
-        JOB_COUNT=0
-    fi
+    process_validator "$i"
 done
-
-# Final wait for any remaining jobs
-wait
 
 # Read tuples file after all jobs complete
 if [[ -f "$TUPLES_FILE" ]]; then

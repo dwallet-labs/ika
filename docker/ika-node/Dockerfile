@@ -1,12 +1,12 @@
 # ==========================
 # Build stage
 # ==========================
-FROM rust:1.88-bullseye AS builder
+FROM rust:1.90-bullseye AS builder
 
 # Arguments
 ARG PROFILE=release
 ARG GIT_REVISION=unknown
-ARG GITHUB_TOKEN
+ARG GH_DEPLOY_KEY
 ARG WORKDIR=/opt
 ARG NO_DEFAULT_FEATURES=false
 
@@ -14,8 +14,14 @@ ARG NO_DEFAULT_FEATURES=false
 ENV CARGO_HOME=/usr/local/cargo
 ENV GIT_REVISION=$GIT_REVISION
 
-# Setup GitHub token for private repos
-RUN git config --global url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+# Setup SSH for manual git
+RUN mkdir -p ~/.ssh
+RUN printf "%s" "${GH_DEPLOY_KEY}" > ~/.ssh/id_ed25519
+RUN chmod 600 ~/.ssh/id_ed25519
+RUN ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+# Globally rewrite any GitHub HTTPS to SSH
+RUN git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y cmake clang pkg-config libssl-dev

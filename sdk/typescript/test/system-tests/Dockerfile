@@ -1,18 +1,19 @@
 # ==========================
 # Build stage
 # ==========================
-FROM rust:1.88-bullseye AS builder
+FROM rust:1.90-bullseye AS builder
 
 ARG GIT_REVISION=unknown
 ARG WORKDIR=/opt
 ARG CARGO_BUILD_FLAGS
+ARG GITHUB_TOKEN
 
 # Environment
 ENV CARGO_HOME=/usr/local/cargo
 ENV GIT_REVISION=$GIT_REVISION
-
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 # Install build dependencies
-RUN apt-get update && apt-get install -y cmake clang pkg-config libssl-dev
+RUN apt-get update && apt-get install -y cmake clang pkg-config libssl-dev git
 # Set working directory
 WORKDIR ${WORKDIR}/ika
 
@@ -20,7 +21,8 @@ WORKDIR ${WORKDIR}/ika
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 COPY contracts contracts
-
+COPY deployed_contracts deployed_contracts
+RUN git config --global url."https://x-access-token:$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"
 RUN cargo build ${CARGO_BUILD_FLAGS} --profile release --bin ika-node
 
 # ==========================
