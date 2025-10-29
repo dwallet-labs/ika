@@ -94,7 +94,9 @@ async fn main() -> Result<()> {
             ika_package_id: config.dynamic_peers.ika_package_id,
             ika_common_package_id: config.dynamic_peers.ika_common_package_id,
             ika_dwallet_2pc_mpc_package_id: config.dynamic_peers.ika_dwallet_2pc_mpc_package_id,
-            ika_dwallet_2pc_mpc_package_id_v2: config.dynamic_peers.ika_dwallet_2pc_mpc_package_id_v2,
+            ika_dwallet_2pc_mpc_package_id_v2: config
+                .dynamic_peers
+                .ika_dwallet_2pc_mpc_package_id_v2,
             ika_system_package_id: config.dynamic_peers.ika_system_package_id,
         },
         objects: IkaObjectsConfig {
