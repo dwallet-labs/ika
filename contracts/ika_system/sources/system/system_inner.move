@@ -29,7 +29,7 @@ use sui::balance::{Self, Balance};
 use sui::bcs;
 use sui::clock::Clock;
 use sui::coin::Coin;
-use sui::event;
+use ika_system::event_wrapper;
 use sui::package::{UpgradeCap, UpgradeTicket, UpgradeReceipt};
 use sui::table::Table;
 use sui::table_vec::TableVec;
@@ -680,7 +680,7 @@ public(package) fun advance_epoch(
     // remaining balance in `remaining_rewards`.
     self.remaining_rewards.join(total_rewards);
 
-    event::emit(SystemEpochInfoEvent {
+    event_wrapper::emit_event(SystemEpochInfoEvent {
         epoch: self.epoch,
         protocol_version: self.protocol_version,
         total_stake: new_total_stake,
@@ -848,7 +848,7 @@ public(package) fun process_checkpoint_message(
     );
     self.last_processed_checkpoint_sequence_number = sequence_number;
 
-    event::emit(SystemCheckpointInfoEvent {
+    event_wrapper::emit_event(SystemCheckpointInfoEvent {
         epoch,
         sequence_number,
     });
@@ -864,7 +864,7 @@ public(package) fun process_checkpoint_message(
             SET_NEXT_PROTOCOL_VERSION_MESSAGE_TYPE => {
                 let next_protocol_version = bcs_body.peel_u64();
                 self.next_protocol_version = option::some(next_protocol_version);
-                event::emit(SetNextProtocolVersionEvent {
+                event_wrapper::emit_event(SetNextProtocolVersionEvent {
                     epoch: self.epoch,
                     next_protocol_version,
                 });
@@ -872,7 +872,7 @@ public(package) fun process_checkpoint_message(
             SET_EPOCH_DURATION_MS_MESSAGE_TYPE => {
                 let epoch_duration_ms = bcs_body.peel_u64();
                 self.epoch_duration_ms = epoch_duration_ms;
-                event::emit(SetEpochDurationMsEvent {
+                event_wrapper::emit_event(SetEpochDurationMsEvent {
                     epoch: self.epoch,
                     epoch_duration_ms,
                 });
@@ -880,7 +880,7 @@ public(package) fun process_checkpoint_message(
             SET_STAKE_SUBSIDY_START_EPOCH_MESSAGE_TYPE => {
                 let stake_subsidy_start_epoch = bcs_body.peel_u64();
                 self.stake_subsidy_start_epoch = stake_subsidy_start_epoch;
-                event::emit(SetStakeSubsidyStartEpochEvent {
+                event_wrapper::emit_event(SetStakeSubsidyStartEpochEvent {
                     epoch: self.epoch,
                     stake_subsidy_start_epoch,
                 });
@@ -888,7 +888,7 @@ public(package) fun process_checkpoint_message(
             SET_STAKE_SUBSIDY_RATE_MESSAGE_TYPE => {
                 let stake_subsidy_rate = bcs_body.peel_u16();
                 self.protocol_treasury.set_stake_subsidy_rate(stake_subsidy_rate);
-                event::emit(SetStakeSubsidyRateEvent {
+                event_wrapper::emit_event(SetStakeSubsidyRateEvent {
                     epoch: self.epoch,
                     stake_subsidy_rate,
                 });
@@ -896,7 +896,7 @@ public(package) fun process_checkpoint_message(
             SET_STAKE_SUBSIDY_PERIOD_LENGTH_MESSAGE_TYPE => {
                 let stake_subsidy_period_length = bcs_body.peel_u64();
                 self.protocol_treasury.set_stake_subsidy_period_length(stake_subsidy_period_length);
-                event::emit(SetStakeSubsidyPeriodLengthEvent {
+                event_wrapper::emit_event(SetStakeSubsidyPeriodLengthEvent {
                     epoch: self.epoch,
                     stake_subsidy_period_length,
                 });
@@ -904,7 +904,7 @@ public(package) fun process_checkpoint_message(
             SET_MIN_VALIDATOR_COUNT_MESSAGE_TYPE => {
                 let min_validator_count = bcs_body.peel_u64();
                 self.validator_set.set_min_validator_count(min_validator_count);
-                event::emit(SetMinValidatorCountEvent {
+                event_wrapper::emit_event(SetMinValidatorCountEvent {
                     epoch: self.epoch,
                     min_validator_count,
                 });
@@ -912,7 +912,7 @@ public(package) fun process_checkpoint_message(
             SET_MAX_VALIDATOR_COUNT_MESSAGE_TYPE => {
                 let max_validator_count = bcs_body.peel_u64();
                 self.validator_set.set_max_validator_count(max_validator_count);
-                event::emit(SetMaxValidatorCountEvent {
+                event_wrapper::emit_event(SetMaxValidatorCountEvent {
                     epoch: self.epoch,
                     max_validator_count,
                 });
@@ -920,7 +920,7 @@ public(package) fun process_checkpoint_message(
             SET_MIN_VALIDATOR_JOINING_STAKE_MESSAGE_TYPE => {
                 let min_validator_joining_stake = bcs_body.peel_u64();
                 self.validator_set.set_min_validator_joining_stake(min_validator_joining_stake);
-                event::emit(SetMinValidatorJoiningStakeEvent {
+                event_wrapper::emit_event(SetMinValidatorJoiningStakeEvent {
                     epoch: self.epoch,
                     min_validator_joining_stake,
                 });
@@ -928,7 +928,7 @@ public(package) fun process_checkpoint_message(
             SET_MAX_VALIDATOR_CHANGE_COUNT_MESSAGE_TYPE => {
                 let max_validator_change_count = bcs_body.peel_u64();
                 self.validator_set.set_max_validator_change_count(max_validator_change_count);
-                event::emit(SetMaxValidatorChangeCountEvent {
+                event_wrapper::emit_event(SetMaxValidatorChangeCountEvent {
                     epoch: self.epoch,
                     max_validator_change_count,
                 });
@@ -936,7 +936,7 @@ public(package) fun process_checkpoint_message(
             SET_REWARD_SLASHING_RATE_MESSAGE_TYPE => {
                 let reward_slashing_rate = bcs_body.peel_u16();
                 self.validator_set.set_reward_slashing_rate(reward_slashing_rate);
-                event::emit(SetRewardSlashingRateEvent {
+                event_wrapper::emit_event(SetRewardSlashingRateEvent {
                     epoch: self.epoch,
                     reward_slashing_rate,
                 });
@@ -948,7 +948,7 @@ public(package) fun process_checkpoint_message(
             },
             END_OF_PUBLISH_MESSAGE_TYPE => {
                 self.received_end_of_publish = true;
-                event::emit(EndOfPublishEvent {
+                event_wrapper::emit_event(EndOfPublishEvent {
                     epoch: self.epoch,
                 });
             },
@@ -1029,7 +1029,7 @@ fun set_approved_upgrade(self: &mut SystemInner, package_id: ID, digest: Option<
             self.approved_upgrades.remove(&package_id);
         }
     };
-    event::emit(SetApprovedUpgradeEvent {
+    event_wrapper::emit_event(SetApprovedUpgradeEvent {
         epoch: self.epoch,
         package_id,
         digest,
@@ -1050,7 +1050,7 @@ fun set_or_remove_witness_approving_advance_epoch(
     } else if (!found) {
         self.witnesses_approving_advance_epoch.push_back(witness_type);
     };
-    event::emit(SetOrRemoveWitnessApprovingAdvanceEpochEvent {
+    event_wrapper::emit_event(SetOrRemoveWitnessApprovingAdvanceEpochEvent {
         epoch: self.epoch,
         witness_type,
         remove,
