@@ -35,7 +35,7 @@ pushd ../upgrade-network-key
 # set a var named protocol_cap_id to the value of the first param passed to the script
 protocol_cap_id=$1
 
-$BINARY_NAME set-supported-and-pricing \
+$BINARY_NAME protocol set-supported-and-pricing \
   --protocol-cap-id "$protocol_cap_id" \
-  --default_pricing_yaml "$(pwd)/new_pricing.yaml"
-  --supported_curves_to_signature_algorithms_to_hash_schemes_yaml "$(pwd)/supported_curves_config.yaml"
+  --default-pricing "$(pwd)/new_pricing.yaml" \
+  --supported-curves-to-signature-algorithms-to-hash-schemes "$(pwd)/supported_curves_config.yaml"

@@ -178,6 +178,13 @@ describe('system tests', () => {
 		console.log('DWallet created successfully, running a full sign flow with it');
 		// await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
 		console.log('V1 dWallet full flow works, upgrading the validators docker image');
+		const signer = await getPublisherKeypair();
+		const protocolCapID = await getProtocolCapID(
+			suiClient,
+			signer.getPublicKey().toSuiAddress(),
+			ikaClient,
+		);
+		console.log(`Protocol Cap ID: ${protocolCapID}`);
 		return;
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		process.env.NOTIFIER_DOCKER_TAG = v2NetworkKeyDockerTag;
@@ -244,13 +251,6 @@ describe('system tests', () => {
 		await fs.writeFile(
 			path.join(TEST_ROOT_DIR, '../../../../contracts/ika_common/Move.toml'),
 			TOML.stringify(ikaCommonToml),
-		);
-
-		const signer = await getPublisherKeypair();
-		const protocolCapID = await getProtocolCapID(
-			suiClient,
-			signer.getPublicKey().toSuiAddress(),
-			ikaClient,
 		);
 
 		const upgradedPackageID = await deployUpgradedPackage(
