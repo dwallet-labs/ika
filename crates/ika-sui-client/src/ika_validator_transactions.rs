@@ -123,7 +123,7 @@ pub async fn request_add_validator_candidate(
         )
         .await?
         .data
-        .ok_or(anyhow::Error::msg("failed to get object data"))?
+        .ok_or(anyhow::Error::msg("failed to get system object data"))?
         .owner
     else {
         bail!("Failed to get owner of object")
@@ -1653,7 +1653,9 @@ pub(crate) async fn get_dwallet_2pc_mpc_coordinator_call_arg(
         )
         .await?
         .data
-        .ok_or(anyhow::Error::msg("failed to get object data"))?
+        .ok_or(anyhow::Error::msg(format!(
+            "failed to get coordinator object data for id: {ika_dwallet_2pc_mpc_coordinator_object_id}"
+        )))?
         .owner
     else {
         bail!("Failed to get owner of object")
@@ -1686,7 +1688,7 @@ pub async fn add_ika_system_command_to_ptb(
         )
         .await?
         .data
-        .ok_or(anyhow::Error::msg("failed to get object data"))?
+        .ok_or(anyhow::Error::msg("failed to get ika system object data"))?
         .owner
     else {
         bail!("Failed to get owner of object")
