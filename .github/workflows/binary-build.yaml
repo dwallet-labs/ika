@@ -92,7 +92,7 @@ jobs:
           chmod +x artifacts/${{ matrix.binary }}-linux-${{ matrix.arch }}
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.binary }}-linux-${{ matrix.arch }}
           path: artifacts/${{ matrix.binary }}-linux-${{ matrix.arch }}
