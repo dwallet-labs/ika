@@ -546,7 +546,7 @@ pub fn advance_centralized_sign_party(
                     }
                     VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
                         bcs::from_bytes::<DKGDecentralizedPartyVersionedOutputSecp256k1>(
-                            output.as_slice(),
+                            dkg_output.as_slice(),
                         ).map_err(
                             |e| {
                                 anyhow!(
