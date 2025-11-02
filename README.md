@@ -15,7 +15,7 @@ across the entire Web3 ecosystem.
 The dWallet is an innovative Web3 building block that has the following attributes:
 
 * _Noncollusive_: The user is always required to generate a signature.
-* _Massively decentralized_: Beside the user, a 2/3 threshold of a network that can include hundreds of
+* _Massively decentralized_: Besides the user, a 2/3 threshold of a network that can include hundreds of
   nodes, is also required to generate a signature.
 * _Multi-Chain_: Using the default authentication method of blockchains - the signature - dWallets can offer universal
   and native multi-chain interoperability, without the cross-chain risks of wrapping, bridging or messaging.
@@ -41,7 +41,7 @@ scalable & massively-decentralized.
 The 2PC-MPC protocol achieves linear-scaling in communication - O(n) - and due to novel aggregation & amortization
 techniques, an amortized cost per-party that remains constant up to thousands of parties - _practically_ O(1) in
 computation for the network, allowing it to scale and achieve decentralization, whilst being _asymptotically_ O(1) for
-the user: meaning the size of the network doesn't have any impact on the user as its computation and communication is
+the user: meaning the size of the network doesn't have any impact on the user as its computation and communication are
 constant.
 
 ## Ika Overview
@@ -58,7 +58,7 @@ Ika has a native token on Sui called IKA that is used (much like SUI) to pay for
 on authorities within an epoch. Authorities are periodically reconfigured according to the stake delegated to them. In any
 epoch, the set of authorities is [Byzantine fault tolerant](http://pmg.csail.mit.edu/papers/osdi99.pdf). At the end of the
 epoch, fees collected through all transactions processed are distributed to authorities according to their contribution to
-the operation of the system. Authorities can in turn share some of the fees as rewards to users that delegated stakes to them.
+the operation of the system. Authorities can in turn share some of the fees as rewards to users who delegated stakes to them.
 
 Sui is based on a number of state-of-the-art
 [peer-reviewed works](https://github.com/MystenLabs/sui/blob/main/docs/content/concepts/research-papers.mdx)
