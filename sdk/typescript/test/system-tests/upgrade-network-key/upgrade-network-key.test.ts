@@ -8,8 +8,6 @@ import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 
 import { Curve, Hash, IkaClient, SignatureAlgorithm } from '../../../src';
-import { testSignCombination } from '../../dkg-v2/all-combinations.test';
-import { testImportedKeyScenario } from '../../dkg-v2/imported-key.test';
 import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
@@ -37,6 +35,8 @@ import {
 	killFullnodePod,
 	killValidatorPod
 } from '../pods';
+import { testSignCombination } from '../../v2/all-combinations.test';
+import { testImportedKeyScenario } from '../../v2/imported-key.test';
 
 async function testImportedDWalletFullFlowWithAllCurves() {
 	await testImportedKeyScenario(
