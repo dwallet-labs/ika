@@ -16,11 +16,8 @@ import {
 	reconfigurationPublicOutputToProtocolPublicParameters,
 } from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
-import {
-	fromNumberToCurve,
-	validateCurveSignatureAlgorithm,
-	type ValidSignatureAlgorithmForCurve,
-} from './hash-signature-validation.js';
+import { fromNumberToCurve, validateCurveSignatureAlgorithm } from './hash-signature-validation.js';
+import type { ValidSignatureAlgorithmForCurve } from './hash-signature-validation.js';
 import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
 	CoordinatorInner,
@@ -30,8 +27,10 @@ import type {
 	DWalletInternal,
 	DWalletKind,
 	DWalletState,
+	DWalletWithState,
 	EncryptedUserSecretKeyShare,
 	EncryptedUserSecretKeyShareState,
+	EncryptedUserSecretKeyShareWithState,
 	EncryptionKey,
 	EncryptionKeyOptions,
 	IkaClientOptions,
@@ -39,11 +38,15 @@ import type {
 	NetworkEncryptionKey,
 	PartialUserSignature,
 	PartialUserSignatureState,
+	PartialUserSignatureWithState,
 	Presign,
 	PresignState,
+	PresignWithState,
 	SharedObjectOwner,
 	Sign,
+	SignatureAlgorithm,
 	SignState,
+	SignWithState,
 	SystemInner,
 } from './types.js';
 import { fetchAllDynamicFields, objResToBcs } from './utils.js';
@@ -330,6 +333,17 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
+	async getDWalletInParticularState<S extends DWalletState>(
+		dwalletID: string,
+		state: S,
+		options?: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		},
+	): Promise<DWalletWithState<S>>;
 	async getDWalletInParticularState(
 		dwalletID: string,
 		state: DWalletState,
@@ -346,7 +360,7 @@ export class IkaClient {
 			state,
 			`DWallet ${dwalletID} to reach state ${state}`,
 			options,
-		);
+		) as Promise<DWallet>;
 	}
 
 	/**
@@ -387,6 +401,17 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
+	async getPresignInParticularState<S extends PresignState>(
+		presignID: string,
+		state: S,
+		options?: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		},
+	): Promise<PresignWithState<S>>;
 	async getPresignInParticularState(
 		presignID: string,
 		state: PresignState,
@@ -403,7 +428,7 @@ export class IkaClient {
 			state,
 			`presign ${presignID} to reach state ${state}`,
 			options,
-		);
+		) as Promise<Presign>;
 	}
 
 	/**
@@ -445,6 +470,17 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
+	async getEncryptedUserSecretKeyShareInParticularState<S extends EncryptedUserSecretKeyShareState>(
+		encryptedUserSecretKeyShareID: string,
+		state: S,
+		options?: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		},
+	): Promise<EncryptedUserSecretKeyShareWithState<S>>;
 	async getEncryptedUserSecretKeyShareInParticularState(
 		encryptedUserSecretKeyShareID: string,
 		state: EncryptedUserSecretKeyShareState,
@@ -461,7 +497,7 @@ export class IkaClient {
 			state,
 			`encrypted user secret key share ${encryptedUserSecretKeyShareID} to reach state ${state}`,
 			options,
-		);
+		) as Promise<EncryptedUserSecretKeyShare>;
 	}
 
 	/**
@@ -487,6 +523,17 @@ export class IkaClient {
 			});
 	}
 
+	async getPartialUserSignatureInParticularState<S extends PartialUserSignatureState>(
+		partialCentralizedSignedMessageID: string,
+		state: S,
+		options?: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		},
+	): Promise<PartialUserSignatureWithState<S>>;
 	async getPartialUserSignatureInParticularState(
 		partialCentralizedSignedMessageID: string,
 		state: PartialUserSignatureState,
@@ -503,7 +550,7 @@ export class IkaClient {
 			state,
 			`partial user signature ${partialCentralizedSignedMessageID} to reach state ${state}`,
 			options,
-		);
+		) as Promise<PartialUserSignature>;
 	}
 
 	/**
@@ -565,10 +612,23 @@ export class IkaClient {
 	 * @throws {NetworkError} If the network request fails
 	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
-	async getSignInParticularState<C extends Curve>(
+	async getSignInParticularState<S extends SignState>(
 		signID: string,
-		curve: C,
-		signatureAlgorithm: ValidSignatureAlgorithmForCurve<C>,
+		curve: Curve,
+		signatureAlgorithm: SignatureAlgorithm,
+		state: S,
+		options?: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		},
+	): Promise<SignWithState<S>>;
+	async getSignInParticularState(
+		signID: string,
+		curve: Curve,
+		signatureAlgorithm: SignatureAlgorithm,
 		state: SignState,
 		options: {
 			timeout?: number;
@@ -583,7 +643,7 @@ export class IkaClient {
 			state,
 			`sign ${signID} to reach state ${state}`,
 			options,
-		);
+		) as Promise<Sign>;
 	}
 
 	/**
@@ -1311,8 +1371,9 @@ export class IkaClient {
 				lastError = error as Error;
 			}
 
+			const waitTime = currentInterval;
 			await new Promise((resolve, reject) => {
-				const timeoutId = setTimeout(resolve, currentInterval);
+				const timeoutId = setTimeout(resolve, waitTime);
 				signal?.addEventListener('abort', () => {
 					clearTimeout(timeoutId);
 					reject(new Error('Operation aborted'));

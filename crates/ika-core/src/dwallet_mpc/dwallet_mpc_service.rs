@@ -100,7 +100,7 @@ impl DWalletMPCService {
         let decryption_key_reconfiguration_third_round_delay =
             protocol_config.decryption_key_reconfiguration_third_round_delay();
 
-        let root_seed = match node_config.root_seed {
+        let root_seed = match node_config.root_seed_key_pair {
             None => {
                 error!("root_seed is not set in the node config, cannot start DWallet MPC service");
                 panic!("root_seed is not set in the node config, cannot start DWallet MPC service");
@@ -1164,7 +1164,7 @@ impl DWalletMPCService {
         }
 
         let root_seed = config
-            .root_seed
+            .root_seed_key_pair
             .clone()
             .ok_or(DwalletMPCError::MissingRootSeed)?
             .root_seed()

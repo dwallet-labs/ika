@@ -119,6 +119,46 @@ export type EncryptedUserSecretKeyShareState =
 export type SignState = typeof CoordinatorInnerModule.SignState.$inferType.$kind;
 
 /**
+ * Type utilities to narrow specific state types.
+ * These allow for type-safe access to state-specific properties.
+ */
+
+/** Narrow DWallet to a specific state */
+export type DWalletWithState<S extends DWalletState> = Omit<DWalletInternal, 'state' | 'kind'> & {
+	state: Extract<typeof CoordinatorInnerModule.DWalletState.$inferType, { $kind: S }>;
+	kind: DWalletKind;
+};
+
+/** Narrow Presign to a specific state */
+export type PresignWithState<S extends PresignState> = Omit<Presign, 'state'> & {
+	state: Extract<typeof CoordinatorInnerModule.PresignState.$inferType, { $kind: S }>;
+};
+
+/** Narrow EncryptedUserSecretKeyShare to a specific state */
+export type EncryptedUserSecretKeyShareWithState<S extends EncryptedUserSecretKeyShareState> = Omit<
+	EncryptedUserSecretKeyShare,
+	'state'
+> & {
+	state: Extract<
+		typeof CoordinatorInnerModule.EncryptedUserSecretKeyShareState.$inferType,
+		{ $kind: S }
+	>;
+};
+
+/** Narrow PartialUserSignature to a specific state */
+export type PartialUserSignatureWithState<S extends PartialUserSignatureState> = Omit<
+	PartialUserSignature,
+	'state'
+> & {
+	state: Extract<typeof CoordinatorInnerModule.PartialUserSignatureState.$inferType, { $kind: S }>;
+};
+
+/** Narrow Sign to a specific state */
+export type SignWithState<S extends SignState> = Omit<Sign, 'state'> & {
+	state: Extract<typeof CoordinatorInnerModule.SignState.$inferType, { $kind: S }>;
+};
+
+/**
  * Hash algorithms supported by the Ika network.
  *
  * **Valid Combinations:**

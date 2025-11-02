@@ -160,8 +160,7 @@ impl DWalletSession {
                 "Unknown - session computation completed".to_string()
             }
             SessionStatus::Completed | SessionStatus::Failed => {
-                error!(
-                    should_never_happen=true,
+                warn!(
                     session_identifier=?self.session_identifier,
                     "tried to add a message to a non-active MPC session"
                 );

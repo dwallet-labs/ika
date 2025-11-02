@@ -8,9 +8,6 @@ use crate::dwallet_checkpoints::DWalletCheckpointStore;
 use crate::sui_connector::SuiNotifier;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::system_checkpoints::SystemCheckpointStore;
-use dwallet_mpc_types::mpc_protocol_configuration::{
-    MPC_PROTOCOLS_WITH_SIGNATURE_ALGORITHM, MPC_PROTOCOLS_WITHOUT_SIGNATURE_ALGORITHM,
-};
 use fastcrypto::traits::ToFromBytes;
 use ika_config::node::RunWithRange;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
@@ -28,7 +25,8 @@ use ika_types::sui::{
     ADVANCE_EPOCH_FUNCTION_NAME, APPEND_VECTOR_FUNCTION_NAME,
     CREATE_SYSTEM_CURRENT_STATUS_INFO_FUNCTION_NAME, DWalletCoordinator, DWalletCoordinatorInner,
     INITIATE_ADVANCE_EPOCH_FUNCTION_NAME, INITIATE_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME,
-    PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME,
+    PROCESS_CHECKPOINT_MESSAGE_BY_QUORUM_FUNCTION_NAME, PricingInfoKey,
+    REQUEST_LOCK_EPOCH_SESSIONS_FUNCTION_NAME,
     REQUEST_NETWORK_ENCRYPTION_KEY_MID_EPOCH_RECONFIGURATION_FUNCTION_NAME, SYSTEM_MODULE_NAME,
     System, SystemInner, SystemInnerTrait, VECTOR_MODULE_NAME,
 };
@@ -184,13 +182,16 @@ where
             info!(
                 "Running network encryption key mid-epoch reconfiguration and Calculating protocol pricing"
             );
-            let supported_curves_to_signature_algorithms = coordinator_inner
-                .support_config
-                .supported_curves_to_signature_algorithms_to_hash_schemes
+
+            let default_pricing_keys = coordinator_inner
+                .pricing_and_fee_management
+                .default
+                .pricing_map
                 .contents
                 .iter()
-                .map(|c| (c.key, c.value.contents.iter().map(|c| c.key).collect_vec()))
-                .collect::<HashMap<_, _>>();
+                .map(|c| c.key.clone())
+                .collect_vec();
+
             let result = retry_with_max_elapsed_time!(
                 Self::request_mid_epoch_reconfiguration_and_calculate_protocols_pricing(
                     &self.sui_client,
@@ -198,7 +199,7 @@ where
                     network_encryption_key_ids.clone(),
                     sui_notifier,
                     self.notifier_tx_lock.clone(),
-                    &supported_curves_to_signature_algorithms,
+                    &default_pricing_keys
                 ),
                 Duration::from_secs(ONE_HOUR_IN_SECONDS)
             );
@@ -555,14 +556,13 @@ where
         network_encryption_key_ids: Vec<ObjectID>,
         sui_notifier: &SuiNotifier,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
-        supported_curves_to_signature_algorithms: &HashMap<u32, Vec<u32>>,
+        default_pricing_keys: &Vec<PricingInfoKey>,
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
         let gas_coin = gas_coins
             .first()
             .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
         let mut ptb = ProgrammableTransactionBuilder::new();
-        let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
         let dwallet_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
             .await;
@@ -581,44 +581,29 @@ where
             );
         }
 
-        for (curve, signature_algorithms) in supported_curves_to_signature_algorithms {
+        for PricingInfoKey {
+            curve,
+            signature_algorithm,
+            protocol,
+        } in default_pricing_keys
+        {
             let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
+            let signature_algorithm_arg =
+                ptb.input(CallArg::Pure(bcs::to_bytes(signature_algorithm)?))?;
+            let protocol_arg = ptb.input(CallArg::Pure(bcs::to_bytes(protocol)?))?;
 
-            for protocol in MPC_PROTOCOLS_WITHOUT_SIGNATURE_ALGORITHM.iter() {
-                let protocol_arg = ptb.input(CallArg::Pure(bcs::to_bytes(protocol)?))?;
-                ptb.programmable_move_call(
-                    ika_dwallet_2pc_mpc_package_id,
-                    DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-                    ident_str!("calculate_pricing_votes").into(),
-                    vec![],
-                    vec![
-                        dwallet_coordinator_ptb_arg,
-                        curve_arg,
-                        none_option,
-                        protocol_arg,
-                    ],
-                );
-            }
-
-            for signature_algorithm in signature_algorithms {
-                let signature_algorithm_arg =
-                    ptb.input(CallArg::Pure(bcs::to_bytes(&Some(signature_algorithm))?))?;
-                for protocol in MPC_PROTOCOLS_WITH_SIGNATURE_ALGORITHM.iter() {
-                    let protocol_arg = ptb.input(CallArg::Pure(bcs::to_bytes(protocol)?))?;
-                    ptb.programmable_move_call(
-                        ika_dwallet_2pc_mpc_package_id,
-                        DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-                        ident_str!("calculate_pricing_votes").into(),
-                        vec![],
-                        vec![
-                            dwallet_coordinator_ptb_arg,
-                            curve_arg,
-                            signature_algorithm_arg,
-                            protocol_arg,
-                        ],
-                    );
-                }
-            }
+            ptb.programmable_move_call(
+                ika_dwallet_2pc_mpc_package_id,
+                DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+                ident_str!("calculate_pricing_votes").into(),
+                vec![],
+                vec![
+                    dwallet_coordinator_ptb_arg,
+                    curve_arg,
+                    signature_algorithm_arg,
+                    protocol_arg,
+                ],
+            );
         }
 
         let transaction = super::build_sui_transaction(

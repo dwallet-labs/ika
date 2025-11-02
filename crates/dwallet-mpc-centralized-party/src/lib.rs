@@ -19,8 +19,9 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedCentralizedDKGPublicOutput, VersionedCentralizedPartyImportedDWalletPublicOutput,
     VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
-    VersionedImportedDwalletOutgoingMessage, VersionedNetworkDkgOutput, VersionedPresignOutput,
-    VersionedPublicKeyShareAndProof, VersionedSignOutput, VersionedUserSignedMessage,
+    VersionedEncryptionKeyValue, VersionedImportedDwalletOutgoingMessage,
+    VersionedNetworkDkgOutput, VersionedPresignOutput, VersionedPublicKeyShareAndProof,
+    VersionedSignOutput, VersionedUserSignedMessage,
 };
 use group::{CyclicGroupElement, GroupElement, HashScheme, OsCsRng, Samplable, secp256k1};
 use homomorphic_encryption::GroupsPublicParametersAccessors;
@@ -1265,9 +1266,11 @@ pub fn generate_cg_keypair_from_seed_inner<P: Protocol>(
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
     let decryption_key = P::generate_decryption_key(&mut rng)?;
-    let encryption_key = P::encryption_key_from_decryption_key(decryption_key.clone())?;
+    let encryption_key_value = P::encryption_key_from_decryption_key(decryption_key.clone())?;
     Ok((
-        bcs::to_bytes(&encryption_key)?,
+        bcs::to_bytes(&VersionedEncryptionKeyValue::V1(bcs::to_bytes(
+            &encryption_key_value,
+        )?))?,
         bcs::to_bytes(&decryption_key)?,
     ))
 }
@@ -1277,13 +1280,13 @@ pub fn generate_cg_keypair_from_seed_inner<P: Protocol>(
 /// and an encrypted `secret key share`.
 pub fn encrypt_secret_key_share_and_prove_v1(
     secret_key_share: SerializedWrappedMPCPublicOutput,
-    encryption_key: Vec<u8>,
+    encryption_key_value: Vec<u8>,
     protocol_pp: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
     encrypt_secret_key_share_and_prove_v2(
         DWalletCurve::Secp256k1 as u32,
         secret_key_share,
-        encryption_key,
+        encryption_key_value,
         protocol_pp,
     )
 }
@@ -1291,35 +1294,35 @@ pub fn encrypt_secret_key_share_and_prove_v1(
 pub fn encrypt_secret_key_share_and_prove_v2(
     curve: u32,
     secret_key_share: SerializedWrappedMPCPublicOutput,
-    encryption_key: Vec<u8>,
+    encryption_key_value: Vec<u8>,
     protocol_pp: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
     match try_into_curve(curve)? {
         DWalletCurve::Secp256k1 => {
             encrypt_secret_key_share_and_prove_inner::<Secp256k1DKGProtocol>(
                 secret_key_share,
-                &encryption_key,
+                &encryption_key_value,
                 protocol_pp,
             )
         }
         DWalletCurve::Ristretto => {
             encrypt_secret_key_share_and_prove_inner::<RistrettoDKGProtocol>(
                 secret_key_share,
-                &encryption_key,
+                &encryption_key_value,
                 protocol_pp,
             )
         }
         DWalletCurve::Curve25519 => {
             encrypt_secret_key_share_and_prove_inner::<Curve25519DKGProtocol>(
                 secret_key_share,
-                &encryption_key,
+                &encryption_key_value,
                 protocol_pp,
             )
         }
         DWalletCurve::Secp256r1 => {
             encrypt_secret_key_share_and_prove_inner::<Secp256r1DKGProtocol>(
                 secret_key_share,
-                &encryption_key,
+                &encryption_key_value,
                 protocol_pp,
             )
         }
@@ -1328,20 +1331,26 @@ pub fn encrypt_secret_key_share_and_prove_v2(
 
 fn encrypt_secret_key_share_and_prove_inner<P: twopc_mpc::dkg::Protocol>(
     secret_key_share: SerializedWrappedMPCPublicOutput,
-    encryption_key: &[u8],
+    encryption_key_value: &[u8],
     protocol_public_params: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
     let secret_key_share: VersionedDwalletUserSecretShare = bcs::from_bytes(&secret_key_share)?;
+
+    let VersionedEncryptionKeyValue::V1(encryption_key_value) =
+        bcs::from_bytes(encryption_key_value)?;
+
     match secret_key_share {
         VersionedDwalletUserSecretShare::V1(secret_key_share) => {
             let protocol_public_params: P::ProtocolPublicParameters =
                 bcs::from_bytes(&protocol_public_params)?;
-            let encryption_key: P::EncryptionKey = bcs::from_bytes(encryption_key)?;
+
+            let encryption_key_value: P::EncryptionKeyValue =
+                bcs::from_bytes(&encryption_key_value)?;
             let secret_key_share: P::CentralizedPartySecretKeyShare =
                 bcs::from_bytes(&secret_key_share)?;
             let result = P::encrypt_and_prove_centralized_party_share(
                 &protocol_public_params,
-                encryption_key,
+                encryption_key_value,
                 secret_key_share,
                 &mut OsCsRng,
             )?;

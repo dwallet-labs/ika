@@ -10,8 +10,8 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
     VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
     VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
-    VersionedImportedDwalletOutgoingMessage, VersionedNetworkEncryptionKeyPublicData,
-    VersionedPublicKeyShareAndProof,
+    VersionedEncryptionKeyValue, VersionedImportedDwalletOutgoingMessage,
+    VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
 };
 use group::{CsRng, PartyID};
 use ika_protocol_config::ProtocolVersion;
@@ -319,7 +319,7 @@ pub enum BytesCentralizedPartyKeyShareVerification {
     /// in which the centralized party (a.k.a. the "user") encrypts its secret key share under its own key,
     /// which is verified & store it as backup by the decentralized party (a.k.a. the "network".)
     Encrypted {
-        encryption_key: Vec<u8>,
+        encryption_key_value: Vec<u8>,
         encrypted_secret_key_share_message: Vec<u8>,
     },
     /// Used in the "public user-share" feature, in which the centralized party (a.k.a. the "user")
@@ -343,7 +343,7 @@ impl From<UserSecretKeyShareEventType> for BytesCentralizedPartyKeyShareVerifica
                 encrypted_centralized_secret_share_and_proof,
                 ..
             } => BytesCentralizedPartyKeyShareVerification::Encrypted {
-                encryption_key,
+                encryption_key_value: encryption_key,
                 encrypted_secret_key_share_message: encrypted_centralized_secret_share_and_proof,
             },
         }
@@ -367,14 +367,18 @@ where
     fn try_from(value: BytesCentralizedPartyKeyShareVerification) -> bcs::Result<Self> {
         Ok(match value {
             BytesCentralizedPartyKeyShareVerification::Encrypted {
-                encryption_key,
+                encryption_key_value,
                 encrypted_secret_key_share_message,
             } => {
                 let VersionedEncryptedUserShare::V1(encrypted_secret_key_share_message) =
                     bcs::from_bytes(&encrypted_secret_key_share_message)?;
+
+                let VersionedEncryptionKeyValue::V1(encryption_key_value) =
+                    bcs::from_bytes(&encryption_key_value)?;
+
                 CentralizedPartyKeyShareVerification::Encrypted {
-                    encryption_key: bcs::from_bytes(&encryption_key).map_err(|_| {
-                        bcs::Error::Custom("failed to deserialize encryption key".to_string())
+                    encryption_key_value: bcs::from_bytes(&encryption_key_value).map_err(|_| {
+                        bcs::Error::Custom("failed to deserialize encryption key value".to_string())
                     })?,
                     encrypted_secret_key_share_message: bcs::from_bytes(
                         &encrypted_secret_key_share_message,

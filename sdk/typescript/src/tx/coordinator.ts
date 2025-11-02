@@ -8,7 +8,7 @@ import type {
 	TransactionResult,
 } from '@mysten/sui/transactions';
 
-import type { Hash, IkaConfig } from '../client/types.js';
+import type { IkaConfig } from '../client/types.js';
 
 export function registerEncryptionKeyTx(
 	ikaConfig: IkaConfig,
