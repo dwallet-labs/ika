@@ -71,13 +71,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 # Dependencies that should be kept in sync through the whole workspace
 [workspace.dependencies]
-mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8ad57f43"}
-proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8ad57f43"}
-class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8ad57f43", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8ad57f43" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8ad57f43"}
-group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "8ad57f43"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8ad57f43"}
+mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58ee562758a3fded7118c06a112c68efb7f"}
+proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58ee562758a3fded7118c06a112c68efb7f"}
+class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58ee562758a3fded7118c06a112c68efb7f", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58ee562758a3fded7118c06a112c68efb7f" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58ee562758a3fded7118c06a112c68efb7f"}
+group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "8484e58ee562758a3fded7118c06a112c68efb7f"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58ee562758a3fded7118c06a112c68efb7f"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }
