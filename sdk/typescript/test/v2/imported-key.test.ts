@@ -35,7 +35,6 @@ import {
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
-import { decodePublicKey } from './helpers';
 
 /**
  * Generate a private key for the given curve
@@ -451,18 +450,16 @@ export async function testImportedKeyScenario(
 	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
 
 	// Get the public key from DWallet output
-	const encodedDWalletPublicKey = await publicKeyFromDWalletOutput(
+	const dWalletPublicKey = await publicKeyFromDWalletOutput(
 		curve,
 		Uint8Array.from(activeDWallet.state.Active?.public_output ?? []),
 	);
-	const dWalletPublicKey = decodePublicKey(curve, encodedDWalletPublicKey);
 
 	// Get the public key from centralized DKG output (user public output)
-	const encodedCentralizedPublicKey = await publicKeyFromCentralizedDKGOutput(
+	const centralizedPublicKey = await publicKeyFromCentralizedDKGOutput(
 		curve,
 		importDWalletVerificationInput.userPublicOutput,
 	);
-	const centralizedPublicKey = decodePublicKey(curve, encodedCentralizedPublicKey);
 
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {

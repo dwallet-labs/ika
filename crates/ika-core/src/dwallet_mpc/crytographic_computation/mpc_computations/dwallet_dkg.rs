@@ -8,10 +8,10 @@
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
-    VersionedDWalletImportedKeyVerificationOutput, VersionedDwalletDKGFirstRoundPublicOutput,
-    VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
-    VersionedEncryptionKeyValue, VersionedImportedDwalletOutgoingMessage,
-    VersionedNetworkEncryptionKeyPublicData, VersionedPublicKeyShareAndProof,
+    VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGPublicOutput,
+    VersionedDwalletUserSecretShare, VersionedEncryptedUserShare, VersionedEncryptionKeyValue,
+    VersionedImportedDwalletOutgoingMessage, VersionedNetworkEncryptionKeyPublicData,
+    VersionedPublicKeyShareAndProof, public_key_from_decentralized_dkg_output_by_curve_v2,
 };
 use group::{CsRng, PartyID};
 use ika_protocol_config::ProtocolVersion;
@@ -673,6 +673,7 @@ fn try_ready_to_advance_imported_key<P: Protocol>(
 }
 
 pub fn compute_dwallet_dkg<P: Protocol>(
+    curve: DWalletCurve,
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
     session_id: CommitmentSizedNumber,
@@ -699,8 +700,13 @@ pub fn compute_dwallet_dkg<P: Protocol>(
             malicious_parties,
             private_output,
         } => {
-            let public_output_value =
-                bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2(public_output_value))?;
+            let public_key_bytes =
+                public_key_from_decentralized_dkg_output_by_curve_v2(curve, &public_output_value)
+                    .map_err(|e| DwalletMPCError::InternalError(e.to_string()))?;
+            let public_output_value = bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2 {
+                public_key_bytes,
+                dkg_output: public_output_value,
+            })?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
@@ -712,6 +718,7 @@ pub fn compute_dwallet_dkg<P: Protocol>(
 }
 
 pub fn compute_imported_key_verification<P: Protocol>(
+    curve: DWalletCurve,
     session_id: CommitmentSizedNumber,
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
@@ -745,13 +752,22 @@ pub fn compute_imported_key_verification<P: Protocol>(
                     let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
                     let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyTargetedDKGOutput = decentralized_output.into();
 
-                    bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V1(
-                        bcs::to_bytes(&decentralized_output)?,
-                    ))?
+                    bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V1(bcs::to_bytes(
+                        &decentralized_output,
+                    )?))?
                 }
-                2 => bcs::to_bytes(&VersionedDWalletImportedKeyVerificationOutput::V2(
-                    public_output_value,
-                ))?,
+                2 => {
+                    let public_key_bytes = public_key_from_decentralized_dkg_output_by_curve_v2(
+                        curve,
+                        &public_output_value,
+                    )
+                    .map_err(|e| DwalletMPCError::InternalError(e.to_string()))?;
+
+                    bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2 {
+                        public_key_bytes,
+                        dkg_output: public_output_value,
+                    })?
+                }
                 _ => {
                     return Err(DwalletMPCError::UnsupportedProtocolVersion(
                         protocol_version.as_u64(),

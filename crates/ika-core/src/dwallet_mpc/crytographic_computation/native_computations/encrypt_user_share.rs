@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
-use class_groups::EquivalenceClass;
 use dwallet_mpc_types::dwallet_mpc::{
     MPCPublicOutput, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
     VersionedEncryptedUserShare, VersionedEncryptionKeyValue,
 };
-use group::{GroupElement, OsCsRng};
+use group::OsCsRng;
 use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
@@ -50,10 +49,10 @@ pub(crate) fn verify_encrypted_share(
         .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string())),
         (
             VersionedEncryptedUserShare::V1(encrypted_centralized_secret_share_and_proof),
-            VersionedDwalletDKGPublicOutput::V2(decentralized_public_output),
+            VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. },
         ) => verify_centralized_secret_key_share_proof_v2(
             encrypted_centralized_secret_share_and_proof,
-            decentralized_public_output,
+            dkg_output,
             encryption_key_value,
             protocol_public_parameters,
         )
@@ -73,7 +72,7 @@ fn verify_centralized_secret_key_share_proof_v1(
     else {
         return Err(anyhow::format_err!(
             "Secret key share proof verification for the given curve is not implemented for v1 {}",
-            protocol_public_parameters.to_string()
+            protocol_public_parameters
         ));
     };
 
@@ -83,18 +82,37 @@ fn verify_centralized_secret_key_share_proof_v1(
 
     let encryption_key_value = match protocol_version.as_u64() {
         1 => {
-            let encryption_key: EquivalenceClass<
+            let representative: class_groups::Ibqf<
                 { class_groups::SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-            > = bcs::from_bytes(encryption_key_value)?;
+            > = bcs::from_bytes(encryption_key_value).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to deserialize backward-compatible encryption key: {}",
+                    e
+                )
+            })?;
 
-            encryption_key.value()
+            let encryption_key_value: class_groups::CompactIbqf<
+                { class_groups::SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+            > = representative.try_into().map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to compress backward-compatible encryption key: {}",
+                    e
+                )
+            })?;
+
+            encryption_key_value
         }
         2 => {
             let VersionedEncryptionKeyValue::V1(encryption_key_value) =
-                bcs::from_bytes(encryption_key_value)?;
+                bcs::from_bytes(encryption_key_value).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to deserialize versioned encryption key value: {}",
+                        e
+                    )
+                })?;
 
             bcs::from_bytes(&encryption_key_value)
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize encryption key: {}", e))?
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize encryption key value: {}", e))?
         }
         v => {
             return Err(anyhow::anyhow!("Unsupported protocol config version: {v}",));

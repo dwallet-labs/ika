@@ -75,6 +75,7 @@ pub(crate) enum ProtocolCryptographicData {
         public_input: SignPublicInputByProtocol,
         advance_request: SignAdvanceRequestByProtocol,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
+        protocol_version: ProtocolVersion,
     },
     DWalletDKGAndSign {
         data: DWalletDKGAndSignData,

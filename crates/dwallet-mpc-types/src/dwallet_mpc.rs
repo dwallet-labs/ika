@@ -1,12 +1,20 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::mpc_protocol_configuration::try_into_curve;
+use class_groups::CiphertextSpaceValue;
 use class_groups::reconfiguration::Secp256k1Party;
+use crypto_bigint::{Encoding, Uint};
 use enum_dispatch::enum_dispatch;
+use group::secp256k1;
+use k256::elliptic_curve::group::GroupEncoding;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput};
 use twopc_mpc::class_groups::{DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput};
+use twopc_mpc::dkg::centralized_party;
 use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
+use twopc_mpc::{curve25519, ristretto, secp256r1};
 
 /// Alias for an MPC message.
 pub type MPCMessage = Vec<u8>;
@@ -263,12 +271,6 @@ pub enum VersionedEncryptionKeyValue {
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
-pub enum VersionedDWalletImportedKeyVerificationOutput {
-    V1(MPCPublicOutput),
-    V2(MPCPublicOutput),
-}
-
-#[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedDwalletDKGFirstRoundPublicOutput {
     V1(MPCPublicOutput),
 }
@@ -276,7 +278,10 @@ pub enum VersionedDwalletDKGFirstRoundPublicOutput {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedDwalletDKGPublicOutput {
     V1(MPCPublicOutput),
-    V2(MPCPublicOutput),
+    V2 {
+        public_key_bytes: Vec<u8>,
+        dkg_output: MPCPublicOutput,
+    },
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -543,3 +548,186 @@ impl NetworkEncryptionKeyPublicDataTrait for NetworkEncryptionKeyPublicDataV2 {
 
 pub type ReconfigurationParty = Secp256k1Party;
 pub type ReconfigurationV2Party = twopc_mpc::decentralized_party::reconfiguration::Party;
+
+pub fn public_key_from_dwallet_output_by_curve(
+    curve: DWalletCurve,
+    dwallet_output: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_dkg_public_output: VersionedDwalletDKGPublicOutput =
+        bcs::from_bytes(dwallet_output)?;
+
+    match versioned_dkg_public_output {
+        VersionedDwalletDKGPublicOutput::V1(dkg_output) => {
+            let output: DKGDecentralizedPartyOutputSecp256k1 = bcs::from_bytes(&dkg_output)?;
+
+            let public_key: k256::AffinePoint = output.public_key.into();
+
+            Ok(public_key.to_bytes().to_vec())
+        }
+        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+            public_key_from_decentralized_dkg_output_by_curve_v2(curve, &dkg_output)
+        }
+    }
+}
+
+pub fn public_key_from_centralized_dkg_output_by_curve(
+    curve: u32,
+    centralized_dkg_output: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    match try_into_curve(curve)? {
+        DWalletCurve::Secp256k1 => {
+            let public_key = public_key_from_centralized_dkg_output_inner::<
+                { secp256k1::SCALAR_LIMBS },
+                group::secp256k1::GroupElement,
+            >(centralized_dkg_output)?;
+
+            let public_key: k256::AffinePoint = public_key.into();
+
+            Ok(public_key.to_bytes().to_vec())
+        }
+        DWalletCurve::Ristretto => {
+            let public_key = public_key_from_centralized_dkg_output_inner::<
+                { ristretto::SCALAR_LIMBS },
+                group::ristretto::GroupElement,
+            >(centralized_dkg_output)?;
+
+            let public_key: curve25519_dalek::RistrettoPoint = public_key.into();
+
+            Ok(public_key.to_bytes().to_vec())
+        }
+        DWalletCurve::Curve25519 => {
+            let public_key = public_key_from_centralized_dkg_output_inner::<
+                { curve25519::SCALAR_LIMBS },
+                group::curve25519::GroupElement,
+            >(centralized_dkg_output)?;
+
+            let public_key: curve25519_dalek::EdwardsPoint = public_key.into();
+
+            Ok(public_key.to_bytes().to_vec())
+        }
+        DWalletCurve::Secp256r1 => {
+            let public_key = public_key_from_centralized_dkg_output_inner::<
+                { secp256r1::SCALAR_LIMBS },
+                group::secp256r1::GroupElement,
+            >(centralized_dkg_output)?;
+
+            let public_key: p256::AffinePoint = public_key.into();
+
+            Ok(public_key.to_bytes().to_vec())
+        }
+    }
+}
+
+pub fn public_key_from_decentralized_dkg_output_by_curve_v2(
+    curve: DWalletCurve,
+    decentralized_dkg_output: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    match curve {
+        DWalletCurve::Secp256k1 => {
+            let public_key = public_key_from_decentralized_dkg_output_inner_v2::<
+                { secp256k1::SCALAR_LIMBS },
+                { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                group::secp256k1::GroupElement,
+            >(decentralized_dkg_output)?;
+
+            let public_key: k256::AffinePoint = public_key.into();
+
+            Ok(public_key.to_bytes().to_vec())
+        }
+        DWalletCurve::Ristretto => {
+            let public_key = public_key_from_decentralized_dkg_output_inner_v2::<
+                { ristretto::SCALAR_LIMBS },
+                { twopc_mpc::ristretto::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                group::ristretto::GroupElement,
+            >(decentralized_dkg_output)?;
+
+            let public_key: curve25519_dalek::RistrettoPoint = public_key.into();
+
+            Ok(public_key.to_bytes().to_vec())
+        }
+        DWalletCurve::Curve25519 => {
+            let public_key = public_key_from_decentralized_dkg_output_inner_v2::<
+                { curve25519::SCALAR_LIMBS },
+                { twopc_mpc::curve25519::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                group::curve25519::GroupElement,
+            >(decentralized_dkg_output)?;
+
+            let public_key: curve25519_dalek::EdwardsPoint = public_key.into();
+
+            Ok(public_key.to_bytes().to_vec())
+        }
+        DWalletCurve::Secp256r1 => {
+            let public_key = public_key_from_decentralized_dkg_output_inner_v2::<
+                { secp256r1::SCALAR_LIMBS },
+                { twopc_mpc::secp256r1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                group::secp256r1::GroupElement,
+            >(decentralized_dkg_output)?;
+
+            let public_key: p256::AffinePoint = public_key.into();
+
+            Ok(public_key.to_bytes().to_vec())
+        }
+    }
+}
+
+fn public_key_from_centralized_dkg_output_inner<
+    const SCALAR_LIMBS: usize,
+    GroupElement: group::GroupElement,
+>(
+    centralized_dkg_output: &[u8],
+) -> anyhow::Result<GroupElement::Value>
+where
+    Uint<SCALAR_LIMBS>: Encoding,
+{
+    let versioned_centralized_dkg_output: VersionedCentralizedDKGPublicOutput =
+        bcs::from_bytes(centralized_dkg_output)?;
+
+    let public_key = match versioned_centralized_dkg_output {
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let dkg_output: DKGCentralizedPartyOutput<SCALAR_LIMBS, GroupElement> =
+                bcs::from_bytes(output.as_slice())?;
+            dkg_output.public_key
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => {
+            let dkg_output: DKGCentralizedPartyVersionedOutput<SCALAR_LIMBS, GroupElement> =
+                bcs::from_bytes(output.as_slice())?;
+            match dkg_output {
+                centralized_party::VersionedOutput::TargetedPublicDKGOutput(o) => o.public_key,
+                centralized_party::VersionedOutput::UniversalPublicDKGOutput {
+                    output: o, ..
+                } => o.public_key,
+            }
+        }
+    };
+
+    Ok(public_key)
+}
+
+fn public_key_from_decentralized_dkg_output_inner_v2<
+    const SCALAR_LIMBS: usize,
+    const NON_FUNDAMENTAL_DISCRIMINANT_LIMBS: usize,
+    GroupElement: group::GroupElement,
+>(
+    decentralized_dkg_output: &[u8],
+) -> anyhow::Result<GroupElement::Value>
+where
+    Uint<SCALAR_LIMBS>: Encoding,
+    Uint<NON_FUNDAMENTAL_DISCRIMINANT_LIMBS>: Encoding,
+{
+    let dkg_output: twopc_mpc::dkg::decentralized_party::VersionedOutput<
+        SCALAR_LIMBS,
+        GroupElement::Value,
+        CiphertextSpaceValue<NON_FUNDAMENTAL_DISCRIMINANT_LIMBS>,
+    > = bcs::from_bytes(decentralized_dkg_output)?;
+    let public_key = match dkg_output {
+        twopc_mpc::dkg::decentralized_party::VersionedOutput::TargetedPublicDKGOutput(o) => {
+            o.public_key
+        }
+        twopc_mpc::dkg::decentralized_party::VersionedOutput::UniversalPublicDKGOutput {
+            output: o,
+            ..
+        } => o.public_key,
+    };
+
+    Ok(public_key)
+}

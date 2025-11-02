@@ -13,12 +13,14 @@ use crate::request_protocol_data::{DWalletDKGAndSignData, SignData};
 use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletSignatureAlgorithm, MPCPublicOutput, NetworkEncryptionKeyPublicDataTrait,
+    DWalletCurve, DWalletSignatureAlgorithm, MPCPublicOutput, NetworkEncryptionKeyPublicDataTrait,
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
-    VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput, VersionedUserSignedMessage,
+    VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput, VersionedSignOutput,
+    VersionedUserSignedMessage, public_key_from_decentralized_dkg_output_by_curve_v2,
 };
 use group::CsRng;
 use group::{HashScheme, OsCsRng, PartyID};
+use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
@@ -31,6 +33,7 @@ use rand_core::SeedableRng;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::error;
+use twopc_mpc::ecdsa::ECDSASecp256k1Signature;
 use twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS;
 use twopc_mpc::{dkg, sign};
 
@@ -371,8 +374,8 @@ impl SignPublicInputByProtocol {
                                         )),
                                     )?.into()
                                 }
-                                VersionedDwalletDKGPublicOutput::V2(output) => {
-                                    bcs::from_bytes::<<Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(output.as_slice()).map_err(
+                                VersionedDwalletDKGPublicOutput::V2{dkg_output, ..} => {
+                                    bcs::from_bytes::<<Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice()).map_err(
                                         |_| DwalletMPCError::BcsError(bcs::Error::Custom(
                                             "Failed to deserialize decentralized DKG output V2"
                                                 .to_string(),
@@ -797,14 +800,15 @@ impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignPart
                     })?
                     .into()
             }
-            VersionedDwalletDKGPublicOutput::V2(output) => bcs::from_bytes::<
-                P::DecentralizedPartyDKGOutput,
-            >(output.as_slice())
-            .map_err(|e| {
-                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                    "Failed to deserialize decentralized DKG output V2: {e}"
-                )))
-            })?,
+            VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+                bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(dkg_output.as_slice()).map_err(
+                    |e| {
+                        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                            "Failed to deserialize decentralized DKG output V2: {e}"
+                        )))
+                    },
+                )?
+            }
         };
 
         let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
@@ -900,8 +904,8 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
         VersionedDwalletDKGPublicOutput::V1(output) => {
             bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
         }
-        VersionedDwalletDKGPublicOutput::V2(output) => {
-            bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(output.as_slice())?
+        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+            bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?
         }
     };
 
@@ -930,6 +934,7 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
     public_input: <SignParty<P> as mpc::Party>::PublicInput,
     decryption_key_shares: Option<<SignParty<P> as AsynchronouslyAdvanceable>::PrivateInput>,
     sign_data: &SignData,
+    protocol_version: ProtocolVersion,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let result =
@@ -953,29 +958,49 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
             malicious_parties,
             private_output,
         } => {
-            let parsed_signature_result: DwalletMPCResult<Vec<u8>> =
-                parse_signature_from_sign_output(
-                    &sign_data.signature_algorithm,
-                    public_output_value,
-                );
+            let signature = match protocol_version.as_u64() {
+                1 => {
+                    // In V1, only ECDSA Secp256k1 is supported
+                    let signature: ECDSASecp256k1Signature = bcs::from_bytes(&public_output_value)?;
 
-            if parsed_signature_result.is_err() {
-                error!(
-                    session_identifier=?session_id,
-                    ?parsed_signature_result,
-                    ?malicious_parties,
-                    signature_algorithm=?sign_data.signature_algorithm,
-                    should_never_happen = true,
-                    "failed to deserialize sign session result "
-                );
+                    // For compatability, split the signature into scalars & serialize (the v1 signature format is two scalars).
+                    let signature = signature
+                        .signature()
+                        .map_err(|e| DwalletMPCError::InternalError(e.to_string()))?;
 
-                return Err(parsed_signature_result.err().unwrap());
-            }
+                    Ok(bcs::to_bytes(&VersionedSignOutput::V1(bcs::to_bytes(
+                        &signature.split_scalars(),
+                    )?))?)
+                }
+                2 => {
+                    match parse_signature_from_sign_output(
+                        &sign_data.signature_algorithm,
+                        public_output_value,
+                    ) {
+                        Ok(signature) => Ok(signature),
+                        Err(e) => {
+                            error!(
+                                session_identifier=?session_id,
+                                ?e,
+                                ?malicious_parties,
+                                signature_algorithm=?sign_data.signature_algorithm,
+                                should_never_happen = true,
+                                "failed to deserialize sign session result "
+                            );
+
+                            Err(e)
+                        }
+                    }
+                }
+                _ => Err(DwalletMPCError::UnsupportedProtocolVersion(
+                    protocol_version.as_u64(),
+                )),
+            }?;
 
             // For Sign protocol, we don't need to wrap the output with version like presign does
             // since the output is already in the correct format
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                public_output_value: parsed_signature_result.unwrap(),
+                public_output_value: signature,
                 malicious_parties,
                 private_output,
             })
@@ -984,6 +1009,7 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
 }
 
 pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
+    curve: DWalletCurve,
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
     session_id: CommitmentSizedNumber,
@@ -1015,32 +1041,41 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
             private_output,
         } => {
             let (dwallet_dkg_output, signature_output): <P::DKGSignDecentralizedParty as mpc::Party>::PublicOutput = bcs::from_bytes(&public_output_value)?;
-            let parsed_signature_result: DwalletMPCResult<Vec<u8>> =
-                parse_signature_from_sign_output(
-                    &sign_data.signature_algorithm,
-                    bcs::to_bytes(&signature_output)?,
-                );
 
-            if parsed_signature_result.is_err() {
-                error!(
-                    session_identifier=?session_id,
-                    ?parsed_signature_result,
-                    ?malicious_parties,
-                    signature_algorithm=?sign_data.signature_algorithm,
-                    should_never_happen = true,
-                    "failed to deserialize sign session result "
-                );
-                return Err(parsed_signature_result.err().unwrap());
-            }
+            let signature = match parse_signature_from_sign_output(
+                &sign_data.signature_algorithm,
+                bcs::to_bytes(&signature_output)?,
+            ) {
+                Ok(signature) => Ok(signature),
+                Err(e) => {
+                    error!(
+                        session_identifier=?session_id,
+                        ?e,
+                        ?malicious_parties,
+                        signature_algorithm=?sign_data.signature_algorithm,
+                        should_never_happen = true,
+                        "failed to deserialize sign session result "
+                    );
 
-            // For Sign protocol, we don't need to wrap the output with version like presign does
-            // since the output is a standardized signature
+                    Err(e)
+                }
+            }?;
+
+            let dwallet_dkg_output = bcs::to_bytes(&dwallet_dkg_output)?;
+            let public_key_bytes =
+                public_key_from_decentralized_dkg_output_by_curve_v2(curve, &dwallet_dkg_output)
+                    .map_err(|e| DwalletMPCError::InternalError(e.to_string()))?;
+            let dkg_public_output_value = bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2 {
+                public_key_bytes,
+                dkg_output: dwallet_dkg_output,
+            })?;
+
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value: bcs::to_bytes(&(
-                    bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2(bcs::to_bytes(
-                        &dwallet_dkg_output,
-                    )?))?,
-                    &parsed_signature_result.unwrap(),
+                    dkg_public_output_value,
+                    // For Sign protocol, we don't need to wrap the output with version like presign does
+                    // since the output is a standardized signature
+                    signature,
                 ))?,
                 malicious_parties,
                 private_output,

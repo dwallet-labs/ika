@@ -33,7 +33,6 @@ import {
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
-import { decodePublicKey } from './helpers';
 
 /**
  * Generate a private key for the given curve
@@ -492,11 +491,10 @@ async function signWithPublicShareAndVerify(
 
 	const signature = Uint8Array.from(sign.state.Completed?.signature ?? []);
 
-	const encodedPkOutput = await publicKeyFromDWalletOutput(
+	const pkOutput = await publicKeyFromDWalletOutput(
 		curve,
 		Uint8Array.from(dWallet.state.Active?.public_output ?? []),
 	);
-	const pkOutput = decodePublicKey(curve, encodedPkOutput);
 
 	// Verify signature only for algorithms where we have client-side verification
 	if (hashScheme !== Hash.Merlin) {
