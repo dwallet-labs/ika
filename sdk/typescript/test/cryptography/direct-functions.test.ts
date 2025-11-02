@@ -164,7 +164,7 @@ describe('Cryptography Direct Functions', () => {
 		// We expect it to not throw during parameter validation
 		// but may fail during actual cryptographic operations due to mock data
 		try {
-			const result = await createDKGUserOutput(mockProtocolParams, mockNetworkOutput, sessionId);
+			const result = await createDKGUserOutput(mockProtocolParams, mockNetworkOutput);
 			expect(result).toBeDefined();
 		} catch (error) {
 			// Expected to fail with mock data, but should have proper error handling
