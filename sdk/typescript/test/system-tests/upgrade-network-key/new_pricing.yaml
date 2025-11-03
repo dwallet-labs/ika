@@ -72,7 +72,7 @@
     gas_fee_reimbursement_sui_for_system_calls: 0
 - key:
     curve: 0
-    signature_algorithm: 0
+    signature_algorithm: null
     protocol: 9
   value:
     fee_ika: 0
