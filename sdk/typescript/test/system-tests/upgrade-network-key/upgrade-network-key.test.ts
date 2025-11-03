@@ -152,18 +152,18 @@ describe('system tests', () => {
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		// ------------ Create Ika Genesis ------------
 		const mainnetCreateIkaGenesisPath = `${TEST_ROOT_DIR}/mainnet-create-ika-genesis.sh`;
-		await execa({
-			stdout: ['pipe', 'inherit'],
-			stderr: ['pipe', 'inherit'],
-			cwd: TEST_ROOT_DIR,
-		})`${mainnetCreateIkaGenesisPath}`;
+		// await execa({
+		// 	stdout: ['pipe', 'inherit'],
+		// 	stderr: ['pipe', 'inherit'],
+		// 	cwd: TEST_ROOT_DIR,
+		// })`${mainnetCreateIkaGenesisPath}`;
 
 		await fs.copyFile(
 			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/ika_config.json`,
 			path.resolve(process.cwd(), '../../ika_config.json'),
 		);
 		console.log(`Ika genesis created, deploying ika network`);
-		await deployIkaNetwork();
+		// await deployIkaNetwork();
 		console.log('Ika network deployed, waiting for epoch switch');
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);
@@ -186,7 +186,7 @@ describe('system tests', () => {
 			ikaClient,
 		);
 		console.log(`Protocol Cap ID: ${protocolCapID}`);
-		return;
+		// return;
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		process.env.NOTIFIER_DOCKER_TAG = v2NetworkKeyDockerTag;
 		const kc = new KubeConfig();
