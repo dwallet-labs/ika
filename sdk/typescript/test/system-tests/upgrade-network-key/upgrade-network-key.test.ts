@@ -140,7 +140,8 @@ describe('system tests', () => {
 
 
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
-		const v2NetworkKeyDockerTag = 'itaylevy134/ika-node:v2key6';
+		const v2NetworkKeyDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-node:testnet-v1.1.2';
+		const v2NetworkKeyNotifierDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier:testnet-v1.1.2';
 
 		const testName = 'upgrade-network-key';
 		// Generate deterministic keypair for this test
@@ -188,7 +189,7 @@ describe('system tests', () => {
 		console.log(`Protocol Cap ID: ${protocolCapID}`);
 		// return;
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
-		process.env.NOTIFIER_DOCKER_TAG = v2NetworkKeyDockerTag;
+		process.env.NOTIFIER_DOCKER_TAG = v2NetworkKeyNotifierDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
 		// Restart each validator pod one by one to pick up the docker tag change
