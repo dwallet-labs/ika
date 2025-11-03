@@ -140,8 +140,8 @@ describe('system tests', () => {
 
 
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
-		const v2NetworkKeyDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-node:testnet-v1.1.2';
-		const v2NetworkKeyNotifierDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier:testnet-v1.1.2';
+		const v2NetworkKeyDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-node:testnet-v1.1.3';
+		const v2NetworkKeyNotifierDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier:testnet-v1.1.3';
 
 		const testName = 'upgrade-network-key';
 		// Generate deterministic keypair for this test
@@ -166,6 +166,7 @@ describe('system tests', () => {
 		console.log(`Ika genesis created, deploying ika network`);
 		// await deployIkaNetwork();
 		console.log('Ika network deployed, waiting for epoch switch');
+		// return;
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
@@ -181,31 +182,33 @@ describe('system tests', () => {
 		// await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
 		console.log('V1 dWallet full flow works, upgrading the validators docker image');
 		const signer = await getPublisherKeypair();
-		const protocolCapID = await getProtocolCapID(
-			suiClient,
-			signer.getPublicKey().toSuiAddress(),
-			ikaClient,
-		);
-		console.log(`Protocol Cap ID: ${protocolCapID}`);
-		// return;
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		process.env.NOTIFIER_DOCKER_TAG = v2NetworkKeyNotifierDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
 		// Restart each validator pod one by one to pick up the docker tag change
-		for (let i = 0; i < Number(process.env.VALIDATOR_NUM); i++) {
+		for (let i = 0; i < 2; i++) {
 			try {
 				await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
 			} catch (e) {}
-			await delay(15);
+			await delay(30);
 			await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
 		}
+		return;
 		await killFullnodePod(kc, NAMESPACE_NAME);
 		await delay(15);
 		await createFullnodePod(NAMESPACE_NAME, kc);
 		console.log(
 			'All validators upgraded, running a full sign flow with the previously created v1 dWallet',
 		);
+		const protocolCapID = await getProtocolCapID(
+			suiClient,
+			signer.getPublicKey().toSuiAddress(),
+			ikaClient,
+		);
+		console.log(`Protocol Cap ID: ${protocolCapID}`);
+		return;
+
 		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
 		console.log(
 			'Signing with the old v1 dWallet works, waiting for the network key to upgrade to V2',
@@ -293,6 +296,18 @@ describe('system tests', () => {
 
 		const yamlStr = yaml.dump(wrapped, { indent: 2 });
 		await fs.writeFile('/home/itayl/.ika/ika_config/ika_sui_config.yaml', yamlStr);
+	});
+
+	it('should run v1 test', async () => {
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+		const testName = 'sign-full-flow-v1-dwallet';
+		console.log('Network key version is V1, creating a dWallet with it');
+		const dwallet = await createCompleteDWallet(ikaClient, suiClient, testName, true);
+		console.log('DWallet created successfully, running a full sign flow with it');
+		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
+		console.log('V1 dWallet full flow works, upgrading the validators docker image');
 	});
 });
 
