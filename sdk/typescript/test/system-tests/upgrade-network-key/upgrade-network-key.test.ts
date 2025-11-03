@@ -12,7 +12,7 @@ import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
-	delay,
+	delay, findIkaConfigFile,
 	generateTestKeypair,
 	requestTestFaucetFunds,
 	runSignFullFlowWithDWallet,
@@ -127,6 +127,7 @@ async function testSignFullFlowWithAllCurves() {
 		'schnorrkel-merlin',
 	);
 }
+import yaml from "js-yaml";
 
 describe('system tests', () => {
 	it('run sign full flow with v1 dwallet', async () => {
@@ -284,6 +285,14 @@ describe('system tests', () => {
 		await testImportedDWalletFullFlowWithAllCurves();
 		console.log('Imported dWallet full flow works with all curves, test complete successfully');
 	}, 3_600_000);
+
+	it('should be chill', async () => {
+		const jsonData = JSON.parse(await fs.readFile(findIkaConfigFile(), "utf8"));
+		const wrapped = { envs: { localhost: jsonData } };
+
+		const yamlStr = yaml.dump(wrapped, { indent: 2 });
+		await fs.writeFile('/home/itayl/.ika/ika_config/ika_sui_config.yaml', yamlStr);
+	});
 });
 
 async function waitForV2NetworkKey(ikaClient: IkaClient) {
