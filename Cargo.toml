@@ -27,7 +27,7 @@ members = [
 ]
 [workspace.package]
 # This version string will be inherited by ika-core, ika-node, ika-tools, ika-sdk, and ika crates.
-version = "1.1.0"
+version = "1.1.4"
 
 [profile.release]
 # debug = 1 means line charts only, which is minimum needed for good stack traces
@@ -71,13 +71,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 # Dependencies that should be kept in sync through the whole workspace
 [workspace.dependencies]
-mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58e"}
-proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58e"}
-class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58e", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58e" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58e"}
-group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "8484e58e"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "8484e58e"}
+mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070"}
+proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070"}
+class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070"}
+group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "3ae2d070"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }
