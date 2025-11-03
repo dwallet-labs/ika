@@ -71,6 +71,8 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 # Dependencies that should be kept in sync through the whole workspace
 [workspace.dependencies]
+crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = ["serde"] }
+
 mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070"}
 proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070"}
 class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070", features = ["threshold"] }
@@ -310,8 +312,6 @@ sui-execution = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.5
 
 consensus-config = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
 consensus-core = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-
-crypto-bigint = { version = "0.7.0-pre.6", default-features = false, features = ["serde"] }
 
 ### Workspace Members ###
 dwallet-rng = { path = "crates/dwallet-rng" }
