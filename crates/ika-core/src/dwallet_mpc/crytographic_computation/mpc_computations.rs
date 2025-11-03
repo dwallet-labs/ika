@@ -473,7 +473,6 @@ impl ProtocolCryptographicData {
                                 ProtocolPublicParametersByCurve::Secp256k1(
                                     public_input.protocol_public_parameters.clone(),
                                 ),
-                                protocol_version,
                             )?;
                         }
 
@@ -642,7 +641,6 @@ impl ProtocolCryptographicData {
                             ProtocolPublicParametersByCurve::Secp256k1(
                                 public_input.protocol_public_parameters.clone(),
                             ),
-                            ProtocolVersion::from(1),
                         )?;
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {

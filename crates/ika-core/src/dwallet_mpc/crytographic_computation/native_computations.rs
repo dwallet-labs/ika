@@ -16,7 +16,6 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedUserSignedMessage,
 };
 use group::OsCsRng;
-use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
@@ -35,7 +34,6 @@ impl ProtocolCryptographicData {
     pub fn try_new_native(
         protocol_specific_data: &ProtocolData,
         public_input: PublicInput,
-        protocol_version: ProtocolVersion,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
             ProtocolData::MakeDWalletUserSecretKeySharesPublic { data, .. } => {
@@ -66,7 +64,6 @@ impl ProtocolCryptographicData {
                 ProtocolCryptographicData::EncryptedShareVerification {
                     data: data.clone(),
                     protocol_public_parameters: public_input.clone(),
-                    protocol_version,
                 }
             }
             _ => {
@@ -89,7 +86,6 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::EncryptedShareVerification {
                 data,
                 protocol_public_parameters,
-                protocol_version,
                 ..
             } => {
                 match verify_encrypted_share(
@@ -97,7 +93,6 @@ impl ProtocolCryptographicData {
                     &data.decentralized_public_output,
                     &data.encryption_key,
                     protocol_public_parameters.clone(),
-                    *protocol_version,
                 ) {
                     Ok(_) => Vec::new(),
                     Err(err) => return Err(err),
