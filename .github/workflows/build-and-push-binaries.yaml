@@ -142,8 +142,6 @@ jobs:
             --project="${GCP_PROJECT}" \
             --location="${GAR_LOCATION}" \
             --repository="${GAR_REPOSITORY}" \
-            --package="linux-${{ matrix.arch }}" \
-            --version="${{ inputs.network }}-${{ inputs.version }}" \
             artifacts
 
       - name: Upload binary artifact (one per arch)
