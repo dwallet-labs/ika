@@ -113,7 +113,7 @@ jobs:
           # cache per target (no per-binary split anymore)
           key: ${{ matrix.target }}
 
-      - name: Build both binaries for ${{ matrix.target }}
+      - name: Build all binaries for ${{ matrix.target }}
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
@@ -142,7 +142,7 @@ jobs:
             --project="${GCP_PROJECT}" \
             --location="${GAR_LOCATION}" \
             --repository="${GAR_REPOSITORY}" \
-            artifacts
+            ${{ inputs.network }}-${{ inputs.version }}-${{ matrix.arch }}.tar.gz
 
       - name: Upload binary artifact (one per arch)
         uses: actions/upload-artifact@v5

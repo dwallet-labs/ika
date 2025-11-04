@@ -77,7 +77,7 @@ jobs:
           # cache per target (no per-binary split anymore)
           key: ${{ matrix.target }}
 
-      - name: Build both binaries for ${{ matrix.target }}
+      - name: Build all binaries for ${{ matrix.target }}
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
