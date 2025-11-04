@@ -199,8 +199,10 @@ describe('system tests', () => {
 		// await delay(30);
 		// await createFullnodePod(NAMESPACE_NAME, kc);
 		console.log(
-			'Two validators upgraded, ',
+			'Two validators upgraded, making sure running a sign full flow with the partially upgraded network',
 		);
+		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, testName, false);
+
 		const protocolCapID = await getProtocolCapID(
 			suiClient,
 			signer.getPublicKey().toSuiAddress(),
