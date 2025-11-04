@@ -87,15 +87,15 @@ jobs:
 
       - name: Prepare binary artifact
         run: |
-          mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/${{ matrix.binary }} artifacts/${{ matrix.binary }}-linux-${{ matrix.arch }}
-          chmod +x artifacts/${{ matrix.binary }}-linux-${{ matrix.arch }}
+          mkdir -p artifacts/linux-${{ matrix.arch }}
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} artifacts/linux-${{ matrix.arch }}/${{ matrix.binary }}
+          chmod +x artifacts/linux-${{ matrix.arch }}/${{ matrix.binary }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.binary }}-linux-${{ matrix.arch }}
-          path: artifacts/${{ matrix.binary }}-linux-${{ matrix.arch }}
+          name: linux-${{ matrix.arch }}
+          path: artifacts/linux-${{ matrix.arch }}
           if-no-files-found: error
 
   summary:
