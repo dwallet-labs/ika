@@ -24,6 +24,12 @@ fi
 cp ../../../../target/debug/ika .
 BINARY_NAME="$(pwd)/ika"
 
+# Assert correct usage: 3 arguments required
+if [ "$#" -ne 3 ]; then
+  echo "Usage: $0 <protocol_cap_id> <new_pricing> <supported_curves_to_signature_algorithms_to_hash_schemes>"
+  exit 1
+fi
+
 pushd "$SUBDOMAIN"
 SUI_CONFIG_PATH=~/.sui/sui_config
 export PUBLISHER_DIR=publisher
@@ -37,5 +43,5 @@ protocol_cap_id=$1
 
 $BINARY_NAME protocol set-supported-and-pricing \
   --protocol-cap-id "$protocol_cap_id" \
-  --default-pricing "$(pwd)/new_pricing.yaml" \
-  --supported-curves-to-signature-algorithms-to-hash-schemes "$(pwd)/supported_curves_config.yaml"
+  --default-pricing "$2" \
+  --supported-curves-to-signature-algorithms-to-hash-schemes "$3"
