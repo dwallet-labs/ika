@@ -443,16 +443,47 @@ impl ProtocolCryptographicData {
                 protocol_version,
                 data,
                 ..
-            } => compute_imported_key_verification::<Secp256k1AsyncDKGProtocol>(
-                data.curve,
-                session_id,
-                party_id,
-                access_structure,
-                advance_request,
-                &public_input.clone(),
-                protocol_version,
-                &mut rng,
-            ),
+            } => {
+                let result = compute_imported_key_verification::<Secp256k1AsyncDKGProtocol>(
+                    data.curve,
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    &public_input.clone(),
+                    protocol_version,
+                    &mut rng,
+                )?;
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        if protocol_version.as_u64() == 1 {
+                            verify_encrypted_share(
+                                &data.encrypted_centralized_secret_share_and_proof,
+                                &public_output_value,
+                                &data.encryption_key,
+                                // DKG second is supported only for secp256k1.
+                                ProtocolPublicParametersByCurve::Secp256k1(
+                                    public_input.protocol_public_parameters.clone(),
+                                ),
+                            )?;
+                        }
+
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
             ProtocolCryptographicData::ImportedKeyVerification {
                 public_input:
                     DWalletImportedKeyVerificationPublicInputByCurve::Secp256r1(public_input),
@@ -610,7 +641,6 @@ impl ProtocolCryptographicData {
                             ProtocolPublicParametersByCurve::Secp256k1(
                                 public_input.protocol_public_parameters.clone(),
                             ),
-                            ProtocolVersion::from(1),
                         )?;
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {

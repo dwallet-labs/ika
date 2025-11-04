@@ -3,7 +3,7 @@
 
 use crate::mpc_protocol_configuration::try_into_curve;
 use class_groups::CiphertextSpaceValue;
-use class_groups::reconfiguration::Secp256k1Party;
+use class_groups::reconfiguration_backward_compatible::Secp256k1Party;
 use crypto_bigint::{Encoding, Uint};
 use enum_dispatch::enum_dispatch;
 use group::secp256k1;

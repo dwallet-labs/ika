@@ -4,7 +4,7 @@
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
-use class_groups::reconfiguration::PublicInput;
+use class_groups::reconfiguration_backward_compatible::PublicInput;
 use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
 };

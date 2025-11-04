@@ -7,7 +7,6 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedEncryptedUserShare, VersionedEncryptionKeyValue,
 };
 use group::OsCsRng;
-use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
@@ -25,7 +24,6 @@ pub(crate) fn verify_encrypted_share(
     decentralized_public_output: &SerializedWrappedMPCPublicOutput,
     encryption_key_value: &[u8],
     protocol_public_parameters: ProtocolPublicParametersByCurve,
-    protocol_version: ProtocolVersion,
 ) -> DwalletMPCResult<()> {
     let encrypted_centralized_secret_share_and_proof: VersionedEncryptedUserShare =
         bcs::from_bytes(encrypted_centralized_secret_share_and_proof)?;
@@ -44,7 +42,6 @@ pub(crate) fn verify_encrypted_share(
             decentralized_public_output,
             encryption_key_value,
             protocol_public_parameters,
-            protocol_version,
         )
         .map_err(|e| DwalletMPCError::EncryptedUserShareVerificationFailed(e.to_string())),
         (
@@ -60,12 +57,43 @@ pub(crate) fn verify_encrypted_share(
     }
 }
 
+pub(crate) fn deserialize_backward_compatible_secp256k1_encryption_key_value(
+    encryption_key_value: &[u8],
+) -> bcs::Result<
+    class_groups::CompactIbqf<{ class_groups::SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>,
+> {
+    match bcs::from_bytes(encryption_key_value) {
+        Ok(VersionedEncryptionKeyValue::V1(encryption_key_value)) => {
+            bcs::from_bytes(&encryption_key_value).map_err(|e| {
+                bcs::Error::Custom(format!("Failed to deserialize encryption key value: {}", e))
+            })
+        }
+        Err(_) => {
+            // Try backward compatible version
+            let representative: class_groups::Ibqf<
+                { class_groups::SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+            > = bcs::from_bytes(encryption_key_value).map_err(|e| {
+                bcs::Error::Custom(format!(
+                    "Failed to deserialize backward-compatible encryption key: {}",
+                    e
+                ))
+            })?;
+
+            representative.try_into().map_err(|e| {
+                bcs::Error::Custom(format!(
+                    "Failed to compress backward-compatible encryption key: {}",
+                    e
+                ))
+            })
+        }
+    }
+}
+
 fn verify_centralized_secret_key_share_proof_v1(
     encrypted_centralized_secret_share_and_proof: MPCPublicOutput,
     dkg_public_output: MPCPublicOutput,
     encryption_key_value: &[u8],
     protocol_public_parameters: ProtocolPublicParametersByCurve,
-    protocol_version: ProtocolVersion,
 ) -> anyhow::Result<()> {
     let ProtocolPublicParametersByCurve::Secp256k1(protocol_public_parameters) =
         protocol_public_parameters
@@ -80,44 +108,8 @@ fn verify_centralized_secret_key_share_proof_v1(
     let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput =
         decentralized_output.into();
 
-    let encryption_key_value = match protocol_version.as_u64() {
-        1 => {
-            let representative: class_groups::Ibqf<
-                { class_groups::SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-            > = bcs::from_bytes(encryption_key_value).map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to deserialize backward-compatible encryption key: {}",
-                    e
-                )
-            })?;
-
-            let encryption_key_value: class_groups::CompactIbqf<
-                { class_groups::SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-            > = representative.try_into().map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to compress backward-compatible encryption key: {}",
-                    e
-                )
-            })?;
-
-            encryption_key_value
-        }
-        2 => {
-            let VersionedEncryptionKeyValue::V1(encryption_key_value) =
-                bcs::from_bytes(encryption_key_value).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to deserialize versioned encryption key value: {}",
-                        e
-                    )
-                })?;
-
-            bcs::from_bytes(&encryption_key_value)
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize encryption key value: {}", e))?
-        }
-        v => {
-            return Err(anyhow::anyhow!("Unsupported protocol config version: {v}",));
-        }
-    };
+    let encryption_key_value =
+        deserialize_backward_compatible_secp256k1_encryption_key_value(encryption_key_value)?;
 
     <ECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_parameters,

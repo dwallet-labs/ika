@@ -120,7 +120,6 @@ pub(crate) enum ProtocolCryptographicData {
     EncryptedShareVerification {
         data: EncryptedShareVerificationData,
         protocol_public_parameters: ProtocolPublicParametersByCurve,
-        protocol_version: ProtocolVersion,
     },
 
     PartialSignatureVerification {
@@ -409,11 +408,9 @@ impl DWalletMPCManager {
         protocol_version: &ProtocolVersion,
     ) -> Result<Option<ProtocolCryptographicData>, DwalletMPCError> {
         match session_type {
-            SessionComputationType::Native => ProtocolCryptographicData::try_new_native(
-                protocol_data,
-                public_input,
-                *protocol_version,
-            ),
+            SessionComputationType::Native => {
+                ProtocolCryptographicData::try_new_native(protocol_data, public_input)
+            }
             SessionComputationType::MPC {
                 messages_by_consensus_round,
                 ..
