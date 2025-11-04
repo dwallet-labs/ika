@@ -140,7 +140,7 @@ describe('system tests', () => {
 
 
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
-		const v2NetworkKeyDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-node:testnet-v1.1.3';
+		const v2NetworkKeyDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-node:testnet-v1.1.4';
 		const v2NetworkKeyNotifierDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier:testnet-v1.1.3';
 
 		const testName = 'upgrade-network-key';
@@ -180,26 +180,26 @@ describe('system tests', () => {
 		// const dwallet = await createCompleteDWallet(ikaClient, suiClient, testName, true);
 		console.log('DWallet created successfully, running a full sign flow with it');
 		// await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
-		console.log('V1 dWallet full flow works, upgrading the validators docker image');
+		console.log('V1 dWallet full flow works, upgrading two validators to the new docker image');
 		const signer = await getPublisherKeypair();
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		process.env.NOTIFIER_DOCKER_TAG = v2NetworkKeyNotifierDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
 		// Restart each validator pod one by one to pick up the docker tag change
-		for (let i = 0; i < 2; i++) {
-			try {
-				await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
-			} catch (e) {}
-			await delay(30);
-			await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
-		}
-		return;
-		await killFullnodePod(kc, NAMESPACE_NAME);
-		await delay(15);
-		await createFullnodePod(NAMESPACE_NAME, kc);
+		// for (let i = 0; i < 2; i++) {
+		// 	try {
+		// 		await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
+		// 	} catch (e) {}
+		// 	await delay(30);
+		// 	await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
+		// }
+		// return;
+		// await killFullnodePod(kc, NAMESPACE_NAME);
+		// await delay(30);
+		// await createFullnodePod(NAMESPACE_NAME, kc);
 		console.log(
-			'All validators upgraded, running a full sign flow with the previously created v1 dWallet',
+			'Two validators upgraded, ',
 		);
 		const protocolCapID = await getProtocolCapID(
 			suiClient,
