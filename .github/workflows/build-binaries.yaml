@@ -100,7 +100,7 @@ jobs:
           chmod +x "$outdir/ika" "$outdir/ika-node"
 
       - name: Upload binary artifact (one per arch)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: linux-${{ matrix.arch }}
           path: artifacts/linux-${{ matrix.arch }}
