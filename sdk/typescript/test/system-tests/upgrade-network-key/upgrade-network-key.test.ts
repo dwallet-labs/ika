@@ -5,38 +5,21 @@ import * as TOML from '@iarna/toml';
 import { network_key_version } from '@ika.xyz/ika-wasm';
 import { KubeConfig } from '@kubernetes/client-node';
 import { execa } from 'execa';
+import yaml from "js-yaml";
 import { describe, expect, it } from 'vitest';
+
+
 
 import { Curve, Hash, IkaClient, SignatureAlgorithm } from '../../../src';
 import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
-import {
-	createTestIkaClient,
-	createTestSuiClient,
-	delay, findIkaConfigFile,
-	generateTestKeypair,
-	requestTestFaucetFunds,
-	runSignFullFlowWithDWallet,
-	runSignFullFlowWithV1Dwallet,
-	waitForEpochSwitch,
-} from '../../helpers/test-utils';
-import {
-	deployUpgradedPackage,
-	getProtocolCapID,
-	getPublisherKeypair,
-	migrateCoordinator,
-} from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
-import { createConfigMaps } from '../config-map';
-import { deployIkaNetwork, NAMESPACE_NAME, NETWORK_SERVICE_NAME, TEST_ROOT_DIR } from '../globals';
-import {
-	createFullnodePod,
-	createPods,
-	createValidatorPod,
-	killAllPods,
-	killFullnodePod,
-	killValidatorPod
-} from '../pods';
+import { createTestIkaClient, createTestSuiClient, delay, findIkaConfigFile, generateTestKeypair, requestTestFaucetFunds, runSignFullFlowWithDWallet, runSignFullFlowWithV1Dwallet, waitForEpochSwitch } from '../../helpers/test-utils';
+import { deployUpgradedPackage, getProtocolCapID, getPublisherKeypair, migrateCoordinator } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { testSignCombination } from '../../v2/all-combinations.test';
 import { testImportedKeyScenario } from '../../v2/imported-key.test';
+import { createConfigMaps } from '../config-map';
+import { deployIkaNetwork, NAMESPACE_NAME, NETWORK_SERVICE_NAME, TEST_ROOT_DIR } from '../globals';
+import { createFullnodePod, createPods, createValidatorPod, killAllPods, killFullnodePod, killValidatorPod } from '../pods';
+
 
 async function testImportedDWalletFullFlowWithAllCurves() {
 	await testImportedKeyScenario(
@@ -127,7 +110,19 @@ async function testSignFullFlowWithAllCurves() {
 		'schnorrkel-merlin',
 	);
 }
-import yaml from "js-yaml";
+
+
+async function upgradeValidatorsDockerImage(kc: KubeConfig, startIndex = 0, endIndex?: number) {
+	for (let i = startIndex; i < endIndex; i++) {
+		try {
+			await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
+		} catch (e) {}
+	}
+	await delay(30);
+	for (let i = startIndex; i < startIndex; i++) {
+		await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
+	}
+}
 
 describe('system tests', () => {
 	it('run sign full flow with v1 dwallet', async () => {
@@ -138,10 +133,11 @@ describe('system tests', () => {
 		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, 'sign-full-flow-v1-dwallet');
 	});
 
-
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
-		const v2NetworkKeyDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-node:testnet-v1.1.4';
-		const v2NetworkKeyNotifierDockerTag = 'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier:testnet-v1.1.3';
+		const v2NetworkKeyDockerTag =
+			'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-node:testnet-v1.1.4';
+		const v2NetworkKeyNotifierDockerTag =
+			'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier:testnet-v1.1.3';
 
 		const testName = 'upgrade-network-key';
 		// Generate deterministic keypair for this test
@@ -221,8 +217,9 @@ describe('system tests', () => {
 		})`${setSupportedAndPricingPath} ${protocolCapID} ${pre_move_upgrade_pricing_path} ${pre_supported_curves_config}`;
 
 		console.log(
-			'network configuration has been upgraded, upgrading the rest of the validators binary');
-		await
+			'network configuration has been upgraded, upgrading the rest of the validators binary',
+		);
+		await upgradeValidatorsDockerImage(kc);
 
 		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
 		console.log(
@@ -306,7 +303,7 @@ describe('system tests', () => {
 	}, 3_600_000);
 
 	it('should be chill', async () => {
-		const jsonData = JSON.parse(await fs.readFile(findIkaConfigFile(), "utf8"));
+		const jsonData = JSON.parse(await fs.readFile(findIkaConfigFile(), 'utf8'));
 		const wrapped = { envs: { localhost: jsonData } };
 
 		const yamlStr = yaml.dump(wrapped, { indent: 2 });
