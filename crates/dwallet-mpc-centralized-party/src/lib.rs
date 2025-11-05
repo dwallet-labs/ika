@@ -1115,6 +1115,17 @@ pub fn generate_cg_keypair_from_seed_inner<P: Protocol>(
     ))
 }
 
+pub fn generate_cg_keypair_from_seed_v1(seed: [u8; 32]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
+    let decryption_key = Secp256k1DKGProtocol::generate_decryption_key(&mut rng)?;
+    let encryption_key_value =
+        Secp256k1DKGProtocol::encryption_key_from_decryption_key(decryption_key.clone())?;
+    Ok((
+        bcs::to_bytes(&encryption_key_value)?,
+        bcs::to_bytes(&decryption_key)?,
+    ))
+}
+
 /// Encrypts the given secret key share with the given encryption key.
 /// Returns a serialized tuple containing the `proof of encryption`,
 /// and an encrypted `secret key share`.
