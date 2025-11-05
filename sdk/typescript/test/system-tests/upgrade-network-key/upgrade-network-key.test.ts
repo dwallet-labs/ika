@@ -153,6 +153,7 @@ describe('system tests', () => {
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		// ------------ Create Ika Genesis ------------
 		const mainnetCreateIkaGenesisPath = `${TEST_ROOT_DIR}/mainnet-create-ika-genesis.sh`;
+		const setSupportedAndPricingPath = `${TEST_ROOT_DIR}/set_supported_and_pricing.sh`;
 		// await execa({
 		// 	stdout: ['pipe', 'inherit'],
 		// 	stderr: ['pipe', 'inherit'],
@@ -203,13 +204,25 @@ describe('system tests', () => {
 		);
 		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, testName, false);
 
+		console.log('Sign full flow works, upgrading the network pricing and curve configuration');
+
 		const protocolCapID = await getProtocolCapID(
 			suiClient,
 			signer.getPublicKey().toSuiAddress(),
 			ikaClient,
 		);
-		console.log(`Protocol Cap ID: ${protocolCapID}`);
-		return;
+
+		const pre_move_upgrade_pricing_path = `${TEST_ROOT_DIR}/upgrade-network-key/pre_default_pricing_test.yaml`;
+		const pre_supported_curves_config = `${TEST_ROOT_DIR}/upgrade-network-key/pre_supported_curves_to_signature_algorithms_to_hash_schemes.yaml`;
+		await execa({
+			stdout: ['pipe', 'inherit'],
+			stderr: ['pipe', 'inherit'],
+			cwd: TEST_ROOT_DIR,
+		})`${setSupportedAndPricingPath} ${protocolCapID} ${pre_move_upgrade_pricing_path} ${pre_supported_curves_config}`;
+
+		console.log(
+			'network configuration has been upgraded, upgrading the rest of the validators binary');
+		await
 
 		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
 		console.log(
