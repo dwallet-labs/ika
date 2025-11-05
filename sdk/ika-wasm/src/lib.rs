@@ -111,6 +111,7 @@ pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsV
     Ok(serde_wasm_bindgen::to_value(&(public_key, private_key))?)
 }
 
+#[wasm_bindgen]
 pub fn generate_secp_cg_keypair_from_seed_v1(seed: &[u8]) -> Result<JsValue, JsError> {
     let seed: [u8; 32] = seed
         .try_into()
