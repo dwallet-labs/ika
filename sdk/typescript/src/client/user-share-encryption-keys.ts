@@ -6,12 +6,13 @@ import { Ed25519Keypair, Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { keccak_256 } from '@noble/hashes/sha3';
 
 import {
-	createClassGroupsKeypair,
+	createClassGroupsKeypair, createClassGroupsKeypairV1,
 	userAndNetworkDKGOutputMatch,
 	verifyAndGetDWalletDKGPublicOutput,
 } from './cryptography.js';
 import { fromCurveToNumber, fromNumberToCurve } from './hash-signature-validation.js';
-import type { Curve, DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './types.js';
+import { Curve } from './types.js';
+import type { DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './types.js';
 import { encodeToASCII } from './utils.js';
 import { decrypt_user_share } from './wasm-loader.js';
 
@@ -85,6 +86,40 @@ export class UserShareEncryptionKeys {
 		);
 
 		const classGroupsKeypair = await createClassGroupsKeypair(classGroupsSeed, curve);
+		const encryptionSignerKey = Ed25519Keypair.deriveKeypairFromSeed(
+			toHex(encryptionSignerKeySeed),
+		);
+
+		return new UserShareEncryptionKeys(
+			new Uint8Array(classGroupsKeypair.encryptionKey),
+			new Uint8Array(classGroupsKeypair.decryptionKey),
+			encryptionSignerKey,
+			curve,
+		);
+	}
+
+	/**
+	 * Creates UserShareEncryptionKeys from a root seed key (Uint8Array).
+	 *
+	 * @param rootSeedKey - The root seed key to generate keys from
+	 * @param curve - The curve to use for key generation
+	 * @returns A new UserShareEncryptionKeys instance
+	 */
+	static async fromRootSeedKeyV1(rootSeedKey: Uint8Array): Promise<UserShareEncryptionKeys> {
+		const curve = Curve.SECP256K1;
+		const classGroupsSeed = UserShareEncryptionKeys.hash(
+			UserShareEncryptionKeys.domainSeparators.classGroups,
+			rootSeedKey,
+			curve,
+		);
+
+		const encryptionSignerKeySeed = UserShareEncryptionKeys.hash(
+			UserShareEncryptionKeys.domainSeparators.encryptionSignerKey,
+			rootSeedKey,
+			curve,
+		);
+
+		const classGroupsKeypair = await createClassGroupsKeypairV1(classGroupsSeed, curve);
 		const encryptionSignerKey = Ed25519Keypair.deriveKeypairFromSeed(
 			toHex(encryptionSignerKeySeed),
 		);

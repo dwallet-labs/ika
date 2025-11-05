@@ -36,7 +36,7 @@ import {
 	public_key_from_dwallet_output,
 	reconfiguration_public_output_to_protocol_pp,
 	verify_secp_signature,
-	verify_user_share,
+	verify_user_share, generate_secp_cg_keypair_from_seed_v1,
 } from './wasm-loader.js';
 
 /**
@@ -99,6 +99,49 @@ export async function createClassGroupsKeypair(
 	) {
 		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed(
 			fromCurveToNumber(curve),
+			seed,
+		);
+	} else {
+		throw new Error(
+			'Only SECP256K1, SECP256R1, RISTRETTO, and ED25519 curves are supported for now',
+		);
+	}
+
+	return {
+		encryptionKey: Uint8Array.from(encryptionKey),
+		decryptionKey: Uint8Array.from(decryptionKey),
+	};
+}
+
+/**
+ * Create a class groups keypair from a seed for encryption/decryption operations.
+ * Uses SECP256k1, SECP256r1, Ristretto, or ED25519 curves with class groups for homomorphic encryption capabilities.
+ *
+ * @param seed - The seed bytes to generate the keypair from
+ * @param curve - The curve to use for key generation
+ * @returns Object containing the encryption key (public) and decryption key (private)
+ */
+export async function createClassGroupsKeypairV1(
+	seed: Uint8Array,
+	curve: Curve,
+): Promise<{
+	encryptionKey: Uint8Array;
+	decryptionKey: Uint8Array;
+}> {
+	if (seed.length !== 32) {
+		throw new Error('Seed must be 32 bytes');
+	}
+
+	let encryptionKey: Uint8Array;
+	let decryptionKey: Uint8Array;
+
+	if (
+		curve === Curve.SECP256K1 ||
+		curve === Curve.SECP256R1 ||
+		curve === Curve.RISTRETTO ||
+		curve === Curve.ED25519
+	) {
+		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed_v1(
 			seed,
 		);
 	} else {

@@ -73,6 +73,13 @@ export async function generate_secp_cg_keypair_from_seed(
 	return wasm.generate_secp_cg_keypair_from_seed(curve, seed);
 }
 
+export async function generate_secp_cg_keypair_from_seed_v1(
+	seed: Uint8Array,
+): Promise<[Uint8Array, Uint8Array]> {
+	const wasm = await getWasmModule();
+	return wasm.generate_secp_cg_keypair_from_seed_v1(seed);
+}
+
 export async function create_dkg_centralized_output_v1(
 	protocolPublicParameters: Uint8Array,
 	networkFirstRoundOutput: Uint8Array,

@@ -15,7 +15,7 @@ import {
 	createTestSuiClient,
 	delay,
 	findIkaConfigFile,
-	generateTestKeypair,
+	generateTestKeypair, generateTestKeypairV1,
 	requestTestFaucetFunds,
 	runSignFullFlowWithDWallet,
 	runSignFullFlowWithV1Dwallet,
@@ -159,7 +159,7 @@ describe('system tests', () => {
 
 		const testName = 'upgrade-network-key';
 		const { userShareEncryptionKeys, signerPublicKey, signerAddress } =
-			await generateTestKeypair(testName);
+			await generateTestKeypairV1(testName);
 		await requestTestFaucetFunds(signerAddress);
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		const mainnetCreateIkaGenesisPath = `${TEST_ROOT_DIR}/mainnet-create-ika-genesis.sh`;
