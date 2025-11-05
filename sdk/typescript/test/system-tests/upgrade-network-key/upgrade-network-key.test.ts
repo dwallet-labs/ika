@@ -150,51 +150,39 @@ describe('system tests', () => {
 		// ------------ Create Ika Genesis ------------
 		const mainnetCreateIkaGenesisPath = `${TEST_ROOT_DIR}/mainnet-create-ika-genesis.sh`;
 		const setSupportedAndPricingPath = `${TEST_ROOT_DIR}/set_supported_and_pricing.sh`;
-		// await execa({
-		// 	stdout: ['pipe', 'inherit'],
-		// 	stderr: ['pipe', 'inherit'],
-		// 	cwd: TEST_ROOT_DIR,
-		// })`${mainnetCreateIkaGenesisPath}`;
+		await execa({
+			stdout: ['pipe', 'inherit'],
+			stderr: ['pipe', 'inherit'],
+			cwd: TEST_ROOT_DIR,
+		})`${mainnetCreateIkaGenesisPath}`;
 
 		await fs.copyFile(
 			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/ika_config.json`,
 			path.resolve(process.cwd(), '../../ika_config.json'),
 		);
 		console.log(`Ika genesis created, deploying ika network`);
-		// await deployIkaNetwork();
+		await deployIkaNetwork();
 		console.log('Ika network deployed, waiting for epoch switch');
-		// return;
 		const suiClient = createTestSuiClient();
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
-		// await waitForEpochSwitch(ikaClient);
+		await waitForEpochSwitch(ikaClient);
 		console.log('Epoch switched, verifying the network key version is V1');
-		// const networkKey = await ikaClient.getConfiguredNetworkEncryptionKey();
-		// let networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.networkDKGOutputID);
-		// const networkKeyVersion = network_key_version(networkKeyBytes);
-		// expect(networkKeyVersion).toBe(1);
+		const networkKey = await ikaClient.getConfiguredNetworkEncryptionKey();
+		let networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.networkDKGOutputID);
+		const networkKeyVersion = network_key_version(networkKeyBytes);
+		expect(networkKeyVersion).toBe(1);
 		console.log('Network key version is V1, creating a dWallet with it');
-		// const dwallet = await createCompleteDWallet(ikaClient, suiClient, testName, true);
+		const dwallet = await createCompleteDWallet(ikaClient, suiClient, testName, true);
 		console.log('DWallet created successfully, running a full sign flow with it');
-		// await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
+		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
 		console.log('V1 dWallet full flow works, upgrading two validators to the new docker image');
 		const signer = await getPublisherKeypair();
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		process.env.NOTIFIER_DOCKER_TAG = v2NetworkKeyNotifierDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
-		// Restart each validator pod one by one to pick up the docker tag change
-		// for (let i = 0; i < 2; i++) {
-		// 	try {
-		// 		await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
-		// 	} catch (e) {}
-		// 	await delay(30);
-		// 	await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
-		// }
-		// return;
-		// await killFullnodePod(kc, NAMESPACE_NAME);
-		// await delay(30);
-		// await createFullnodePod(NAMESPACE_NAME, kc);
+		await upgradeValidatorsDockerImage(kc, 0, 2);
 		console.log(
 			'Two validators upgraded, making sure running a sign full flow with the partially upgraded network',
 		);
@@ -219,7 +207,8 @@ describe('system tests', () => {
 		console.log(
 			'network configuration has been upgraded, upgrading the rest of the validators binary',
 		);
-		await upgradeValidatorsDockerImage(kc);
+		await upgradeValidatorsDockerImage(kc, 2, Number(process.env.VALIDATOR_NUM));
+		console.log('All validators upgraded, running a sign full flow with the old v1 dWallet');
 
 		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
 		console.log(
@@ -227,7 +216,6 @@ describe('system tests', () => {
 		);
 		await waitForV2NetworkKey(ikaClient);
 		console.log('Network key upgraded to V2, verifying the v1 dWallet full flow still works');
-		await delay(3); // wait for a few seconds to release the gas objects
 		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
 		console.log(
 			'V1 dWallet full flow works with previously created dWallet, creating a new v1 dWallet and verifying it works',
