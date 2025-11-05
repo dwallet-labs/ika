@@ -141,7 +141,7 @@ jobs:
             --repository="${GAR_REPOSITORY}" \
             --package="linux-${{ matrix.arch }}" \
             --version="${{ inputs.network }}-${{ inputs.version }}" \
-            --source="${{ inputs.network }}-${{ inputs.version }}-linux-${{ matrix.arch }}.tar.gz"
+            --source-directory="artifacts/linux-${{ matrix.arch }}"
 
       - name: Upload binary artifact (one per arch)
         uses: actions/upload-artifact@v5
