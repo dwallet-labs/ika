@@ -140,14 +140,10 @@ describe('system tests', () => {
 			'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier:testnet-v1.1.3';
 
 		const testName = 'upgrade-network-key';
-		// Generate deterministic keypair for this test
 		const { userShareEncryptionKeys, signerPublicKey, signerAddress } =
 			await generateTestKeypair(testName);
-
-		// Request faucet funds for the test address
 		await requestTestFaucetFunds(signerAddress);
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
-		// ------------ Create Ika Genesis ------------
 		const mainnetCreateIkaGenesisPath = `${TEST_ROOT_DIR}/mainnet-create-ika-genesis.sh`;
 		const setSupportedAndPricingPath = `${TEST_ROOT_DIR}/set_supported_and_pricing.sh`;
 		await execa({
@@ -270,6 +266,14 @@ describe('system tests', () => {
 		console.log('running the migration to the upgraded package');
 
 		await migrateCoordinator(suiClient, signer, ikaClient, protocolCapID, upgradedPackageID);
+
+		const post_move_upgrade_pricing_path = `${TEST_ROOT_DIR}/upgrade-network-key/post_default_pricing_test.yaml`;
+		const post_supported_curves_config = `${TEST_ROOT_DIR}/upgrade-network-key/post_supported_curves_to_signature_algorithms_to_hash_schemes.yaml`;
+		await execa({
+			stdout: ['pipe', 'inherit'],
+			stderr: ['pipe', 'inherit'],
+			cwd: TEST_ROOT_DIR,
+		})`${setSupportedAndPricingPath} ${protocolCapID} ${post_move_upgrade_pricing_path} ${post_supported_curves_config}`;
 
 		console.log('Migration complete, updating the validators with the new package ID');
 		await updateOperatorsConfigWithNewPackageID(upgradedPackageID);
