@@ -878,7 +878,7 @@ export async function testSignV1(
 			signatureAlgorithm,
 			hashScheme,
 			message,
-			curve: Curve.SECP256K1
+			curve: Curve.SECP256K1,
 		});
 
 		await ikaTransaction.requestSignWithImportedKey({

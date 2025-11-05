@@ -29,8 +29,10 @@ import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-
 import {
 	createCompleteDWallet,
 	createCompleteDWalletV2,
-	testPresign, testPresignV1,
-	testSign, testSignV1,
+	testPresign,
+	testPresignV1,
+	testSign,
+	testSignV1,
 } from './dwallet-test-helpers';
 
 // Store random seeds per test to ensure deterministic behavior within each test

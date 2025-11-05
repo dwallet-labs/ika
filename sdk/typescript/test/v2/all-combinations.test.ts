@@ -399,7 +399,12 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 	// EdDSA + ED25519 combination (1 test)
 	describe('EdDSA on ED25519', () => {
 		it('should work with SHA512', async () => {
-			await testSignCombination(Curve.ED25519, SignatureAlgorithm.EdDSA, Hash.SHA512, 'eddsa-sha512');
+			await testSignCombination(
+				Curve.ED25519,
+				SignatureAlgorithm.EdDSA,
+				Hash.SHA512,
+				'eddsa-sha512',
+			);
 		});
 	});
 

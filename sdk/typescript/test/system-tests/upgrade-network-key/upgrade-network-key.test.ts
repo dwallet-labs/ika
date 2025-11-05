@@ -5,21 +5,40 @@ import * as TOML from '@iarna/toml';
 import { network_key_version } from '@ika.xyz/ika-wasm';
 import { KubeConfig } from '@kubernetes/client-node';
 import { execa } from 'execa';
-import yaml from "js-yaml";
+import yaml from 'js-yaml';
 import { describe, expect, it } from 'vitest';
-
-
 
 import { Curve, Hash, IkaClient, SignatureAlgorithm } from '../../../src';
 import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
-import { createTestIkaClient, createTestSuiClient, delay, findIkaConfigFile, generateTestKeypair, requestTestFaucetFunds, runSignFullFlowWithDWallet, runSignFullFlowWithV1Dwallet, waitForEpochSwitch } from '../../helpers/test-utils';
-import { deployUpgradedPackage, getProtocolCapID, getPublisherKeypair, migrateCoordinator } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
+import {
+	createTestIkaClient,
+	createTestSuiClient,
+	delay,
+	findIkaConfigFile,
+	generateTestKeypair,
+	requestTestFaucetFunds,
+	runSignFullFlowWithDWallet,
+	runSignFullFlowWithV1Dwallet,
+	waitForEpochSwitch,
+} from '../../helpers/test-utils';
+import {
+	deployUpgradedPackage,
+	getProtocolCapID,
+	getPublisherKeypair,
+	migrateCoordinator,
+} from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
 import { testSignCombination } from '../../v2/all-combinations.test';
 import { testImportedKeyScenario } from '../../v2/imported-key.test';
 import { createConfigMaps } from '../config-map';
 import { deployIkaNetwork, NAMESPACE_NAME, NETWORK_SERVICE_NAME, TEST_ROOT_DIR } from '../globals';
-import { createFullnodePod, createPods, createValidatorPod, killAllPods, killFullnodePod, killValidatorPod } from '../pods';
-
+import {
+	createFullnodePod,
+	createPods,
+	createValidatorPod,
+	killAllPods,
+	killFullnodePod,
+	killValidatorPod,
+} from '../pods';
 
 async function testImportedDWalletFullFlowWithAllCurves() {
 	await testImportedKeyScenario(
@@ -110,7 +129,6 @@ async function testSignFullFlowWithAllCurves() {
 		'schnorrkel-merlin',
 	);
 }
-
 
 async function upgradeValidatorsDockerImage(kc: KubeConfig, startIndex = 0, endIndex?: number) {
 	for (let i = startIndex; i < endIndex; i++) {
