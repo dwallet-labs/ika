@@ -6,7 +6,6 @@ import type { PublicKey } from '@mysten/sui/cryptography';
 import { SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { randomBytes } from '@noble/hashes/utils.js';
-import sha3 from 'sha3';
 
 import {
 	fromCurveAndSignatureAlgorithmAndHashToNumbers,
