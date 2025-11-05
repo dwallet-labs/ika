@@ -230,6 +230,9 @@ describe('system tests', () => {
 			'network configuration has been upgraded, upgrading the rest of the validators binary',
 		);
 		await upgradeValidatorsDockerImage(kc, 2, Number(process.env.VALIDATOR_NUM));
+		await killFullnodePod(kc, NAMESPACE_NAME);
+		await delay(30);
+		await createFullnodePod(NAMESPACE_NAME, kc);
 		console.log('All validators upgraded, running a sign full flow with the old v1 dWallet');
 
 		// await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
