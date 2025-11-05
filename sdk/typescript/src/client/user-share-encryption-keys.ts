@@ -6,7 +6,8 @@ import { Ed25519Keypair, Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { keccak_256 } from '@noble/hashes/sha3';
 
 import {
-	createClassGroupsKeypair, createClassGroupsKeypairV1,
+	createClassGroupsKeypair,
+	createClassGroupsKeypairV1,
 	userAndNetworkDKGOutputMatch,
 	verifyAndGetDWalletDKGPublicOutput,
 } from './cryptography.js';

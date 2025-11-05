@@ -30,13 +30,14 @@ import {
 	create_sign_centralized_party_message as create_sign_user_message,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
+	generate_secp_cg_keypair_from_seed_v1,
 	network_dkg_public_output_to_protocol_pp,
 	parse_signature_from_sign_output,
 	public_key_from_centralized_dkg_output,
 	public_key_from_dwallet_output,
 	reconfiguration_public_output_to_protocol_pp,
 	verify_secp_signature,
-	verify_user_share, generate_secp_cg_keypair_from_seed_v1,
+	verify_user_share,
 } from './wasm-loader.js';
 
 /**
@@ -141,9 +142,7 @@ export async function createClassGroupsKeypairV1(
 		curve === Curve.RISTRETTO ||
 		curve === Curve.ED25519
 	) {
-		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed_v1(
-			seed,
-		);
+		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed_v1(seed);
 	} else {
 		throw new Error(
 			'Only SECP256K1, SECP256R1, RISTRETTO, and ED25519 curves are supported for now',
