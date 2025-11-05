@@ -142,7 +142,9 @@ jobs:
             --project="${GCP_PROJECT}" \
             --location="${GAR_LOCATION}" \
             --repository="${GAR_REPOSITORY}" \
-            ${{ inputs.network }}-${{ inputs.version }}-${{ matrix.arch }}.tar.gz
+            --file="${{ inputs.network }}-${{ inputs.version }}-${{ matrix.arch }}.tar.gz" \
+            --source=.
+          
 
       - name: Upload binary artifact (one per arch)
         uses: actions/upload-artifact@v5
