@@ -72,9 +72,6 @@ jobs:
       - name: 'Set up Cloud SDK'
         uses: 'google-github-actions/setup-gcloud@v3'
 
-      - name: 'Configure Docker for Artifact Registry'
-        run: gcloud auth configure-docker us-docker.pkg.dev
-
       - name: Setup SSH for manual git
         if: env.GH_DEPLOY_KEY
         run: |
@@ -137,13 +134,14 @@ jobs:
 
       - name: Upload to GCP Artifact Registry (generic) for ${{ matrix.arch }}
         run: |
-          tar -czvf ${{ inputs.network }}-${{ inputs.version }}-${{ matrix.arch }}.tar.gz artifacts/linux-${{ matrix.arch }}/
-          gcloud artifacts files upload \
+          tar -czvf ${{ inputs.network }}-${{ inputs.version }}-linux-${{ matrix.arch }}.tar.gz artifacts/linux-${{ matrix.arch }}/
+          gcloud artifacts generic upload \
             --project="${GCP_PROJECT}" \
             --location="${GAR_LOCATION}" \
             --repository="${GAR_REPOSITORY}" \
-            --source="${{ inputs.network }}-${{ inputs.version }}-${{ matrix.arch }}.tar.gz"
-          
+            --package="linux-${{ matrix.arch }}" \
+            --version="${{ inputs.network }}-${{ inputs.version }}" \
+            --source="${{ inputs.network }}-${{ inputs.version }}-linux-${{ matrix.arch }}.tar.gz"
 
       - name: Upload binary artifact (one per arch)
         uses: actions/upload-artifact@v5
