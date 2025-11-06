@@ -295,6 +295,14 @@ describe('system tests', () => {
 		console.log('running the migration to the upgraded package');
 
 		await migrateCoordinator(suiClient, signer, ikaClient, protocolCapID, upgradedPackageID);
+		wrapped.envs.localhost.packages.ika_dwallet_2pc_mpc_package_id = upgradedPackageID;
+		const yamlString = yaml.dump(wrapped, { indent: 2 });
+		await fs.writeFile(
+			path.join(process.env.HOME!, '.ika/ika_config/ika_sui_config.yaml'),
+			yamlString,
+		);
+
+		ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage = upgradedPackageID;
 
 		const post_move_upgrade_pricing_path = `${TEST_ROOT_DIR}/upgrade-network-key/post_default_pricing_test.yaml`;
 		const post_supported_curves_config = `${TEST_ROOT_DIR}/upgrade-network-key/post_supported_curves_to_signature_algorithms_to_hash_schemes.yaml`;
@@ -314,7 +322,6 @@ describe('system tests', () => {
 		console.log(
 			'Move contracts upgraded to V2, running sign full flow with all curves and verifying it works',
 		);
-		ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage = upgradedPackageID;
 		await testSignFullFlowWithAllCurves();
 		console.log(
 			'sign works with all curves, checking full flow with an imported dWallet with all curves',

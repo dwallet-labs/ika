@@ -1,15 +1,15 @@
+dev-dependencies = { }
+dev-addresses = { }
+
 [package]
 name = "ika_common"
 edition = "2024"
 license = "BSD-3-Clause-Clear"
-authors = ["dWallet Labs, Ltd. <dev@dwalletlabs.com>"]
+authors = [ "dWallet Labs, Ltd. <dev@dwalletlabs.com>" ]
+published-at = "0x28ea3c05569c2d656a949b5523b8f4e0f7d66ba5610c4b8bb7fdc70729255a23"
 
-[dependencies]
-ika = { local = "../ika" }
+[dependencies.ika]
+local = "../ika"
 
 [addresses]
-ika_common = "0x0"
-
-[dev-dependencies]
-
-[dev-addresses]
+ika_common = "0x28ea3c05569c2d656a949b5523b8f4e0f7d66ba5610c4b8bb7fdc70729255a23"
