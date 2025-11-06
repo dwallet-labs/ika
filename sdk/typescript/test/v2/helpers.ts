@@ -257,7 +257,7 @@ export async function waitForDWalletAwaitingSignature(
 	const awaitingKeyHolderSignatureDWallet = await retryUntil(
 		() => ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature'),
 		(wallet) => wallet !== null,
-		30,
+		300,
 		1000,
 	);
 

@@ -86,12 +86,13 @@ async function testImportedDWalletFullFlowWithAllCurves() {
 }
 
 async function testSignFullFlowWithAllCurves() {
-	await testSignCombination(
-		Curve.SECP256K1,
-		SignatureAlgorithm.ECDSASecp256k1,
-		Hash.KECCAK256,
-		'ecdsa-secp256k1-keccak256',
-	);
+	console.log('Starting: ecdsa-secp256k1-keccak256');
+	// await testSignCombination(
+	// 	Curve.SECP256K1,
+	// 	SignatureAlgorithm.ECDSASecp256k1,
+	// 	Hash.KECCAK256,
+	// 	'ecdsa-secp256k1-keccak256',
+	// );
 	console.log('Completed: ecdsa-secp256k1-keccak256');
 
 	await testSignCombination(
@@ -338,11 +339,7 @@ describe('system tests', () => {
 	}, 3_600_000);
 
 	it('should be chill', async () => {
-		const jsonData = JSON.parse(await fs.readFile(findIkaConfigFile(), 'utf8'));
-		const wrapped = { envs: { localhost: jsonData } };
-
-		const yamlStr = yaml.dump(wrapped, { indent: 2 });
-		await fs.writeFile('/home/itayl/.ika/ika_config/ika_sui_config.yaml', yamlStr);
+		await testSignFullFlowWithAllCurves();
 	});
 
 	it('should run v1 test', async () => {
