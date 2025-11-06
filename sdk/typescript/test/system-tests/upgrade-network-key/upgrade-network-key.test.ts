@@ -92,6 +92,7 @@ async function testSignFullFlowWithAllCurves() {
 		Hash.KECCAK256,
 		'ecdsa-secp256k1-keccak256',
 	);
+	console.log('Completed: ecdsa-secp256k1-keccak256');
 
 	await testSignCombination(
 		Curve.SECP256K1,
@@ -99,6 +100,7 @@ async function testSignFullFlowWithAllCurves() {
 		Hash.SHA256,
 		'ecdsa-secp256k1-sha256',
 	);
+	console.log('Completed: ecdsa-secp256k1-sha256');
 
 	await testSignCombination(
 		Curve.SECP256K1,
@@ -106,6 +108,7 @@ async function testSignFullFlowWithAllCurves() {
 		Hash.DoubleSHA256,
 		'ecdsa-secp256k1-double-sha256',
 	);
+	console.log('Completed: ecdsa-secp256k1-double-sha256');
 
 	await testSignCombination(
 		Curve.SECP256K1,
@@ -113,6 +116,7 @@ async function testSignFullFlowWithAllCurves() {
 		Hash.SHA256,
 		'taproot-sha256',
 	);
+	console.log('Completed: taproot-sha256');
 
 	await testSignCombination(
 		Curve.SECP256R1,
@@ -120,8 +124,10 @@ async function testSignFullFlowWithAllCurves() {
 		Hash.SHA256,
 		'ecdsa-secp256r1-sha256',
 	);
+	console.log('Completed: ecdsa-secp256r1-sha256');
 
 	await testSignCombination(Curve.ED25519, SignatureAlgorithm.EdDSA, Hash.SHA512, 'eddsa-sha512');
+	console.log('Completed: eddsa-sha512');
 
 	await testSignCombination(
 		Curve.RISTRETTO,
@@ -129,6 +135,7 @@ async function testSignFullFlowWithAllCurves() {
 		Hash.Merlin,
 		'schnorrkel-merlin',
 	);
+	console.log('Completed: schnorrkel-merlin');
 }
 
 async function upgradeValidatorsDockerImage(kc: KubeConfig, startIndex = 0, endIndex?: number) {

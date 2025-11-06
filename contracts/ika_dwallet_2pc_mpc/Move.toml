@@ -15,4 +15,4 @@ local = "../ika_common"
 
 [addresses]
 ika_dwallet_2pc_mpc = "0x0"
-ika = "0x93659ea9b558a6e426dafacf65c728e083321691b55c0af529f6aad26f1534ea"
+ika = "0xf3c62a30583318ae542f6b9de61a48cb6c558001873bbbdca988224727003a62"
