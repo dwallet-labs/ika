@@ -254,11 +254,12 @@ export async function waitForDWalletAwaitingSignature(
 	ikaClient: IkaClient,
 	dWalletID: string,
 ): Promise<ZeroTrustDWallet> {
-	const awaitingKeyHolderSignatureDWallet = await retryUntil(
-		() => ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature'),
-		(wallet) => wallet !== null,
-		300,
-		1000,
+	const awaitingKeyHolderSignatureDWallet = await ikaClient.getDWalletInParticularState(
+		dWalletID,
+		'AwaitingKeyHolderSignature',
+		{
+			timeout: 300000
+		}
 	);
 
 	expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
