@@ -258,8 +258,8 @@ export async function waitForDWalletAwaitingSignature(
 		dWalletID,
 		'AwaitingKeyHolderSignature',
 		{
-			timeout: 300000
-		}
+			timeout: 300000,
+		},
 	);
 
 	expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
