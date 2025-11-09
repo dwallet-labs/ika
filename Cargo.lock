@@ -2297,17 +2297,17 @@ name = "class_groups"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
- "commitment",
+ "commitment 0.2.0",
  "criterion",
  "crypto-bigint 0.7.0-rc.9",
  "crypto-primes",
  "group 0.2.0",
- "homomorphic_encryption",
+ "homomorphic_encryption 0.2.0",
  "itertools 0.14.0",
- "maurer",
+ "maurer 0.2.0",
  "merlin",
- "mpc",
- "proof",
+ "mpc 0.2.0",
+ "proof 0.2.0",
  "rand 0.9.0",
  "rand_chacha 0.9.0",
  "rayon",
@@ -2465,6 +2465,18 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "commitment"
+version = "0.1.0"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=cc502b28#cc502b2830c920d715b0ab6504e200b790409e77"
+dependencies = [
+ "crypto-bigint 0.7.0-rc.9",
+ "group 0.1.0",
+ "merlin",
+ "serde",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -3637,7 +3649,7 @@ dependencies = [
  "group 0.2.0",
  "ika-types",
  "serde",
- "twopc_mpc",
+ "twopc_mpc 0.2.0",
 ]
 
 [[package]]
@@ -3647,22 +3659,23 @@ dependencies = [
  "anyhow",
  "bcs",
  "class_groups",
- "commitment",
+ "commitment 0.2.0",
  "console_log",
  "crypto-bigint 0.7.0-rc.9",
  "dwallet-mpc-types",
  "getrandom 0.2.16",
  "group 0.2.0",
- "homomorphic_encryption",
+ "homomorphic_encryption 0.2.0",
  "log",
- "mpc",
+ "mpc 0.2.0",
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
  "schemars",
  "serde",
  "tracing",
  "tracing-subscriber",
- "twopc_mpc",
+ "twopc_mpc 0.1.0",
+ "twopc_mpc 0.2.0",
  "web-sys",
 ]
 
@@ -3684,19 +3697,19 @@ dependencies = [
  "serde",
  "strum_macros 0.27.1",
  "thiserror 2.0.12",
- "twopc_mpc",
+ "twopc_mpc 0.2.0",
 ]
 
 [[package]]
 name = "dwallet-rng"
 version = "1.1.4"
 dependencies = [
- "commitment",
+ "commitment 0.2.0",
  "fastcrypto",
  "group 0.2.0",
  "ika-types",
  "merlin",
- "mpc",
+ "mpc 0.2.0",
  "rand_chacha 0.9.0",
  "serde",
  "zeroize",
@@ -5033,6 +5046,25 @@ dependencies = [
 
 [[package]]
 name = "group"
+version = "0.1.0"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=cc502b28#cc502b2830c920d715b0ab6504e200b790409e77"
+dependencies = [
+ "crypto-bigint 0.7.0-rc.9",
+ "curve25519-dalek 5.0.0-pre.1",
+ "hash2curve",
+ "itertools 0.14.0",
+ "k256 0.14.0-pre.11",
+ "rand_chacha 0.9.0",
+ "rand_core 0.9.3",
+ "serde",
+ "serde_json",
+ "sha3 0.11.0-rc.3",
+ "subtle",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "group"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
@@ -5332,13 +5364,25 @@ dependencies = [
 
 [[package]]
 name = "homomorphic_encryption"
+version = "0.1.0"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=cc502b28#cc502b2830c920d715b0ab6504e200b790409e77"
+dependencies = [
+ "crypto-bigint 0.7.0-rc.9",
+ "group 0.1.0",
+ "mpc 0.1.0",
+ "serde",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "homomorphic_encryption"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "criterion",
  "crypto-bigint 0.7.0-rc.9",
  "group 0.2.0",
- "mpc",
+ "mpc 0.2.0",
  "rayon",
  "rstest",
  "serde",
@@ -5822,7 +5866,7 @@ dependencies = [
  "bcs",
  "chrono",
  "class_groups",
- "commitment",
+ "commitment 0.2.0",
  "consensus-config",
  "consensus-core",
  "dashmap",
@@ -5837,7 +5881,7 @@ dependencies = [
  "fastcrypto",
  "futures",
  "group 0.2.0",
- "homomorphic_encryption",
+ "homomorphic_encryption 0.2.0",
  "ika-config",
  "ika-network",
  "ika-protocol-config",
@@ -5849,7 +5893,7 @@ dependencies = [
  "mockall 0.13.1",
  "moka",
  "move-core-types",
- "mpc",
+ "mpc 0.2.0",
  "mysten-common",
  "mysten-metrics",
  "parking_lot 0.12.3",
@@ -5878,7 +5922,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "twopc_mpc",
+ "twopc_mpc 0.2.0",
  "typed-store",
 ]
 
@@ -6165,7 +6209,7 @@ dependencies = [
  "ika-protocol-config",
  "jsonrpsee 0.25.1",
  "move-core-types",
- "mpc",
+ "mpc 0.2.0",
  "mysten-network",
  "once_cell",
  "prometheus",
@@ -6187,7 +6231,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tonic 0.13.1",
  "tracing",
- "twopc_mpc",
+ "twopc_mpc 0.2.0",
  "typed-store-error",
 ]
 
@@ -7413,16 +7457,33 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "maurer"
+version = "0.1.0"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=cc502b28#cc502b2830c920d715b0ab6504e200b790409e77"
+dependencies = [
+ "commitment 0.1.0",
+ "crypto-bigint 0.7.0-rc.9",
+ "group 0.1.0",
+ "homomorphic_encryption 0.1.0",
+ "merlin",
+ "mpc 0.1.0",
+ "proof 0.1.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "maurer"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
- "commitment",
+ "commitment 0.2.0",
  "crypto-bigint 0.7.0-rc.9",
  "group 0.2.0",
- "homomorphic_encryption",
+ "homomorphic_encryption 0.2.0",
  "merlin",
- "mpc",
- "proof",
+ "mpc 0.2.0",
+ "proof 0.2.0",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
@@ -8480,11 +8541,30 @@ dependencies = [
 
 [[package]]
 name = "mpc"
+version = "0.1.0"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=cc502b28#cc502b2830c920d715b0ab6504e200b790409e77"
+dependencies = [
+ "bcs",
+ "commitment 0.1.0",
+ "crypto-bigint 0.7.0-rc.9",
+ "gcd",
+ "group 0.1.0",
+ "itertools 0.14.0",
+ "merlin",
+ "rand 0.9.0",
+ "rand_chacha 0.9.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "mpc"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "bcs",
- "commitment",
+ "commitment 0.2.0",
  "criterion",
  "crypto-bigint 0.7.0-rc.9",
  "gcd",
@@ -10139,16 +10219,33 @@ dependencies = [
 
 [[package]]
 name = "proof"
+version = "0.1.0"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=cc502b28#cc502b2830c920d715b0ab6504e200b790409e77"
+dependencies = [
+ "commitment 0.1.0",
+ "crypto-bigint 0.7.0-rc.9",
+ "curve25519-dalek 5.0.0-pre.1",
+ "group 0.1.0",
+ "itertools 0.14.0",
+ "merlin",
+ "mpc 0.1.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "proof"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
- "commitment",
+ "commitment 0.2.0",
  "crypto-bigint 0.7.0-rc.9",
  "curve25519-dalek 5.0.0-pre.1",
  "group 0.2.0",
  "itertools 0.14.0",
  "merlin",
- "mpc",
+ "mpc 0.2.0",
  "rayon",
  "serde",
  "serde_json",
@@ -15716,25 +15813,43 @@ dependencies = [
 
 [[package]]
 name = "twopc_mpc"
+version = "0.1.0"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=cc502b28#cc502b2830c920d715b0ab6504e200b790409e77"
+dependencies = [
+ "commitment 0.1.0",
+ "crypto-bigint 0.7.0-rc.9",
+ "group 0.1.0",
+ "homomorphic_encryption 0.1.0",
+ "maurer 0.1.0",
+ "merlin",
+ "mpc 0.1.0",
+ "proof 0.1.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "twopc_mpc"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "class_groups",
- "commitment",
+ "commitment 0.2.0",
  "crypto-bigint 0.7.0-rc.9",
  "curve25519-dalek 5.0.0-pre.1",
  "ecdsa 0.17.0-rc.7",
  "ed25519 3.0.0-rc.1",
  "ed25519-dalek 3.0.0-pre.1",
  "group 0.2.0",
- "homomorphic_encryption",
+ "homomorphic_encryption 0.2.0",
  "itertools 0.14.0",
  "k256 0.14.0-pre.11",
- "maurer",
+ "maurer 0.2.0",
  "merlin",
- "mpc",
+ "mpc 0.2.0",
  "p256 0.14.0-pre.11",
- "proof",
+ "proof 0.2.0",
  "schnorrkel",
  "serde",
  "serde_json",
