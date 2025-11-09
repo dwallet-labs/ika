@@ -1,7 +1,22 @@
-name: Build Binaries
+name: Build and Push Binaries
 
 on:
   workflow_dispatch:
+    inputs:
+      network:
+        description: 'The network to build the image for (mainnet, testnet, devnet)'
+        required: true
+        type: string
+        options:
+          - mainnet
+          - testnet
+          - devnet
+        default: devnet
+      version:
+        description: 'Version to tag the image (format: vX.Y.Z)'
+        required: true
+        default: v1.0.0
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -13,6 +28,9 @@ env:
   rust_stable: 1.90
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+  GCP_PROJECT: common-449616
+  GAR_LOCATION: us
+  GAR_REPOSITORY: ika-common-public-binaries
 
 jobs:
   build-binaries:
@@ -38,6 +56,22 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v5
 
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Version must be in format vX.Y.Z (e.g., v1.0.0)"
+            exit 1
+          fi
+          echo "Version format is valid: ${{ inputs.version }}"
+
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v3'
+        with:
+          credentials_json: '${{ secrets.GAR_KEY }}'
+
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v3'
+
       - name: Setup SSH for manual git
         if: env.GH_DEPLOY_KEY
         run: |
@@ -45,7 +79,6 @@ jobs:
           printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-
       - name: Globally rewrite any GitHub HTTPS to SSH
         if: env.GH_DEPLOY_KEY
         run: |
@@ -98,6 +131,17 @@ jobs:
           cp "target/${{ matrix.target }}/release/ika" "$outdir/ika"
           cp "target/${{ matrix.target }}/release/ika-node" "$outdir/ika-node"
           chmod +x "$outdir/ika" "$outdir/ika-node"
+
+      - name: Upload to GCP Artifact Registry (generic) for ${{ matrix.arch }}
+        run: |
+          tar -czvf ${{ inputs.network }}-${{ inputs.version }}-linux-${{ matrix.arch }}.tar.gz artifacts/linux-${{ matrix.arch }}/
+          gcloud artifacts generic upload \
+            --project="${GCP_PROJECT}" \
+            --location="${GAR_LOCATION}" \
+            --repository="${GAR_REPOSITORY}" \
+            --package="linux-${{ matrix.arch }}" \
+            --version="${{ inputs.network }}-${{ inputs.version }}" \
+            --source-directory="artifacts/linux-${{ matrix.arch }}"
 
       - name: Upload binary artifact (one per arch)
         uses: actions/upload-artifact@v5
