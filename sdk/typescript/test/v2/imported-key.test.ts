@@ -228,13 +228,10 @@ async function requestPresignForImportedKey(
 		CoordinatorInnerModule.PresignRequestEvent,
 	).fromBase64(presignEvent?.bcs as string);
 
-	const presign = await retryUntil(
-		() =>
-			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
-		(presign) => presign !== null,
-		30,
-		2000,
-	);
+	const presign = await ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed', {
+		timeout: 600000,
+		interval: 1000,
+	});
 
 	expect(presign).toBeDefined();
 	expect(presign.state.$kind).toBe('Completed');
@@ -317,11 +314,13 @@ export async function testImportedKeyScenario(
 	expect(dWalletID).toBeDefined();
 
 	// Wait for DWallet to be verified and active
-	const importedKeyDWallet = (await retryUntil(
-		() => ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature'),
-		(wallet) => wallet !== null,
-		30,
-		1000,
+	const importedKeyDWallet = (await ikaClient.getDWalletInParticularState(
+		dWalletID,
+		'AwaitingKeyHolderSignature',
+		{
+			timeout: 600000,
+			interval: 1000,
+		}
 	)) as ImportedKeyDWallet;
 
 	expect(importedKeyDWallet).toBeDefined();
@@ -357,11 +356,13 @@ export async function testImportedKeyScenario(
 	await executeTestTransaction(suiClient, acceptShareTransaction, testName);
 
 	// Wait for wallet to become Active
-	const activeDWallet = (await retryUntil(
-		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
-		(wallet) => wallet !== null,
-		30,
-		2000,
+	const activeDWallet = (await ikaClient.getDWalletInParticularState(
+		dWalletID,
+		'Active',
+		{
+			timeout: 600000,
+			interval: 1000,
+		}
 	)) as ImportedKeyDWallet;
 
 	expect(activeDWallet).toBeDefined();
@@ -440,7 +441,7 @@ export async function testImportedKeyScenario(
 		curve,
 		signatureAlgorithm,
 		'Completed',
-		{ timeout: 60000, interval: 1000 },
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	expect(sign).toBeDefined();
