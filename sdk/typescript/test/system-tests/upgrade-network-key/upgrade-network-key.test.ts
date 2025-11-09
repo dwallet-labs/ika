@@ -48,6 +48,7 @@ async function testImportedDWalletFullFlowWithAllCurves() {
 		Hash.KECCAK256,
 		'ecdsa-secp256k1-keccak256',
 	);
+	console.log('Completed: ecdsa-secp256k1-keccak256');
 
 	await testImportedKeyScenario(
 		Curve.SECP256K1,
@@ -55,6 +56,7 @@ async function testImportedDWalletFullFlowWithAllCurves() {
 		Hash.SHA256,
 		'ecdsa-secp256k1-sha256',
 	);
+	console.log('Completed: ecdsa-secp256k1-sha256');
 
 	await testImportedKeyScenario(
 		Curve.SECP256K1,
@@ -62,6 +64,7 @@ async function testImportedDWalletFullFlowWithAllCurves() {
 		Hash.SHA256,
 		'taproot-sha256',
 	);
+	console.log('Completed: taproot-sha256');
 
 	await testImportedKeyScenario(
 		Curve.SECP256R1,
@@ -69,6 +72,7 @@ async function testImportedDWalletFullFlowWithAllCurves() {
 		Hash.SHA256,
 		'ecdsa-secp256r1-sha256',
 	);
+	console.log('Completed: ecdsa-secp256r1-sha256');
 
 	await testImportedKeyScenario(
 		Curve.ED25519,
@@ -76,6 +80,7 @@ async function testImportedDWalletFullFlowWithAllCurves() {
 		Hash.SHA512,
 		'eddsa-sha512',
 	);
+	console.log('Completed: eddsa-sha512');
 
 	await testImportedKeyScenario(
 		Curve.RISTRETTO,
@@ -83,6 +88,7 @@ async function testImportedDWalletFullFlowWithAllCurves() {
 		Hash.Merlin,
 		'schnorrkel-merlin',
 	);
+	console.log('Completed: schnorrkel-merlin');
 }
 
 async function testSignFullFlowWithAllCurves() {
@@ -346,7 +352,7 @@ describe('system tests', () => {
 	}, 3_600_000);
 
 	it('should be chill', async () => {
-		await testSignFullFlowWithAllCurves();
+		await testImportedDWalletFullFlowWithAllCurves();
 	});
 
 	it('should run v1 test', async () => {
