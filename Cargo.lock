@@ -2294,6 +2294,28 @@ checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 
 [[package]]
 name = "class_groups"
+version = "0.1.0"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=cc502b28#cc502b2830c920d715b0ab6504e200b790409e77"
+dependencies = [
+ "commitment 0.1.0",
+ "crypto-bigint 0.7.0-rc.9",
+ "crypto-primes",
+ "group 0.1.0",
+ "homomorphic_encryption 0.1.0",
+ "itertools 0.14.0",
+ "maurer 0.1.0",
+ "merlin",
+ "mpc 0.1.0",
+ "proof 0.1.0",
+ "rand 0.9.0",
+ "rand_chacha 0.9.0",
+ "serde",
+ "sha3 0.11.0-rc.3",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "class_groups"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
@@ -3643,7 +3665,7 @@ dependencies = [
 name = "dwallet-classgroups-types"
 version = "1.1.4"
 dependencies = [
- "class_groups",
+ "class_groups 0.2.0",
  "crypto-bigint 0.7.0-rc.9",
  "dwallet-rng",
  "group 0.2.0",
@@ -3658,7 +3680,7 @@ version = "1.1.4"
 dependencies = [
  "anyhow",
  "bcs",
- "class_groups",
+ "class_groups 0.2.0",
  "commitment 0.2.0",
  "console_log",
  "crypto-bigint 0.7.0-rc.9",
@@ -3685,7 +3707,7 @@ version = "1.1.4"
 dependencies = [
  "anyhow",
  "bcs",
- "class_groups",
+ "class_groups 0.2.0",
  "crypto-bigint 0.7.0-rc.9",
  "curve25519-dalek 5.0.0-pre.1",
  "enum_dispatch",
@@ -5865,7 +5887,7 @@ dependencies = [
  "base64 0.22.1",
  "bcs",
  "chrono",
- "class_groups",
+ "class_groups 0.2.0",
  "commitment 0.2.0",
  "consensus-config",
  "consensus-core",
@@ -6196,7 +6218,7 @@ dependencies = [
  "base64 0.22.1",
  "bcs",
  "byteorder",
- "class_groups",
+ "class_groups 0.2.0",
  "consensus-config",
  "consensus-core",
  "derive_more 2.0.1",
@@ -15816,6 +15838,7 @@ name = "twopc_mpc"
 version = "0.1.0"
 source = "git+https://github.com/dwallet-labs/cryptography-private?rev=cc502b28#cc502b2830c920d715b0ab6504e200b790409e77"
 dependencies = [
+ "class_groups 0.1.0",
  "commitment 0.1.0",
  "crypto-bigint 0.7.0-rc.9",
  "group 0.1.0",
@@ -15834,7 +15857,7 @@ name = "twopc_mpc"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
- "class_groups",
+ "class_groups 0.2.0",
  "commitment 0.2.0",
  "crypto-bigint 0.7.0-rc.9",
  "curve25519-dalek 5.0.0-pre.1",
