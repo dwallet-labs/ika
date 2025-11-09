@@ -174,7 +174,7 @@ describe('system tests', () => {
 
 		const testName = 'upgrade-network-key';
 		const { userShareEncryptionKeys, signerPublicKey, signerAddress } =
-			await generateTestKeypairV1(testName);
+			await generateTestKeypair(testName);
 		await requestTestFaucetFunds(signerAddress);
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
 		const mainnetCreateIkaGenesisPath = `${TEST_ROOT_DIR}/mainnet-create-ika-genesis.sh`;
@@ -201,23 +201,14 @@ describe('system tests', () => {
 		let networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.networkDKGOutputID);
 		const networkKeyVersion = network_key_version(networkKeyBytes);
 		expect(networkKeyVersion).toBe(1);
-		console.log('Network key version is V1, creating a dWallet with it');
-		// const dwallet = await createCompleteDWallet(ikaClient, suiClient, testName, true);
-		console.log('DWallet created successfully, running a full sign flow with it');
-		// await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
-		console.log('V1 dWallet full flow works, upgrading two validators to the new docker image');
+		console.log('Network key version is V1, upgrading two validators to the new docker image');
 		const signer = await getPublisherKeypair();
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
 		process.env.NOTIFIER_DOCKER_TAG = v2NetworkKeyNotifierDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
 		await upgradeValidatorsDockerImage(kc, 0, 2);
-		console.log(
-			'Two validators upgraded, making sure running a sign full flow with the partially upgraded network works fine',
-		);
-		// await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, testName, false);
-
-		console.log('Sign full flow works, upgrading the network pricing and curve configuration');
+		console.log('Two validators upgraded, upgrading the network pricing and curve configuration');
 
 		const protocolCapID = await getProtocolCapID(
 			suiClient,
@@ -247,26 +238,13 @@ describe('system tests', () => {
 		await killFullnodePod(kc, NAMESPACE_NAME);
 		await delay(30);
 		await createFullnodePod(NAMESPACE_NAME, kc);
-		console.log('All validators upgraded, running a sign full flow with the old v1 dWallet');
-
-		// await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
-		console.log(
-			'Signing with the old v1 dWallet works, waiting for the network key to upgrade to V2',
-		);
+		console.log('All validators upgraded, waiting for the network key to upgrade to V2');
 		await waitForV2NetworkKey(ikaClient);
-		console.log('Network key upgraded to V2, verifying the v1 dWallet full flow still works');
-		// await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
-		console.log(
-			'V1 dWallet full flow works with previously created dWallet, creating a new v1 dWallet and verifying it works',
-		);
-		// await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, testName, false);
-		console.log('V1 dWallet full flow works, upgrading the Move contracts to V2');
-
+		console.log('Network key upgraded to V2, upgrading the Move contracts to V2');
 		const twopc_mpc_contracts_path = path.join(
 			TEST_ROOT_DIR,
 			'../../../../contracts/ika_dwallet_2pc_mpc',
 		);
-
 		const ika_twopc_move_toml = TOML.parse(
 			await fs.readFile(path.join(twopc_mpc_contracts_path, 'Move.toml'), 'utf8'),
 		);
