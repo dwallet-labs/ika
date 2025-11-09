@@ -6,10 +6,10 @@ name = "ika_common"
 edition = "2024"
 license = "BSD-3-Clause-Clear"
 authors = [ "dWallet Labs, Ltd. <dev@dwalletlabs.com>" ]
-published-at = "0x10afdf5a9fe0899283cae40e508ebbb783cc6661c07796b6d8323deb181bf436"
+published-at = "0x5d95daebef107ce8c624cee922b050925b087dbc5aaadb6870ca47d914d389ea"
 
 [dependencies.ika]
 local = "../ika"
 
 [addresses]
-ika_common = "0x10afdf5a9fe0899283cae40e508ebbb783cc6661c07796b6d8323deb181bf436"
+ika_common = "0x5d95daebef107ce8c624cee922b050925b087dbc5aaadb6870ca47d914d389ea"

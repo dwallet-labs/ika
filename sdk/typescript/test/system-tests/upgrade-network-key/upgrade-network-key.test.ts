@@ -87,12 +87,12 @@ async function testImportedDWalletFullFlowWithAllCurves() {
 
 async function testSignFullFlowWithAllCurves() {
 	console.log('Starting: ecdsa-secp256k1-keccak256');
-	// await testSignCombination(
-	// 	Curve.SECP256K1,
-	// 	SignatureAlgorithm.ECDSASecp256k1,
-	// 	Hash.KECCAK256,
-	// 	'ecdsa-secp256k1-keccak256',
-	// );
+	await testSignCombination(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.KECCAK256,
+		'ecdsa-secp256k1-keccak256',
+	);
 	console.log('Completed: ecdsa-secp256k1-keccak256');
 
 	await testSignCombination(
