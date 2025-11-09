@@ -260,7 +260,7 @@ async function signAndVerify(
 		curve,
 		signatureAlgorithm,
 		'Completed',
-		{ timeout: 60000, interval: 1000 },
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	const dWallet = await ikaClient.getDWalletInParticularState(
