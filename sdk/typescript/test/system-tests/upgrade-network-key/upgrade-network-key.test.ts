@@ -319,6 +319,13 @@ describe('system tests', () => {
 			stderr: ['pipe', 'inherit'],
 			cwd: TEST_ROOT_DIR,
 		})`${setSupportedAndPricingPath} ${protocolCapID} ${post_move_upgrade_pricing_path} ${post_supported_curves_config}`;
+		const ikaBinaryPath = `${TEST_ROOT_DIR}/ika`;
+		const globalPresignConfig = `${TEST_ROOT_DIR}/upgrade-network-key/global_presign_config.yaml`;
+		await execa({
+			stdout: ['pipe', 'inherit'],
+			stderr: ['pipe', 'inherit'],
+			cwd: TEST_ROOT_DIR,
+		})`${ikaBinaryPath} protocol set-global-presign-config --protocol-cap-id ${protocolCapID} --global-presign-config ${globalPresignConfig}`;
 
 		console.log('Migration complete, updating the validators with the new package ID');
 		await updateOperatorsConfigWithNewPackageID(upgradedPackageID);
