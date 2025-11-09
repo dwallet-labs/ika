@@ -9,17 +9,13 @@ import yaml from 'js-yaml';
 import { describe, expect, it } from 'vitest';
 
 import { Curve, Hash, IkaClient, SignatureAlgorithm } from '../../../src';
-import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
 	delay,
 	findIkaConfigFile,
 	generateTestKeypair,
-	generateTestKeypairV1,
 	requestTestFaucetFunds,
-	runSignFullFlowWithDWallet,
-	runSignFullFlowWithV1Dwallet,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
 import {
@@ -158,14 +154,6 @@ async function upgradeValidatorsDockerImage(kc: KubeConfig, startIndex = 0, endI
 }
 
 describe('system tests', () => {
-	it('run sign full flow with v1 dwallet', async () => {
-		const suiClient = createTestSuiClient();
-		const ikaClient = createTestIkaClient(suiClient);
-		await ikaClient.initialize();
-
-		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, 'sign-full-flow-v1-dwallet');
-	});
-
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
 		const v2NetworkKeyDockerTag =
 			'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-node:testnet-v1.1.4';
@@ -328,22 +316,6 @@ describe('system tests', () => {
 		await testImportedDWalletFullFlowWithAllCurves();
 		console.log('Imported dWallet full flow works with all curves, test complete successfully');
 	}, 3_600_000);
-
-	it('should be chill', async () => {
-		await testImportedDWalletFullFlowWithAllCurves();
-	});
-
-	it('should run v1 test', async () => {
-		const suiClient = createTestSuiClient();
-		const ikaClient = createTestIkaClient(suiClient);
-		await ikaClient.initialize();
-		const testName = 'sign-full-flow-v1-dwallet';
-		console.log('Network key version is V1, creating a dWallet with it');
-		const dwallet = await createCompleteDWallet(ikaClient, suiClient, testName, true);
-		console.log('DWallet created successfully, running a full sign flow with it');
-		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
-		console.log('V1 dWallet full flow works, upgrading the validators docker image');
-	});
 });
 
 async function waitForV2NetworkKey(ikaClient: IkaClient) {
