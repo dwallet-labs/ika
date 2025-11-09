@@ -30,7 +30,6 @@ import {
 	create_sign_centralized_party_message as create_sign_user_message,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
-	generate_secp_cg_keypair_from_seed_v1,
 	network_dkg_public_output_to_protocol_pp,
 	parse_signature_from_sign_output,
 	public_key_from_centralized_dkg_output,
@@ -115,47 +114,6 @@ export async function createClassGroupsKeypair(
 }
 
 /**
- * Create a class groups keypair from a seed for encryption/decryption operations.
- * Uses SECP256k1, SECP256r1, Ristretto, or ED25519 curves with class groups for homomorphic encryption capabilities.
- *
- * @param seed - The seed bytes to generate the keypair from
- * @param curve - The curve to use for key generation
- * @returns Object containing the encryption key (public) and decryption key (private)
- */
-export async function createClassGroupsKeypairV1(
-	seed: Uint8Array,
-	curve: Curve,
-): Promise<{
-	encryptionKey: Uint8Array;
-	decryptionKey: Uint8Array;
-}> {
-	if (seed.length !== 32) {
-		throw new Error('Seed must be 32 bytes');
-	}
-
-	let encryptionKey: Uint8Array;
-	let decryptionKey: Uint8Array;
-
-	if (
-		curve === Curve.SECP256K1 ||
-		curve === Curve.SECP256R1 ||
-		curve === Curve.RISTRETTO ||
-		curve === Curve.ED25519
-	) {
-		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed_v1(seed);
-	} else {
-		throw new Error(
-			'Only SECP256K1, SECP256R1, RISTRETTO, and ED25519 curves are supported for now',
-		);
-	}
-
-	return {
-		encryptionKey: Uint8Array.from(encryptionKey),
-		decryptionKey: Uint8Array.from(decryptionKey),
-	};
-}
-
-/**
  * Create the user's output and message for the Distributed Key Generation (DKG) protocol.
  * This function takes the first round output and produces the user's contribution.
  *
@@ -170,7 +128,6 @@ export async function createClassGroupsKeypairV1(
 export async function createDKGUserOutput(
 	protocolPublicParameters: Uint8Array,
 	networkFirstRoundOutput: Uint8Array,
-	sessionIdentifier: Uint8Array,
 ): Promise<{
 	userDKGMessage: Uint8Array;
 	userPublicOutput: Uint8Array;
@@ -179,7 +136,6 @@ export async function createDKGUserOutput(
 	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
 		protocolPublicParameters,
 		Uint8Array.from(networkFirstRoundOutput),
-		sessionIdentifier,
 	);
 
 	return {
@@ -218,47 +174,20 @@ export async function encryptSecretShare(
 /**
  * @deprecated Use prepareDKG instead
  *
- * @param protocolPublicParameters - The protocol public parameters
- * @param dWallet - The DWallet object containing first round output
- * @param encryptionKey - The user's public encryption key
- * @param sessionID
+ * @param _protocolPublicParameters - The protocol public parameters
+ * @param _dWallet - The DWallet object containing first round output
+ * @param _encryptionKey - The user's public encryption key
  * @returns Complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available in the DWallet
  *
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
 export async function prepareDKGSecondRound(
-	protocolPublicParameters: Uint8Array,
-	dWallet: DWallet,
-	encryptionKey: Uint8Array,
-	sessionID: Uint8Array,
+	_protocolPublicParameters: Uint8Array,
+	_dWallet: DWallet,
+	_encryptionKey: Uint8Array,
 ): Promise<DKGRequestInput> {
-	const networkFirstRoundOutput =
-		dWallet.state.AwaitingUserDKGVerificationInitiation?.first_round_output;
-
-	if (!networkFirstRoundOutput) {
-		throw new Error('First round output is undefined');
-	}
-
-	const [userDKGMessage, userPublicOutput, userSecretKeyShare] = await create_dkg_user_output(
-		protocolPublicParameters,
-		Uint8Array.from(networkFirstRoundOutput),
-		sessionID,
-	);
-
-	const encryptedUserShareAndProof = await encryptSecretShare(
-		Curve.SECP256K1,
-		userSecretKeyShare,
-		encryptionKey,
-		protocolPublicParameters,
-	);
-
-	return {
-		userDKGMessage: Uint8Array.from(userDKGMessage),
-		userPublicOutput: Uint8Array.from(userPublicOutput),
-		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
-		userSecretKeyShare: Uint8Array.from(userSecretKeyShare),
-	};
+	throw new Error('prepareDKGSecondRound is deprecated. Use prepareDKG instead');
 }
 
 /**
@@ -310,26 +239,17 @@ export async function prepareDKG(
  * @param ikaClient - The IkaClient instance to fetch network parameters from
  * @param dWallet - The DWallet object containing first round output
  * @param userShareEncryptionKeys - The user's encryption keys for securing the user's share
- * @param sessionID
  * @returns Promise resolving to complete prepared data for the second DKG round
  * @throws {Error} If the first round output is not available or network parameters cannot be fetched
  *
  * SECURITY WARNING: *secret key share must be kept private!* never send it to anyone, or store it anywhere unencrypted.
  */
 export async function prepareDKGSecondRoundAsync(
-	ikaClient: IkaClient,
-	dWallet: DWallet,
-	userShareEncryptionKeys: UserShareEncryptionKeys,
-	sessionID: Uint8Array,
+	_ikaClient: IkaClient,
+	_dWallet: DWallet,
+	_userShareEncryptionKeys: UserShareEncryptionKeys,
 ): Promise<DKGRequestInput> {
-	const protocolPublicParameters = await ikaClient.getProtocolPublicParameters();
-
-	return prepareDKGSecondRound(
-		protocolPublicParameters,
-		dWallet,
-		userShareEncryptionKeys.encryptionKey,
-		sessionID,
-	);
+	throw new Error('prepareDKGSecondRoundAsync is deprecated. Use prepareDKGAsync instead');
 }
 
 /**
@@ -755,15 +675,6 @@ export function sessionIdentifierDigest(
 	]);
 	// Compute the SHA3-256 digest of the serialized data
 	const digest = keccak_256(data);
-	return Uint8Array.from(digest);
-}
-
-export function sessionIdentifierDigestV1(sessionIdentifier: Uint8Array): Uint8Array {
-	const version = 0; // Version of the session identifier
-	// Calculate the user session identifier for digest
-	const data = [...u64ToBytesBigEndian(version), ...encodeToASCII('USER'), ...sessionIdentifier];
-	// Compute the SHA3-256 digest of the serialized data
-	const digest = keccak_256(Uint8Array.from(data));
 	return Uint8Array.from(digest);
 }
 

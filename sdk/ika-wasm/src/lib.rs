@@ -6,12 +6,12 @@ use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party_with_centralized_party_dkg_output,
     centralized_and_decentralized_parties_dkg_output_match_inner, create_dkg_output_by_curve_v2,
     create_dkg_output_v1, create_imported_dwallet_centralized_step_inner_v2, decrypt_user_share_v2,
-    dwallet_version_inner, encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
-    generate_cg_keypair_from_seed_v1, network_dkg_public_output_to_protocol_pp_inner,
-    network_key_version_inner, parse_signature_from_sign_output_inner,
-    public_key_from_centralized_dkg_output_by_curve, public_key_from_dwallet_output_by_curve,
-    reconfiguration_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
-    try_into_curve, verify_secp_signature_inner, verify_secret_share_v2,
+    dwallet_version_inner,
+    encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
+    network_dkg_public_output_to_protocol_pp_inner, network_key_version_inner,
+    parse_signature_from_sign_output_inner, public_key_from_centralized_dkg_output_by_curve,
+    public_key_from_dwallet_output_by_curve, reconfiguration_public_output_to_protocol_pp_inner,
+    sample_dwallet_keypair_inner, verify_secp_signature_inner, verify_secret_share_v2, try_into_curve
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
@@ -20,14 +20,10 @@ use wasm_bindgen::prelude::*;
 pub fn create_dkg_centralized_output_v1(
     protocol_pp: Vec<u8>,
     decentralized_first_round_public_output: Vec<u8>,
-    session_id: Vec<u8>,
 ) -> Result<JsValue, JsError> {
-    let dkg_centralized_result = &create_dkg_output_v1(
-        protocol_pp,
-        decentralized_first_round_public_output,
-        session_id,
-    )
-    .map_err(|e| JsError::new(&e.to_string()))?;
+    let dkg_centralized_result =
+        &create_dkg_output_v1(protocol_pp, decentralized_first_round_public_output)
+            .map_err(|e| JsError::new(&e.to_string()))?;
     serde_wasm_bindgen::to_value(&(
         dkg_centralized_result.public_key_share_and_proof.clone(),
         dkg_centralized_result.public_output.clone(),
@@ -108,15 +104,6 @@ pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsV
         .map_err(|_| JsError::new("seed must be 32 bytes long"))?;
     let (public_key, private_key) =
         generate_cg_keypair_from_seed(curve, seed).map_err(to_js_err)?;
-    Ok(serde_wasm_bindgen::to_value(&(public_key, private_key))?)
-}
-
-#[wasm_bindgen]
-pub fn generate_secp_cg_keypair_from_seed_v1(seed: &[u8]) -> Result<JsValue, JsError> {
-    let seed: [u8; 32] = seed
-        .try_into()
-        .map_err(|_| JsError::new("seed must be 32 bytes long"))?;
-    let (public_key, private_key) = generate_cg_keypair_from_seed_v1(seed).map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&(public_key, private_key))?)
 }
 
