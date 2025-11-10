@@ -88,6 +88,13 @@ public struct Multisig has key, store {
   dwallet_network_encryption_key_id: ID,
 }
 
+public struct MultisigOwnership has key {
+  /// Unique identifier for this multisig ownership object.
+  id: UID,
+  /// ID of the multisig wallet that this ownership object belongs to.
+  multisig_id: ID,
+}
+
 // === Public Functions ===
 
 /// Creates a new multisig wallet with the specified configuration.
@@ -194,6 +201,15 @@ public fun new_multisig(
     expiration_duration,
     ctx.sender(),
   );
+
+  members_non_duplicated.do!(|member| {
+    let ownership = MultisigOwnership {
+      id: object::new(ctx),
+      multisig_id: object::id(&multisig),
+    };
+
+    transfer::transfer(ownership, member);
+  });
 
   transfer::public_share_object(multisig);
 }
@@ -463,6 +479,14 @@ public fun execute_request(
     };
 
     self.members.push_back(member_address);
+
+    let ownership = MultisigOwnership {
+      id: object::new(ctx),
+      multisig_id,
+    };
+
+    transfer::transfer(ownership, member_address);
+
     multisig_request::resolve_add_member_request(member_address)
   } else if (request_type.is_remove_member()) {
     let member_address = request_type.get_remove_member_address();
