@@ -1,5 +1,7 @@
 use crate::messages_dwallet_mpc::SessionIdentifier;
-use dwallet_mpc_types::dwallet_mpc::DwalletNetworkMPCError;
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, DWalletSignatureAlgorithm, DwalletNetworkMPCError,
+};
 use group::PartyID;
 use sui_types::base_types::{EpochId, ObjectID};
 
@@ -83,8 +85,11 @@ pub enum DwalletMPCError {
     #[error("failed to lock the mutex")]
     LockError,
 
-    #[error("verification of the encrypted user share failed")]
-    EncryptedUserShareVerificationFailed,
+    #[error("verification of the encrypted user share failed: {0}")]
+    EncryptedUserShareVerificationFailed(String),
+
+    #[error("verification of the secret share failed: {0}")]
+    SecretShareVerificationFailed(String),
 
     #[error("the sent public key does not match the sender's address")]
     EncryptedUserSharePublicKeyDoesNotMatchAddress,
@@ -180,6 +185,38 @@ pub enum DwalletMPCError {
 
     #[error("Internal error: {0}")]
     InternalError(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("missing protocol public parameters for curve: {0:?}")]
+    MissingProtocolPublicParametersForCurve(DWalletCurve),
+
+    #[error("centralized secret key share proof verification failed: {0}")]
+    CentralizedSecretKeyShareProofVerificationFailed(String),
+
+    #[error("failed to advance MPC step: {0}")]
+    FailedToAdvanceMPC(mpc::Error),
+
+    #[error("public input mismatch")]
+    PublicInputMismatch,
+
+    #[error("dWallet DKG parameters missmatch: curve {0}, advance request {1}")]
+    MPCParametersMissmatchInputToRequest(String, String),
+
+    #[error("dWallet curve and protocol mismatch: curve {curve:?}, protocol {protocol:?}")]
+    CurveToProtocolMismatch {
+        curve: DWalletCurve,
+        protocol: DWalletSignatureAlgorithm,
+    },
+    #[error("unsupported protocol version: {0}")]
+    UnsupportedProtocolVersion(u64),
+
+    #[error("invalid partially signed message version")]
+    InvalidPartiallySignedMessageVersion,
+
+    #[error("invalid centralized party imported dWallet public output version")]
+    InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
 }
 
 /// A wrapper type for the result of a runtime operation.

@@ -137,6 +137,7 @@ use sui::package::{UpgradeCap, UpgradeReceipt, UpgradeTicket};
 use sui::table::Table;
 use sui::table_vec::TableVec;
 use ika_common::upgrade_package_approver::UpgradePackageApprover;
+use sui::coin_registry::Currency;
 
 // === Errors ===
 
@@ -691,6 +692,14 @@ public fun epoch(self: &System): u64 {
 /// Aborts if `validator_id` is not an active validator.
 public fun validator_stake_amount(self: &mut System, validator_id: ID): u64 {
     self.inner_mut().validator_stake_amount(validator_id)
+}
+
+public fun claim_metadata_cap(
+    self: &mut System,
+    currency: &mut Currency<IKA>,
+    ctx: &mut TxContext,
+) {
+    self.inner_mut().claim_metadata_cap(currency, ctx);
 }
 
 // === Internals ===

@@ -272,6 +272,9 @@ impl IkaNode {
                 ika_dwallet_2pc_mpc_package_id: config
                     .sui_connector_config
                     .ika_dwallet_2pc_mpc_package_id,
+                ika_dwallet_2pc_mpc_package_id_v2: config
+                    .sui_connector_config
+                    .ika_dwallet_2pc_mpc_package_id_v2,
                 ika_system_package_id: config.sui_connector_config.ika_system_package_id,
             },
             objects: IkaObjectsConfig {
@@ -333,6 +336,9 @@ impl IkaNode {
             config.sui_connector_config.ika_package_id,
             config.sui_connector_config.ika_common_package_id,
             config.sui_connector_config.ika_dwallet_2pc_mpc_package_id,
+            config
+                .sui_connector_config
+                .ika_dwallet_2pc_mpc_package_id_v2,
             config.sui_connector_config.ika_system_package_id,
             config.sui_connector_config.ika_system_object_id,
             config
@@ -1238,13 +1244,13 @@ impl IkaNode {
                 debug_assert!(!latest_system_state.safe_mode());
             }
 
-            if let Err(err) = self.end_of_epoch_channel.send(*latest_system_state) {
-                if self.state.is_fullnode(&cur_epoch_store) {
-                    warn!(
-                        "Failed to send the end-of-epoch notification to subscriber: {:?}",
-                        err
-                    );
-                }
+            if let Err(err) = self.end_of_epoch_channel.send(*latest_system_state)
+                && self.state.is_fullnode(&cur_epoch_store)
+            {
+                warn!(
+                    "Failed to send the end-of-epoch notification to subscriber: {:?}",
+                    err
+                );
             }
             let (_, dwallet_coordinator_inner) =
                 sui_client.must_get_dwallet_coordinator_inner().await;

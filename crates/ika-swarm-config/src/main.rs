@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use fastcrypto::traits::EncodeDecodeBase64;
 use ika_config::initiation::InitiationParameters;
+use ika_protocol_config::Chain;
 use ika_swarm_config::sui_client::{
     ika_system_add_upgrade_cap_by_cap, ika_system_initialize,
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap,
@@ -46,6 +47,9 @@ enum Commands {
         /// The optional path for network configuration.
         #[clap(long, value_parser = clap::value_parser!(PathBuf))]
         sui_conf_dir: Option<PathBuf>,
+        /// The chain version of the Move smart contracts to use.
+        #[clap(long, value_parser = clap::value_parser!(Chain), default_value = "devnet")]
+        chain: Chain,
     },
 
     /// Mint IKA tokens.
@@ -133,6 +137,7 @@ async fn main() -> Result<()> {
             sui_rpc_addr,
             sui_faucet_addr,
             sui_conf_dir,
+            chain,
         } => {
             println!("Publishing IKA modules on network: {sui_rpc_addr}");
 
@@ -143,7 +148,7 @@ async fn main() -> Result<()> {
             let mut context = WalletContext::new(&sui_config_path)?;
 
             // Setup contract paths.
-            let contract_paths = setup_contract_paths()?;
+            let contract_paths = setup_contract_paths(chain)?;
 
             // Publish the "ika" package.
             let (ika_package_id, treasury_cap_id, ika_package_upgrade_cap_id) =

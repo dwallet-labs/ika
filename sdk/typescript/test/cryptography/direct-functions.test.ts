@@ -111,19 +111,20 @@ describe('Cryptography Direct Functions', () => {
 
 	it('should compute session identifier digest', async () => {
 		// Test with hardcoded session identifier for reproducible results
-		const hardcodedSessionId = new Uint8Array([
+		const hardcodedBytesToHash = new Uint8Array([
 			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
 			0x10,
 		]);
+		const hardcodedSenderAddress = new Uint8Array(32).fill(1);
 
-		const digest = sessionIdentifierDigest(hardcodedSessionId);
+		const digest = sessionIdentifierDigest(hardcodedBytesToHash, hardcodedSenderAddress);
 
 		// Test against expected deterministic output
 		expect(digest).toBeInstanceOf(Uint8Array);
 		expect(digest.length).toBe(32); // Should always be 32 bytes
 
 		// Verify exact expected digest for this specific input
-		const expectedDigest = '8d177679b5fb62500cd3fc64a76dca83f30c40b16638f52f09c74a1fb6fd668c';
+		const expectedDigest = '73be7ad97a2a6ef7421e40841962fd317596a476b5a53863747806c5bb4cd0c5';
 		const actualDigest = Array.from(digest)
 			.map((b) => b.toString(16).padStart(2, '0'))
 			.join('');
@@ -131,12 +132,12 @@ describe('Cryptography Direct Functions', () => {
 		expect(actualDigest).toBe(expectedDigest);
 
 		// Same input should produce same output
-		const digest2 = sessionIdentifierDigest(hardcodedSessionId);
+		const digest2 = sessionIdentifierDigest(hardcodedBytesToHash, hardcodedSenderAddress);
 		expect(digest).toEqual(digest2);
 
 		// Different input should produce different output
-		const sessionId2 = await createRandomSessionIdentifier();
-		const digest3 = sessionIdentifierDigest(sessionId2);
+		const sessionId2 = createRandomSessionIdentifier();
+		const digest3 = sessionIdentifierDigest(sessionId2, hardcodedSenderAddress);
 		expect(digest).not.toEqual(digest3);
 	});
 
@@ -163,7 +164,7 @@ describe('Cryptography Direct Functions', () => {
 		// We expect it to not throw during parameter validation
 		// but may fail during actual cryptographic operations due to mock data
 		try {
-			const result = await createDKGUserOutput(mockProtocolParams, mockNetworkOutput, sessionId);
+			const result = await createDKGUserOutput(mockProtocolParams, mockNetworkOutput);
 			expect(result).toBeDefined();
 		} catch (error) {
 			// Expected to fail with mock data, but should have proper error handling
@@ -182,7 +183,12 @@ describe('Cryptography Direct Functions', () => {
 
 		// This should fail with mock data but validate parameters properly
 		try {
-			const result = await encryptSecretShare(secretShare, encryptionKey, protocolParams);
+			const result = await encryptSecretShare(
+				Curve.SECP256K1,
+				secretShare,
+				encryptionKey,
+				protocolParams,
+			);
 			expect(result).toBeDefined();
 		} catch (error) {
 			// Expected to fail with mock data
@@ -203,12 +209,14 @@ describe('Cryptography Direct Functions', () => {
 	});
 
 	it('should handle edge cases and invalid inputs gracefully', async () => {
+		const senderAddress = new Uint8Array(32).fill(1);
+
 		// Test with empty arrays
-		expect(() => sessionIdentifierDigest(new Uint8Array(0))).not.toThrow();
+		expect(() => sessionIdentifierDigest(new Uint8Array(0), senderAddress)).not.toThrow();
 
 		// Test with minimal valid inputs
 		const minimalSessionId = new Uint8Array(1);
-		const digest = sessionIdentifierDigest(minimalSessionId);
+		const digest = sessionIdentifierDigest(minimalSessionId, senderAddress);
 		expect(digest).toBeInstanceOf(Uint8Array);
 
 		// Test random session identifier multiple times for consistency
@@ -238,7 +246,9 @@ describe('Cryptography Direct Functions', () => {
 			const mockDWalletOutput = new Uint8Array(64).fill(1);
 
 			// This function may throw for invalid input, which is expected behavior
-			await expect(publicKeyFromDWalletOutput(mockDWalletOutput)).rejects.toThrow();
+			await expect(
+				publicKeyFromDWalletOutput(Curve.SECP256K1, mockDWalletOutput),
+			).rejects.toThrow();
 		});
 	});
 
@@ -354,6 +364,166 @@ describe('Cryptography Direct Functions', () => {
 			).rejects.toThrow(
 				'Invalid Sui address. The encryption key address does not match the signing keypair address.',
 			);
+		});
+	});
+
+	describe('prepareDKGSecondRound', () => {
+		it('should throw error when first round output is missing', async () => {
+			const mockDWallet = {
+				state: {
+					AwaitingUserDKGVerificationInitiation: {}, // Missing first_round_output
+				},
+			} as any;
+
+			const protocolParams = new Uint8Array(32);
+			const encryptionKey = new Uint8Array(778);
+
+			const { prepareDKGSecondRound } = await import('../../src/client/cryptography');
+
+			await expect(
+				prepareDKGSecondRound(protocolParams, mockDWallet, encryptionKey),
+			).rejects.toThrow();
+		});
+	});
+
+	describe('prepareDKG', () => {
+		it('should handle invalid protocol parameters', async () => {
+			const invalidProtocolParams = new Uint8Array(0); // Empty params
+			const encryptionKey = new Uint8Array(778);
+			const bytesToHash = new Uint8Array(32);
+			const senderAddress = '0x' + '1'.repeat(64);
+			crypto.getRandomValues(bytesToHash);
+
+			const { prepareDKG } = await import('../../src/client/cryptography');
+
+			await expect(
+				prepareDKG(
+					invalidProtocolParams,
+					Curve.SECP256K1,
+					encryptionKey,
+					bytesToHash,
+					senderAddress,
+				),
+			).rejects.toThrow();
+		});
+	});
+
+	describe('networkDkgPublicOutputToProtocolPublicParameters', () => {
+		it('should handle invalid network DKG output', async () => {
+			const invalidOutput = new Uint8Array(10);
+
+			const { networkDkgPublicOutputToProtocolPublicParameters } = await import(
+				'../../src/client/cryptography'
+			);
+
+			await expect(
+				networkDkgPublicOutputToProtocolPublicParameters(Curve.SECP256K1, invalidOutput),
+			).rejects.toThrow();
+		});
+	});
+
+	describe('reconfigurationPublicOutputToProtocolPublicParameters', () => {
+		it('should handle invalid reconfiguration output', async () => {
+			const invalidReconfigOutput = new Uint8Array(10);
+			const invalidNetworkOutput = new Uint8Array(10);
+
+			const { reconfigurationPublicOutputToProtocolPublicParameters } = await import(
+				'../../src/client/cryptography'
+			);
+
+			await expect(
+				reconfigurationPublicOutputToProtocolPublicParameters(
+					Curve.SECP256K1,
+					invalidReconfigOutput,
+					invalidNetworkOutput,
+				),
+			).rejects.toThrow();
+		});
+	});
+
+	describe('verifyUserShare', () => {
+		it('should handle invalid user share data', async () => {
+			const userSecretKeyShare = new Uint8Array(32);
+			const userDKGOutput = new Uint8Array(32);
+			const networkDkgPublicOutput = new Uint8Array(32);
+			crypto.getRandomValues(userSecretKeyShare);
+			crypto.getRandomValues(userDKGOutput);
+			crypto.getRandomValues(networkDkgPublicOutput);
+
+			const { verifyUserShare } = await import('../../src/client/cryptography');
+
+			// With random invalid data, this should throw an error
+			await expect(
+				verifyUserShare(Curve.SECP256K1, userSecretKeyShare, userDKGOutput, networkDkgPublicOutput),
+			).rejects.toThrow();
+		});
+	});
+
+	describe('verifySecpSignature', () => {
+		it('should handle invalid signature data', async () => {
+			const publicKey = new Uint8Array(33);
+			const signature = new Uint8Array(64);
+			const message = new Uint8Array(32);
+			const networkDkgPublicOutput = new Uint8Array(32);
+			crypto.getRandomValues(publicKey);
+			crypto.getRandomValues(signature);
+			crypto.getRandomValues(message);
+			crypto.getRandomValues(networkDkgPublicOutput);
+
+			const { verifySecpSignature } = await import('../../src/client/cryptography');
+
+			// With random invalid data, this should throw an error
+			await expect(
+				verifySecpSignature(publicKey, signature, message, networkDkgPublicOutput, 1),
+			).rejects.toThrow();
+		});
+	});
+
+	describe('userAndNetworkDKGOutputMatch', () => {
+		it('should handle invalid output data', async () => {
+			const userPublicOutput = new Uint8Array(32);
+			const networkDKGOutput = new Uint8Array(32);
+			crypto.getRandomValues(userPublicOutput);
+			crypto.getRandomValues(networkDKGOutput);
+
+			const { userAndNetworkDKGOutputMatch } = await import('../../src/client/cryptography');
+
+			// With random invalid data, this should throw an error
+			await expect(
+				userAndNetworkDKGOutputMatch(Curve.SECP256K1, userPublicOutput, networkDKGOutput),
+			).rejects.toThrow();
+		});
+	});
+
+	describe('createUserSignMessageWithPublicOutput', () => {
+		it('should handle invalid inputs', async () => {
+			const protocolParams = new Uint8Array(32);
+			const publicOutput = new Uint8Array(32);
+			const userSecretKeyShare = new Uint8Array(32);
+			const presign = new Uint8Array(32);
+			const message = new Uint8Array(32);
+			crypto.getRandomValues(protocolParams);
+			crypto.getRandomValues(publicOutput);
+			crypto.getRandomValues(userSecretKeyShare);
+			crypto.getRandomValues(presign);
+			crypto.getRandomValues(message);
+
+			const { createUserSignMessageWithPublicOutput } = await import(
+				'../../src/client/cryptography'
+			);
+
+			// With mock data, this should fail
+			await expect(
+				createUserSignMessageWithPublicOutput(
+					protocolParams,
+					publicOutput,
+					userSecretKeyShare,
+					presign,
+					message,
+					1, // SHA256 hash
+					0, // ECDSA signature scheme
+				),
+			).rejects.toThrow();
 		});
 	});
 });

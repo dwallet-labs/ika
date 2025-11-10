@@ -8,12 +8,13 @@ use colored::Colorize;
 use ika_config::{IKA_SUI_CONFIG, ika_config_dir};
 use ika_sui_client::ika_protocol_transactions::{
     perform_approved_upgrade, set_approved_upgrade_by_cap,
-    set_gas_fee_reimbursement_sui_system_call_value_by_cap,
+    set_gas_fee_reimbursement_sui_system_call_value_by_cap, set_global_presign_config,
     set_paused_curves_and_signature_algorithms, set_supported_and_pricing, try_migrate_coordinator,
     try_migrate_coordinator_by_cap, try_migrate_system, try_migrate_system_by_cap,
 };
 use ika_types::sui::{PricingInfoKey, PricingInfoValue};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::{
@@ -142,6 +143,17 @@ pub enum IkaProtocolCommand {
         #[clap(name = "ika-sui-config", long)]
         ika_sui_config: Option<PathBuf>,
     },
+    #[clap(name = "set-global-presign-config")]
+    SetGlobalPresignConfig {
+        #[clap(name = "gas-budget", long)]
+        gas_budget: Option<u64>,
+        #[clap(name = "protocol-cap-id", long)]
+        protocol_cap_id: ObjectID,
+        #[clap(name = "global-presign-config", long)]
+        global_presign_config: PathBuf,
+        #[clap(name = "ika-sui-config", long)]
+        ika_sui_config: Option<PathBuf>,
+    },
 }
 
 pub enum IkaProtocolCommandResponse {
@@ -154,6 +166,7 @@ pub enum IkaProtocolCommandResponse {
     SetPausedCurvesAndSignatureAlgorithms(SuiTransactionBlockResponse),
     SetSupportedAndPricing(SuiTransactionBlockResponse),
     SetGasFeeReimbursementSuiSystemCallValueByCap(SuiTransactionBlockResponse),
+    SetGlobalPresignConfig(SuiTransactionBlockResponse),
 }
 
 impl IkaProtocolCommand {
@@ -404,6 +417,41 @@ impl IkaProtocolCommand {
                 .await?;
                 IkaProtocolCommandResponse::SetGasFeeReimbursementSuiSystemCallValueByCap(response)
             }
+            IkaProtocolCommand::SetGlobalPresignConfig {
+                gas_budget,
+                protocol_cap_id,
+                global_presign_config,
+                ika_sui_config,
+            } => {
+                let gas_budget = gas_budget.unwrap_or(DEFAULT_GAS_BUDGET);
+                let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
+                let config = read_ika_sui_config_yaml(context, &config_path)?;
+
+                #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+                struct FileConfig {
+                    curve_to_signature_algorithms_for_dkg: HashMap<u32, Vec<u32>>,
+                    curve_to_signature_algorithms_for_imported_key: HashMap<u32, Vec<u32>>,
+                }
+
+                let FileConfig {
+                    curve_to_signature_algorithms_for_dkg,
+                    curve_to_signature_algorithms_for_imported_key,
+                } = serde_yaml::from_reader(BufReader::new(File::open(global_presign_config)?))?;
+
+                let response = set_global_presign_config(
+                    context,
+                    config.packages.ika_dwallet_2pc_mpc_package_id,
+                    config.objects.ika_dwallet_coordinator_object_id,
+                    config.packages.ika_system_package_id,
+                    config.objects.ika_system_object_id,
+                    protocol_cap_id,
+                    curve_to_signature_algorithms_for_dkg,
+                    curve_to_signature_algorithms_for_imported_key,
+                    gas_budget,
+                )
+                .await?;
+                IkaProtocolCommandResponse::SetGlobalPresignConfig(response)
+            }
         };
         Ok(response)
     }
@@ -421,8 +469,8 @@ impl Display for IkaProtocolCommandResponse {
             | IkaProtocolCommandResponse::TryMigrateCoordinatorByCap(response)
             | IkaProtocolCommandResponse::SetPausedCurvesAndSignatureAlgorithms(response)
             | IkaProtocolCommandResponse::SetSupportedAndPricing(response)
-            | IkaProtocolCommandResponse::SetGasFeeReimbursementSuiSystemCallValueByCap(response) =>
-            {
+            | IkaProtocolCommandResponse::SetGasFeeReimbursementSuiSystemCallValueByCap(response)
+            | IkaProtocolCommandResponse::SetGlobalPresignConfig(response) => {
                 write!(
                     writer,
                     "{}",

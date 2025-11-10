@@ -36,6 +36,7 @@ const TRY_MIGRATE_BY_CAP_FUNCTION_NAME: &IdentStr = ident_str!("try_migrate_by_c
 const SET_SUPPORTED_AND_PRICING_FUNCTION_NAME: &IdentStr = ident_str!("set_supported_and_pricing");
 const SET_GAS_FEE_REIMBURSEMENT_SUI_SYSTEM_CALL_VALUE_BY_CAP_FUNCTION_NAME: &IdentStr =
     ident_str!("set_gas_fee_reimbursement_sui_system_call_value_by_cap");
+const SET_GLOBAL_PRESIGN_CONFIG_FUNCTION_NAME: &IdentStr = ident_str!("set_global_presign_config");
 
 /// Set approved upgrade by cap
 pub async fn set_approved_upgrade_by_cap(
@@ -532,7 +533,7 @@ fn new_supported_curves_to_signature_algorithms_to_hash_schemes_argument(
     Ok(supported_curves_to_signature_algorithms_to_hash_schemes_arg)
 }
 
-async fn get_verified_protocol_cap(
+pub async fn get_verified_protocol_cap(
     context: &mut WalletContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -558,4 +559,83 @@ async fn get_verified_protocol_cap(
         ptb,
     )
     .await
+}
+
+fn new_curve_to_signature_algorithm_vecmap(
+    ptb: &mut ProgrammableTransactionBuilder,
+    curve_to_signature_algorithms: HashMap<u32, Vec<u32>>,
+) -> anyhow::Result<Argument> {
+    let (keys, values): (Vec<u32>, Vec<Vec<u32>>) =
+        curve_to_signature_algorithms.into_iter().unzip();
+
+    let keys = ptb.input(CallArg::Pure(bcs::to_bytes(&keys)?))?;
+    let values = ptb.input(CallArg::Pure(bcs::to_bytes(&values)?))?;
+
+    Ok(ptb.programmable_move_call(
+        SUI_FRAMEWORK_PACKAGE_ID,
+        VEC_MAP_MODULE_NAME.into(),
+        VEC_MAP_FROM_KEYS_VALUES_FUNCTION_NAME.into(),
+        vec![TypeTag::U32, TypeTag::Vector(Box::new(TypeTag::U32))],
+        vec![keys, values],
+    ))
+}
+
+/// Set global presign config
+pub async fn set_global_presign_config(
+    context: &mut WalletContext,
+    ika_dwallet_2pc_mpc_coordinator_package_id: ObjectID,
+    ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
+    ika_system_package_id: ObjectID,
+    ika_system_object_id: ObjectID,
+    protocol_cap_id: ObjectID,
+    curve_to_signature_algorithms_for_dkg: HashMap<u32, Vec<u32>>,
+    curve_to_signature_algorithms_for_imported_key: HashMap<u32, Vec<u32>>,
+    gas_budget: u64,
+) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+    let mut ptb = ProgrammableTransactionBuilder::new();
+
+    let verified_protocol_cap = get_verified_protocol_cap(
+        context,
+        ika_system_package_id,
+        ika_system_object_id,
+        protocol_cap_id,
+        &mut ptb,
+    )
+    .await?;
+
+    let curve_to_signature_algorithms_for_dkg_arg =
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, curve_to_signature_algorithms_for_dkg)?;
+    let curve_to_signature_algorithms_for_imported_key_arg =
+        new_curve_to_signature_algorithm_vecmap(
+            &mut ptb,
+            curve_to_signature_algorithms_for_imported_key,
+        )?;
+
+    let dwallet_2pc_mpc_coordinator = ptb.input(
+        get_dwallet_2pc_mpc_coordinator_call_arg(
+            context,
+            ika_dwallet_2pc_mpc_coordinator_object_id,
+        )
+        .await?,
+    )?;
+
+    let args = vec![
+        dwallet_2pc_mpc_coordinator,
+        curve_to_signature_algorithms_for_dkg_arg,
+        curve_to_signature_algorithms_for_imported_key_arg,
+        verified_protocol_cap,
+    ];
+    ptb.programmable_move_call(
+        ika_dwallet_2pc_mpc_coordinator_package_id,
+        DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+        SET_GLOBAL_PRESIGN_CONFIG_FUNCTION_NAME.to_owned(),
+        vec![],
+        args,
+    );
+
+    let sender = context.active_address()?;
+
+    let tx_data = construct_unsigned_txn(context, sender, gas_budget, ptb).await?;
+
+    ika_validator_transactions::execute_transaction(context, tx_data).await
 }

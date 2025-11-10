@@ -7,20 +7,30 @@ import { toHex } from '@mysten/sui/utils';
 
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator.js';
+import { TableVec } from '../generated/ika_system/deps/sui/table_vec.js';
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
-import { networkDkgPublicOutputToProtocolPublicParameters } from './cryptography.js';
+import {
+	networkDkgPublicOutputToProtocolPublicParameters,
+	parseSignatureFromSignOutput,
+	reconfigurationPublicOutputToProtocolPublicParameters,
+} from './cryptography.js';
 import { InvalidObjectError, NetworkError, ObjectNotFoundError } from './errors.js';
-import { CoordinatorInnerDynamicField, SystemInnerDynamicField } from './types.js';
+import { fromNumberToCurve, validateCurveSignatureAlgorithm } from './hash-signature-validation.js';
+import type { ValidSignatureAlgorithmForCurve } from './hash-signature-validation.js';
+import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
 	CoordinatorInner,
+	Curve,
 	DWallet,
 	DWalletCap,
 	DWalletInternal,
 	DWalletKind,
 	DWalletState,
+	DWalletWithState,
 	EncryptedUserSecretKeyShare,
 	EncryptedUserSecretKeyShareState,
+	EncryptedUserSecretKeyShareWithState,
 	EncryptionKey,
 	EncryptionKeyOptions,
 	IkaClientOptions,
@@ -28,14 +38,18 @@ import type {
 	NetworkEncryptionKey,
 	PartialUserSignature,
 	PartialUserSignatureState,
+	PartialUserSignatureWithState,
 	Presign,
 	PresignState,
+	PresignWithState,
 	SharedObjectOwner,
 	Sign,
+	SignatureAlgorithm,
 	SignState,
+	SignWithState,
 	SystemInner,
 } from './types.js';
-import { objResToBcs } from './utils.js';
+import { fetchAllDynamicFields, objResToBcs } from './utils.js';
 
 /**
  * IkaClient provides a high-level interface for interacting with the Ika network.
@@ -52,12 +66,13 @@ export class IkaClient {
 	private client: SuiClient;
 	/** Whether to enable caching of network objects and parameters */
 	private cache: boolean;
-	/** Cached network public parameters by encryption key ID to avoid repeated fetching */
+	/** Cached network public parameters by encryption key ID and curve to avoid repeated fetching */
 	private cachedProtocolPublicParameters: Map<
 		string,
 		{
 			networkEncryptionKeyPublicOutputID: string;
 			epoch: number;
+			curve: Curve;
 			protocolPublicParameters: Uint8Array;
 		}
 	> = new Map();
@@ -122,14 +137,24 @@ export class IkaClient {
 	}
 
 	/**
-	 * Invalidate cached protocol public parameters for a specific encryption key.
-	 * If no encryptionKeyID is provided, clears all cached protocol parameters.
+	 * Invalidate cached protocol public parameters for a specific encryption key and/or curve.
+	 * If no parameters are provided, clears all cached protocol parameters.
+	 * If only encryptionKeyID is provided, clears all curves for that key.
+	 * If both are provided, clears only that specific combination.
 	 *
 	 * @param encryptionKeyID - Optional specific encryption key ID to invalidate
+	 * @param curve - Optional specific curve to invalidate
 	 */
-	invalidateProtocolPublicParametersCache(encryptionKeyID?: string): void {
-		if (encryptionKeyID) {
-			this.cachedProtocolPublicParameters.delete(encryptionKeyID);
+	invalidateProtocolPublicParametersCache(encryptionKeyID?: string, curve?: Curve): void {
+		if (encryptionKeyID !== undefined && curve !== undefined) {
+			this.cachedProtocolPublicParameters.delete(this.#getCacheKey(encryptionKeyID, curve));
+		} else if (encryptionKeyID !== undefined) {
+			// Clear all curves for this encryption key
+			for (const key of this.cachedProtocolPublicParameters.keys()) {
+				if (key.startsWith(`${encryptionKeyID}-`)) {
+					this.cachedProtocolPublicParameters.delete(key);
+				}
+			}
 		} else {
 			this.cachedProtocolPublicParameters.clear();
 		}
@@ -153,7 +178,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If initialization fails
 	 * @private
 	 */
-	private async ensureInitialized(): Promise<{
+	async ensureInitialized(): Promise<{
 		coordinatorInner: CoordinatorInner;
 		systemInner: SystemInner;
 	}> {
@@ -299,34 +324,43 @@ export class IkaClient {
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
 	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
-	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
+	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
+	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
+	 * @param options.signal - AbortSignal to cancel the polling
 	 * @returns Promise resolving to the DWallet object when it reaches the target state
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
-	 * @throws {Error} If timeout is reached before the target state is achieved
+	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
+	async getDWalletInParticularState<S extends DWalletState>(
+		dwalletID: string,
+		state: S,
+		options?: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		},
+	): Promise<DWalletWithState<S>>;
 	async getDWalletInParticularState(
 		dwalletID: string,
 		state: DWalletState,
-		options: { timeout?: number; interval?: number } = {},
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<DWallet> {
-		await this.ensureInitialized();
-
-		const { timeout = 30000, interval = 1000 } = options;
-		const startTime = Date.now();
-
-		while (Date.now() - startTime < timeout) {
-			const dWallet = await this.getDWallet(dwalletID);
-
-			if (dWallet.state.$kind === state) {
-				return dWallet;
-			}
-
-			// Wait for the specified interval before next poll
-			await new Promise((resolve) => setTimeout(resolve, interval));
-		}
-
-		throw new Error(`Timeout waiting for DWallet ${dwalletID} to reach state ${state}`);
+		return this.#pollUntilState(
+			() => this.getDWallet(dwalletID),
+			state,
+			`DWallet ${dwalletID} to reach state ${state}`,
+			options,
+		) as Promise<DWallet>;
 	}
 
 	/**
@@ -358,33 +392,43 @@ export class IkaClient {
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
 	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
-	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
+	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
+	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
+	 * @param options.signal - AbortSignal to cancel the polling
 	 * @returns Promise resolving to the Presign object when it reaches the target state
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
-	 * @throws {Error} If timeout is reached before the target state is achieved
+	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
+	async getPresignInParticularState<S extends PresignState>(
+		presignID: string,
+		state: S,
+		options?: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		},
+	): Promise<PresignWithState<S>>;
 	async getPresignInParticularState(
 		presignID: string,
 		state: PresignState,
-		options: { timeout?: number; interval?: number } = {},
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<Presign> {
-		await this.ensureInitialized();
-
-		const { timeout = 30000, interval = 1000 } = options;
-		const startTime = Date.now();
-
-		while (Date.now() - startTime < timeout) {
-			const presign = await this.getPresign(presignID);
-
-			if (presign.state.$kind === state) {
-				return presign;
-			}
-
-			await new Promise((resolve) => setTimeout(resolve, interval));
-		}
-
-		throw new Error(`Timeout waiting for presign ${presignID} to reach state ${state}`);
+		return this.#pollUntilState(
+			() => this.getPresign(presignID),
+			state,
+			`presign ${presignID} to reach state ${state}`,
+			options,
+		) as Promise<Presign>;
 	}
 
 	/**
@@ -417,36 +461,43 @@ export class IkaClient {
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
 	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
-	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
+	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
+	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
+	 * @param options.signal - AbortSignal to cancel the polling
 	 * @returns Promise resolving to the EncryptedUserSecretKeyShare object
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
+	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
+	async getEncryptedUserSecretKeyShareInParticularState<S extends EncryptedUserSecretKeyShareState>(
+		encryptedUserSecretKeyShareID: string,
+		state: S,
+		options?: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		},
+	): Promise<EncryptedUserSecretKeyShareWithState<S>>;
 	async getEncryptedUserSecretKeyShareInParticularState(
 		encryptedUserSecretKeyShareID: string,
 		state: EncryptedUserSecretKeyShareState,
-		options: { timeout?: number; interval?: number } = {},
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<EncryptedUserSecretKeyShare> {
-		await this.ensureInitialized();
-
-		const { timeout = 30000, interval = 1000 } = options;
-		const startTime = Date.now();
-
-		while (Date.now() - startTime < timeout) {
-			const encryptedUserSecretKeyShare = await this.getEncryptedUserSecretKeyShare(
-				encryptedUserSecretKeyShareID,
-			);
-
-			if (encryptedUserSecretKeyShare.state.$kind === state) {
-				return encryptedUserSecretKeyShare;
-			}
-
-			await new Promise((resolve) => setTimeout(resolve, interval));
-		}
-
-		throw new Error(
-			`Timeout waiting for encrypted user secret key share ${encryptedUserSecretKeyShareID} to reach state ${state}`,
-		);
+		return this.#pollUntilState(
+			() => this.getEncryptedUserSecretKeyShare(encryptedUserSecretKeyShareID),
+			state,
+			`encrypted user secret key share ${encryptedUserSecretKeyShareID} to reach state ${state}`,
+			options,
+		) as Promise<EncryptedUserSecretKeyShare>;
 	}
 
 	/**
@@ -472,52 +523,74 @@ export class IkaClient {
 			});
 	}
 
+	async getPartialUserSignatureInParticularState<S extends PartialUserSignatureState>(
+		partialCentralizedSignedMessageID: string,
+		state: S,
+		options?: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		},
+	): Promise<PartialUserSignatureWithState<S>>;
 	async getPartialUserSignatureInParticularState(
 		partialCentralizedSignedMessageID: string,
 		state: PartialUserSignatureState,
-		options: { timeout?: number; interval?: number } = {},
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<PartialUserSignature> {
-		await this.ensureInitialized();
-
-		const { timeout = 30000, interval = 1000 } = options;
-		const startTime = Date.now();
-
-		while (Date.now() - startTime < timeout) {
-			const partialUserSignature = await this.getPartialUserSignature(
-				partialCentralizedSignedMessageID,
-			);
-
-			if (partialUserSignature.state.$kind === state) {
-				return partialUserSignature;
-			}
-
-			await new Promise((resolve) => setTimeout(resolve, interval));
-		}
-
-		throw new Error(
-			`Timeout waiting for partial user signature ${partialCentralizedSignedMessageID} to reach state ${state}`,
-		);
+		return this.#pollUntilState(
+			() => this.getPartialUserSignature(partialCentralizedSignedMessageID),
+			state,
+			`partial user signature ${partialCentralizedSignedMessageID} to reach state ${state}`,
+			options,
+		) as Promise<PartialUserSignature>;
 	}
 
 	/**
 	 * Retrieve a sign session object by its ID.
 	 *
 	 * @param signID - The unique identifier of the sign session to retrieve
+	 * @param curve - The curve to use for parsing
+	 * @param signatureAlgorithm - The signature algorithm to use for parsing (must be valid for the curve)
+	 *
 	 * @returns Promise resolving to the Sign object
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getSign(signID: string): Promise<Sign> {
+	async getSign<C extends Curve>(
+		signID: string,
+		curve: C,
+		signatureAlgorithm: ValidSignatureAlgorithmForCurve<C>,
+	): Promise<Sign> {
 		await this.ensureInitialized();
 
-		return this.client
-			.getObject({
-				id: signID,
-				options: { showBcs: true },
-			})
-			.then((obj) => {
-				return CoordinatorInnerModule.SignSession.fromBase64(objResToBcs(obj));
-			});
+		validateCurveSignatureAlgorithm(curve, signatureAlgorithm);
+
+		const unparsedSign = await this.client.getObject({
+			id: signID,
+			options: { showBcs: true },
+		});
+
+		const sign = CoordinatorInnerModule.SignSession.fromBase64(objResToBcs(unparsedSign));
+
+		if (sign.state.$kind === 'Completed') {
+			sign.state.Completed.signature = Array.from(
+				await parseSignatureFromSignOutput(
+					curve,
+					signatureAlgorithm,
+					Uint8Array.from(sign.state.Completed.signature),
+				),
+			);
+		}
+
+		return sign;
 	}
 
 	/**
@@ -525,36 +598,52 @@ export class IkaClient {
 	 * This method polls the sign until it matches the specified state.
 	 *
 	 * @param signID - The unique identifier of the sign session to retrieve
+	 * @param curve - The curve to use for parsing
+	 * @param signatureAlgorithm - The signature algorithm to use for parsing (must be valid for the curve)
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
 	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
-	 * @param options.interval - Polling interval in milliseconds (default: 1000)
+	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
+	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
+	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
+	 * @param options.signal - AbortSignal to cancel the polling
 	 * @returns Promise resolving to the Sign object when it reaches the target state
 	 * @throws {InvalidObjectError} If the object cannot be parsed or is invalid
 	 * @throws {NetworkError} If the network request fails
-	 * @throws {Error} If timeout is reached before the target state is achieved
+	 * @throws {Error} If timeout is reached before the target state is achieved or operation is aborted
 	 */
+	async getSignInParticularState<S extends SignState>(
+		signID: string,
+		curve: Curve,
+		signatureAlgorithm: SignatureAlgorithm,
+		state: S,
+		options?: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		},
+	): Promise<SignWithState<S>>;
 	async getSignInParticularState(
 		signID: string,
+		curve: Curve,
+		signatureAlgorithm: SignatureAlgorithm,
 		state: SignState,
-		options: { timeout?: number; interval?: number } = {},
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<Sign> {
-		await this.ensureInitialized();
-
-		const { timeout = 30000, interval = 1000 } = options;
-		const startTime = Date.now();
-
-		while (Date.now() - startTime < timeout) {
-			const sign = await this.getSign(signID);
-
-			if (sign.state.$kind === state) {
-				return sign;
-			}
-
-			await new Promise((resolve) => setTimeout(resolve, interval));
-		}
-
-		throw new Error(`Timeout waiting for sign ${signID} to reach state ${state}`);
+		return this.#pollUntilState(
+			() => this.getSign(signID, curve, signatureAlgorithm),
+			state,
+			`sign ${signID} to reach state ${state}`,
+			options,
+		) as Promise<Sign>;
 	}
 
 	/**
@@ -630,14 +719,16 @@ export class IkaClient {
 	}
 
 	/**
-	 * Get cached protocol public parameters for a specific encryption key.
+	 * Get cached protocol public parameters for a specific encryption key and curve.
 	 * Returns undefined if not cached or if the cache is invalid.
 	 *
 	 * @param encryptionKeyID - The ID of the encryption key to get cached parameters for
+	 * @param curve - The curve to get cached parameters for
 	 * @returns Cached protocol public parameters or undefined if not cached
 	 */
-	getCachedProtocolPublicParameters(encryptionKeyID: string): Uint8Array | undefined {
-		const cachedParams = this.cachedProtocolPublicParameters.get(encryptionKeyID);
+	getCachedProtocolPublicParameters(encryptionKeyID: string, curve: Curve): Uint8Array | undefined {
+		const cacheKey = this.#getCacheKey(encryptionKeyID, curve);
+		const cachedParams = this.cachedProtocolPublicParameters.get(cacheKey);
 		if (!cachedParams) {
 			return undefined;
 		}
@@ -649,27 +740,29 @@ export class IkaClient {
 			return undefined;
 		}
 
-		// Check if the cached parameters match the current key state
+		// Check if the cached parameters match the current key state and curve
 		if (
-			cachedParams.networkEncryptionKeyPublicOutputID === currentKey.publicOutputID &&
-			cachedParams.epoch === currentKey.epoch
+			cachedParams.networkEncryptionKeyPublicOutputID === currentKey.networkDKGOutputID &&
+			cachedParams.epoch === currentKey.epoch &&
+			cachedParams.curve === curve
 		) {
 			return cachedParams.protocolPublicParameters;
 		}
 
 		// Cache is invalid, remove it
-		this.cachedProtocolPublicParameters.delete(encryptionKeyID);
+		this.cachedProtocolPublicParameters.delete(cacheKey);
 		return undefined;
 	}
 
 	/**
-	 * Check if protocol public parameters are cached for a specific encryption key.
+	 * Check if protocol public parameters are cached for a specific encryption key and curve.
 	 *
 	 * @param encryptionKeyID - The ID of the encryption key to check
+	 * @param curve - The curve to check
 	 * @returns True if valid cached parameters exist, false otherwise
 	 */
-	isProtocolPublicParametersCached(encryptionKeyID: string): boolean {
-		return this.getCachedProtocolPublicParameters(encryptionKeyID) !== undefined;
+	isProtocolPublicParametersCached(encryptionKeyID: string, curve: Curve): boolean {
+		return this.getCachedProtocolPublicParameters(encryptionKeyID, curve) !== undefined;
 	}
 
 	/**
@@ -705,13 +798,14 @@ export class IkaClient {
 	 * Retrieve the protocol public parameters used for cryptographic operations.
 	 * These parameters are cached by encryption key ID and only refetched when the epoch or decryption key changes.
 	 *
-	 * @param options - Options for encryption key selection
+	 * @param dWallet - The DWallet to get the protocol public parameters for
+	 * @param curve - The curve to use for key generation
 	 * @returns Promise resolving to the protocol public parameters as bytes
 	 * @throws {ObjectNotFoundError} If the public parameters cannot be found
 	 * @throws {NetworkError} If the network request fails
 	 */
-	async getProtocolPublicParameters(dWallet?: DWallet): Promise<Uint8Array> {
-		await this.ensureInitialized();
+	async getProtocolPublicParameters(dWallet?: DWallet, curve?: Curve): Promise<Uint8Array> {
+		await this.#fetchEncryptionKeysFromNetwork();
 
 		let networkEncryptionKey: NetworkEncryptionKey;
 
@@ -723,28 +817,46 @@ export class IkaClient {
 		}
 
 		const encryptionKeyID = networkEncryptionKey.id;
-		const networkEncryptionKeyPublicOutputID = networkEncryptionKey.publicOutputID;
+		const networkEncryptionKeyPublicOutputID = networkEncryptionKey.networkDKGOutputID;
 		const epoch = networkEncryptionKey.epoch;
 
-		// Check if we have cached parameters for this specific encryption key
-		const cachedParams = this.cachedProtocolPublicParameters.get(encryptionKeyID);
+		let selectedCurve: Curve;
+
+		if (dWallet) {
+			selectedCurve = fromNumberToCurve(dWallet.curve);
+		} else {
+			selectedCurve = curve !== undefined ? curve : fromNumberToCurve(0);
+		}
+
+		// Check if we have cached parameters for this specific encryption key and curve
+		const cacheKey = this.#getCacheKey(encryptionKeyID, selectedCurve);
+		const cachedParams = this.cachedProtocolPublicParameters.get(cacheKey);
 		if (cachedParams) {
 			if (
 				cachedParams.networkEncryptionKeyPublicOutputID === networkEncryptionKeyPublicOutputID &&
-				cachedParams.epoch === epoch
+				cachedParams.epoch === epoch &&
+				cachedParams.curve === selectedCurve
 			) {
 				return cachedParams.protocolPublicParameters;
 			}
 		}
 
-		const protocolPublicParameters = await networkDkgPublicOutputToProtocolPublicParameters(
-			await this.#readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
-		);
+		const protocolPublicParameters = !networkEncryptionKey.reconfigurationOutputID
+			? await networkDkgPublicOutputToProtocolPublicParameters(
+					selectedCurve,
+					await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+				)
+			: await reconfigurationPublicOutputToProtocolPublicParameters(
+					selectedCurve,
+					await this.readTableVecAsRawBytes(networkEncryptionKey.reconfigurationOutputID),
+					await this.readTableVecAsRawBytes(networkEncryptionKeyPublicOutputID),
+				);
 
-		// Cache the parameters by encryption key ID
-		this.cachedProtocolPublicParameters.set(encryptionKeyID, {
+		// Cache the parameters by encryption key ID and curve
+		this.cachedProtocolPublicParameters.set(cacheKey, {
 			networkEncryptionKeyPublicOutputID,
 			epoch,
+			curve: selectedCurve,
 			protocolPublicParameters,
 		});
 
@@ -965,10 +1077,38 @@ export class IkaClient {
 					objResToBcs(keyObject),
 				);
 
+				const reconfigOutputsDFs = await fetchAllDynamicFields(
+					this.client,
+					keyParsed.reconfiguration_public_outputs.id.id,
+				);
+
+				const lastReconfigOutput = (
+					await Promise.all(
+						reconfigOutputsDFs.map(async (df) => {
+							const name = df.name.value as string;
+							const reconfigObject = await this.client.getObject({
+								id: df.objectId,
+								options: { showBcs: true },
+							});
+
+							const parsedValue = DynamicField(TableVec).fromBase64(objResToBcs(reconfigObject));
+
+							return {
+								name,
+								parsedValue,
+							};
+						}),
+					)
+				)
+					.sort((a, b) => Number(a.name) - Number(b.name))
+					// The last reconfiguration has not necessarily been completed, so we take the second to last
+					.at(-2);
+
 				const encryptionKey: NetworkEncryptionKey = {
 					id: keyName,
 					epoch: Number(keyParsed.dkg_at_epoch),
-					publicOutputID: keyParsed.network_dkg_public_output.contents.id.id,
+					networkDKGOutputID: keyParsed.network_dkg_public_output.contents.id.id,
+					reconfigurationOutputID: lastReconfigOutput?.parsedValue.value.contents.id.id,
 				};
 
 				encryptionKeys.push(encryptionKey);
@@ -999,7 +1139,7 @@ export class IkaClient {
 	 * @throws {NetworkError} If network requests fail
 	 * @private
 	 */
-	async #readTableVecAsRawBytes(tableID: string): Promise<Uint8Array> {
+	async readTableVecAsRawBytes(tableID: string): Promise<Uint8Array> {
 		try {
 			let cursor: string | null = null;
 			const allTableRows: { objectId: string }[] = [];
@@ -1146,6 +1286,18 @@ export class IkaClient {
 		}
 	}
 
+	/**
+	 * Generate a cache key for protocol public parameters based on encryption key ID and curve.
+	 *
+	 * @param encryptionKeyID - The encryption key ID
+	 * @param curve - The curve
+	 * @returns A unique cache key string
+	 * @private
+	 */
+	#getCacheKey(encryptionKeyID: string, curve: Curve): string {
+		return `${encryptionKeyID}-${curve}`;
+	}
+
 	#getDWalletKind(dWallet: DWalletInternal): DWalletKind {
 		if (dWallet.is_imported_key_dwallet && dWallet.public_user_secret_key_share) {
 			return 'imported-key-shared';
@@ -1160,5 +1312,113 @@ export class IkaClient {
 		}
 
 		return 'zero-trust';
+	}
+
+	/**
+	 * Generic polling method that waits for an object to meet a specific condition.
+	 * Implements exponential backoff and abort signal support.
+	 *
+	 * @param fetcher - Function that fetches the object
+	 * @param condition - Function that checks if the object meets the desired condition
+	 * @param errorContext - Context string for error messages (e.g., "DWallet X to reach state Y")
+	 * @param options - Optional configuration for polling behavior
+	 * @returns Promise resolving to the object when the condition is met
+	 * @throws {Error} If timeout is reached before condition is met or operation is aborted
+	 * @private
+	 */
+	async #pollUntilCondition<T>(
+		fetcher: () => Promise<T>,
+		condition: (obj: T) => boolean,
+		errorContext: string,
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
+	): Promise<T> {
+		await this.ensureInitialized();
+
+		const {
+			timeout = 30000,
+			interval = 1000,
+			maxInterval = 5000,
+			backoffMultiplier = 1.5,
+			signal,
+		} = options;
+
+		if (signal?.aborted) {
+			throw new Error('Operation aborted');
+		}
+
+		const startTime = Date.now();
+		let currentInterval = interval;
+		let lastError: Error | undefined;
+
+		while (Date.now() - startTime < timeout) {
+			if (signal?.aborted) {
+				throw new Error('Operation aborted');
+			}
+
+			try {
+				const obj = await fetcher();
+
+				if (condition(obj)) {
+					return obj;
+				}
+			} catch (error) {
+				lastError = error as Error;
+			}
+
+			const waitTime = currentInterval;
+			await new Promise((resolve, reject) => {
+				const timeoutId = setTimeout(resolve, waitTime);
+				signal?.addEventListener('abort', () => {
+					clearTimeout(timeoutId);
+					reject(new Error('Operation aborted'));
+				});
+			});
+
+			currentInterval = Math.min(currentInterval * backoffMultiplier, maxInterval);
+		}
+
+		const errorMessage = lastError
+			? `Timeout waiting for ${errorContext}. Last error: ${lastError.message}`
+			: `Timeout waiting for ${errorContext}`;
+
+		throw new Error(errorMessage);
+	}
+
+	/**
+	 * Specialized polling method that waits for an object to reach a specific state.
+	 * This is a convenience wrapper around #pollUntilCondition for the common case of checking state.$kind.
+	 *
+	 * @param fetcher - Function that fetches the object
+	 * @param state - The state to wait for (compared with obj.state.$kind)
+	 * @param errorContext - Context string for error messages (e.g., "DWallet X to reach state Y")
+	 * @param options - Optional configuration for polling behavior
+	 * @returns Promise resolving to the object when it reaches the desired state
+	 * @throws {Error} If timeout is reached before state is achieved or operation is aborted
+	 * @private
+	 */
+	async #pollUntilState<T extends { state: { $kind: string } }>(
+		fetcher: () => Promise<T>,
+		state: string,
+		errorContext: string,
+		options: {
+			timeout?: number;
+			interval?: number;
+			maxInterval?: number;
+			backoffMultiplier?: number;
+			signal?: AbortSignal;
+		} = {},
+	): Promise<T> {
+		return this.#pollUntilCondition(
+			fetcher,
+			(obj) => obj.state.$kind === state,
+			errorContext,
+			options,
+		);
 	}
 }

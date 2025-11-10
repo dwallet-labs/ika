@@ -51,10 +51,10 @@ use tracing::{debug, error, info};
 pub(crate) struct DWalletMPCManager {
     /// The party ID of the current authority. Based on the authority index in the committee.
     pub(crate) party_id: PartyID,
-    /// A map of all MPC sessions that start execution in this epoch.
+    /// A map of all sessions that start execution in this epoch.
     /// These include completed sessions, and they are never to be removed from this
     /// mapping until the epoch advances.
-    pub(crate) mpc_sessions: HashMap<SessionIdentifier, DWalletSession>,
+    pub(crate) sessions: HashMap<SessionIdentifier, DWalletSession>,
     pub(crate) epoch_id: EpochId,
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) committee: Arc<Committee>,
@@ -130,17 +130,15 @@ impl DWalletMPCManager {
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
-        let mpc_computations_orchestrator = CryptographicComputationsOrchestrator::try_new(
-            root_seed.clone(),
-            protocol_config.clone(),
-        )?;
+        let mpc_computations_orchestrator =
+            CryptographicComputationsOrchestrator::try_new(root_seed.clone())?;
         let party_id = authority_name_to_party_id_from_committee(&committee, &validator_name)?;
 
-        let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
+        let class_groups_key_pair_and_proof = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
 
         let validator_private_data = ValidatorPrivateDecryptionKeyData {
             party_id,
-            class_groups_decryption_key: class_groups_key_pair.decryption_key(),
+            class_groups_decryption_key: class_groups_key_pair_and_proof.decryption_key(),
             validator_decryption_key_shares: HashMap::new(),
         };
         let dwallet_network_keys = DwalletMPCNetworkKeys::new(validator_private_data);
@@ -148,7 +146,7 @@ impl DWalletMPCManager {
         // Re-initialize the malicious handler every epoch. This is done intentionally:
         // We want to "forget" the malicious actors from the previous epoch and start from scratch.
         Ok(Self {
-            mpc_sessions: HashMap::new(),
+            sessions: HashMap::new(),
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
             access_structure,
@@ -277,7 +275,7 @@ impl DWalletMPCManager {
             return;
         }
 
-        let session = match self.mpc_sessions.entry(session_identifier) {
+        let session = match self.sessions.entry(session_identifier) {
             Entry::Occupied(session) => session.into_mut(),
             Entry::Vacant(_) => {
                 info!(
@@ -300,7 +298,7 @@ impl DWalletMPCManager {
                     },
                 );
                 // Safe to `unwrap()`: we just created the session.
-                self.mpc_sessions.get_mut(&session_identifier).unwrap()
+                self.sessions.get_mut(&session_identifier).unwrap()
             }
         };
 
@@ -339,7 +337,7 @@ impl DWalletMPCManager {
             "Adding a new MPC session to the active sessions map",
         );
 
-        self.mpc_sessions.insert(*session_identifier, new_session);
+        self.sessions.insert(*session_identifier, new_session);
     }
 
     /// Spawns all ready MPC cryptographic computations on separate threads using Rayon.
@@ -362,14 +360,14 @@ impl DWalletMPCManager {
         last_read_consensus_round: u64,
     ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
         let mut ready_to_advance_sessions: Vec<_> = self
-            .mpc_sessions
+            .sessions
             .iter()
             .filter_map(|(_, session)| {
                 let SessionStatus::Active { request, .. } = &session.status else {
                     return None;
                 };
 
-                //   Always advance system sessions, and only advance user session
+                // Always advance system sessions, and only advance user session
                 // if they come before the last session to complete in the current epoch (at the current time).
                 let should_advance = match request.session_type {
                     SessionType::User => {
@@ -404,6 +402,7 @@ impl DWalletMPCManager {
                         session_identifier=?session.session_identifier,
                         "session is not active, cannot perform cryptographic computation",
                     );
+
                     return None;
                 };
 
@@ -412,11 +411,12 @@ impl DWalletMPCManager {
                     &request.protocol_data,
                     last_read_consensus_round,
                     public_input.clone(),
+                    &self.protocol_config.version,
                 )
                 .ok()?
-                .map(|advance_specific_data| {
-                    let attempt_number = advance_specific_data.get_attempt_number();
-                    let mpc_round = advance_specific_data.get_mpc_round();
+                .map(|protocol_cryptographic_data| {
+                    let attempt_number = protocol_cryptographic_data.get_attempt_number();
+                    let mpc_round = protocol_cryptographic_data.get_mpc_round();
 
                     let computation_id = ComputationId {
                         session_identifier: session.session_identifier,
@@ -430,7 +430,7 @@ impl DWalletMPCManager {
                         protocol_data: (&request.protocol_data).into(),
                         validator_name: self.validator_name,
                         access_structure: self.access_structure.clone(),
-                        protocol_cryptographic_data: advance_specific_data,
+                        protocol_cryptographic_data,
                     };
 
                     (computation_id, computation_request)
@@ -442,7 +442,7 @@ impl DWalletMPCManager {
             .cryptographic_computations_orchestrator
             .receive_completed_computations(self.dwallet_mpc_metrics.clone());
         for (computation_id, computation_request) in computation_requests {
-            let computation_executing = self
+            let spawned_computation = self
                 .cryptographic_computations_orchestrator
                 .try_spawn_cryptographic_computation(
                     computation_id,
@@ -451,7 +451,7 @@ impl DWalletMPCManager {
                 )
                 .await;
 
-            if !computation_executing {
+            if !spawned_computation {
                 return completed_computation_results;
             }
         }
@@ -588,7 +588,7 @@ impl DWalletMPCManager {
             return None;
         };
 
-        let session = match self.mpc_sessions.entry(session_identifier) {
+        let session = match self.sessions.entry(session_identifier) {
             Entry::Occupied(session) => session.into_mut(),
             Entry::Vacant(_) => {
                 info!(
@@ -621,7 +621,7 @@ impl DWalletMPCManager {
                     session_computation_type.clone(),
                 );
                 // Safe to `unwrap()`: we just created the session.
-                self.mpc_sessions.get_mut(&session_identifier).unwrap()
+                self.sessions.get_mut(&session_identifier).unwrap()
             }
         };
 
@@ -629,12 +629,9 @@ impl DWalletMPCManager {
 
         let outputs_by_consensus_round = session.outputs_by_consensus_round().clone();
 
-        let built_outputs_to_finalize =
-            self.build_outputs_to_finalize(&session_identifier, outputs_by_consensus_round);
-
-        match built_outputs_to_finalize {
+        match self.build_outputs_to_finalize(&session_identifier, outputs_by_consensus_round) {
             Some((malicious_authorities, majority_vote)) => {
-                self.malicious_actors.extend(malicious_authorities.clone());
+                self.record_malicious_actors(&malicious_authorities);
 
                 Some((malicious_authorities, majority_vote))
             }
@@ -647,7 +644,7 @@ impl DWalletMPCManager {
     }
 
     /// Records malicious actors that were identified as part of the execution of an MPC session.
-    pub(crate) fn record_malicious_actors(&mut self, authorities: &[AuthorityName]) {
+    pub(crate) fn record_malicious_actors(&mut self, authorities: &HashSet<AuthorityName>) {
         self.malicious_actors.extend(authorities);
 
         if self.is_malicious_actor(&self.validator_name) {
@@ -680,29 +677,12 @@ impl DWalletMPCManager {
         match outputs_to_finalize.weighted_majority_vote(&self.access_structure) {
             Ok((malicious_voters, majority_vote)) => {
                 let output = majority_vote.output;
-                let malicious_authorities_options = malicious_voters
+                let malicious_authorities = malicious_voters
                     .iter()
-                    .map(|party_id| party_id_to_authority_name(*party_id, &self.committee))
-                    .collect_vec();
-                let any_not_found_malicious_voters =
-                    malicious_authorities_options.iter().any(|ma| ma.is_none());
-                let malicious_authorities: HashSet<AuthorityName> = malicious_authorities_options
-                    .into_iter()
-                    .flatten()
-                    .collect();
-                if any_not_found_malicious_voters {
-                    error!(
-                        ?session_identifier,
-                        ?malicious_voters,
-                        ?malicious_authorities,
-                        committee=?self.committee,
-                        "failed to convert some malicious party IDs to authority names"
-                    );
-                }
-                let malicious_authorities: HashSet<AuthorityName> = malicious_authorities
-                    .into_iter()
+                    .flat_map(|party_id| party_id_to_authority_name(*party_id, &self.committee))
                     .chain(majority_vote.malicious_authorities)
                     .collect();
+
                 Some((malicious_authorities, output))
             }
             Err(mpc::Error::ThresholdNotReached) => None,
@@ -717,7 +697,7 @@ impl DWalletMPCManager {
     }
 
     pub(crate) fn complete_mpc_session(&mut self, session_identifier: &SessionIdentifier) {
-        if let Some(session) = self.mpc_sessions.get_mut(session_identifier) {
+        if let Some(session) = self.sessions.get_mut(session_identifier) {
             if let Some(request_data) = session.request_metric_data() {
                 self.dwallet_mpc_metrics.add_completion(&request_data);
             }
@@ -731,7 +711,7 @@ impl DWalletMPCManager {
         session_identifier: &SessionIdentifier,
         session_type: SessionComputationType,
     ) {
-        match self.mpc_sessions.entry(*session_identifier) {
+        match self.sessions.entry(*session_identifier) {
             Entry::Occupied(session) => session
                 .into_mut()
                 .mark_mpc_session_as_computation_completed(),

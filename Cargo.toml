@@ -71,14 +71,14 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 # Dependencies that should be kept in sync through the whole workspace
 [workspace.dependencies]
-k256 = { version = "0.14.0-pre.9", features = ["arithmetic", "critical-section", "precomputed-tables", "serde", "ecdsa", "hash2curve", "alloc"], default-features = false }
-mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "363ed94d"}
-proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "363ed94d"}
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "363ed94d", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "363ed94d" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "363ed94d"}
-group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "363ed94d"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "363ed94d"}
+mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "9a0261a"}
+proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "9a0261a"}
+class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "9a0261a", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "9a0261a" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "9a0261a"}
+group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "9a0261a"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "9a0261a"}
+
 anyhow = "1.0.71"
 arc-swap = { version = "1.5.1", features = ["serde"] }
 assert_cmd = "2.0.6"
@@ -169,7 +169,7 @@ prometheus = "0.13.3"
 quote = "1.0.23"
 rand = "0.9"
 rand_chacha = "0.9"
-rayon = "1.5.3"
+rayon = "1.11.0"
 regex = "1.7.1"
 reqwest = { version = "0.12", default-features = false, features = [
     "http2",
@@ -219,6 +219,8 @@ tracing = "0.1.37"
 url = "2.3.1"
 zeroize = "1.6.0"
 shlex = "1.3.0"
+
+lazy_static = "1.5.0"
 
 # Move dependencies
 move-binary-format = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
@@ -301,4 +303,5 @@ ika-network = { path = "crates/ika-network" }
 ika-archival = { path = "crates/ika-archival" }
 
 [patch.crates-io]
-crypto-bigint = { git = 'https://github.com/erik-3milabs/crypto-bigint.git', rev = "d0929d4" }
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }
+rfc6979 = { git = "https://github.com/RustCrypto/signatures", tag = "rfc6979/v0.5.0-rc.1" }

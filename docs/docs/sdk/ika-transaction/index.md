@@ -43,7 +43,7 @@ const ikaClient = new IkaClient({...});
 await ikaClient.initialize();
 
 // Optional: Set up user share encryption keys for encrypted operations
-const userKeys = await UserShareEncryptionKeys.fromRootSeedKey(seedKey, Curve.SECP256K1);
+const userKeys = await UserShareEncryptionKeys.fromRootSeedKey(seedKey, Curve.SECP256K1); // or other supported curves
 
 // Get user's IKA coin for transaction fees
 const userIkaCoin = tx.object('0x...'); // User's IKA coin object ID
@@ -58,77 +58,111 @@ const ikaTx = new IkaTransaction({
 
 ## DKG Operations
 
-### requestDWalletDKGFirstRoundAsync
+### requestDWalletDKG
 
-Requests the first round of DKG with automatic decryption key ID fetching.
+Request the DKG (Distributed Key Generation) to create a dWallet with encrypted user shares.
 
 ```typescript
-const dwalletCap = await ikaTx.requestDWalletDKGFirstRoundAsync({
-	curve: Curve.SECP256K1, // Currently only SECP256K1 is supported
-	ikaCoin: userIkaCoin, // User's IKA coin object
+const dwalletCap = await ikaTx.requestDWalletDKG({
+	dkgRequestInput: dkgRequestInput,
+	sessionIdentifier: ikaTx.createSessionIdentifier(),
+	dwalletNetworkEncryptionKeyId: networkEncryptionKeyId,
+	curve: Curve.SECP256K1, // or Curve.SECP256R1, Curve.ED25519, etc.
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
-```
 
-**Parameters:**
-
-- `curve`: The elliptic curve identifier (`Curve.SECP256K1` - currently only SECP256K1 is supported)
-- `ikaCoin`: User's IKA coin object to use for transaction fees
-- `suiCoin`: The SUI coin object to use for gas fees
-
-**Returns:** `TransactionObjectArgument` - The dWallet capability
-
-### requestDWalletDKGFirstRound
-
-Requests the first round of DKG with explicit decryption key ID.
-
-```typescript
-const dwalletCap = ikaTx.requestDWalletDKGFirstRound({
+// With optional signing during DKG
+const dwalletCap = await ikaTx.requestDWalletDKG({
+	dkgRequestInput: dkgRequestInput,
+	sessionIdentifier: ikaTx.createSessionIdentifier(),
+	dwalletNetworkEncryptionKeyId: networkEncryptionKeyId,
 	curve: Curve.SECP256K1,
-	networkEncryptionKeyID: 'key_id',
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signDuringDKGRequest: {
+		message: messageBytes,
+		presign: presignObject,
+		verifiedPresignCap: verifiedPresignCapObject,
+		hashScheme: Hash.KECCAK256,
+		signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
+	},
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 ```
 
 **Parameters:**
 
-- `curve`: The elliptic curve identifier (`Curve.SECP256K1`)
-- `networkEncryptionKeyID`: The specific network encryption key ID
+- `dkgRequestInput`: Cryptographic data prepared for the DKG
+- `sessionIdentifier`: The session identifier object
+- `dwalletNetworkEncryptionKeyId`: The dWallet network encryption key ID
+- `curve`: The elliptic curve identifier (e.g., `Curve.SECP256K1`, `Curve.SECP256R1`, `Curve.ED25519`)
+- `signDuringDKGRequest`: Optional: Sign a message during DKG (includes message, presign, verifiedPresignCap, hashScheme, signatureAlgorithm)
 - `ikaCoin`: User's IKA coin object for fees
 - `suiCoin`: SUI coin object for gas
 
-### requestDWalletDKGSecondRound
+**Returns:** `Promise<TransactionResult>` - The DWallet capability
 
-Completes the DKG process with the second round.
+### requestDWalletDKGWithPublicUserShare
+
+Request the DKG with public user shares to create a shared dWallet.
 
 ```typescript
-ikaTx.requestDWalletDKGSecondRound({
-	dWalletCap: dwalletObject.dwallet_cap_id,
-	dkgSecondRoundRequestInput: secondRoundInput,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+const dwalletCap = await ikaTx.requestDWalletDKGWithPublicUserShare({
+	sessionIdentifier: ikaTx.createSessionIdentifier(),
+	dwalletNetworkEncryptionKeyId: networkEncryptionKeyId,
+	curve: Curve.SECP256K1, // or Curve.SECP256R1, Curve.ED25519, etc.
+	publicKeyShareAndProof: publicKeyShareAndProofBytes,
+	publicUserSecretKeyShare: publicUserSecretKeyShareBytes,
+	userPublicOutput: userPublicOutputBytes,
+	ikaCoin: userIkaCoin,
+	suiCoin: tx.splitCoins(tx.gas, [1000000]),
+});
+
+// With optional signing during DKG
+const dwalletCap = await ikaTx.requestDWalletDKGWithPublicUserShare({
+	sessionIdentifier: ikaTx.createSessionIdentifier(),
+	dwalletNetworkEncryptionKeyId: networkEncryptionKeyId,
+	curve: Curve.SECP256K1,
+	publicKeyShareAndProof: publicKeyShareAndProofBytes,
+	publicUserSecretKeyShare: publicUserSecretKeyShareBytes,
+	userPublicOutput: userPublicOutputBytes,
+	signDuringDKGRequest: {
+		message: messageBytes,
+		presign: presignObject,
+		verifiedPresignCap: verifiedPresignCapObject,
+		hashScheme: Hash.KECCAK256,
+		signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
+	},
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 ```
 
 **Parameters:**
 
-- `dWalletCap`: The dWalletCap object from the first round
-- `dkgSecondRoundRequestInput`: Cryptographic data for the second round
-- `ikaCoin`: User's IKA coin object
-- `suiCoin`: SUI coin object
+- `sessionIdentifier`: The session identifier object
+- `dwalletNetworkEncryptionKeyId`: The dWallet network encryption key ID
+- `curve`: The elliptic curve identifier (e.g., `Curve.SECP256K1`, `Curve.SECP256R1`, `Curve.ED25519`)
+- `publicKeyShareAndProof`: The public key share and proof
+- `publicUserSecretKeyShare`: The public user secret key share
+- `userPublicOutput`: The user's public output from the DKG process
+- `signDuringDKGRequest`: Optional: Sign a message during DKG (includes message, presign, verifiedPresignCap, hashScheme, signatureAlgorithm)
+- `ikaCoin`: User's IKA coin object for fees
+- `suiCoin`: SUI coin object for gas
+
+**Returns:** `Promise<TransactionResult>` - The DWallet capability
 
 ## Presigning Operations
 
 ### requestPresign
 
-Requests a presign operation for faster signature generation.
+Requests a presign operation for a specific dWallet. Use this for ECDSA signatures with imported key dWallets.
 
 ```typescript
 const unverifiedPresignCap = ikaTx.requestPresign({
 	dWallet: dwalletObject,
-	signatureAlgorithm: SignatureAlgorithm.ECDSA,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 ```
@@ -136,7 +170,31 @@ const unverifiedPresignCap = ikaTx.requestPresign({
 **Parameters:**
 
 - `dWallet`: The dWallet to create the presign for
-- `signatureAlgorithm`: Signature algorithm (`SignatureAlgorithm.ECDSA` - currently only ECDSA is supported)
+- `signatureAlgorithm`: Signature algorithm to use
+- `ikaCoin`: User's IKA coin object
+- `suiCoin`: SUI coin object
+
+**Returns:** `TransactionObjectArgument` - The unverified presign capability
+
+### requestGlobalPresign
+
+Requests a global presign operation. Use this for Schnorr, SchnorrKell, EdDSA, and Taproot signatures.
+
+```typescript
+const unverifiedPresignCap = ikaTx.requestGlobalPresign({
+	dwalletNetworkEncryptionKeyId: networkEncryptionKeyId,
+	curve: Curve.SECP256K1,
+	signatureAlgorithm: SignatureAlgorithm.Schnorr,
+	ikaCoin: userIkaCoin,
+	suiCoin: tx.splitCoins(tx.gas, [1000000]),
+});
+```
+
+**Parameters:**
+
+- `dwalletNetworkEncryptionKeyId`: The network encryption key ID to use for the presign
+- `curve`: The elliptic curve to use
+- `signatureAlgorithm`: The signature algorithm to use (must be valid for the curve)
 - `ikaCoin`: User's IKA coin object
 - `suiCoin`: SUI coin object
 
@@ -167,7 +225,8 @@ Approves a message for signing with a dWallet.
 ```typescript
 const messageApproval = ikaTx.approveMessage({
 	dWalletCap: dwalletObject.dwallet_cap_id,
-	signatureAlgorithm: SignatureAlgorithm.ECDSA,
+	curve: Curve.SECP256K1,
+	signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes,
 });
@@ -176,8 +235,9 @@ const messageApproval = ikaTx.approveMessage({
 **Parameters:**
 
 - `dWalletCap`: The dWalletCap object, that owns the dWallet
-- `signatureAlgorithm`: The signature algorithm (`SignatureAlgorithm.ECDSA`)
-- `hashScheme`: Hash scheme (`Hash.KECCAK256` | `Hash.SHA256`)
+- `curve`: The elliptic curve to use for the approval
+- `signatureAlgorithm`: The signature algorithm to use (must be valid for the curve)
+- `hashScheme`: Hash scheme to apply to the message (must be valid for the signature algorithm)
 - `message`: The message bytes to approve
 
 **Returns:** `TransactionObjectArgument` - The message approval object
@@ -188,12 +248,21 @@ Approves a message for signing with an imported key dWallet.
 
 ```typescript
 const importedKeyMessageApproval = ikaTx.approveImportedKeyMessage({
-	dWalletCap: importeddWallet.dwallet_cap_id,
-	signatureAlgorithm: SignatureAlgorithm.ECDSA,
+	dWalletCap: importedDWallet.dwallet_cap_id,
+	curve: Curve.SECP256K1,
+	signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes,
 });
 ```
+
+**Parameters:**
+
+- `dWalletCap`: The dWalletCap object, that owns the imported key dWallet
+- `curve`: The elliptic curve to use for the approval
+- `signatureAlgorithm`: The signature algorithm to use (must be valid for the curve)
+- `hashScheme`: Hash scheme to apply to the message (must be valid for the signature algorithm)
+- `message`: The message bytes to approve
 
 **Returns:** `TransactionObjectArgument` - The imported key message approval object
 
@@ -209,7 +278,7 @@ Always verify secret shares and public outputs in production environments when u
 
 ```typescript
 // ZeroTrust DWallet with encrypted shares
-await ikaTx.requestSign({
+const signatureId = await ikaTx.requestSign({
 	dWallet: dwalletObject,
 	messageApproval: messageApprovalObject,
 	hashScheme: Hash.KECCAK256,
@@ -217,12 +286,13 @@ await ikaTx.requestSign({
 	presign: presignObject,
 	encryptedUserSecretKeyShare: encryptedShare,
 	message: messageBytes,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
 // ZeroTrust DWallet with unencrypted shares
-await ikaTx.requestSign({
+const signatureId = await ikaTx.requestSign({
 	dWallet: dwalletObject,
 	messageApproval: messageApprovalObject,
 	hashScheme: Hash.KECCAK256,
@@ -231,19 +301,21 @@ await ikaTx.requestSign({
 	secretShare: secretShareBytes,
 	publicOutput: publicOutputBytes,
 	message: messageBytes,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
 // Shared DWallet with public shares (no secret params needed)
-await ikaTx.requestSign({
+const signatureId = await ikaTx.requestSign({
 	dWallet: sharedDWallet,
 	messageApproval: messageApprovalObject,
 	hashScheme: Hash.KECCAK256,
 	verifiedPresignCap: verifiedPresignCapObject,
 	presign: presignObject,
 	message: messageBytes,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 ```
@@ -252,17 +324,18 @@ await ikaTx.requestSign({
 
 - `dWallet`: The dWallet to sign with (ZeroTrust or Shared DWallet)
 - `messageApproval`: Message approval from approveMessage
-- `hashScheme`: Hash scheme (`Hash.KECCAK256` | `Hash.SHA256`)
+- `hashScheme`: Hash scheme to use for the message (must be valid for the signature algorithm)
 - `verifiedPresignCap`: The verified presign capability
 - `presign`: The completed presign object
 - `encryptedUserSecretKeyShare`: Optional: encrypted user secret key share (for ZeroTrust DWallets)
 - `secretShare`: Optional: unencrypted secret share (requires publicOutput, for ZeroTrust DWallets)
 - `publicOutput`: Optional: public output (required when using secretShare, for ZeroTrust DWallets)
 - `message`: The message bytes to sign
+- `signatureScheme`: The signature algorithm to use
 - `ikaCoin`: User's IKA coin object
 - `suiCoin`: SUI coin object
 
-**Returns:** `Promise<IkaTransaction>` - The updated IkaTransaction instance
+**Returns:** `Promise<TransactionObjectArgument>` - The signature ID
 
 ### requestSignWithImportedKey
 
@@ -270,7 +343,7 @@ Signs using an Imported Key dWallet. Automatically detects the dWallet type and 
 
 ```typescript
 // ImportedKeyDWallet with encrypted shares
-await ikaTx.requestSignWithImportedKey({
+const signatureId = await ikaTx.requestSignWithImportedKey({
 	dWallet: importedKeyDWallet,
 	importedKeyMessageApproval: importedKeyMessageApprovalObject,
 	verifiedPresignCap: verifiedPresignCapObject,
@@ -278,12 +351,13 @@ await ikaTx.requestSignWithImportedKey({
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes,
 	encryptedUserSecretKeyShare: encryptedShare,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1, // Optional, defaults to ECDSASecp256k1
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
 // ImportedKeyDWallet with unencrypted shares
-await ikaTx.requestSignWithImportedKey({
+const signatureId = await ikaTx.requestSignWithImportedKey({
 	dWallet: importedKeyDWallet,
 	importedKeyMessageApproval: importedKeyMessageApprovalObject,
 	verifiedPresignCap: verifiedPresignCapObject,
@@ -292,19 +366,19 @@ await ikaTx.requestSignWithImportedKey({
 	message: messageBytes,
 	secretShare: secretShareBytes,
 	publicOutput: publicOutputBytes,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
 // ImportedSharedDWallet with public shares (no secret params needed)
-await ikaTx.requestSignWithImportedKey({
+const signatureId = await ikaTx.requestSignWithImportedKey({
 	dWallet: importedSharedDWallet,
 	importedKeyMessageApproval: importedKeyMessageApprovalObject,
 	verifiedPresignCap: verifiedPresignCapObject,
 	presign: presignObject,
 	hashScheme: Hash.KECCAK256,
 	message: messageBytes,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 ```
@@ -313,17 +387,18 @@ await ikaTx.requestSignWithImportedKey({
 
 - `dWallet`: The Imported Key dWallet to sign with (ImportedKeyDWallet or ImportedSharedDWallet)
 - `importedKeyMessageApproval`: Imported key message approval from approveImportedKeyMessage
-- `hashScheme`: Hash scheme (`Hash.KECCAK256` | `Hash.SHA256`)
+- `hashScheme`: Hash scheme to use for the message (must be valid for the signature algorithm)
 - `verifiedPresignCap`: The verified presign capability
 - `presign`: The completed presign object
 - `encryptedUserSecretKeyShare`: Optional: encrypted user secret key share (for ImportedKeyDWallet)
 - `secretShare`: Optional: unencrypted secret share (requires publicOutput, for ImportedKeyDWallet)
 - `publicOutput`: Optional: public output (required when using secretShare, for ImportedKeyDWallet)
 - `message`: The message bytes to sign
+- `signatureScheme`: Optional: signature algorithm (defaults to ECDSASecp256k1)
 - `ikaCoin`: User's IKA coin object
 - `suiCoin`: SUI coin object
 
-**Returns:** `Promise<IkaTransaction>` - The updated IkaTransaction instance
+**Returns:** `Promise<TransactionObjectArgument>` - The signature ID
 
 ## Future Signing
 
@@ -340,7 +415,8 @@ const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSign({
 	encryptedUserSecretKeyShare: encryptedShare,
 	message: messageBytes,
 	hashScheme: Hash.KECCAK256,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
@@ -353,7 +429,8 @@ const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSign({
 	publicOutput: publicOutputBytes,
 	message: messageBytes,
 	hashScheme: Hash.KECCAK256,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
@@ -364,7 +441,8 @@ const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSign({
 	presign: presignObject,
 	message: messageBytes,
 	hashScheme: Hash.KECCAK256,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 ```
@@ -379,6 +457,7 @@ const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSign({
 - `publicOutput`: Optional: public output (required when using secretShare, for ZeroTrust DWallets)
 - `message`: The message bytes to pre-sign
 - `hashScheme`: The hash scheme to use for the message
+- `signatureScheme`: The signature algorithm to use
 - `ikaCoin`: User's IKA coin object
 - `suiCoin`: SUI coin object
 
@@ -397,7 +476,8 @@ const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSignWithImpor
 	encryptedUserSecretKeyShare: encryptedShare,
 	message: messageBytes,
 	hashScheme: Hash.KECCAK256,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
@@ -410,7 +490,8 @@ const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSignWithImpor
 	publicOutput: publicOutputBytes,
 	message: messageBytes,
 	hashScheme: Hash.KECCAK256,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 
@@ -421,7 +502,8 @@ const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSignWithImpor
 	presign: presignObject,
 	message: messageBytes,
 	hashScheme: Hash.KECCAK256,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 ```
@@ -436,6 +518,7 @@ const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSignWithImpor
 - `publicOutput`: Optional: public output (required when using secretShare, for ImportedKeyDWallet)
 - `message`: The message bytes to pre-sign
 - `hashScheme`: The hash scheme to use for the message
+- `signatureScheme`: The signature algorithm to use
 - `ikaCoin`: User's IKA coin object
 - `suiCoin`: SUI coin object
 
@@ -446,10 +529,10 @@ const unverifiedPartialUserSignatureCap = await ikaTx.requestFutureSignWithImpor
 Completes a future sign operation using a partial signature.
 
 ```typescript
-ikaTx.futureSign({
+const signatureId = ikaTx.futureSign({
 	partialUserSignatureCap: partialSignatureObject.cap_id,
 	messageApproval: messageApprovalObject,
-	ikaCoin: userIkaCoin, // User's IKA coin object
+	ikaCoin: userIkaCoin,
 	suiCoin: tx.splitCoins(tx.gas, [1000000]),
 });
 ```
@@ -461,7 +544,29 @@ ikaTx.futureSign({
 - `ikaCoin`: User's IKA coin object
 - `suiCoin`: SUI coin object
 
-**Returns:** `IkaTransaction` - The updated IkaTransaction instance
+**Returns:** `TransactionObjectArgument` - The signature ID
+
+### futureSignWithImportedKey
+
+Completes a future sign operation for imported key using a partial signature.
+
+```typescript
+const signatureId = ikaTx.futureSignWithImportedKey({
+	partialUserSignatureCap: partialSignatureObject.cap_id,
+	importedKeyMessageApproval: importedKeyMessageApprovalObject,
+	ikaCoin: userIkaCoin,
+	suiCoin: tx.splitCoins(tx.gas, [1000000]),
+});
+```
+
+**Parameters:**
+
+- `partialUserSignatureCap`: The partial user signature capability created by requestFutureSignWithImportedKey
+- `importedKeyMessageApproval`: The imported key message approval from approveImportedKeyMessage
+- `ikaCoin`: User's IKA coin object
+- `suiCoin`: SUI coin object
+
+**Returns:** `TransactionObjectArgument` - The signature ID
 
 ## Imported Key Operations
 
@@ -615,6 +720,8 @@ await ikaTx.registerEncryptionKey({
 
 **Returns:** `Promise<IkaTransaction>` - The updated IkaTransaction instance
 
+## Session Management
+
 ### createSessionIdentifier
 
 Creates a unique session identifier for the transaction.
@@ -624,6 +731,54 @@ const sessionId = ikaTx.createSessionIdentifier();
 ```
 
 **Returns:** `TransactionObjectArgument` - Session identifier object
+
+### registerSessionIdentifier
+
+Registers a unique session identifier for the current transaction.
+
+```typescript
+const sessionId = ikaTx.registerSessionIdentifier(sessionIdentifierBytes);
+```
+
+**Parameters:**
+
+- `sessionIdentifier`: The session identifier bytes to register
+
+**Returns:** `TransactionObjectArgument` - The session identifier transaction object argument
+
+## Utility Methods
+
+### hasDWallet
+
+Checks if a DWallet with the specified ID exists in the coordinator.
+
+```typescript
+const exists = ikaTx.hasDWallet({
+	dwalletId: '0x...',
+});
+```
+
+**Parameters:**
+
+- `dwalletId`: The ID of the DWallet to check
+
+**Returns:** `TransactionObjectArgument` - Transaction result indicating whether the DWallet exists (returns a boolean)
+
+### getDWallet
+
+Gets a reference to a DWallet object from the coordinator.
+
+```typescript
+const dwalletRef = ikaTx.getDWallet({
+	dwalletId: '0x...',
+});
+```
+
+**Parameters:**
+
+- `dwalletId`: The ID of the DWallet to retrieve
+
+**Returns:** `TransactionObjectArgument` - Transaction result containing a reference to the DWallet object
 
 <Warning title="Security Warning">
 Methods marked with security warnings require careful verification of inputs to maintain zero-trust security guarantees.

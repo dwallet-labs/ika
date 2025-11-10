@@ -4,15 +4,15 @@
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
-use class_groups::reconfiguration::{PublicInput, Secp256k1Party};
+use class_groups::reconfiguration::PublicInput;
 use class_groups::{
-    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters, dkg,
+    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, Secp256k1DecryptionKeySharePublicParameters,
 };
 use dwallet_mpc_types::dwallet_mpc::{
     NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicDataV1,
-    NetworkEncryptionKeyPublicDataV2, SerializedWrappedMPCPublicOutput,
-    VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
-    VersionedNetworkEncryptionKeyPublicData,
+    NetworkEncryptionKeyPublicDataV2, ReconfigurationParty, ReconfigurationV2Party,
+    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
+    VersionedNetworkDkgOutput, VersionedNetworkEncryptionKeyPublicData,
 };
 use group::{GroupElement, PartyID, secp256k1};
 use homomorphic_encryption::GroupsPublicParametersAccessors;
@@ -26,10 +26,8 @@ use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
 };
 
-pub(crate) type ReconfigurationParty = Secp256k1Party;
 pub(crate) type ReconfigurationV1toV2Party =
     twopc_mpc::decentralized_party::reconfiguration_v1_to_v2::Party;
-pub(crate) type ReconfigurationV2Party = twopc_mpc::decentralized_party::reconfiguration::Party;
 
 pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
     /// Generates the public input required for the reconfiguration protocol.
@@ -88,6 +86,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                                     .to_string(),
                             ));
                         };
+
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
                                 &current_access_structure,
@@ -100,6 +99,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                                 bcs::from_bytes(&latest_reconfiguration_public_output)?,
                             )
                                 .map_err(DwalletMPCError::from)?;
+
                         Ok(public_input)
                     }
                 }
@@ -109,6 +109,7 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                     None => {
                         let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
                             bcs::from_bytes(&network_dkg_public_output)?;
+
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_dkg_output(
                                 &current_access_structure,
@@ -133,8 +134,10 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                                     .to_string(),
                             ));
                         };
+
                         let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
                             bcs::from_bytes(&network_dkg_public_output)?;
+
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
                                 &current_access_structure,

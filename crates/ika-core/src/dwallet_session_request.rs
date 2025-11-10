@@ -1,9 +1,10 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::request_protocol_data::ProtocolData;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureScheme};
-use group::HashType;
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use group::HashScheme;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use std::cmp::Ordering;
+use std::fmt;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequest {
@@ -20,13 +21,18 @@ pub struct DWalletSessionRequest {
     pub pulled: bool,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, derive_more::Display)]
-#[display("{name}")]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequestMetricData {
     name: String,
     curve: Option<DWalletCurve>,
-    hash_scheme: Option<HashType>,
-    signature_algorithm: Option<DWalletSignatureScheme>,
+    hash_scheme: Option<HashScheme>,
+    signature_algorithm: Option<DWalletSignatureAlgorithm>,
+}
+
+impl fmt::Display for DWalletSessionRequestMetricData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
 }
 
 impl PartialOrd<Self> for DWalletSessionRequest {
@@ -80,47 +86,53 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
         match protocol_specific_data {
             ProtocolData::DWalletDKG { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
+                curve: Some(data.curve),
                 hash_scheme: None,
                 signature_algorithm: None,
             },
+            ProtocolData::DWalletDKGAndSign { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve),
+                hash_scheme: Some(data.hash_scheme),
+                signature_algorithm: Some(data.signature_algorithm),
+            },
             ProtocolData::ImportedKeyVerification { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
+                curve: Some(data.curve),
                 hash_scheme: None,
                 signature_algorithm: None,
             },
             ProtocolData::MakeDWalletUserSecretKeySharesPublic { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
-                    curve: Some(data.curve.clone()),
+                    curve: Some(data.curve),
                     hash_scheme: None,
                     signature_algorithm: None,
                 }
             }
             ProtocolData::DKGFirst { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
+                curve: Some(data.curve),
                 hash_scheme: None,
                 signature_algorithm: None,
             },
             ProtocolData::DKGSecond { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
+                curve: Some(data.curve),
                 hash_scheme: None,
                 signature_algorithm: None,
             },
             ProtocolData::Presign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
+                curve: Some(data.curve),
                 hash_scheme: None,
-                signature_algorithm: Some(data.signature_algorithm.clone()),
+                signature_algorithm: Some(data.signature_algorithm),
             },
             ProtocolData::Sign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
-                hash_scheme: Some(data.hash_scheme.clone()),
-                signature_algorithm: Some(data.signature_algorithm.clone()),
+                curve: Some(data.curve),
+                hash_scheme: Some(data.hash_scheme),
+                signature_algorithm: Some(data.signature_algorithm),
             },
             ProtocolData::NetworkEncryptionKeyDkg { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
@@ -139,7 +151,7 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
             ProtocolData::EncryptedShareVerification { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
-                    curve: Some(data.curve.clone()),
+                    curve: Some(data.curve),
                     hash_scheme: None,
                     signature_algorithm: None,
                 }
@@ -147,9 +159,9 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
             ProtocolData::PartialSignatureVerification { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
-                    curve: Some(data.curve.clone()),
-                    hash_scheme: Some(data.hash_type.clone()),
-                    signature_algorithm: Some(data.signature_algorithm.clone()),
+                    curve: Some(data.curve),
+                    hash_scheme: Some(data.hash_scheme),
+                    signature_algorithm: Some(data.signature_algorithm),
                 }
             }
         }
@@ -162,7 +174,7 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
             ProtocolCryptographicData::ImportedKeyVerification { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
-                    curve: Some(data.curve.clone()),
+                    curve: Some(data.curve),
                     hash_scheme: None,
                     signature_algorithm: None,
                 }
@@ -170,41 +182,49 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
             ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
-                    curve: Some(data.curve.clone()),
+                    curve: Some(data.curve),
                     hash_scheme: None,
                     signature_algorithm: None,
                 }
             }
             ProtocolCryptographicData::DKGFirst { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
+                curve: Some(data.curve),
                 hash_scheme: None,
                 signature_algorithm: None,
             },
             ProtocolCryptographicData::DKGSecond { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
+                curve: Some(data.curve),
                 hash_scheme: None,
                 signature_algorithm: None,
             },
             ProtocolCryptographicData::DWalletDKG { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
+                curve: Some(data.curve),
                 hash_scheme: None,
                 signature_algorithm: None,
             },
             ProtocolCryptographicData::Presign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
+                curve: Some(data.curve),
                 hash_scheme: None,
-                signature_algorithm: Some(data.signature_algorithm.clone()),
+                signature_algorithm: Some(data.signature_algorithm),
             },
             ProtocolCryptographicData::Sign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
-                curve: Some(data.curve.clone()),
-                hash_scheme: Some(data.hash_scheme.clone()),
-                signature_algorithm: Some(data.signature_algorithm.clone()),
+                curve: Some(data.curve),
+                hash_scheme: Some(data.hash_scheme),
+                signature_algorithm: Some(data.signature_algorithm),
             },
+            ProtocolCryptographicData::DWalletDKGAndSign { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve),
+                    hash_scheme: Some(data.hash_scheme),
+                    signature_algorithm: Some(data.signature_algorithm),
+                }
+            }
             ProtocolCryptographicData::NetworkEncryptionKeyDkgV1 { data, .. } => {
                 // TODO (#1508): Remove the curve label completely from protocols the curve label is irrelevant for
                 DWalletSessionRequestMetricData {
@@ -225,7 +245,7 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
             ProtocolCryptographicData::EncryptedShareVerification { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
-                    curve: Some(data.curve.clone()),
+                    curve: Some(data.curve),
                     hash_scheme: None,
                     signature_algorithm: None,
                 }
@@ -233,9 +253,9 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
             ProtocolCryptographicData::PartialSignatureVerification { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
-                    curve: Some(data.curve.clone()),
-                    hash_scheme: Some(data.hash_type.clone()),
-                    signature_algorithm: Some(data.signature_algorithm.clone()),
+                    curve: Some(data.curve),
+                    hash_scheme: Some(data.hash_scheme),
+                    signature_algorithm: Some(data.signature_algorithm),
                 }
             }
             ProtocolCryptographicData::NetworkEncryptionKeyV1ToV2Reconfiguration {
