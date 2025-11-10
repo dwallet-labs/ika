@@ -33,15 +33,15 @@ module ika_btc_multisig::multisig;
 
 use ika::ika::IKA;
 use ika_btc_multisig::{
-    constants,
-    error,
-    multisig_events,
-    multisig_request::{Self, Request, RequestType}
+  constants,
+  error,
+  multisig_events,
+  multisig_request::{Self, Request, RequestType}
 };
 use ika_dwallet_2pc_mpc::{
-    coordinator::{DWalletCoordinator, request_dwallet_dkg_first_round},
-    coordinator_inner::{DWalletCap, UnverifiedPresignCap, UnverifiedPartialUserSignatureCap},
-    sessions_manager::SessionIdentifier
+  coordinator::DWalletCoordinator,
+  coordinator_inner::{DWalletCap, UnverifiedPresignCap, UnverifiedPartialUserSignatureCap},
+  sessions_manager::SessionIdentifier
 };
 use sui::{balance::Balance, clock::Clock, coin::Coin, sui::SUI, table::{Self, Table}, vec_set};
 
@@ -51,42 +51,41 @@ use sui::{balance::Balance, clock::Clock, coin::Coin, sui::SUI, table::{Self, Ta
 /// This shared object coordinates between multiple members to approve or reject Bitcoin transactions.
 /// All state changes are atomic and consistent across the distributed system.
 public struct Multisig has key, store {
-    /// Unique identifier for this multisig wallet instance
-    id: UID,
-    /// Distributed wallet capability for creating Bitcoin signatures.
-    /// This integrates with IKA's 2PC-MPC protocol for enhanced security.
-    dwallet_cap: DWalletCap,
-    /// List of member addresses who can vote on requests.
-    /// Members are identified by their Sui addresses and must be unique.
-    members: vector<address>,
-    /// Number of approval votes required to execute a Bitcoin transaction.
-    /// Must be greater than 0 and less than or equal to the number of members.
-    approval_threshold: u64,
-    /// Number of rejection votes required to definitively reject a request.
-    /// Must be greater than 0 and less than or equal to the number of members.
-    rejection_threshold: u64,
-    /// Table storing all active requests indexed by request ID.
-    /// Request IDs are auto-incrementing counters for uniqueness.
-    requests: Table<u64, Request>,
-    /// Duration in milliseconds after which a request automatically expires.
-    /// Expired requests cannot be voted on or executed.
-    /// A request is considered expired if: created_at + expiration_duration < current_time
-    expiration_duration: u64,
-    /// Auto-incrementing counter for generating unique request IDs.
-    /// Each new request increments this counter to ensure globally unique identifiers
-    /// across the multisig wallet's lifetime.
-    request_id_counter: u64,
-    /// Collection of unverified presign capabilities that require validation before use.
-    /// These capabilities represent requested presign sessions that must be verified
-    /// as completed before they can be converted to VerifiedPresignCap for signing operations.
-    presigns: vector<UnverifiedPresignCap>,
-    /// IKA balance of the multisig wallet. Used for paying protocol fees.
-    ika_balance: Balance<IKA>,
-    /// SUI balance of the multisig wallet. Used for paying protocol fees.
-    sui_balance: Balance<SUI>,
-    /// Whether the multisig wallet is ready to be used.
-    /// This is set to true after the second DKG round is completed and the user's secret key shares are shared.
-    ready: bool,
+  /// Unique identifier for this multisig wallet instance
+  id: UID,
+  /// Distributed wallet capability for creating Bitcoin signatures.
+  /// This integrates with IKA's 2PC-MPC protocol for enhanced security.
+  dwallet_cap: DWalletCap,
+  /// List of member addresses who can vote on requests.
+  /// Members are identified by their Sui addresses and must be unique.
+  members: vector<address>,
+  /// Number of approval votes required to execute a Bitcoin transaction.
+  /// Must be greater than 0 and less than or equal to the number of members.
+  approval_threshold: u64,
+  /// Number of rejection votes required to definitively reject a request.
+  /// Must be greater than 0 and less than or equal to the number of members.
+  rejection_threshold: u64,
+  /// Table storing all active requests indexed by request ID.
+  /// Request IDs are auto-incrementing counters for uniqueness.
+  requests: Table<u64, Request>,
+  /// Duration in milliseconds after which a request automatically expires.
+  /// Expired requests cannot be voted on or executed.
+  /// A request is considered expired if: created_at + expiration_duration < current_time
+  expiration_duration: u64,
+  /// Auto-incrementing counter for generating unique request IDs.
+  /// Each new request increments this counter to ensure globally unique identifiers
+  /// across the multisig wallet's lifetime.
+  request_id_counter: u64,
+  /// Collection of unverified presign capabilities that require validation before use.
+  /// These capabilities represent requested presign sessions that must be verified
+  /// as completed before they can be converted to VerifiedPresignCap for signing operations.
+  presigns: vector<UnverifiedPresignCap>,
+  /// IKA balance of the multisig wallet. Used for paying protocol fees.
+  ika_balance: Balance<IKA>,
+  /// SUI balance of the multisig wallet. Used for paying protocol fees.
+  sui_balance: Balance<SUI>,
+  /// ID of the network encryption key
+  dwallet_network_encryption_key_id: ID,
 }
 
 // === Public Functions ===
@@ -99,6 +98,9 @@ public struct Multisig has key, store {
 /// * `initial_ika_coin_for_balance` - Initial IKA tokens to fund the wallet's balance for protocol fees
 /// * `initial_sui_coin_for_balance` - Initial SUI tokens to fund the wallet's balance for protocol fees
 /// * `dwallet_network_encryption_key_id` - ID of the network encryption key for secure communication
+/// * `centralized_public_key_share_and_proof` - Centralized public key share and proof
+/// * `user_public_output` - User's public output
+/// * `public_user_secret_key_share` - Public user secret key share
 /// * `members` - List of member addresses who can vote on transactions
 /// * `approval_threshold` - Number of approvals required to execute transactions
 /// * `rejection_threshold` - Number of rejections required to reject transactions
@@ -114,175 +116,86 @@ public struct Multisig has key, store {
 /// * `members` vector must not be empty and contain unique addresses
 /// * Caller must have sufficient IKA and SUI tokens for DKG fees
 public fun new_multisig(
-    coordinator: &mut DWalletCoordinator,
-    mut initial_ika_coin_for_balance: Coin<IKA>,
-    mut initial_sui_coin_for_balance: Coin<SUI>,
-    dwallet_network_encryption_key_id: ID,
-    members: vector<address>,
-    approval_threshold: u64,
-    rejection_threshold: u64,
-    expiration_duration: u64,
-    ctx: &mut TxContext,
+  coordinator: &mut DWalletCoordinator,
+  mut initial_ika_coin_for_balance: Coin<IKA>,
+  mut initial_sui_coin_for_balance: Coin<SUI>,
+  dwallet_network_encryption_key_id: ID,
+  centralized_public_key_share_and_proof: vector<u8>,
+  user_public_output: vector<u8>,
+  public_user_secret_key_share: vector<u8>,
+  members: vector<address>,
+  approval_threshold: u64,
+  rejection_threshold: u64,
+  expiration_duration: u64,
+  ctx: &mut TxContext,
 ) {
-    assert!(approval_threshold > 0, error::invalid_approval_threshold!());
-    assert!(rejection_threshold > 0, error::invalid_rejection_threshold!());
-    assert!(approval_threshold <= members.length(), error::approval_threshold_too_high!());
-    assert!(rejection_threshold <= members.length(), error::rejection_threshold_too_high!());
-    assert!(members.length() > 0, error::empty_member_list!());
+  assert!(approval_threshold > 0, error::invalid_approval_threshold!());
+  assert!(rejection_threshold > 0, error::invalid_rejection_threshold!());
+  assert!(approval_threshold <= members.length(), error::approval_threshold_too_high!());
+  assert!(rejection_threshold <= members.length(), error::rejection_threshold_too_high!());
+  assert!(members.length() > 0, error::empty_member_list!());
 
-    // A way to make sure the members in the vector is not duplicated.
-    let members_non_duplicated = vec_set::from_keys(members).into_keys();
+  // A way to make sure the members in the vector is not duplicated.
+  let members_non_duplicated = vec_set::from_keys(members).into_keys();
 
-    let session_identifier = random_session_identifier(coordinator, ctx);
+  let session_identifier = random_session_identifier(coordinator, ctx);
 
-    let dwallet_cap = coordinator.request_dwallet_dkg_first_round(
-        dwallet_network_encryption_key_id,
-        constants::curve!(),
-        session_identifier,
-        &mut initial_ika_coin_for_balance,
-        &mut initial_sui_coin_for_balance,
-        ctx,
-    );
+  let (dwallet_cap, _) = coordinator.request_dwallet_dkg_with_public_user_secret_key_share(
+    dwallet_network_encryption_key_id,
+    constants::curve!(),
+    centralized_public_key_share_and_proof,
+    user_public_output,
+    public_user_secret_key_share,
+    option::none(),
+    session_identifier,
+    &mut initial_ika_coin_for_balance,
+    &mut initial_sui_coin_for_balance,
+    ctx,
+  );
 
-    let multisig = Multisig {
-        id: object::new(ctx),
-        dwallet_cap: dwallet_cap,
-        members: members_non_duplicated,
-        approval_threshold: approval_threshold,
-        rejection_threshold: rejection_threshold,
-        requests: table::new(ctx),
-        expiration_duration: expiration_duration,
-        request_id_counter: 0,
-        presigns: vector::empty(),
-        ika_balance: initial_ika_coin_for_balance.into_balance(),
-        sui_balance: initial_sui_coin_for_balance.into_balance(),
-        ready: false,
-    };
+  let mut multisig = Multisig {
+    id: object::new(ctx),
+    dwallet_cap: dwallet_cap,
+    members: members_non_duplicated,
+    approval_threshold: approval_threshold,
+    rejection_threshold: rejection_threshold,
+    requests: table::new(ctx),
+    expiration_duration: expiration_duration,
+    request_id_counter: 0,
+    presigns: vector::empty(),
+    ika_balance: initial_ika_coin_for_balance.into_balance(),
+    sui_balance: initial_sui_coin_for_balance.into_balance(),
+    dwallet_network_encryption_key_id: dwallet_network_encryption_key_id,
+  };
 
-    multisig_events::multisig_created(
-        object::id(&multisig),
-        members_non_duplicated,
-        approval_threshold,
-        rejection_threshold,
-        expiration_duration,
-        ctx.sender(),
-    );
+  let session_identifier = random_session_identifier(coordinator, ctx);
 
-    transfer::public_share_object(multisig);
-}
+  let (mut payment_ika, mut payment_sui) = multisig.withdraw_payment_coins(ctx);
 
-/// Completes the second round of distributed key generation for the multisig wallet.
-/// This function finalizes the cryptographic setup required for Bitcoin transaction signing.
-///
-/// # Arguments
-/// * `self` - Mutable reference to the multisig wallet being initialized
-/// * `coordinator` - The IKA dWallet coordinator managing the DKG process
-/// * `centralized_public_key_share_and_proof` - Public key share with cryptographic proof
-/// * `encrypted_centralized_secret_share_and_proof` - Encrypted secret share with proof
-/// * `user_public_output` - User's public output from the DKG process
-/// * `ctx` - Transaction context for the operation
-///s
-/// # Security Notes
-/// This function handles sensitive cryptographic material and should be called
-/// only after successful completion of the first DKG round.
-/// All cryptographic proofs are validated by the coordinator.
-public fun multisig_dkg_second_round(
-    self: &mut Multisig,
-    coordinator: &mut DWalletCoordinator,
-    centralized_public_key_share_and_proof: vector<u8>,
-    encrypted_centralized_secret_share_and_proof: vector<u8>,
-    user_public_output: vector<u8>,
-    ctx: &mut TxContext,
-) {
-    let (mut payment_ika, mut payment_sui) = self.withdraw_payment_coins(ctx);
+  multisig
+    .presigns
+    .push_back(coordinator.request_global_presign(
+      dwallet_network_encryption_key_id,
+      constants::curve!(),
+      constants::signature_algorithm!(),
+      session_identifier,
+      &mut payment_ika,
+      &mut payment_sui,
+      ctx,
+    ));
 
-    let session_identifier = random_session_identifier(coordinator, ctx);
+  multisig.return_payment_coins(payment_ika, payment_sui);
 
-    coordinator.request_dwallet_dkg_second_round(
-        &self.dwallet_cap,
-        centralized_public_key_share_and_proof,
-        encrypted_centralized_secret_share_and_proof,
-        constants::signer_public_key_address!(),
-        user_public_output,
-        constants::signer_public_key!(),
-        session_identifier,
-        &mut payment_ika,
-        &mut payment_sui,
-        ctx,
-    );
+  multisig_events::multisig_created(
+    object::id(&multisig),
+    members_non_duplicated,
+    approval_threshold,
+    rejection_threshold,
+    expiration_duration,
+    ctx.sender(),
+  );
 
-    multisig_events::multisig_dkg_second_round_started(object::id(self));
-
-    self.return_payment_coins(payment_ika, payment_sui);
-}
-
-/// Accepts the encrypted user secret key share and makes user share publicly available.
-/// This is the final step in setting up the multisig wallet's distributed key infrastructure.
-/// Note: Presign capabilities are created on-demand when the first request is submitted,
-/// rather than in bulk during initialization, for better resource efficiency.
-///
-/// # Arguments
-/// * `self` - Mutable reference to the multisig wallet
-/// * `coordinator` - The IKA dWallet coordinator managing the process
-/// * `encrypted_user_secret_key_share_id` - ID of the encrypted secret key share to accept
-/// * `user_output_signature` - User's signature on the output for verification
-/// * `public_user_secret_key_shares` - Public portion of the secret key shares to publish
-/// * `ctx` - Transaction context for the operation
-///
-/// # Workflow
-/// 1. Accepts the encrypted secret key share from the user
-/// 2. Generates a new session identifier for the sharing process
-/// 3. Makes the user's secret key shares public for the distributed wallet
-/// 4. Presign capabilities are created lazily on first request
-///
-/// # Security Notes
-/// This function handles cryptographic key material and should only be called
-/// by authorized members during the wallet setup process.
-public fun multisig_accept_and_share(
-    self: &mut Multisig,
-    coordinator: &mut DWalletCoordinator,
-    encrypted_user_secret_key_share_id: ID,
-    user_output_signature: vector<u8>,
-    public_user_secret_key_shares: vector<u8>,
-    ctx: &mut TxContext,
-) {
-    let (mut payment_ika, mut payment_sui) = self.withdraw_payment_coins(ctx);
-
-    coordinator.accept_encrypted_user_share(
-        self.dwallet_cap.dwallet_id(),
-        encrypted_user_secret_key_share_id,
-        user_output_signature,
-    );
-
-    let session_identifier = random_session_identifier(coordinator, ctx);
-
-    coordinator.request_make_dwallet_user_secret_key_shares_public(
-        self.dwallet_cap.dwallet_id(),
-        public_user_secret_key_shares,
-        session_identifier,
-        &mut payment_ika,
-        &mut payment_sui,
-        ctx,
-    );
-
-    let session_identifier = random_session_identifier(coordinator, ctx);
-
-    self
-        .presigns
-        .push_back(coordinator.request_presign(
-            self.dwallet_cap.dwallet_id(),
-            constants::curve!(),
-            session_identifier,
-            &mut payment_ika,
-            &mut payment_sui,
-            ctx,
-        ));
-
-    multisig_events::multisig_accepted_and_shared(object::id(self));
-
-    self.ready = true;
-
-    self.return_payment_coins(payment_ika, payment_sui);
+  transfer::public_share_object(multisig);
 }
 
 /// Adds IKA tokens to the multisig wallet's balance for paying protocol fees.
@@ -299,15 +212,15 @@ public fun multisig_accept_and_share(
 /// operations that require protocol fees. The tokens are stored in the
 /// wallet's balance and automatically used when needed.
 public fun add_ika_balance(self: &mut Multisig, ika_coin: Coin<IKA>, ctx: &TxContext) {
-    let amount = ika_coin.value();
-    self.ika_balance.join(ika_coin.into_balance());
+  let amount = ika_coin.value();
+  self.ika_balance.join(ika_coin.into_balance());
 
-    multisig_events::balance_added(
-        object::id(self),
-        ctx.sender(),
-        amount,
-        0,
-    );
+  multisig_events::balance_added(
+    object::id(self),
+    ctx.sender(),
+    amount,
+    0,
+  );
 }
 
 /// Adds SUI tokens to the multisig wallet's balance for paying protocol fees.
@@ -323,15 +236,15 @@ public fun add_ika_balance(self: &mut Multisig, ika_coin: Coin<IKA>, ctx: &TxCon
 /// operations that require protocol fees. The tokens are stored in the
 /// wallet's balance and automatically used when needed.
 public fun add_sui_balance(self: &mut Multisig, sui_coin: Coin<SUI>, ctx: &TxContext) {
-    let amount = sui_coin.value();
-    self.sui_balance.join(sui_coin.into_balance());
+  let amount = sui_coin.value();
+  self.sui_balance.join(sui_coin.into_balance());
 
-    multisig_events::balance_added(
-        object::id(self),
-        ctx.sender(),
-        0,
-        amount,
-    );
+  multisig_events::balance_added(
+    object::id(self),
+    ctx.sender(),
+    0,
+    amount,
+  );
 }
 
 /// Adds a presign capability to the multisig wallet.
@@ -344,35 +257,35 @@ public fun add_sui_balance(self: &mut Multisig, sui_coin: Coin<SUI>, ctx: &TxCon
 /// * `coordinator` - The IKA dWallet coordinator for presign operations
 /// * `ctx` - Transaction context for the operation
 public fun add_presign(
-    self: &mut Multisig,
-    coordinator: &mut DWalletCoordinator,
-    ctx: &mut TxContext,
+  self: &mut Multisig,
+  coordinator: &mut DWalletCoordinator,
+  ctx: &mut TxContext,
 ) {
-    assert!(self.members.contains(&ctx.sender()), error::caller_not_member!());
-    assert!(self.ready, error::multisig_not_ready!());
+  assert!(self.members.contains(&ctx.sender()), error::caller_not_member!());
 
-    let (mut payment_ika, mut payment_sui) = self.withdraw_payment_coins(ctx);
+  let (mut payment_ika, mut payment_sui) = self.withdraw_payment_coins(ctx);
 
-    let session_identifier = random_session_identifier(coordinator, ctx);
+  let session_identifier = random_session_identifier(coordinator, ctx);
 
-    self
-        .presigns
-        .push_back(coordinator.request_presign(
-            self.dwallet_cap.dwallet_id(),
-            constants::curve!(),
-            session_identifier,
-            &mut payment_ika,
-            &mut payment_sui,
-            ctx,
-        ));
+  self
+    .presigns
+    .push_back(coordinator.request_global_presign(
+      self.dwallet_network_encryption_key_id,
+      constants::curve!(),
+      constants::signature_algorithm!(),
+      session_identifier,
+      &mut payment_ika,
+      &mut payment_sui,
+      ctx,
+    ));
 
-    multisig_events::presign_added(
-        object::id(self),
-        ctx.sender(),
-        self.presigns.length(),
-    );
+  multisig_events::presign_added(
+    object::id(self),
+    ctx.sender(),
+    self.presigns.length(),
+  );
 
-    self.return_payment_coins(payment_ika, payment_sui);
+  self.return_payment_coins(payment_ika, payment_sui);
 }
 
 /// Casts a vote on an existing multisig request.
@@ -401,47 +314,47 @@ public fun add_presign(
 /// * Vote immediately contributes to threshold calculations
 /// * Execution is separate from voting for better control
 public fun vote_request(
-    self: &mut Multisig,
-    request_id: u64,
-    vote: bool,
-    clock: &Clock,
-    ctx: &mut TxContext,
+  self: &mut Multisig,
+  request_id: u64,
+  vote: bool,
+  clock: &Clock,
+  ctx: &mut TxContext,
 ) {
-    assert!(self.requests.contains(request_id), error::request_not_found!());
-    let multisig_id = object::id(self);
+  assert!(self.requests.contains(request_id), error::request_not_found!());
+  let multisig_id = object::id(self);
 
-    let request = self.requests.borrow_mut(request_id);
+  let request = self.requests.borrow_mut(request_id);
 
-    assert!(request.status() == multisig_request::pending(), error::request_not_pending!());
-    assert!(self.members.contains(&ctx.sender()), error::caller_not_member!());
-    assert!(!request.votes().contains(ctx.sender()), error::already_voted!());
+  assert!(request.status() == multisig_request::pending(), error::request_not_pending!());
+  assert!(self.members.contains(&ctx.sender()), error::caller_not_member!());
+  assert!(!request.votes().contains(ctx.sender()), error::already_voted!());
 
-    if (clock.timestamp_ms() > *request.created_at() + self.expiration_duration) {
-        self.reject_request(request_id);
-        return
-    };
+  if (clock.timestamp_ms() > *request.created_at() + self.expiration_duration) {
+    self.reject_request(request_id);
+    return
+  };
 
-    request.votes().add(ctx.sender(), vote);
+  request.votes().add(ctx.sender(), vote);
 
-    if (vote) {
-        *request.approvers_count() = *request.approvers_count() + 1;
-    } else {
-        *request.rejecters_count() = *request.rejecters_count() + 1;
-    };
+  if (vote) {
+    *request.approvers_count() = *request.approvers_count() + 1;
+  } else {
+    *request.rejecters_count() = *request.rejecters_count() + 1;
+  };
 
-    if (*request.rejecters_count() >= self.rejection_threshold) {
-        self.reject_request(request_id);
-        return
-    };
+  if (*request.rejecters_count() >= self.rejection_threshold) {
+    self.reject_request(request_id);
+    return
+  };
 
-    multisig_events::vote_request(
-        multisig_id,
-        request_id,
-        ctx.sender(),
-        vote,
-        *request.approvers_count(),
-        *request.rejecters_count(),
-    );
+  multisig_events::vote_request(
+    multisig_id,
+    request_id,
+    ctx.sender(),
+    vote,
+    *request.approvers_count(),
+    *request.rejecters_count(),
+  );
 }
 
 /// Executes an approved request or marks it as rejected.
@@ -479,125 +392,125 @@ public fun vote_request(
 /// - Governance actions take effect immediately
 /// - Can be called by any party after thresholds are reached
 public fun execute_request(
-    self: &mut Multisig,
-    coordinator: &mut DWalletCoordinator,
-    request_id: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
+  self: &mut Multisig,
+  coordinator: &mut DWalletCoordinator,
+  request_id: u64,
+  clock: &Clock,
+  ctx: &mut TxContext,
 ) {
-    let multisig_id = object::id(self);
-    let (mut payment_ika, mut payment_sui) = self.withdraw_payment_coins(ctx);
+  let multisig_id = object::id(self);
+  let (mut payment_ika, mut payment_sui) = self.withdraw_payment_coins(ctx);
 
-    let request = self.requests.borrow_mut(request_id);
+  let request = self.requests.borrow_mut(request_id);
 
-    if (clock.timestamp_ms() > *request.created_at() + self.expiration_duration) {
-        self.reject_request(request_id);
-        self.return_payment_coins(payment_ika, payment_sui);
-        return
-    };
+  if (clock.timestamp_ms() > *request.created_at() + self.expiration_duration) {
+    self.reject_request(request_id);
+    self.return_payment_coins(payment_ika, payment_sui);
+    return
+  };
 
-    assert!(
-        *request.approvers_count() >= self.approval_threshold || *request.rejecters_count() >= self.rejection_threshold,
-        error::insufficient_votes!(),
+  assert!(
+    *request.approvers_count() >= self.approval_threshold || *request.rejecters_count() >= self.rejection_threshold,
+    error::insufficient_votes!(),
+  );
+
+  if (*request.rejecters_count() >= self.rejection_threshold) {
+    self.reject_request(request_id);
+    self.return_payment_coins(payment_ika, payment_sui);
+    return
+  };
+
+  let request_type = request.request_type();
+
+  let result = if (request_type.is_transaction()) {
+    let (message, _message_centralized_signature) = request_type.get_transaction_data();
+
+    let unverified_partial_user_signature_cap = request
+      .tx_unverified_partial_user_signature_cap()
+      .extract();
+
+    let verified_partial_user_signature_cap = coordinator.verify_partial_user_signature_cap(
+      unverified_partial_user_signature_cap,
+      ctx,
     );
 
-    if (*request.rejecters_count() >= self.rejection_threshold) {
-        self.reject_request(request_id);
-        self.return_payment_coins(payment_ika, payment_sui);
-        return
+    let message_approval = coordinator.approve_message(
+      &self.dwallet_cap,
+      constants::signature_algorithm!(),
+      constants::hash_scheme!(),
+      message,
+    );
+
+    let session_identifier = random_session_identifier(coordinator, ctx);
+
+    let sign_id = coordinator.request_sign_with_partial_user_signature_and_return_id(
+      verified_partial_user_signature_cap,
+      message_approval,
+      session_identifier,
+      &mut payment_ika,
+      &mut payment_sui,
+      ctx,
+    );
+
+    multisig_request::resolve_transaction_request(sign_id)
+  } else if (request_type.is_add_member()) {
+    let member_address = request_type.get_add_member_address();
+
+    if (self.members.contains(&member_address)) {
+      self.reject_request(request_id);
+      self.return_payment_coins(payment_ika, payment_sui);
+      return
     };
 
-    let request_type = request.request_type();
+    self.members.push_back(member_address);
+    multisig_request::resolve_add_member_request(member_address)
+  } else if (request_type.is_remove_member()) {
+    let member_address = request_type.get_remove_member_address();
+    let mut index = self.members.find_index!(|member| member_address == *member);
 
-    let result = if (request_type.is_transaction()) {
-        let (message, _message_centralized_signature) = request_type.get_transaction_data();
-
-        let unverified_partial_user_signature_cap = request
-            .tx_unverified_partial_user_signature_cap()
-            .extract();
-
-        let verified_partial_user_signature_cap = coordinator.verify_partial_user_signature_cap(
-            unverified_partial_user_signature_cap,
-            ctx,
-        );
-
-        let message_approval = coordinator.approve_message(
-            &self.dwallet_cap,
-            constants::signature_algorithm!(),
-            constants::hash_scheme!(),
-            message,
-        );
-
-        let session_identifier = random_session_identifier(coordinator, ctx);
-
-        let sign_id = coordinator.request_sign_with_partial_user_signature_and_return_id(
-            verified_partial_user_signature_cap,
-            message_approval,
-            session_identifier,
-            &mut payment_ika,
-            &mut payment_sui,
-            ctx,
-        );
-
-        multisig_request::resolve_transaction_request(sign_id)
-    } else if (request_type.is_add_member()) {
-        let member_address = request_type.get_add_member_address();
-
-        if (self.members.contains(&member_address)) {
-            self.reject_request(request_id);
-            self.return_payment_coins(payment_ika, payment_sui);
-            return
-        };
-
-        self.members.push_back(member_address);
-        multisig_request::resolve_add_member_request(member_address)
-    } else if (request_type.is_remove_member()) {
-        let member_address = request_type.get_remove_member_address();
-        let mut index = self.members.find_index!(|member| member_address == *member);
-
-        if (index.is_none()) {
-            self.reject_request(request_id);
-            self.return_payment_coins(payment_ika, payment_sui);
-            return
-        };
-
-        self.members.swap_remove(index.extract());
-        multisig_request::resolve_remove_member_request(member_address)
-    } else if (request_type.is_change_approval_threshold()) {
-        let new_threshold = request_type.get_change_approval_threshold_value();
-
-        if (new_threshold > self.members.length()) {
-            self.reject_request(request_id);
-            self.return_payment_coins(payment_ika, payment_sui);
-            return
-        };
-
-        self.approval_threshold = new_threshold;
-        multisig_request::resolve_change_approval_threshold_request(new_threshold)
-    } else if (request_type.is_change_rejection_threshold()) {
-        let new_threshold = request_type.get_change_rejection_threshold_value();
-
-        if (new_threshold > self.members.length()) {
-            self.reject_request(request_id);
-            self.return_payment_coins(payment_ika, payment_sui);
-            return
-        };
-
-        self.rejection_threshold = new_threshold;
-        multisig_request::resolve_change_rejection_threshold_request(new_threshold)
-    } else if (request_type.is_change_expiration_duration()) {
-        let new_duration = request_type.get_change_expiration_duration_value();
-        self.expiration_duration = new_duration;
-        multisig_request::resolve_change_expiration_duration_request(new_duration)
-    } else {
-        abort 0 // This should never happen if all cases are covered
+    if (index.is_none()) {
+      self.reject_request(request_id);
+      self.return_payment_coins(payment_ika, payment_sui);
+      return
     };
 
-    *request.status() = multisig_request::approved(result);
+    self.members.swap_remove(index.extract());
+    multisig_request::resolve_remove_member_request(member_address)
+  } else if (request_type.is_change_approval_threshold()) {
+    let new_threshold = request_type.get_change_approval_threshold_value();
 
-    multisig_events::request_resolved(multisig_id, request_id, *request.status());
+    if (new_threshold > self.members.length()) {
+      self.reject_request(request_id);
+      self.return_payment_coins(payment_ika, payment_sui);
+      return
+    };
 
-    self.return_payment_coins(payment_ika, payment_sui);
+    self.approval_threshold = new_threshold;
+    multisig_request::resolve_change_approval_threshold_request(new_threshold)
+  } else if (request_type.is_change_rejection_threshold()) {
+    let new_threshold = request_type.get_change_rejection_threshold_value();
+
+    if (new_threshold > self.members.length()) {
+      self.reject_request(request_id);
+      self.return_payment_coins(payment_ika, payment_sui);
+      return
+    };
+
+    self.rejection_threshold = new_threshold;
+    multisig_request::resolve_change_rejection_threshold_request(new_threshold)
+  } else if (request_type.is_change_expiration_duration()) {
+    let new_duration = request_type.get_change_expiration_duration_value();
+    self.expiration_duration = new_duration;
+    multisig_request::resolve_change_expiration_duration_request(new_duration)
+  } else {
+    abort 0 // This should never happen if all cases are covered
+  };
+
+  *request.status() = multisig_request::approved(result);
+
+  multisig_events::request_resolved(multisig_id, request_id, *request.status());
+
+  self.return_payment_coins(payment_ika, payment_sui);
 }
 
 // === Request Creation Functions ===
@@ -630,54 +543,54 @@ public fun execute_request(
 /// This request type requires approval_threshold votes to execute and will
 /// trigger Bitcoin transaction signing through the IKA dWallet protocol.
 public fun transaction_request(
-    self: &mut Multisig,
-    coordinator: &mut DWalletCoordinator,
-    transaction_hex: vector<u8>,
-    message_centralized_signature: vector<u8>,
-    clock: &Clock,
-    ctx: &mut TxContext,
+  self: &mut Multisig,
+  coordinator: &mut DWalletCoordinator,
+  transaction_hex: vector<u8>,
+  message_centralized_signature: vector<u8>,
+  clock: &Clock,
+  ctx: &mut TxContext,
 ): u64 {
-    let (mut payment_ika, mut payment_sui) = self.withdraw_payment_coins(ctx);
+  let (mut payment_ika, mut payment_sui) = self.withdraw_payment_coins(ctx);
 
+  let session_identifier = random_session_identifier(coordinator, ctx);
+  let unverified_presign_cap = self.presigns.swap_remove(0);
+  let verified_presign_cap = coordinator.verify_presign_cap(unverified_presign_cap, ctx);
+
+  let unverified_partial_user_signature_cap_from_request_sign = coordinator.request_future_sign(
+    self.dwallet_cap.dwallet_id(),
+    verified_presign_cap,
+    transaction_hex,
+    constants::hash_scheme!(),
+    message_centralized_signature,
+    session_identifier,
+    &mut payment_ika,
+    &mut payment_sui,
+    ctx,
+  );
+
+  if (self.presigns.length() == 0) {
     let session_identifier = random_session_identifier(coordinator, ctx);
-    let unverified_presign_cap = self.presigns.swap_remove(0);
-    let verified_presign_cap = coordinator.verify_presign_cap(unverified_presign_cap, ctx);
 
-    let unverified_partial_user_signature_cap_from_request_sign = coordinator.request_future_sign(
+    self
+      .presigns
+      .push_back(coordinator.request_presign(
         self.dwallet_cap.dwallet_id(),
-        verified_presign_cap,
-        transaction_hex,
-        constants::hash_scheme!(),
-        message_centralized_signature,
+        constants::curve!(),
         session_identifier,
         &mut payment_ika,
         &mut payment_sui,
         ctx,
-    );
+      ));
+  };
 
-    if (self.presigns.length() == 0) {
-        let session_identifier = random_session_identifier(coordinator, ctx);
+  self.return_payment_coins(payment_ika, payment_sui);
 
-        self
-            .presigns
-            .push_back(coordinator.request_presign(
-                self.dwallet_cap.dwallet_id(),
-                constants::curve!(),
-                session_identifier,
-                &mut payment_ika,
-                &mut payment_sui,
-                ctx,
-            ));
-    };
-
-    self.return_payment_coins(payment_ika, payment_sui);
-
-    self.new_request(
-        multisig_request::request_transaction(transaction_hex, message_centralized_signature),
-        option::some(unverified_partial_user_signature_cap_from_request_sign),
-        clock,
-        ctx,
-    )
+  self.new_request(
+    multisig_request::request_transaction(transaction_hex, message_centralized_signature),
+    option::some(unverified_partial_user_signature_cap_from_request_sign),
+    clock,
+    ctx,
+  )
 }
 
 /// Creates a governance request to add a new member to the multisig wallet.
@@ -699,19 +612,19 @@ public fun transaction_request(
 /// * Requires approval_threshold votes to execute
 /// * New member gains full voting rights immediately upon approval
 public fun add_member_request(
-    self: &mut Multisig,
-    member_address: address,
-    clock: &Clock,
-    ctx: &mut TxContext,
+  self: &mut Multisig,
+  member_address: address,
+  clock: &Clock,
+  ctx: &mut TxContext,
 ): u64 {
-    assert!(!self.members.contains(&member_address), error::member_already_exists!());
+  assert!(!self.members.contains(&member_address), error::member_already_exists!());
 
-    self.new_request(
-        multisig_request::request_add_member(member_address),
-        option::none(),
-        clock,
-        ctx,
-    )
+  self.new_request(
+    multisig_request::request_add_member(member_address),
+    option::none(),
+    clock,
+    ctx,
+  )
 }
 
 /// Creates a governance request to remove an existing member from the multisig wallet.
@@ -733,19 +646,19 @@ public fun add_member_request(
 /// * Requires approval_threshold votes to execute
 /// * Removed member loses all voting rights and cannot create new requests
 public fun remove_member_request(
-    self: &mut Multisig,
-    member_address: address,
-    clock: &Clock,
-    ctx: &mut TxContext,
+  self: &mut Multisig,
+  member_address: address,
+  clock: &Clock,
+  ctx: &mut TxContext,
 ): u64 {
-    assert!(self.members.contains(&member_address), error::member_not_found!());
+  assert!(self.members.contains(&member_address), error::member_not_found!());
 
-    self.new_request(
-        multisig_request::request_remove_member(member_address),
-        option::none(),
-        clock,
-        ctx,
-    )
+  self.new_request(
+    multisig_request::request_remove_member(member_address),
+    option::none(),
+    clock,
+    ctx,
+  )
 }
 
 /// Creates a governance request to modify the approval threshold.
@@ -768,20 +681,20 @@ public fun remove_member_request(
 /// * Requires approval_threshold votes to execute (based on current threshold)
 /// * Affects all future transaction requests immediately upon approval
 public fun change_approval_threshold_request(
-    self: &mut Multisig,
-    new_threshold: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
+  self: &mut Multisig,
+  new_threshold: u64,
+  clock: &Clock,
+  ctx: &mut TxContext,
 ): u64 {
-    assert!(new_threshold > 0, error::invalid_threshold!());
-    assert!(new_threshold <= self.members.length(), error::invalid_threshold!());
+  assert!(new_threshold > 0, error::invalid_threshold!());
+  assert!(new_threshold <= self.members.length(), error::invalid_threshold!());
 
-    self.new_request(
-        multisig_request::request_change_approval_threshold(new_threshold),
-        option::none(),
-        clock,
-        ctx,
-    )
+  self.new_request(
+    multisig_request::request_change_approval_threshold(new_threshold),
+    option::none(),
+    clock,
+    ctx,
+  )
 }
 
 /// Creates a governance request to modify the rejection threshold.
@@ -804,20 +717,20 @@ public fun change_approval_threshold_request(
 /// * Requires approval_threshold votes to execute
 /// * Affects all future requests immediately upon approval
 public fun change_rejection_threshold_request(
-    self: &mut Multisig,
-    new_threshold: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
+  self: &mut Multisig,
+  new_threshold: u64,
+  clock: &Clock,
+  ctx: &mut TxContext,
 ): u64 {
-    assert!(new_threshold > 0, error::invalid_rejection_threshold_specific!());
-    assert!(new_threshold <= self.members.length(), error::invalid_rejection_threshold_specific!());
+  assert!(new_threshold > 0, error::invalid_rejection_threshold_specific!());
+  assert!(new_threshold <= self.members.length(), error::invalid_rejection_threshold_specific!());
 
-    self.new_request(
-        multisig_request::request_change_rejection_threshold(new_threshold),
-        option::none(),
-        clock,
-        ctx,
-    )
+  self.new_request(
+    multisig_request::request_change_rejection_threshold(new_threshold),
+    option::none(),
+    clock,
+    ctx,
+  )
 }
 
 /// Creates a governance request to modify the request expiration duration.
@@ -839,19 +752,19 @@ public fun change_rejection_threshold_request(
 /// * Requires approval_threshold votes to execute
 /// * Affects all future requests created after approval
 public fun change_expiration_duration_request(
-    self: &mut Multisig,
-    new_duration: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
+  self: &mut Multisig,
+  new_duration: u64,
+  clock: &Clock,
+  ctx: &mut TxContext,
 ): u64 {
-    assert!(new_duration > 0, error::invalid_expiration_duration!());
+  assert!(new_duration > 0, error::invalid_expiration_duration!());
 
-    self.new_request(
-        multisig_request::request_change_expiration_duration(new_duration),
-        option::none(),
-        clock,
-        ctx,
-    )
+  self.new_request(
+    multisig_request::request_change_expiration_duration(new_duration),
+    option::none(),
+    clock,
+    ctx,
+  )
 }
 
 // === Private Helper Functions ===
@@ -867,13 +780,13 @@ public fun change_expiration_duration_request(
 /// A new SessionIdentifier registered with the coordinator
 ///
 fun random_session_identifier(
-    coordinator: &mut DWalletCoordinator,
-    ctx: &mut TxContext,
+  coordinator: &mut DWalletCoordinator,
+  ctx: &mut TxContext,
 ): SessionIdentifier {
-    coordinator.register_session_identifier(
-        ctx.fresh_object_address().to_bytes(),
-        ctx,
-    )
+  coordinator.register_session_identifier(
+    ctx.fresh_object_address().to_bytes(),
+    ctx,
+  )
 }
 
 /// Creates a new request to be voted on by the multisig members.
@@ -904,34 +817,33 @@ fun random_session_identifier(
 /// * Request starts with zero votes and Pending status
 /// * Signature capability is validated against the request type
 fun new_request(
-    self: &mut Multisig,
-    request_type: RequestType,
-    unverified_partial_user_signature_cap: Option<UnverifiedPartialUserSignatureCap>,
-    clock: &Clock,
-    ctx: &mut TxContext,
+  self: &mut Multisig,
+  request_type: RequestType,
+  unverified_partial_user_signature_cap: Option<UnverifiedPartialUserSignatureCap>,
+  clock: &Clock,
+  ctx: &mut TxContext,
 ): u64 {
-    assert!(self.ready, error::multisig_not_ready!());
-    assert!(self.members.contains(&ctx.sender()), error::caller_not_member!());
+  assert!(self.members.contains(&ctx.sender()), error::caller_not_member!());
 
-    let request = multisig_request::create_request(
-        request_type,
-        unverified_partial_user_signature_cap,
-        clock,
-        ctx,
-    );
+  let request = multisig_request::create_request(
+    request_type,
+    unverified_partial_user_signature_cap,
+    clock,
+    ctx,
+  );
 
-    self.request_id_counter = self.request_id_counter + 1;
+  self.request_id_counter = self.request_id_counter + 1;
 
-    multisig_events::request_created(
-        object::id(self),
-        self.request_id_counter,
-        request_type,
-        ctx.sender(),
-    );
+  multisig_events::request_created(
+    object::id(self),
+    self.request_id_counter,
+    request_type,
+    ctx.sender(),
+  );
 
-    self.requests.add(self.request_id_counter, request);
+  self.requests.add(self.request_id_counter, request);
 
-    self.request_id_counter
+  self.request_id_counter
 }
 
 /// Withdraws all IKA and SUI tokens from the multisig wallet's balance for payment.
@@ -949,9 +861,9 @@ fun new_request(
 /// This function withdraws all available tokens. Ensure that return_payment_coins
 /// is called to restore any unused funds to maintain the wallet's balance.
 fun withdraw_payment_coins(self: &mut Multisig, ctx: &mut TxContext): (Coin<IKA>, Coin<SUI>) {
-    let payment_ika = self.ika_balance.withdraw_all().into_coin(ctx);
-    let payment_sui = self.sui_balance.withdraw_all().into_coin(ctx);
-    (payment_ika, payment_sui)
+  let payment_ika = self.ika_balance.withdraw_all().into_coin(ctx);
+  let payment_sui = self.sui_balance.withdraw_all().into_coin(ctx);
+  (payment_ika, payment_sui)
 }
 
 /// Returns unused payment coins back to the multisig wallet's balance.
@@ -967,14 +879,14 @@ fun withdraw_payment_coins(self: &mut Multisig, ctx: &mut TxContext): (Coin<IKA>
 /// Always call this function after protocol operations to ensure unused
 /// payment funds are returned to the wallet's balance for future use.
 fun return_payment_coins(self: &mut Multisig, payment_ika: Coin<IKA>, payment_sui: Coin<SUI>) {
-    self.ika_balance.join(payment_ika.into_balance());
-    self.sui_balance.join(payment_sui.into_balance());
+  self.ika_balance.join(payment_ika.into_balance());
+  self.sui_balance.join(payment_sui.into_balance());
 }
 
 fun reject_request(self: &mut Multisig, request_id: u64) {
-    let multisig_id = object::id(self);
-    let request = self.requests.borrow_mut(request_id);
-    *request.status() = multisig_request::rejected();
+  let multisig_id = object::id(self);
+  let request = self.requests.borrow_mut(request_id);
+  *request.status() = multisig_request::rejected();
 
-    multisig_events::request_resolved(multisig_id, request_id, *request.status());
+  multisig_events::request_resolved(multisig_id, request_id, *request.status());
 }

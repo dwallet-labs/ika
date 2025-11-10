@@ -23,15 +23,15 @@ public(package) macro fun curve(): u32 {
 }
 
 /// Returns the signature algorithm identifier for Bitcoin signature generation.
-/// Uses the standard Bitcoin signature algorithm (ECDSA) which is the standard algorithm for Bitcoin.
+/// Uses the standard Bitcoin signature algorithm (Taproot) which is the standard algorithm for Bitcoin.
 /// This algorithm provides the cryptographic foundation for all multisig operations.
 public(package) macro fun signature_algorithm(): u32 {
-  0
+  1
 }
 
 /// Returns the hash scheme identifier for Bitcoin signature generation.
-/// Uses the standard Bitcoin hash scheme (double SHA256) which is the standard hash scheme for Bitcoin.
+/// Uses the standard Bitcoin hash scheme (SHA256) which is the standard hash scheme for Bitcoin.
 /// This hash scheme provides the cryptographic foundation for all multisig operations.
 public(package) macro fun hash_scheme(): u32 {
-  1
+  0
 }
