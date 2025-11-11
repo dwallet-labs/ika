@@ -121,8 +121,8 @@ importers:
         specifier: ^1.9.2
         version: 1.9.2
       '@mysten/sui':
-        specifier: ^1.40.0
-        version: 1.43.1(typescript@5.8.3)
+        specifier: ^1.44.0
+        version: 1.44.0(typescript@5.8.3)
       '@noble/curves':
         specifier: ^2.0.1
         version: 2.0.1
@@ -1439,19 +1439,12 @@ packages:
   '@microsoft/tsdoc@0.14.2':
     resolution: {integrity: sha512-9b8mPpKrfeGRuhFH5iO1iwCLeIIsV6+H1sRfxbkoGXIyQE2BTsPd9zqSqQJ+pv5sJ/hT5M1zvOFL02MnEezFug==}
 
-  '@mysten/bcs@1.9.1':
-    resolution: {integrity: sha512-EJejUrgv/FSjrssJw47/QQkK6FS2/4+YjDyQxHa2AbrCdENs252G7Owu2chapSwT3CXQVhmknECpFRkGMWOw9Q==}
-
   '@mysten/bcs@1.9.2':
     resolution: {integrity: sha512-kBk5xrxV9OWR7i+JhL/plQrgQ2/KJhB2pB5gj+w6GXhbMQwS3DPpOvi/zN0Tj84jwPvHMllpEl0QHj6ywN7/eQ==}
 
   '@mysten/codegen@0.5.9':
     resolution: {integrity: sha512-Lzks+e3JLq1E4+zSNakud7McEhNqmwhk+86qsxZpkLTMHDaIEoPZHcKh/nHF5v0izQ1wVXU6QPjTzV/ZxqOoBA==}
     hasBin: true
-
-  '@mysten/sui@1.43.1':
-    resolution: {integrity: sha512-DWD5q+19gi7c+gxtIfqgGlTFAIQlo4jB4bZcEE4SR8Z2hlnY2JK2CYllKSXAkDl9WpIjAe5In9uoQwuzyQ1t+Q==}
-    engines: {node: '>=18'}
 
   '@mysten/sui@1.44.0':
     resolution: {integrity: sha512-3p/y5gUhsG/MBXLOdX6qw1b8r1z/lKMvdfpacH+CjuEx8Y0U98R9fLmnFFd+6K+d+CE1gctBuMtcOqr+SppBug==}
@@ -6150,11 +6143,6 @@ snapshots:
 
   '@microsoft/tsdoc@0.14.2': {}
 
-  '@mysten/bcs@1.9.1':
-    dependencies:
-      '@mysten/utils': 0.2.0
-      '@scure/base': 1.2.6
-
   '@mysten/bcs@1.9.2':
     dependencies:
       '@mysten/utils': 0.2.0
@@ -6176,10 +6164,10 @@ snapshots:
       - '@gql.tada/svelte-support'
       - '@gql.tada/vue-support'
 
-  '@mysten/sui@1.43.1(typescript@5.8.3)':
+  '@mysten/sui@1.44.0(typescript@5.8.3)':
     dependencies:
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.11.0)
-      '@mysten/bcs': 1.9.1
+      '@mysten/bcs': 1.9.2
       '@mysten/utils': 0.2.0
       '@noble/curves': 1.9.4
       '@noble/hashes': 1.8.0

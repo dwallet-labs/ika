@@ -75,7 +75,7 @@
 		"@iarna/toml": "^2.2.5",
 		"@ika.xyz/ika-wasm": "workspace:*",
 		"@mysten/bcs": "^1.9.2",
-		"@mysten/sui": "^1.40.0",
+		"@mysten/sui": "^1.44.0",
 		"@noble/curves": "^2.0.1",
 		"@noble/hashes": "^1.8.0"
 	}
