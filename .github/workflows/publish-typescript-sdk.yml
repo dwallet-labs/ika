@@ -20,6 +20,18 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # ---------- Rust + wasm-pack (for sdk/ika-wasm) ----------
+
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+
+      - name: Install wasm-pack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          wasm-pack --version
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -37,18 +49,6 @@ jobs:
 
       - name: Install dependencies (workspace)
         run: pnpm install --frozen-lockfile
-
-      # ---------- Rust + wasm-pack (for sdk/ika-wasm) ----------
-
-      - name: Install Rust ${{ env.rust_stable }}
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.rust_stable }}
-
-      - name: Install wasm-pack
-        run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-          wasm-pack --version
 
       # ---------- sdk/ika-wasm ----------
 
