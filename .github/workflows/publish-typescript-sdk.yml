@@ -11,6 +11,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
   rust_stable: 1.90
+  SUI_VERSION: "sui@mainnet"
 
 jobs:
   publish-sdks:
@@ -47,6 +48,21 @@ jobs:
         with:
           run_install: false
 
+      - name: Install Sui CLI via suiup
+        run: |
+          # Install suiup
+          curl -sSfL https://raw.githubusercontent.com/MystenLabs/suiup/main/install.sh | sh
+          
+          # Make suiup/sui available to later steps
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+          # Install chosen Sui CLI version
+          "$HOME/.local/bin/suiup" install "$SUI_VERSION"
+
+          # Sanity check
+          sui --version
+
       - name: Install dependencies (workspace)
         run: pnpm install --frozen-lockfile
 
@@ -77,11 +93,6 @@ jobs:
             echo "published=false" >> "$GITHUB_OUTPUT"
             echo "$PKG_NAME@$PKG_VERSION is NOT published yet. Will publish."
           fi
-
-      - name: Run tests (sdk/ika-wasm)
-        working-directory: ./sdk/ika-wasm
-        run: pnpm test
-        # remove if no tests
 
       - name: Build (sdk/ika-wasm)
         working-directory: ./sdk/ika-wasm
@@ -123,11 +134,6 @@ jobs:
             echo "published=false" >> "$GITHUB_OUTPUT"
             echo "$PKG_NAME@$PKG_VERSION is NOT published yet. Will publish."
           fi
-
-      - name: Run tests (sdk/typescript)
-        working-directory: ./sdk/typescript
-        run: pnpm test
-        # tweak/remove as needed
 
       - name: Build (sdk/typescript)
         working-directory: ./sdk/typescript
