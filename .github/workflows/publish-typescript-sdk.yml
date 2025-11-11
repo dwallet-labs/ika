@@ -58,7 +58,7 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
 
           # Install chosen Sui CLI version
-          "$HOME/.local/bin/suiup" install "$SUI_VERSION"
+          "$HOME/.local/bin/suiup" install "$SUI_VERSION" -y
 
           # Sanity check
           sui --version
