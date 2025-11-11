@@ -246,6 +246,7 @@ public fun add_ika_balance(self: &mut Multisig, ika_coin: Coin<IKA>, ctx: &TxCon
 /// # Arguments
 /// * `self` - Mutable reference to the multisig wallet
 /// * `sui_coin` - SUI coin to add to the wallet's balance
+/// * `ctx` - Transaction context for the operation
 ///
 /// # Usage
 /// Use this function to fund the wallet with SUI tokens before performing
@@ -625,6 +626,7 @@ public fun transaction_request(
 /// # Arguments
 /// * `self` - Multisig wallet reference for validation
 /// * `member_address` - The Sui address of the new member to add
+/// * `clock` - Clock for getting the current timestamp for request expiration tracking
 /// * `ctx` - Transaction context to verify caller is an existing member
 ///
 /// # Returns
@@ -659,6 +661,7 @@ public fun add_member_request(
 /// # Arguments
 /// * `self` - Multisig wallet reference for validation
 /// * `member_address` - The Sui address of the member to remove
+/// * `clock` - Clock for getting the current timestamp for request expiration tracking
 /// * `ctx` - Transaction context to verify caller is an existing member
 ///
 /// # Returns
@@ -693,6 +696,7 @@ public fun remove_member_request(
 /// # Arguments
 /// * `self` - Multisig wallet reference for validation
 /// * `new_threshold` - The new approval threshold value (> 0)
+/// * `clock` - Clock for getting the current timestamp for request expiration tracking
 /// * `ctx` - Transaction context to verify caller is an existing member
 ///
 /// # Returns
@@ -729,6 +733,7 @@ public fun change_approval_threshold_request(
 /// # Arguments
 /// * `self` - Multisig wallet reference for validation
 /// * `new_threshold` - The new rejection threshold value (> 0)
+/// * `clock` - Clock for getting the current timestamp for request expiration tracking
 /// * `ctx` - Transaction context to verify caller is an existing member
 ///
 /// # Returns
@@ -764,7 +769,8 @@ public fun change_rejection_threshold_request(
 ///
 /// # Arguments
 /// * `self` - Multisig wallet reference for validation
-/// * `new_duration` - The new expiration duration in seconds (> 0)
+/// * `new_duration` - The new expiration duration in milliseconds (> 0)
+/// * `clock` - Clock for getting the current timestamp for request expiration tracking
 /// * `ctx` - Transaction context to verify caller is an existing member
 ///
 /// # Returns
