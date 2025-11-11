@@ -131,15 +131,19 @@ export class MultisigBitcoinWallet {
 		// Create transaction
 		const psbt = new bitcoin.Psbt({ network: this.bitcoinNetwork });
 
+		// Fetch the transaction hex for this UTXO
+		const txHex = await this.#fetchTransactionHex(utxo.txid);
+		const tx = bitcoin.Transaction.fromHex(txHex);
+
 		// Add the single input
 		psbt.addInput({
 			hash: utxo.txid,
 			index: utxo.vout,
 			witnessUtxo: {
-				script: this.p2tr.output!,
-				value: BigInt(utxoValue),
+				script: tx.outs[utxo.vout].script,
+				value: utxoValue,
 			},
-			tapInternalKey: this.p2tr.pubkey ?? this.publicKey,
+			tapInternalKey: this.publicKey,
 		});
 
 		// Add recipient output
