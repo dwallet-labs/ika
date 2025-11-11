@@ -279,11 +279,8 @@ export class MultisigBitcoinWallet {
 
 	finalizeTransaction(psbt: bitcoin.Psbt, signature: Uint8Array, inputIndex: number): string {
 		psbt
-			.signInput(inputIndex, {
-				sign: () => signature,
-				signSchnorr: () => signature,
-				publicKey: this.p2tr.pubkey ?? this.publicKey,
-				network: this.bitcoinNetwork,
+			.updateInput(inputIndex, {
+				tapKeySig: signature,
 			})
 			.finalizeAllInputs();
 
