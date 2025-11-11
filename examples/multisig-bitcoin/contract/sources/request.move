@@ -67,12 +67,13 @@ public enum RequestStatus has copy, drop, store {
 /// Each variant corresponds to a specific function that creates requests of that type.
 public enum RequestType has copy, drop, store {
   /// Bitcoin transaction request containing all necessary data for signing and broadcasting.
-  /// - Parameter 1 (vector<u8>): Complete serialized Bitcoin transaction in hexadecimal format
+  /// - Parameter 1 (vector<u8>): UTXO input to spend(preimage to be signed)
   /// - Parameter 2 (vector<u8>): Centralized signature component for the transaction
+  /// - Parameter 3 (vector<u8>): Whole serialized Bitcoin transaction in hexadecimal format
   ///
   /// This request type requires approval_threshold votes to execute and will trigger
   /// Bitcoin transaction signing through the IKA dWallet protocol when approved.
-  Transaction(vector<u8>, vector<u8>),
+  Transaction(vector<u8>, vector<u8>, vector<u8>),
   /// Governance request to add a new member to the multisig wallet.
   /// - Parameter (address): Sui address of the new member to add to the members vector
   ///
@@ -160,10 +161,11 @@ public(package) fun create_request(
 // === Request Type Functions ===
 
 public(package) fun request_transaction(
-  transaction_hex: vector<u8>,
+  preimage: vector<u8>,
   message_centralized_signature: vector<u8>,
+  psbt: vector<u8>,
 ): RequestType {
-  RequestType::Transaction(transaction_hex, message_centralized_signature)
+  RequestType::Transaction(preimage, message_centralized_signature, psbt)
 }
 
 public(package) fun request_add_member(member_address: address): RequestType {
@@ -277,7 +279,7 @@ public(package) fun rejected(): RequestStatus {
 /// `true` if the request is a Transaction type, `false` otherwise
 public(package) fun is_transaction(request_type: &RequestType): bool {
   match (request_type) {
-    RequestType::Transaction(_, _) => true,
+    RequestType::Transaction(_, _, _) => true,
     _ => false,
   }
 }
@@ -289,13 +291,19 @@ public(package) fun is_transaction(request_type: &RequestType): bool {
 /// * `request_type` - Reference to a Transaction request type
 ///
 /// # Returns
-/// A tuple containing (transaction_hex, centralized_signature)
+/// A tuple containing (preimage, centralized_signature, psbt)
 ///
 /// # Safety
 /// Aborts if called on non-Transaction request types. Always check with `is_transaction()` first.
-public(package) fun get_transaction_data(request_type: &RequestType): (vector<u8>, vector<u8>) {
+public(package) fun get_transaction_data(
+  request_type: &RequestType,
+): (vector<u8>, vector<u8>, vector<u8>) {
   match (request_type) {
-    RequestType::Transaction(message, signature) => (*message, *signature),
+    RequestType::Transaction(preimage, message_centralized_signature, psbt) => (
+      *preimage,
+      *message_centralized_signature,
+      *psbt,
+    ),
     _ => abort 0,
   }
 }

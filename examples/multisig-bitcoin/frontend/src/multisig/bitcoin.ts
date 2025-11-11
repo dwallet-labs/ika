@@ -1,39 +1,22 @@
-/**
- * MultisigBitcoinWallet - A Taproot-based Bitcoin wallet for MPC/dWallet integration
- *
- * Workflow:
- * 1. Create wallet with aggregated public key from MPC/dWallet
- * 2. Get balance and UTXOs
- * 3. User selects a UTXO to spend
- * 4. Create signable transaction (returns PSBT)
- * 5. Send PSBT to IKA/MPC for signing
- * 6. Receive signature from MPC
- * 7. Finalize transaction with signature
- * 8. Broadcast to network
- *
- * Example:
- * ```typescript
- * const wallet = new MultisigBitcoinWallet('testnet', aggregatedPublicKey);
- * const utxos = await wallet.getUTXOs();
- * const utxo = wallet.findSuitableUTXO(utxos, amount, feeRate);
- *
- * // Create transaction
- * const { psbt, psbtBase64, inputIndex } = await wallet.sendTransaction(
- *   recipientAddress,
- *   amount,
- *   feeRate,
- *   utxo
- * );
- *
- * // Send psbtBase64 to IKA/MPC for signing
- * const signature = await ikaMPCSign(psbtBase64, inputIndex);
- *
- * // Finalize and broadcast
- * const txHex = wallet.finalizeTransaction(psbt, signature, inputIndex);
- * const txid = await wallet.broadcastTransaction(Buffer.from(txHex).toString('hex'));
- * ```
- */
+'use client';
+
+import {
+	createUserSignMessageWithPublicOutput,
+	Curve,
+	DWalletWithState,
+	Hash,
+	IkaClient,
+	objResToBcs,
+	SignatureAlgorithm,
+} from '@ika.xyz/sdk';
+import { bcs } from '@mysten/sui/bcs';
+import { SuiClient } from '@mysten/sui/client';
+import { Transaction } from '@mysten/sui/transactions';
+import { sha256 } from '@noble/hashes/sha2';
 import * as bitcoin from 'bitcoinjs-lib';
+
+import { transactionRequest } from '../generated/ika_btc_multisig/multisig';
+import * as MultisigModule from '../generated/ika_btc_multisig/multisig';
 
 export interface UTXO {
 	txid: string;
@@ -55,14 +38,20 @@ export class MultisigBitcoinWallet {
 	private readonly address: string;
 	private readonly bitcoinNetwork: bitcoin.Network;
 	private readonly apiBaseUrl: string;
+	private readonly p2tr: bitcoin.payments.Payment;
 
 	constructor(
-		private readonly network: 'testnet' | 'mainnet' = 'testnet',
+		network: 'testnet' | 'mainnet' = 'testnet',
 		private readonly publicKey: Uint8Array,
+		private readonly ikaClient: IkaClient,
+		private readonly suiClient: SuiClient,
+		private readonly packageAddress: string,
+		public readonly object: {
+			multisig: string;
+			coordinator: string;
+			dWallet: DWalletWithState<'Active'>;
+		},
 	) {
-		this.network = network;
-		this.publicKey = publicKey;
-
 		// Set Bitcoin network and API URL
 		this.bitcoinNetwork =
 			network === 'mainnet' ? bitcoin.networks.bitcoin : bitcoin.networks.testnet;
@@ -71,21 +60,36 @@ export class MultisigBitcoinWallet {
 				? 'https://blockstream.info/api'
 				: 'https://blockstream.info/testnet/api';
 
+		if (this.publicKey.length === 33) {
+			this.publicKey = publicKey.slice(1);
+		}
+
 		// Create Taproot address from public key
-		const p2tr = bitcoin.payments.p2tr({
-			internalPubkey: Buffer.from(this.publicKey), // x-only pubkey (32 bytes)
-			network: this.bitcoinNetwork,
-		});
+		const p2tr = bitcoin.payments.p2tr(
+			{
+				internalPubkey: this.publicKey, // x-only pubkey (32 bytes) - Uint8Array
+				network: this.bitcoinNetwork,
+			},
+			{
+				validate: true,
+			},
+		);
 
 		if (!p2tr.address) {
 			throw new Error('Failed to generate Taproot address');
 		}
+
+		this.p2tr = p2tr;
 
 		this.address = p2tr.address;
 	}
 
 	getAddress(): string {
 		return this.address;
+	}
+
+	getNetwork(): 'testnet' | 'mainnet' {
+		return this.bitcoinNetwork === bitcoin.networks.testnet ? 'testnet' : 'mainnet';
 	}
 
 	async getBalance(): Promise<bigint> {
@@ -127,19 +131,15 @@ export class MultisigBitcoinWallet {
 		// Create transaction
 		const psbt = new bitcoin.Psbt({ network: this.bitcoinNetwork });
 
-		// Fetch the transaction hex for this UTXO
-		const txHex = await this.fetchTransactionHex(utxo.txid);
-		const tx = bitcoin.Transaction.fromHex(txHex);
-
 		// Add the single input
 		psbt.addInput({
 			hash: utxo.txid,
 			index: utxo.vout,
 			witnessUtxo: {
-				script: tx.outs[utxo.vout].script,
-				value: utxoValue,
+				script: this.p2tr.output!,
+				value: BigInt(utxoValue),
 			},
-			tapInternalKey: Buffer.from(this.publicKey),
+			tapInternalKey: this.p2tr.pubkey ?? this.publicKey,
 		});
 
 		// Add recipient output
@@ -167,6 +167,69 @@ export class MultisigBitcoinWallet {
 		};
 	}
 
+	async sendTransactionSui(
+		toAddress: string,
+		amount: bigint,
+		feeRate: number,
+		utxo: UTXO,
+	): Promise<{
+		transaction: Transaction;
+		preimage: Uint8Array;
+		psbt: bitcoin.Psbt;
+		messageCentralizedSignature: Uint8Array;
+	}> {
+		const { psbt, inputIndex } = await this.sendTransaction(toAddress, amount, feeRate, utxo);
+
+		const transaction = new Transaction();
+
+		const multisig = await this.#getMultisig();
+
+		const presign = await this.ikaClient.getPresignInParticularState(
+			multisig.presigns[0].presign_id,
+			'Completed',
+		);
+
+		const tx = bitcoin.Transaction.fromBuffer(psbt.data.getTransaction());
+		const preimage = this.#taprootPreimage(
+			tx,
+			inputIndex,
+			[psbt.data.inputs[inputIndex].witnessUtxo!.script],
+			[psbt.data.inputs[inputIndex].witnessUtxo!.value],
+			bitcoin.Transaction.SIGHASH_DEFAULT,
+		);
+
+		const messageCentralizedSignature = await createUserSignMessageWithPublicOutput(
+			await this.ikaClient.getProtocolPublicParameters(this.object.dWallet),
+			Uint8Array.from(this.object.dWallet.state.Active.public_output),
+			Uint8Array.from(this.object.dWallet.public_user_secret_key_share ?? new Uint8Array(32)),
+			Uint8Array.from(presign.state.Completed.presign),
+			preimage,
+			Hash.SHA256,
+			SignatureAlgorithm.Taproot,
+			Curve.SECP256K1,
+		);
+
+		const byteVector = bcs.vector(bcs.u8());
+
+		transactionRequest({
+			package: this.packageAddress,
+			arguments: {
+				self: this.object.multisig,
+				coordinator: this.object.coordinator,
+				preimage: byteVector.serialize(preimage).parse(),
+				messageCentralizedSignature: byteVector.serialize(messageCentralizedSignature).parse(),
+				psbt: byteVector.serialize(psbt.toBuffer()).parse(),
+			},
+		})(transaction);
+
+		return {
+			transaction,
+			preimage,
+			psbt,
+			messageCentralizedSignature,
+		};
+	}
+
 	async getUTXOs(): Promise<UTXO[]> {
 		try {
 			const response = await fetch(`${this.apiBaseUrl}/address/${this.address}/utxo`);
@@ -182,22 +245,6 @@ export class MultisigBitcoinWallet {
 		} catch (error) {
 			throw new Error(
 				`Error fetching UTXOs: ${error instanceof Error ? error.message : 'Unknown error'}`,
-			);
-		}
-	}
-
-	private async fetchTransactionHex(txid: string): Promise<string> {
-		try {
-			const response = await fetch(`${this.apiBaseUrl}/tx/${txid}/hex`);
-
-			if (!response.ok) {
-				throw new Error(`Failed to fetch transaction: ${response.statusText}`);
-			}
-
-			return await response.text();
-		} catch (error) {
-			throw new Error(
-				`Error fetching transaction: ${error instanceof Error ? error.message : 'Unknown error'}`,
 			);
 		}
 	}
@@ -226,19 +273,20 @@ export class MultisigBitcoinWallet {
 		return sortedUtxos.find((utxo) => BigInt(utxo.value) >= totalNeeded) || null;
 	}
 
-	finalizeTransaction(psbt: bitcoin.Psbt, signature: Uint8Array, inputIndex: number): Uint8Array {
-		// Add the signature to the PSBT
-		// For Taproot key path spending, we use tapKeySig
-		psbt.updateInput(inputIndex, {
-			tapKeySig: Buffer.from(signature),
-		});
-
-		// Finalize the input
-		psbt.finalizeInput(inputIndex);
+	finalizeTransaction(psbt: bitcoin.Psbt, signature: Uint8Array, inputIndex: number): string {
+		psbt
+			.signInput(inputIndex, {
+				sign: () => signature,
+				signSchnorr: () => signature,
+				publicKey: this.p2tr.pubkey ?? this.publicKey,
+				network: this.bitcoinNetwork,
+			})
+			.finalizeAllInputs();
 
 		// Extract the final transaction
 		const tx = psbt.extractTransaction();
-		return new Uint8Array(tx.toBuffer());
+
+		return tx.toHex();
 	}
 
 	async broadcastTransaction(txHex: string): Promise<string> {
@@ -257,6 +305,378 @@ export class MultisigBitcoinWallet {
 		} catch (error) {
 			throw new Error(
 				`Error broadcasting transaction: ${error instanceof Error ? error.message : 'Unknown error'}`,
+			);
+		}
+	}
+
+	/**
+	 * Build Taproot preimage for signing
+	 * Based on BIP-0341 and BIP-0342
+	 *
+	 * @param tx - The Bitcoin transaction
+	 * @param inIndex - Index of the input being signed
+	 * @param prevOutScripts - Previous output scripts for all inputs
+	 * @param values - Values (in satoshis) for all inputs
+	 * @param hashType - Sighash type
+	 * @param leafHash - Optional Taproot leaf hash for script path spending
+	 * @param annex - Optional annex data
+	 * @returns The preimage (tagHash || tagHash || [0x00] || sigMsg) ready for MPC signing
+	 *          This should be hashed with SHA256 to get the final TapSighash
+	 */
+	#taprootPreimage(
+		tx: bitcoin.Transaction,
+		inIndex: number,
+		prevOutScripts: (Buffer | Uint8Array)[],
+		values: bigint[],
+		hashType: number,
+		leafHash?: Buffer | Uint8Array,
+		annex?: Buffer | Uint8Array,
+	): Uint8Array {
+		if (values.length !== tx.ins.length || prevOutScripts.length !== tx.ins.length) {
+			throw new Error('Must supply prevout script and value for all inputs');
+		}
+
+		const outputType =
+			hashType === bitcoin.Transaction.SIGHASH_DEFAULT
+				? bitcoin.Transaction.SIGHASH_ALL
+				: hashType & bitcoin.Transaction.SIGHASH_OUTPUT_MASK;
+
+		const inputType = hashType & bitcoin.Transaction.SIGHASH_INPUT_MASK;
+
+		const isAnyoneCanPay = inputType === bitcoin.Transaction.SIGHASH_ANYONECANPAY;
+		const isNone = outputType === bitcoin.Transaction.SIGHASH_NONE;
+		const isSingle = outputType === bitcoin.Transaction.SIGHASH_SINGLE;
+
+		const EMPTY_BUFFER = Buffer.alloc(0);
+
+		let hashPrevouts = EMPTY_BUFFER;
+		let hashAmounts = EMPTY_BUFFER;
+		let hashScriptPubKeys = EMPTY_BUFFER;
+		let hashSequences = EMPTY_BUFFER;
+		let hashOutputs = EMPTY_BUFFER;
+
+		// Helper to convert Uint8Array to Buffer
+		const toBuffer = (data: Buffer | Uint8Array): Buffer => {
+			return Buffer.isBuffer(data) ? data : Buffer.from(data);
+		};
+
+		// Helper to write 64-bit unsigned integer in little-endian format
+		const writeUInt64LE = (buffer: Buffer, value: bigint, offset: number): void => {
+			// Write 64-bit unsigned integer as little-endian bytes
+			const low = Number(value & BigInt(0xffffffff));
+			const high = Number((value >> BigInt(32)) & BigInt(0xffffffff));
+			buffer.writeUInt32LE(low, offset);
+			buffer.writeUInt32LE(high, offset + 4);
+		};
+
+		// Helper to calculate varint size
+		const varSliceSize = (script: Buffer | Uint8Array): number => {
+			const length = script.length;
+			if (length < 0xfd) return 1 + length;
+			if (length <= 0xffff) return 3 + length;
+			if (length <= 0xffffffff) return 5 + length;
+			return 9 + length;
+		};
+
+		if (!isAnyoneCanPay) {
+			// Hash prevouts
+			const prevoutsBuffer = Buffer.allocUnsafe(36 * tx.ins.length);
+			let offset = 0;
+			for (const txIn of tx.ins) {
+				const hashBuffer = toBuffer(txIn.hash);
+				hashBuffer.copy(prevoutsBuffer, offset);
+				offset += 32;
+				prevoutsBuffer.writeUInt32LE(txIn.index, offset);
+				offset += 4;
+			}
+			hashPrevouts = Buffer.from(sha256(prevoutsBuffer));
+
+			// Hash amounts
+			const amountsBuffer = Buffer.allocUnsafe(8 * values.length);
+			offset = 0;
+			for (const value of values) {
+				writeUInt64LE(amountsBuffer, value, offset);
+				offset += 8;
+			}
+			hashAmounts = Buffer.from(sha256(amountsBuffer));
+
+			// Hash script pubkeys
+			const scriptPubKeysSize = prevOutScripts.reduce(
+				(sum, script) => sum + varSliceSize(script),
+				0,
+			);
+			const scriptPubKeysBuffer = Buffer.allocUnsafe(scriptPubKeysSize);
+			offset = 0;
+			for (const script of prevOutScripts) {
+				const scriptBuffer = toBuffer(script);
+				const length = scriptBuffer.length;
+				if (length < 0xfd) {
+					scriptPubKeysBuffer.writeUInt8(length, offset);
+					offset += 1;
+				} else if (length <= 0xffff) {
+					scriptPubKeysBuffer.writeUInt8(0xfd, offset);
+					offset += 1;
+					scriptPubKeysBuffer.writeUInt16LE(length, offset);
+					offset += 2;
+				} else if (length <= 0xffffffff) {
+					scriptPubKeysBuffer.writeUInt8(0xfe, offset);
+					offset += 1;
+					scriptPubKeysBuffer.writeUInt32LE(length, offset);
+					offset += 4;
+				} else {
+					scriptPubKeysBuffer.writeUInt8(0xff, offset);
+					offset += 1;
+					writeUInt64LE(scriptPubKeysBuffer, BigInt(length), offset);
+					offset += 8;
+				}
+				scriptBuffer.copy(scriptPubKeysBuffer, offset);
+				offset += length;
+			}
+			hashScriptPubKeys = Buffer.from(sha256(scriptPubKeysBuffer.slice(0, offset)));
+
+			// Hash sequences
+			const sequencesBuffer = Buffer.allocUnsafe(4 * tx.ins.length);
+			offset = 0;
+			for (const txIn of tx.ins) {
+				sequencesBuffer.writeUInt32LE(txIn.sequence, offset);
+				offset += 4;
+			}
+			hashSequences = Buffer.from(sha256(sequencesBuffer));
+		}
+
+		// Hash outputs
+		if (!(isNone || isSingle)) {
+			if (!tx.outs.length) {
+				throw new Error('Add outputs to the transaction before signing.');
+			}
+			const txOutsSize = tx.outs.reduce((sum, out) => sum + 8 + varSliceSize(out.script), 0);
+			const outputsBuffer = Buffer.allocUnsafe(txOutsSize);
+			let offset = 0;
+			for (const out of tx.outs) {
+				writeUInt64LE(outputsBuffer, BigInt(out.value), offset);
+				offset += 8;
+				const scriptBuffer = toBuffer(out.script);
+				const length = scriptBuffer.length;
+				if (length < 0xfd) {
+					outputsBuffer.writeUInt8(length, offset);
+					offset += 1;
+				} else if (length <= 0xffff) {
+					outputsBuffer.writeUInt8(0xfd, offset);
+					offset += 1;
+					outputsBuffer.writeUInt16LE(length, offset);
+					offset += 2;
+				} else if (length <= 0xffffffff) {
+					outputsBuffer.writeUInt8(0xfe, offset);
+					offset += 1;
+					outputsBuffer.writeUInt32LE(length, offset);
+					offset += 4;
+				} else {
+					outputsBuffer.writeUInt8(0xff, offset);
+					offset += 1;
+					writeUInt64LE(outputsBuffer, BigInt(length), offset);
+					offset += 8;
+				}
+				scriptBuffer.copy(outputsBuffer, offset);
+				offset += length;
+			}
+			hashOutputs = Buffer.from(sha256(outputsBuffer.slice(0, offset)));
+		} else if (isSingle && inIndex < tx.outs.length) {
+			const out = tx.outs[inIndex];
+			const outputSize = 8 + varSliceSize(out.script);
+			const outputBuffer = Buffer.allocUnsafe(outputSize);
+			let offset = 0;
+			writeUInt64LE(outputBuffer, BigInt(out.value), offset);
+			offset += 8;
+			const scriptBuffer = toBuffer(out.script);
+			const length = scriptBuffer.length;
+			if (length < 0xfd) {
+				outputBuffer.writeUInt8(length, offset);
+				offset += 1;
+			} else if (length <= 0xffff) {
+				outputBuffer.writeUInt8(0xfd, offset);
+				offset += 1;
+				outputBuffer.writeUInt16LE(length, offset);
+				offset += 2;
+			} else if (length <= 0xffffffff) {
+				outputBuffer.writeUInt8(0xfe, offset);
+				offset += 1;
+				outputBuffer.writeUInt32LE(length, offset);
+				offset += 4;
+			} else {
+				outputBuffer.writeUInt8(0xff, offset);
+				offset += 1;
+				writeUInt64LE(outputBuffer, BigInt(length), offset);
+				offset += 8;
+			}
+			scriptBuffer.copy(outputBuffer, offset);
+			offset += length;
+			hashOutputs = Buffer.from(sha256(outputBuffer.slice(0, offset)));
+		}
+
+		const spendType = (leafHash ? 2 : 0) + (annex ? 1 : 0);
+
+		// Calculate signature message size
+		const sigMsgSize =
+			174 - (isAnyoneCanPay ? 49 : 0) - (isNone ? 32 : 0) + (annex ? 32 : 0) + (leafHash ? 37 : 0);
+
+		// Build signature message
+		const sigMsgParts: Buffer[] = [];
+
+		// Hash type
+		sigMsgParts.push(Buffer.from([hashType]));
+
+		// Transaction
+		const versionBuffer = Buffer.allocUnsafe(4);
+		versionBuffer.writeUInt32LE(tx.version, 0);
+		sigMsgParts.push(versionBuffer);
+
+		const locktimeBuffer = Buffer.allocUnsafe(4);
+		locktimeBuffer.writeUInt32LE(tx.locktime, 0);
+		sigMsgParts.push(locktimeBuffer);
+
+		sigMsgParts.push(hashPrevouts);
+		sigMsgParts.push(hashAmounts);
+		sigMsgParts.push(hashScriptPubKeys);
+		sigMsgParts.push(hashSequences);
+
+		if (!(isNone || isSingle)) {
+			sigMsgParts.push(hashOutputs);
+		}
+
+		// Input
+		sigMsgParts.push(Buffer.from([spendType]));
+
+		if (isAnyoneCanPay) {
+			const input = tx.ins[inIndex];
+			sigMsgParts.push(toBuffer(input.hash));
+			const indexBuffer = Buffer.allocUnsafe(4);
+			indexBuffer.writeUInt32LE(input.index, 0);
+			sigMsgParts.push(indexBuffer);
+
+			const valueBuffer = Buffer.allocUnsafe(8);
+			writeUInt64LE(valueBuffer, values[inIndex], 0);
+			sigMsgParts.push(valueBuffer);
+
+			const scriptBuffer = toBuffer(prevOutScripts[inIndex]);
+			const scriptLength = scriptBuffer.length;
+			const scriptVarint = Buffer.allocUnsafe(
+				scriptLength < 0xfd ? 1 : scriptLength <= 0xffff ? 3 : scriptLength <= 0xffffffff ? 5 : 9,
+			);
+			let scriptOffset = 0;
+			if (scriptLength < 0xfd) {
+				scriptVarint.writeUInt8(scriptLength, scriptOffset);
+				scriptOffset = 1;
+			} else if (scriptLength <= 0xffff) {
+				scriptVarint.writeUInt8(0xfd, scriptOffset);
+				scriptVarint.writeUInt16LE(scriptLength, scriptOffset + 1);
+				scriptOffset = 3;
+			} else if (scriptLength <= 0xffffffff) {
+				scriptVarint.writeUInt8(0xfe, scriptOffset);
+				scriptVarint.writeUInt32LE(scriptLength, scriptOffset + 1);
+				scriptOffset = 5;
+			} else {
+				scriptVarint.writeUInt8(0xff, scriptOffset);
+				writeUInt64LE(scriptVarint, BigInt(scriptLength), scriptOffset + 1);
+				scriptOffset = 9;
+			}
+			sigMsgParts.push(scriptVarint.slice(0, scriptOffset));
+			sigMsgParts.push(scriptBuffer);
+
+			const sequenceBuffer = Buffer.allocUnsafe(4);
+			sequenceBuffer.writeUInt32LE(input.sequence, 0);
+			sigMsgParts.push(sequenceBuffer);
+		} else {
+			const indexBuffer = Buffer.allocUnsafe(4);
+			indexBuffer.writeUInt32LE(inIndex, 0);
+			sigMsgParts.push(indexBuffer);
+		}
+
+		if (annex) {
+			const annexBuffer = toBuffer(annex);
+			const annexLength = annexBuffer.length;
+			let annexVarintSize = 1;
+			if (annexLength >= 0xfd) {
+				annexVarintSize = annexLength <= 0xffff ? 3 : annexLength <= 0xffffffff ? 5 : 9;
+			}
+			const annexVarint = Buffer.allocUnsafe(annexVarintSize);
+			let annexOffset = 0;
+			if (annexLength < 0xfd) {
+				annexVarint.writeUInt8(annexLength, annexOffset);
+				annexOffset = 1;
+			} else if (annexLength <= 0xffff) {
+				annexVarint.writeUInt8(0xfd, annexOffset);
+				annexVarint.writeUInt16LE(annexLength, annexOffset + 1);
+				annexOffset = 3;
+			} else if (annexLength <= 0xffffffff) {
+				annexVarint.writeUInt8(0xfe, annexOffset);
+				annexVarint.writeUInt32LE(annexLength, annexOffset + 1);
+				annexOffset = 5;
+			} else {
+				annexVarint.writeUInt8(0xff, annexOffset);
+				writeUInt64LE(annexVarint, BigInt(annexLength), annexOffset + 1);
+				annexOffset = 9;
+			}
+			const annexWithVarint = Buffer.concat([annexVarint.slice(0, annexOffset), annexBuffer]);
+			sigMsgParts.push(Buffer.from(sha256(annexWithVarint)));
+		}
+
+		// Output
+		if (isSingle) {
+			sigMsgParts.push(hashOutputs);
+		}
+
+		// BIP342 extension
+		if (leafHash) {
+			sigMsgParts.push(toBuffer(leafHash));
+			sigMsgParts.push(Buffer.from([0]));
+			const leafHashExt = Buffer.allocUnsafe(4);
+			leafHashExt.writeUInt32LE(0xffffffff, 0);
+			sigMsgParts.push(leafHashExt);
+		}
+
+		// Concatenate all parts
+		const sigMsg = Buffer.concat(sigMsgParts);
+
+		// Compute tagged hash: SHA256(tagHash || tagHash || [0x00] || sigMsg)
+		// Where tagHash = SHA256("TapSighash")
+		const tagHash = Uint8Array.from([
+			244, 10, 72, 223, 75, 42, 112, 200, 180, 146, 75, 242, 101, 70, 97, 237, 61, 149, 253, 102,
+			163, 19, 235, 135, 35, 117, 151, 198, 40, 228, 160, 49, 244, 10, 72, 223, 75, 42, 112, 200,
+			180, 146, 75, 242, 101, 70, 97, 237, 61, 149, 253, 102, 163, 19, 235, 135, 35, 117, 151, 198,
+			40, 228, 160, 49,
+		]);
+		const preimage = Buffer.concat([tagHash, Buffer.from([0x00]), sigMsg]);
+
+		// Return preimage (tagHash || tagHash || [0x00] || sigMsg)
+		// This is what MPC signs - it will hash this with SHA256 to get the TapSighash
+		return new Uint8Array(preimage);
+	}
+
+	async #getMultisig(): Promise<typeof MultisigModule.Multisig.$inferType> {
+		const multisig = await this.suiClient
+			.getObject({
+				id: this.object.multisig,
+				options: {
+					showBcs: true,
+				},
+			})
+			.then((obj) => MultisigModule.Multisig.fromBase64(objResToBcs(obj)));
+
+		return multisig;
+	}
+
+	async #fetchTransactionHex(txid: string): Promise<string> {
+		try {
+			const response = await fetch(`${this.apiBaseUrl}/tx/${txid}/hex`);
+
+			if (!response.ok) {
+				throw new Error(`Failed to fetch transaction: ${response.statusText}`);
+			}
+
+			return await response.text();
+		} catch (error) {
+			throw new Error(
+				`Error fetching transaction: ${error instanceof Error ? error.message : 'Unknown error'}`,
 			);
 		}
 	}

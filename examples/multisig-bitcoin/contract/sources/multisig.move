@@ -130,6 +130,7 @@ public fun new_multisig(
   centralized_public_key_share_and_proof: vector<u8>,
   user_public_output: vector<u8>,
   public_user_secret_key_share: vector<u8>,
+  session_identifier: vector<u8>,
   members: vector<address>,
   approval_threshold: u64,
   rejection_threshold: u64,
@@ -145,7 +146,10 @@ public fun new_multisig(
   // A way to make sure the members in the vector is not duplicated.
   let members_non_duplicated = vec_set::from_keys(members).into_keys();
 
-  let session_identifier = random_session_identifier(coordinator, ctx);
+  let registered_session_identifier = coordinator.register_session_identifier(
+    session_identifier,
+    ctx,
+  );
 
   let (dwallet_cap, _) = coordinator.request_dwallet_dkg_with_public_user_secret_key_share(
     dwallet_network_encryption_key_id,
@@ -154,7 +158,7 @@ public fun new_multisig(
     user_public_output,
     public_user_secret_key_share,
     option::none(),
-    session_identifier,
+    registered_session_identifier,
     &mut initial_ika_coin_for_balance,
     &mut initial_sui_coin_for_balance,
     ctx,
@@ -440,7 +444,7 @@ public fun execute_request(
   let request_type = request.request_type();
 
   let result = if (request_type.is_transaction()) {
-    let (message, _message_centralized_signature) = request_type.get_transaction_data();
+    let (preimage, _, _) = request_type.get_transaction_data();
 
     let unverified_partial_user_signature_cap = request
       .tx_unverified_partial_user_signature_cap()
@@ -455,7 +459,7 @@ public fun execute_request(
       &self.dwallet_cap,
       constants::signature_algorithm!(),
       constants::hash_scheme!(),
-      message,
+      preimage,
     );
 
     let session_identifier = random_session_identifier(coordinator, ctx);
@@ -550,8 +554,9 @@ public fun execute_request(
 /// # Arguments
 /// * `self` - Mutable reference to the multisig wallet
 /// * `coordinator` - The IKA dWallet coordinator for signature operations
-/// * `transaction_hex` - Complete serialized Bitcoin transaction in hexadecimal format
+/// * `preimage` - BIP 341 preimage for the transaction
 /// * `message_centralized_signature` - Centralized signature component for the transaction
+/// * `psbt` - Complete serialized Bitcoin transaction in hexadecimal format
 /// * `clock` - Clock for getting the current timestamp for request expiration tracking
 /// * `ctx` - Transaction context for the operation
 ///
@@ -570,8 +575,9 @@ public fun execute_request(
 public fun transaction_request(
   self: &mut Multisig,
   coordinator: &mut DWalletCoordinator,
-  transaction_hex: vector<u8>,
+  preimage: vector<u8>,
   message_centralized_signature: vector<u8>,
+  psbt: vector<u8>,
   clock: &Clock,
   ctx: &mut TxContext,
 ): u64 {
@@ -584,7 +590,7 @@ public fun transaction_request(
   let unverified_partial_user_signature_cap_from_request_sign = coordinator.request_future_sign(
     self.dwallet_cap.dwallet_id(),
     verified_presign_cap,
-    transaction_hex,
+    preimage,
     constants::hash_scheme!(),
     message_centralized_signature,
     session_identifier,
@@ -598,9 +604,10 @@ public fun transaction_request(
 
     self
       .presigns
-      .push_back(coordinator.request_presign(
-        self.dwallet_cap.dwallet_id(),
+      .push_back(coordinator.request_global_presign(
+        self.dwallet_network_encryption_key_id,
         constants::curve!(),
+        constants::signature_algorithm!(),
         session_identifier,
         &mut payment_ika,
         &mut payment_sui,
@@ -611,7 +618,7 @@ public fun transaction_request(
   self.return_payment_coins(payment_ika, payment_sui);
 
   self.new_request(
-    multisig_request::request_transaction(transaction_hex, message_centralized_signature),
+    multisig_request::request_transaction(preimage, message_centralized_signature, psbt),
     option::some(unverified_partial_user_signature_cap_from_request_sign),
     clock,
     ctx,
