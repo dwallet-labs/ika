@@ -12,6 +12,7 @@ import {
 import { bcs } from '@mysten/sui/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2';
 import * as bitcoin from 'bitcoinjs-lib';
 
@@ -39,6 +40,12 @@ export class MultisigBitcoinWallet {
 	private readonly bitcoinNetwork: bitcoin.Network;
 	private readonly apiBaseUrl: string;
 	private readonly p2tr: bitcoin.payments.Payment;
+	private readonly scriptTree: { output: Buffer };
+	private readonly redeem: {
+		output: Buffer;
+		redeemVersion: number;
+	};
+	private readonly internalPubkey: Buffer;
 
 	constructor(
 		network: 'testnet' | 'mainnet' = 'testnet',
@@ -60,14 +67,53 @@ export class MultisigBitcoinWallet {
 				? 'https://blockstream.info/api'
 				: 'https://blockstream.info/testnet/api';
 
+		// Ensure we have x-only public key (32 bytes) for BIP-340 Schnorr signatures
 		if (this.publicKey.length === 33) {
 			this.publicKey = publicKey.slice(1);
 		}
 
-		// Create Taproot address from public key
+		if (this.publicKey.length !== 32) {
+			throw new Error('Public key must be 32 bytes (x-only) for BIP-340');
+		}
+
+		// ============================================
+		// SCRIPT PATH SPENDING SETUP
+		// ============================================
+		// We use script path spending because our MPC doesn't support tweaked keys.
+		// With script path, we sign with the UNTWEAKED public key.
+
+		// Create Tapscript: <32-byte-pubkey> OP_CHECKSIG
+		// This verifies BIP-340 Schnorr signatures against our untweaked MPC public key
+		const scriptASM = Buffer.concat([
+			Buffer.from([0x20]), // OP_PUSHBYTES_32 (push next 32 bytes)
+			Buffer.from(this.publicKey), // 32-byte x-only public key from MPC
+			Buffer.from([0xac]), // OP_CHECKSIG
+		]);
+
+		this.redeem = {
+			output: scriptASM,
+			redeemVersion: 0xc0, // Tapscript leaf version (192 decimal)
+		};
+
+		// Create script tree with our single checksig script
+		this.scriptTree = {
+			output: scriptASM,
+		};
+
+		// Use "Nothing Up My Sleeve" (NUMS) point as internal pubkey
+		// This is the H point = SHA256("H"), used as a provably unspendable key
+		// Since we only use script path, this internal key is never used for signing
+		this.internalPubkey = Buffer.from(
+			'50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
+			'hex',
+		);
+
+		// Create Taproot P2TR address with script path
 		const p2tr = bitcoin.payments.p2tr(
 			{
-				internalPubkey: this.publicKey, // x-only pubkey (32 bytes) - Uint8Array
+				internalPubkey: this.internalPubkey,
+				scriptTree: this.scriptTree,
+				redeem: this.redeem,
 				network: this.bitcoinNetwork,
 			},
 			{
@@ -80,7 +126,6 @@ export class MultisigBitcoinWallet {
 		}
 
 		this.p2tr = p2tr;
-
 		this.address = p2tr.address;
 	}
 
@@ -99,7 +144,7 @@ export class MultisigBitcoinWallet {
 	}
 
 	/**
-	 * Create a transaction ready for signing
+	 * Create a transaction ready for signing (SCRIPT PATH SPENDING)
 	 *
 	 * @param toAddress - Recipient Bitcoin address
 	 * @param amount - Amount to send in satoshis
@@ -107,7 +152,7 @@ export class MultisigBitcoinWallet {
 	 * @param utxo - The UTXO to spend (user-selected)
 	 * @returns SignableTransaction containing PSBT for IKA/MPC signing
 	 *
-	 * Note: This creates a single-input transaction, requiring only ONE signature from IKA/MPC
+	 * Note: Uses script path spending which requires signing with UNTWEAKED key
 	 */
 	async sendTransaction(
 		toAddress: string,
@@ -115,9 +160,9 @@ export class MultisigBitcoinWallet {
 		feeRate: number,
 		utxo: UTXO,
 	): Promise<SignableTransaction> {
-		// Estimate transaction size and fee for single input
-		// Taproot input: ~57.5 vbytes, output: ~43 vbytes
-		const estimatedSize = 1 * 58 + 2 * 43 + 10; // 1 input, 2 outputs
+		// Estimate transaction size and fee for single input with script path
+		// Script path is slightly larger than key path due to script reveal
+		const estimatedSize = 1 * 68 + 2 * 43 + 10; // 1 script path input, 2 outputs
 		const fee = BigInt(Math.ceil(estimatedSize * feeRate));
 
 		// Check if the UTXO can cover the amount + fee
@@ -135,7 +180,7 @@ export class MultisigBitcoinWallet {
 		const txHex = await this.#fetchTransactionHex(utxo.txid);
 		const tx = bitcoin.Transaction.fromHex(txHex);
 
-		// Add the single input
+		// Add input with SCRIPT PATH spending information
 		psbt.addInput({
 			hash: utxo.txid,
 			index: utxo.vout,
@@ -143,7 +188,15 @@ export class MultisigBitcoinWallet {
 				script: tx.outs[utxo.vout].script,
 				value: utxoValue,
 			},
-			tapInternalKey: this.publicKey,
+			// For script path spending, we need:
+			tapInternalKey: this.internalPubkey, // NUMS point (not used for signing)
+			tapLeafScript: [
+				{
+					leafVersion: this.redeem.redeemVersion, // 0xc0
+					script: this.redeem.output, // Our checksig script
+					controlBlock: this.p2tr.witness![this.p2tr.witness!.length - 1], // Merkle proof
+				},
+			],
 		});
 
 		// Add recipient output
@@ -194,12 +247,18 @@ export class MultisigBitcoinWallet {
 		);
 
 		const tx = bitcoin.Transaction.fromBuffer(psbt.data.getTransaction());
+
+		// Calculate leaf hash for script path spending
+		const leafHash = this.#getLeafHash();
+
+		// Build preimage with leaf hash (required for script path spending)
 		const preimage = this.#taprootPreimage(
 			tx,
 			inputIndex,
 			[psbt.data.inputs[inputIndex].witnessUtxo!.script],
 			[psbt.data.inputs[inputIndex].witnessUtxo!.value],
 			bitcoin.Transaction.SIGHASH_DEFAULT,
+			leafHash, // Include leaf hash for script path
 		);
 
 		const messageCentralizedSignature = await createUserSignMessageWithPublicOutput(
@@ -254,11 +313,12 @@ export class MultisigBitcoinWallet {
 	}
 
 	/**
-	 * Estimate the fee for a transaction with a single input
+	 * Estimate the fee for a transaction with a single input (script path)
 	 */
 	estimateFee(feeRate: number, hasChange: boolean = true): bigint {
-		// Taproot input: ~57.5 vbytes, output: ~43 vbytes
-		const estimatedSize = 1 * 58 + (hasChange ? 2 : 1) * 43 + 10;
+		// Script path input: ~68 vbytes (includes script + control block)
+		// Output: ~43 vbytes
+		const estimatedSize = 1 * 68 + (hasChange ? 2 : 1) * 43 + 10;
 		return BigInt(Math.ceil(estimatedSize * feeRate));
 	}
 
@@ -278,9 +338,19 @@ export class MultisigBitcoinWallet {
 	}
 
 	finalizeTransaction(psbt: bitcoin.Psbt, signature: Uint8Array, inputIndex: number): string {
+		// Get leaf hash for verification
+		const leafHash = this.#getLeafHash();
+
+		// For SCRIPT PATH spending, use tapScriptSig (not tapKeySig)
 		psbt
 			.updateInput(inputIndex, {
-				tapKeySig: signature,
+				tapScriptSig: [
+					{
+						pubkey: this.publicKey, // Untweaked public key
+						signature: signature, // BIP-340 Schnorr signature
+						leafHash: leafHash, // Identifies which script in the tree
+					},
+				],
 			})
 			.finalizeAllInputs();
 
@@ -651,6 +721,43 @@ export class MultisigBitcoinWallet {
 		// Return preimage (tagHash || tagHash || [0x00] || sigMsg)
 		// This is what MPC signs - it will hash this with SHA256 to get the TapSighash
 		return new Uint8Array(preimage);
+	}
+
+	/**
+	 * Calculate the leaf hash for the taproot script
+	 * TapLeaf hash = SHA256(SHA256("TapLeaf") || SHA256("TapLeaf") || version || script_len || script)
+	 *
+	 * This is required for script path spending to identify which script in the tree we're using.
+	 */
+	#getLeafHash(): Buffer {
+		const tagHash = Buffer.from(sha256('TapLeaf'));
+		const version = Buffer.from([this.redeem.redeemVersion]); // 0xc0
+
+		// Encode script length as compact size
+		const scriptLen = this.redeem.output.length;
+		let scriptLenEncoded: Buffer;
+		if (scriptLen < 0xfd) {
+			scriptLenEncoded = Buffer.from([scriptLen]);
+		} else if (scriptLen <= 0xffff) {
+			scriptLenEncoded = Buffer.allocUnsafe(3);
+			scriptLenEncoded.writeUInt8(0xfd, 0);
+			scriptLenEncoded.writeUInt16LE(scriptLen, 1);
+		} else if (scriptLen <= 0xffffffff) {
+			scriptLenEncoded = Buffer.allocUnsafe(5);
+			scriptLenEncoded.writeUInt8(0xfe, 0);
+			scriptLenEncoded.writeUInt32LE(scriptLen, 1);
+		} else {
+			scriptLenEncoded = Buffer.allocUnsafe(9);
+			scriptLenEncoded.writeUInt8(0xff, 0);
+			scriptLenEncoded.writeBigUInt64LE(BigInt(scriptLen), 1);
+		}
+
+		// Calculate tagged hash: SHA256(tagHash || tagHash || version || scriptLen || script)
+		const leafHash = Buffer.from(
+			sha256(Buffer.concat([tagHash, tagHash, version, scriptLenEncoded, this.redeem.output])),
+		);
+
+		return leafHash;
 	}
 
 	async #getMultisig(): Promise<typeof MultisigModule.Multisig.$inferType> {
