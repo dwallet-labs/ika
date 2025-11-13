@@ -1,11 +1,11 @@
-name: Publish SDKs (ika-wasm + typescript via Trusted Publishing)
+name: Publish SDKs (ika-wasm + typescript via pnpm Trusted Publishing)
 
 on:
-  workflow_dispatch: {}  # manual trigger
+  workflow_dispatch: {} # manual trigger
 
 permissions:
   contents: read
-  id-token: write   # REQUIRED for npm Trusted Publishing (OIDC)
+  id-token: write # REQUIRED for pnpm/npm Trusted Publishing (OIDC)
 
 env:
   RUSTDOCFLAGS: -Dwarnings
@@ -39,7 +39,7 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      # npm Trusted Publishing requires npm CLI >= 11.5.1
+      # Update npm for registry checks (npm view commands)
       - name: Update npm to latest
         run: npm install -g npm@latest
 
@@ -52,7 +52,7 @@ jobs:
         run: |
           # Install suiup
           curl -sSfL https://raw.githubusercontent.com/MystenLabs/suiup/main/install.sh | sh
-          
+
           # Make suiup/sui available to later steps
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$PATH"
@@ -99,12 +99,12 @@ jobs:
         run: pnpm build
         # this should run wasm-pack internally
 
-      - name: Publish sdk/ika-wasm via npm (Trusted Publishing)
+      - name: Publish sdk/ika-wasm via pnpm (Trusted Publishing)
         if: steps.ika_check.outputs.published == 'false'
         working-directory: ./sdk/ika-wasm
         run: |
           # First publish of a public package usually needs --access public
-          npm publish --provenance --access public
+          pnpm publish --provenance --access public --no-git-checks
           echo "Published ${{ steps.ika_pkg.outputs.name }}@${{ steps.ika_pkg.outputs.version }}"
 
       # ---------- sdk/typescript ----------
@@ -139,9 +139,9 @@ jobs:
         working-directory: ./sdk/typescript
         run: pnpm build
 
-      - name: Publish sdk/typescript via npm (Trusted Publishing)
+      - name: Publish sdk/typescript via pnpm (Trusted Publishing)
         if: steps.ts_check.outputs.published == 'false'
         working-directory: ./sdk/typescript
         run: |
-          npm publish --provenance --access public
+          pnpm publish --provenance --access public --no-git-checks
           echo "Published ${{ steps.ts_pkg.outputs.name }}@${{ steps.ts_pkg.outputs.version }}"
