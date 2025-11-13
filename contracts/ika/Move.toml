@@ -3,14 +3,13 @@ name = "ika"
 edition = "2024"
 license = "BSD-3-Clause-Clear"
 authors = ["dWallet Labs, Ltd. <dev@dwalletlabs.com>"]
+published-at = "0xee5d4da55ded42f64bad7b9e33297d9fb9646875802caaf654c291dfb964f235"
 
 [dependencies]
 
 [addresses]
-ika = "0x0"
+ika = "0xee5d4da55ded42f64bad7b9e33297d9fb9646875802caaf654c291dfb964f235"
 
 [dev-dependencies]
 
 [dev-addresses]
-
-
