@@ -104,7 +104,7 @@ jobs:
         working-directory: ./sdk/ika-wasm
         run: |
           # First publish of a public package usually needs --access public
-          pnpm publish --provenance --access public --no-git-checks
+          pnpm publish --provenance --access public
           echo "Published ${{ steps.ika_pkg.outputs.name }}@${{ steps.ika_pkg.outputs.version }}"
 
       # ---------- sdk/typescript ----------
@@ -143,5 +143,5 @@ jobs:
         if: steps.ts_check.outputs.published == 'false'
         working-directory: ./sdk/typescript
         run: |
-          pnpm publish --provenance --access public --no-git-checks
+          pnpm publish --provenance --access public
           echo "Published ${{ steps.ts_pkg.outputs.name }}@${{ steps.ts_pkg.outputs.version }}"
