@@ -12,7 +12,7 @@ on:
         types: [opened, synchronize, reopened, ready_for_review]
 
 env:
-    VERSION: 0.3.0
+    VERSION: 0.3.3
 
 jobs:
     prettier-move:
