@@ -56,7 +56,7 @@ jobs:
         run: |
           # Install build dependencies
           apt-get update && apt-get install -y cmake clang pkg-config libssl-dev
-          RUSTFLAGS="-D warnings" cargo build --bin ika dev --target x86_64-unknown-linux-gnu
+          RUSTFLAGS="-D warnings" cargo build --bin ika --target x86_64-unknown-linux-gnu
 
   fmt:
     name: Format Check
