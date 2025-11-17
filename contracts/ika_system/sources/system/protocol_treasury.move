@@ -4,10 +4,7 @@
 module ika_system::protocol_treasury;
 
 use ika::ika::IKA;
-use sui::bag::{Self, Bag};
-use sui::balance::Balance;
-use sui::coin::TreasuryCap;
-use sui::coin_registry::{Currency};
+use sui::{bag::{Self, Bag}, balance::Balance, coin::TreasuryCap, coin_registry::Currency};
 
 // === Errors ===
 

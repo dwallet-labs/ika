@@ -4,25 +4,31 @@
 module ika_system::validator_set;
 
 use ika::ika::IKA;
-use ika_common::bls_committee::{Self, BlsCommittee, new_bls_committee, new_bls_committee_member};
-use ika_common::extended_field::{Self, ExtendedField};
-use ika_common::system_object_cap::SystemObjectCap;
-use ika_common::validator_cap::{ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap};
-use ika_system::pending_active_set::{Self, PendingActiveSet};
-use ika_system::staked_ika::StakedIka;
-use ika_system::token_exchange_rate::TokenExchangeRate;
-use ika_system::validator::{Self, Validator};
-use ika_system::validator_metadata::ValidatorMetadata;
+use ika_common::{
+    bls_committee::{Self, BlsCommittee, new_bls_committee, new_bls_committee_member},
+    extended_field::{Self, ExtendedField},
+    system_object_cap::SystemObjectCap,
+    validator_cap::{ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap}
+};
+use ika_system::{
+    pending_active_set::{Self, PendingActiveSet},
+    staked_ika::StakedIka,
+    token_exchange_rate::TokenExchangeRate,
+    validator::{Self, Validator},
+    validator_metadata::ValidatorMetadata
+};
 use std::string::String;
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::coin::Coin;
-use sui::event;
-use sui::object_table::{Self, ObjectTable};
-use sui::table::Table;
-use sui::vec_map::{Self, VecMap};
-use sui::vec_set::{Self, VecSet};
-use sui::table_vec::TableVec;
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    coin::Coin,
+    event,
+    object_table::{Self, ObjectTable},
+    table::Table,
+    table_vec::TableVec,
+    vec_map::{Self, VecMap},
+    vec_set::{Self, VecSet}
+};
 
 // === Constants ===
 
@@ -295,13 +301,10 @@ public(package) fun assert_no_pending_or_active_duplicates(
     self.validators.add(validator_id, validator);
 }
 
-public(package) fun assert_validator_can_set_for_next_epoch(
-    self: &ValidatorSet,
-    validator_id: ID,
-) {
+public(package) fun assert_validator_can_set_for_next_epoch(self: &ValidatorSet, validator_id: ID) {
     assert!(
         !self.next_epoch_active_committee.is_some_and!(|c| c.contains(&validator_id)),
-        ECannotSetBeforeNextEpoch
+        ECannotSetBeforeNextEpoch,
     );
 }
 
@@ -579,7 +582,6 @@ public(package) fun set_next_epoch_mpc_data_bytes(
     );
     self.assert_no_pending_or_active_duplicates(validator_id);
     previous_mpc_data_key
-
 }
 
 // ==== epoch change functions ====

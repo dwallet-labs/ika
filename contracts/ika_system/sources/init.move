@@ -4,16 +4,10 @@
 module ika_system::init;
 
 use ika::ika::IKA;
-use ika_common::protocol_cap::ProtocolCap;
-use ika_common::system_object_cap::SystemObjectCap;
-use ika_system::display;
-use ika_system::protocol_treasury;
-use ika_system::system;
-use ika_system::validator_set;
-use std::string::String;
-use std::type_name;
-use sui::coin::TreasuryCap;
-use sui::package::{Self, Publisher, UpgradeCap};
+use ika_common::{protocol_cap::ProtocolCap, system_object_cap::SystemObjectCap};
+use ika_system::{display, protocol_treasury, system, validator_set};
+use std::{string::String, type_name};
+use sui::{coin::TreasuryCap, package::{Self, Publisher, UpgradeCap}};
 
 // === Errors ===
 

@@ -4,38 +4,44 @@
 module ika_system::system_inner;
 
 use ika::ika::IKA;
-use ika_common::advance_epoch_approver::{Self, AdvanceEpochApprover};
-use ika_common::bls_committee::BlsCommittee;
-use ika_common::protocol_cap::{Self, ProtocolCap, VerifiedProtocolCap};
-use ika_common::system_current_status_info::{Self, SystemCurrentStatusInfo};
-use ika_common::system_object_cap::SystemObjectCap;
-use ika_common::upgrade_package_approver::{Self, UpgradePackageApprover};
-use ika_common::validator_cap::{
-    ValidatorCap,
-    ValidatorOperationCap,
-    ValidatorCommissionCap,
-    VerifiedValidatorCap,
-    VerifiedValidatorOperationCap,
-    VerifiedValidatorCommissionCap
+use ika_common::{
+    advance_epoch_approver::{Self, AdvanceEpochApprover},
+    bls_committee::BlsCommittee,
+    protocol_cap::{Self, ProtocolCap, VerifiedProtocolCap},
+    system_current_status_info::{Self, SystemCurrentStatusInfo},
+    system_object_cap::SystemObjectCap,
+    upgrade_package_approver::{Self, UpgradePackageApprover},
+    validator_cap::{
+        ValidatorCap,
+        ValidatorOperationCap,
+        ValidatorCommissionCap,
+        VerifiedValidatorCap,
+        VerifiedValidatorOperationCap,
+        VerifiedValidatorCommissionCap
+    }
 };
-use ika_system::protocol_treasury::ProtocolTreasury;
-use ika_system::staked_ika::StakedIka;
-use ika_system::token_exchange_rate::TokenExchangeRate;
-use ika_system::validator_metadata::ValidatorMetadata;
-use ika_system::validator_set::ValidatorSet;
+use ika_system::{
+    protocol_treasury::ProtocolTreasury,
+    staked_ika::StakedIka,
+    token_exchange_rate::TokenExchangeRate,
+    validator_metadata::ValidatorMetadata,
+    validator_set::ValidatorSet
+};
 use std::string::String;
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::bcs;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
-use sui::package::{UpgradeCap, UpgradeTicket, UpgradeReceipt};
-use sui::table::Table;
-use sui::table_vec::TableVec;
-use sui::vec_map::{Self, VecMap};
-use sui::vec_set::VecSet;
-use sui::coin_registry::Currency;
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    bcs,
+    clock::Clock,
+    coin::Coin,
+    coin_registry::Currency,
+    event,
+    package::{UpgradeCap, UpgradeTicket, UpgradeReceipt},
+    table::Table,
+    table_vec::TableVec,
+    vec_map::{Self, VecMap},
+    vec_set::VecSet
+};
 
 // === Constants ===
 
@@ -633,7 +639,7 @@ public(package) fun advance_epoch(
         self.last_processed_checkpoint_sequence_number;
 
     let new_epoch = advance_epoch_approver.new_epoch();
-    
+
     let fee_rewards = advance_epoch_approver.destroy(
         &self.system_object_cap,
     );
@@ -776,13 +782,16 @@ public(package) fun add_upgrade_cap_by_cap(
     self.upgrade_caps.push_back(upgrade_cap);
 }
 
-public(package) fun authorize_upgrade(self: &mut SystemInner, package_id: ID): (UpgradeTicket, UpgradePackageApprover) {
+public(package) fun authorize_upgrade(
+    self: &mut SystemInner,
+    package_id: ID,
+): (UpgradeTicket, UpgradePackageApprover) {
     assert!(self.approved_upgrades.contains(&package_id), EApprovedUpgradeNotFound);
     let (_, digest) = self.approved_upgrades.remove(&package_id);
     let index = self.upgrade_caps.find_index!(|c| c.package() == package_id).extract();
     let policy = self.upgrade_caps[index].policy();
     let upgrade_ticket = self.upgrade_caps[index].authorize(policy, digest);
-    let upgrade_package_approver =     upgrade_package_approver::create(
+    let upgrade_package_approver = upgrade_package_approver::create(
         object::id(&self.upgrade_caps[index]),
         self.witnesses_approving_advance_epoch,
         package_id,
