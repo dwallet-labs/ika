@@ -324,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dwallet-mpc-centralized-party",
