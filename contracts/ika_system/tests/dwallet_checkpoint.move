@@ -7,14 +7,14 @@ use std::bcs;
 
 const CHECKPOINT_MESSAGE_INTENT: vector<u8> = vector[1, 0, 0];
 
-public struct DKGFirstRoundOutput has drop, copy {
+public struct DKGFirstRoundOutput has copy, drop {
     dwallet_id: vector<u8>,
     output: vector<u8>,
     rejected: bool,
     session_sequence_number: u64,
 }
 
-public struct DKGSecondRoundOutput has drop, copy {
+public struct DKGSecondRoundOutput has copy, drop {
     dwallet_id: vector<u8>,
     session_id: vector<u8>,
     encrypted_secret_share_id: vector<u8>,
@@ -23,7 +23,7 @@ public struct DKGSecondRoundOutput has drop, copy {
     session_sequence_number: u64,
 }
 
-public struct PresignOutput has drop, copy {
+public struct PresignOutput has copy, drop {
     dwallet_id: Option<vector<u8>>,
     presign_id: vector<u8>,
     session_id: vector<u8>,
@@ -32,7 +32,7 @@ public struct PresignOutput has drop, copy {
     session_sequence_number: u64,
 }
 
-public struct SignOutput has drop, copy {
+public struct SignOutput has copy, drop {
     dwallet_id: vector<u8>,
     sign_id: vector<u8>,
     session_id: vector<u8>,
@@ -42,14 +42,14 @@ public struct SignOutput has drop, copy {
     session_sequence_number: u64,
 }
 
-public struct EncryptedUserShareOutput has drop, copy {
+public struct EncryptedUserShareOutput has copy, drop {
     dwallet_id: vector<u8>,
     encrypted_user_secret_key_share_id: vector<u8>,
     rejected: bool,
     session_sequence_number: u64,
 }
 
-public struct PartialSignatureVerificationOutput has drop, copy {
+public struct PartialSignatureVerificationOutput has copy, drop {
     session_id: vector<u8>,
     dwallet_id: vector<u8>,
     partial_centralized_signed_message_id: vector<u8>,
@@ -57,7 +57,7 @@ public struct PartialSignatureVerificationOutput has drop, copy {
     session_sequence_number: u64,
 }
 
-public struct NetworkKeyPublicOutputSlice has drop, copy {
+public struct NetworkKeyPublicOutputSlice has copy, drop {
     dwallet_network_decryption_key_id: vector<u8>,
     public_output: vector<u8>,
     supported_curves: vector<u32>,
@@ -65,14 +65,14 @@ public struct NetworkKeyPublicOutputSlice has drop, copy {
     rejected: bool,
 }
 
-public struct MakeDWalletUserSecretKeySharesPublicOutput has drop, copy {
+public struct MakeDWalletUserSecretKeySharesPublicOutput has copy, drop {
     dwallet_id: vector<u8>,
     public_user_secret_key_shares: vector<u8>,
     rejected: bool,
-    session_sequence_number: u64
+    session_sequence_number: u64,
 }
 
-public struct DWalletImportedKeyVerificationOutput has drop, copy {
+public struct DWalletImportedKeyVerificationOutput has copy, drop {
     dwallet_id: vector<u8>,
     public_output: vector<u8>,
     encrypted_user_secret_key_share_id: vector<u8>,
@@ -81,7 +81,7 @@ public struct DWalletImportedKeyVerificationOutput has drop, copy {
     session_sequence_number: u64,
 }
 
-public enum MessageKind has drop, copy {
+public enum MessageKind has copy, drop {
     RespondDWalletDKGFirstRoundOutput(DKGFirstRoundOutput),
     RespondDWalletDKGSecondRoundOutput(DKGSecondRoundOutput),
     RespondDWalletEncryptedUserShare(EncryptedUserShareOutput),
@@ -96,7 +96,7 @@ public enum MessageKind has drop, copy {
     SetGasFeeReimbursementSuiSystemCallValue(u64),
 }
 
-public struct DWalletCheckpointMessage has drop, copy {
+public struct DWalletCheckpointMessage has copy, drop {
     epoch: u64,
     sequence_number: u64,
     timestamp_ms: u64,
@@ -267,16 +267,16 @@ public fun dwallet_mpc_network_reconfiguration_output(
     })
 }
 
-public fun set_max_active_sessions_buffer(
-    max_active_sessions_buffer: u64,
-): MessageKind {
+public fun set_max_active_sessions_buffer(max_active_sessions_buffer: u64): MessageKind {
     MessageKind::SetMaxActiveSessionsBuffer(max_active_sessions_buffer)
 }
 
 public fun set_gas_fee_reimbursement_sui_system_call_value(
     gas_fee_reimbursement_sui_system_call_value: u64,
 ): MessageKind {
-    MessageKind::SetGasFeeReimbursementSuiSystemCallValue(gas_fee_reimbursement_sui_system_call_value)
+    MessageKind::SetGasFeeReimbursementSuiSystemCallValue(
+        gas_fee_reimbursement_sui_system_call_value,
+    )
 }
 
 public fun dwallet_checkpoint_message(
@@ -293,16 +293,11 @@ public fun dwallet_checkpoint_message(
     }
 }
 
-public fun dwallet_checkpoint_message_bytes(
-    message: DWalletCheckpointMessage,
-): vector<u8> {
+public fun dwallet_checkpoint_message_bytes(message: DWalletCheckpointMessage): vector<u8> {
     bcs::to_bytes(&message)
 }
 
-public fun dwallet_checkpoint_message_intent(
-    message: vector<u8>,
-    epoch: u64,
-): vector<u8> {
+public fun dwallet_checkpoint_message_intent(message: vector<u8>, epoch: u64): vector<u8> {
     let mut intent_bytes = CHECKPOINT_MESSAGE_INTENT;
     intent_bytes.append(message);
     intent_bytes.append(bcs::to_bytes(&epoch));

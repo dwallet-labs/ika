@@ -3,9 +3,7 @@
 
 module ika_common::bls_committee;
 
-use sui::bls12381::{Self, G1, UncompressedG1};
-use sui::event;
-use sui::group_ops::{Self, Element};
+use sui::{bls12381::{Self, G1, UncompressedG1}, event, group_ops::{Self, Element}};
 
 // === Constants ===
 

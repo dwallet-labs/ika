@@ -6,8 +6,7 @@
 /// It has 9 decimals, and the smallest unit (10^-9) is called "INKU".
 module ika::ika;
 
-use sui::coin;
-use sui::url;
+use sui::{coin, url};
 
 // === Constants ===
 

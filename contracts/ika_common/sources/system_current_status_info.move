@@ -3,8 +3,7 @@
 
 module ika_common::system_current_status_info;
 
-use ika_common::bls_committee::BlsCommittee;
-use ika_common::system_object_cap::SystemObjectCap;
+use ika_common::{bls_committee::BlsCommittee, system_object_cap::SystemObjectCap};
 
 // === Structs ===
 
