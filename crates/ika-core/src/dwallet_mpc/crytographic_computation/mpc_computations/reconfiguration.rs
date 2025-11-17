@@ -21,6 +21,7 @@ use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::{Party, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
+use tracing::warn;
 use twopc_mpc::ProtocolPublicParameters;
 use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -395,6 +396,16 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
             let curve25519_decryption_key_share_public_parameters = public_output
                 .curve25519_decryption_key_share_public_parameters(access_structure)
                 .map_err(DwalletMPCError::from)?;
+
+            warn!(
+                secp256k1_public_params_size = ?bcs::to_bytes(&public_output.secp256k1_protocol_public_parameters()?).map(|v| v.len()).unwrap_or(0),
+                secp256r1_public_params_size = ?bcs::to_bytes(&public_output.secp256r1_protocol_public_parameters()?).map(|v| v.len()).unwrap_or(0),
+                ristretto_public_params_size = ?bcs::to_bytes(&public_output.ristretto_protocol_public_parameters()?).map(|v| v.len()).unwrap_or(0),
+                curve25519_public_params_size = ?bcs::to_bytes(&public_output.curve25519_protocol_public_parameters()?).map(|v| v.len()).unwrap_or(0),
+                raw_reconfig_output_len = public_output_bytes.len(),
+                network_dkg_output_len =?  bcs::to_bytes(&network_dkg_public_output).map(|v| v.len()).unwrap_or(0),
+                "Public parameters sizes (bytes)"
+            );
 
             Ok(VersionedNetworkEncryptionKeyPublicData::V2(
                 NetworkEncryptionKeyPublicDataV2 {

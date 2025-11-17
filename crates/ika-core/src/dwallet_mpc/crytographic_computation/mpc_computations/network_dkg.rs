@@ -538,14 +538,6 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 .secp256k1_decryption_key_share_public_parameters(access_structure)
                 .map_err(DwalletMPCError::from)?;
 
-            warn!(
-                secp256k1_public_params_size = ?bcs::to_bytes(&public_output.secp256k1_protocol_public_parameters()?).map(|v| v.len()).unwrap_or(0),
-                secp256r1_public_params_size = ?bcs::to_bytes(&public_output.secp256r1_protocol_public_parameters()?).map(|v| v.len()).unwrap_or(0),
-                ristretto_public_params_size = ?bcs::to_bytes(&public_output.ristretto_protocol_public_parameters()?).map(|v| v.len()).unwrap_or(0),
-                curve25519_public_params_size = ?bcs::to_bytes(&public_output.curve25519_protocol_public_parameters()?).map(|v| v.len()).unwrap_or(0),
-                "Public parameters sizes (bytes)"
-            );
-
             Ok(VersionedNetworkEncryptionKeyPublicData::V2(
                 NetworkEncryptionKeyPublicDataV2 {
                     epoch,
