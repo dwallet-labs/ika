@@ -231,19 +231,27 @@ public(package) fun lock_last_user_initiated_session_to_complete_in_current_epoc
 
 /// Registers a new session identifier.
 ///
+/// This function is used to register a new session identifier, the bytes length must be 32 bytes.
+/// SessionIdentifier's `identifier_preimage` is an keccak256 hash of the bytes and the sender address,
+/// this can be calculated on the client side before even calling this function onchain.
+///
 /// ### Parameters
 /// - `self`: Mutable reference to the session manager.
-/// - `identifier_preimage`: The preimage bytes for creating the session identifier.
+/// - `bytes`: The bytes for creating the session identifier, length must be 32 bytes.
 /// - `ctx`: Transaction context for object creation.
 public(package) fun register_session_identifier(
     self: &mut SessionsManager,
-    identifier_preimage: vector<u8>,
+    bytes: vector<u8>,
     ctx: &mut TxContext,
 ): SessionIdentifier {
     assert!(
-        identifier_preimage.length() == SESSION_IDENTIFIER_LENGTH,
+        bytes.length() == SESSION_IDENTIFIER_LENGTH,
         ESessionIdentifierInvalidLength,
     );
+    let mut bytes_to_hash = ctx.sender().to_bytes();
+    bytes_to_hash.append(bytes);
+    let identifier_preimage = sui::hash::keccak256(&bytes_to_hash);
+
     assert!(
         !self.registered_user_session_identifiers.contains(identifier_preimage),
         ESessionIdentifierAlreadyRegistered,

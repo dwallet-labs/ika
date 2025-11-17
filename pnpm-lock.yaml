@@ -118,11 +118,11 @@ importers:
         specifier: workspace:*
         version: link:../ika-wasm
       '@mysten/bcs':
-        specifier: ^1.9.1
-        version: 1.9.1
+        specifier: ^1.9.2
+        version: 1.9.2
       '@mysten/sui':
-        specifier: ^1.43.1
-        version: 1.43.1(typescript@5.8.3)
+        specifier: ^1.44.0
+        version: 1.44.0(typescript@5.8.3)
       '@noble/curves':
         specifier: ^2.0.1
         version: 2.0.1
@@ -140,8 +140,8 @@ importers:
         specifier: ^1.3.0
         version: 1.3.0
       '@mysten/codegen':
-        specifier: ^0.5.7
-        version: 0.5.7
+        specifier: ^0.5.9
+        version: 0.5.9
       '@types/node':
         specifier: ^22.15.21
         version: 22.15.21
@@ -1442,15 +1442,15 @@ packages:
   '@microsoft/tsdoc@0.14.2':
     resolution: {integrity: sha512-9b8mPpKrfeGRuhFH5iO1iwCLeIIsV6+H1sRfxbkoGXIyQE2BTsPd9zqSqQJ+pv5sJ/hT5M1zvOFL02MnEezFug==}
 
-  '@mysten/bcs@1.9.1':
-    resolution: {integrity: sha512-EJejUrgv/FSjrssJw47/QQkK6FS2/4+YjDyQxHa2AbrCdENs252G7Owu2chapSwT3CXQVhmknECpFRkGMWOw9Q==}
+  '@mysten/bcs@1.9.2':
+    resolution: {integrity: sha512-kBk5xrxV9OWR7i+JhL/plQrgQ2/KJhB2pB5gj+w6GXhbMQwS3DPpOvi/zN0Tj84jwPvHMllpEl0QHj6ywN7/eQ==}
 
-  '@mysten/codegen@0.5.7':
-    resolution: {integrity: sha512-BDxtR+RUTRZyLag4zfIEg/F4rsX/IAPbd4wIXFabT5FSPw7xVgP3fkO3/IH8Ise9bhtB85QvZ5CY9ozoM1mSdA==}
+  '@mysten/codegen@0.5.9':
+    resolution: {integrity: sha512-Lzks+e3JLq1E4+zSNakud7McEhNqmwhk+86qsxZpkLTMHDaIEoPZHcKh/nHF5v0izQ1wVXU6QPjTzV/ZxqOoBA==}
     hasBin: true
 
-  '@mysten/sui@1.43.1':
-    resolution: {integrity: sha512-DWD5q+19gi7c+gxtIfqgGlTFAIQlo4jB4bZcEE4SR8Z2hlnY2JK2CYllKSXAkDl9WpIjAe5In9uoQwuzyQ1t+Q==}
+  '@mysten/sui@1.44.0':
+    resolution: {integrity: sha512-3p/y5gUhsG/MBXLOdX6qw1b8r1z/lKMvdfpacH+CjuEx8Y0U98R9fLmnFFd+6K+d+CE1gctBuMtcOqr+SppBug==}
     engines: {node: '>=18'}
 
   '@mysten/utils@0.2.0':
@@ -1635,9 +1635,6 @@ packages:
 
   '@rushstack/eslint-patch@1.1.4':
     resolution: {integrity: sha512-LwzQKA4vzIct1zNZzBmRKI9QuNpLgTQMEjsQLf3BXuGYb3QPTP4Yjf6mkdX+X1mYttZ808QpOwAzZjv28kq7DA==}
-
-  '@scure/base@1.2.5':
-    resolution: {integrity: sha512-9rE6EOVeIQzt5TSu4v+K523F8u6DhBsoZWPGKlnCshhlDhy0kJzUX4V+tr2dWmzF1GdekvThABoEQBGBQI7xZw==}
 
   '@scure/base@1.2.6':
     resolution: {integrity: sha512-g/nm5FgUa//MCj1gV09zTJTaM6KBAHqLN907YVQqf7zC49+DcO4B1so4ZX07Ef10Twr6nuqYEH9GEggFXA4Fmg==}
@@ -6149,15 +6146,15 @@ snapshots:
 
   '@microsoft/tsdoc@0.14.2': {}
 
-  '@mysten/bcs@1.9.1':
+  '@mysten/bcs@1.9.2':
     dependencies:
       '@mysten/utils': 0.2.0
       '@scure/base': 1.2.6
 
-  '@mysten/codegen@0.5.7':
+  '@mysten/codegen@0.5.9':
     dependencies:
-      '@mysten/bcs': 1.9.1
-      '@mysten/sui': 1.43.1(typescript@5.9.3)
+      '@mysten/bcs': 1.9.2
+      '@mysten/sui': 1.44.0(typescript@5.9.3)
       '@stricli/auto-complete': 1.2.0
       '@stricli/core': 1.2.0
       '@types/node': 22.17.0
@@ -6170,10 +6167,10 @@ snapshots:
       - '@gql.tada/svelte-support'
       - '@gql.tada/vue-support'
 
-  '@mysten/sui@1.43.1(typescript@5.8.3)':
+  '@mysten/sui@1.44.0(typescript@5.8.3)':
     dependencies:
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.11.0)
-      '@mysten/bcs': 1.9.1
+      '@mysten/bcs': 1.9.2
       '@mysten/utils': 0.2.0
       '@noble/curves': 1.9.4
       '@noble/hashes': 1.8.0
@@ -6192,10 +6189,10 @@ snapshots:
       - '@gql.tada/vue-support'
       - typescript
 
-  '@mysten/sui@1.43.1(typescript@5.9.3)':
+  '@mysten/sui@1.44.0(typescript@5.9.3)':
     dependencies:
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.11.0)
-      '@mysten/bcs': 1.9.1
+      '@mysten/bcs': 1.9.2
       '@mysten/utils': 0.2.0
       '@noble/curves': 1.9.4
       '@noble/hashes': 1.8.0
@@ -6351,20 +6348,18 @@ snapshots:
 
   '@rushstack/eslint-patch@1.1.4': {}
 
-  '@scure/base@1.2.5': {}
-
   '@scure/base@1.2.6': {}
 
   '@scure/bip32@1.7.0':
     dependencies:
       '@noble/curves': 1.9.6
       '@noble/hashes': 1.8.0
-      '@scure/base': 1.2.5
+      '@scure/base': 1.2.6
 
   '@scure/bip39@1.6.0':
     dependencies:
       '@noble/hashes': 1.8.0
-      '@scure/base': 1.2.5
+      '@scure/base': 1.2.6
 
   '@sec-ant/readable-stream@0.4.1': {}
 
