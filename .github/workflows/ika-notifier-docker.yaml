@@ -35,23 +35,22 @@ jobs:
       - name: Validate semver version format
         run: |
           SEMVER_REGEX='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
-          
+
           if [[ ! "${{ inputs.version }}" =~ $SEMVER_REGEX ]]; then
             echo "Error: Version must be valid SemVer (e.g., 1.0.0, 1.2.3-beta, 1.2.3+build.1)"
             exit 1
           fi
           echo "Version semver format is valid: ${{ inputs.version }}"
 
-
       - name: Authenticate to Google Cloud
-        uses: 'google-github-actions/auth@v3'
+        uses: google-github-actions/auth@v3
         with:
           credentials_json: '${{ secrets.GAR_KEY }}'
 
-      - name: 'Set up Cloud SDK'
-        uses: 'google-github-actions/setup-gcloud@v3'
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
 
-      - name: 'Configure Docker for Artifact Registry'
+      - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker us-docker.pkg.dev
 
       - name: Setup SSH for manual git
@@ -61,43 +60,36 @@ jobs:
           printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan github.com >> ~/.ssh/known_hosts
+
       - name: Globally rewrite any GitHub HTTPS to SSH
         if: env.GH_DEPLOY_KEY
         run: |
           git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
 
-      - name: 'Build and Push Docker Image'
-        run: |
-          set -e
-          
-          # Set repository details
-          REPO_NAME="us-docker.pkg.dev/common-449616/ika-common-public-containers"
-          IMAGE_NAME="ika-notifier"
-          VERSION="v${{ inputs.version }}"
-          NETWORK="${{ inputs.network }}"
-          
-          DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${NETWORK}-${VERSION}"
-          
-          # Set up environment variables for build script
-          export GH_DEPLOY_KEY="${{ secrets.GH_DEPLOY_KEY }}"
-          export DOCKER_TAG
-          
-          # Prepare build flags
-          BUILD_FLAGS="--no-default-features"
-          echo "Building with --no-default-features flag enabled"
-          
-          # Navigate to docker build directory
-          cd docker/ika-node
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-          # Build the Docker image using build.sh
-          echo "Building Docker image: ${DOCKER_TAG}"
-          ./build.sh $BUILD_FLAGS
+      - name: Build and Push Docker Image (with Cargo cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker/ika-node
+          push: true
 
-          # Push both tags
-          echo "Pushing Docker image: ${DOCKER_TAG}"
-          docker push ${DOCKER_TAG}
-          
-          echo "Successfully built and pushed:"
-          echo "- ${DOCKER_TAG}"
+          # Tag format: <network>-v<version>
+          tags: |
+            us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier:${{ inputs.network }}-v${{ inputs.version }}
 
-          echo "- Built with --no-default-features flag"
+          # BuildKit cache stored in GitHub Actions
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+          # Mount secret inside build (NOT as build arg!)
+          secrets: |
+            GH_DEPLOY_KEY=${{ secrets.GH_DEPLOY_KEY }}
+
+          # build args (safe ones only)
+          build-args: |
+            NO_DEFAULT_FEATURES=true
+            PROFILE=release
+            GIT_REVISION=${{ github.sha }}
+            BUILD_DATE=${{ github.run_started_at }}
