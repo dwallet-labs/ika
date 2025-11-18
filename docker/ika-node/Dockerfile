@@ -14,15 +14,17 @@ ARG NO_DEFAULT_FEATURES=false
 # Environment
 ENV CARGO_HOME=/usr/local/cargo
 ENV GIT_REVISION=$GIT_REVISION
+# Avoid rustup trying to self-update and download extra toolchains
+ENV RUSTUP_NO_SELF_UPDATE=1
 
 # Set working directory
 WORKDIR ${WORKDIR}/ika
 
 # --------------------------
-# SSH key for private git (secure via BuildKit secret)
+# SSH key for private git (via BuildKit secret)
 # --------------------------
-# secret is injected at build time by docker/build-push-action:
-#   secrets: |
+# Secret is provided by docker/build-push-action:
+#   secrets:
 #     GH_DEPLOY_KEY=${{ secrets.GH_DEPLOY_KEY }}
 RUN --mount=type=secret,id=GH_DEPLOY_KEY \
     mkdir -p ~/.ssh && \
@@ -30,7 +32,7 @@ RUN --mount=type=secret,id=GH_DEPLOY_KEY \
     chmod 600 ~/.ssh/id_ed25519 && \
     ssh-keyscan github.com >> ~/.ssh/known_hosts
 
-# Rewrite GitHub HTTPS to SSH for the private dependency
+# Rewrite GitHub HTTPS to SSH for private dependency
 RUN git config --global \
     url."git@github.com:dwallet-labs/cryptography-private".insteadOf \
     "https://github.com/dwallet-labs/cryptography-private"
@@ -43,14 +45,13 @@ RUN apt-get update && apt-get install -y \
     libssl-dev
 
 # --------------------------
-# Workspace + deps
+# Workspace + dependencies
 # --------------------------
 
 # Root manifests
 COPY Cargo.toml Cargo.lock ./
 
-# Copy the full workspace directories so all members exist.
-# (This fixes the `dwallet-mpc-centralized-party` missing manifest error.)
+# Copy the full workspace directories so all members are present
 COPY crates crates
 COPY contracts contracts
 COPY deployed_contracts deployed_contracts
@@ -58,18 +59,10 @@ COPY deployed_contracts deployed_contracts
 # Fetch dependencies according to Cargo.lock
 RUN cargo fetch --locked
 
-# Optional "warm-up" build to cache dependencies; we allow failure
-# because code might not be fully present/valid yet, but deps get compiled.
-RUN if [ "$NO_DEFAULT_FEATURES" = "true" ]; then \
-      cargo build --profile ${PROFILE} --locked --bin ika-node --no-default-features || true; \
-    else \
-      cargo build --profile ${PROFILE} --locked --bin ika-node || true; \
-    fi
-
-# Now copy the rest of the repo (config, scripts, etc.)
+# Copy the rest of the repo (configs, scripts, etc.)
 COPY . .
 
-# Final build
+# Single actual build
 RUN if [ "$NO_DEFAULT_FEATURES" = "true" ]; then \
       cargo build --profile ${PROFILE} --locked --bin ika-node --no-default-features; \
     else \
@@ -87,26 +80,25 @@ ARG GIT_REVISION
 ARG PROFILE=release
 ARG TARGETARCH
 
-# Install runtime dependencies and jemalloc.
+# Install runtime dependencies and jemalloc
 RUN apt-get update && apt-get install -y \
     libjemalloc-dev \
     ca-certificates \
     curl \
     jq
 
-# If you really want jemalloc by default, you might prefer:
-# ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
+# Use jemalloc as memory allocator on amd64
 ENV LD_PRELOAD=""
 RUN if [ "$TARGETARCH" = "amd64" ]; then \
       echo "/usr/lib/x86_64-linux-gnu/libjemalloc.so" > /etc/ld.so.preload; \
     fi
 
-# Set working directory.
+# Set working directory
 WORKDIR ${WORKDIR}/ika
 
-# Copy the built binary from the builder stage.
+# Copy the built binary from the builder stage
 COPY --from=builder /opt/ika/target/${PROFILE}/ika-node /usr/local/bin/ika-node
 
-# Add build metadata.
+# Build metadata
 LABEL build-date=$BUILD_DATE
 LABEL git-revision=$GIT_REVISION
