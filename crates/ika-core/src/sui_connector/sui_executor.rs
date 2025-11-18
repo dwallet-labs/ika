@@ -230,7 +230,7 @@ where
                 .map(|c| c.key.clone())
                 .collect_vec();
 
-            let default_pricing_keys_chunked = default_pricing_keys.chunks(20).collect_vec();
+            let default_pricing_keys_chunked = default_pricing_keys.chunks(10).collect_vec();
             for default_pricing_keys_chunk in default_pricing_keys_chunked {
                 let result = retry_with_max_elapsed_time!(
                     Self::calculate_protocols_pricing(
