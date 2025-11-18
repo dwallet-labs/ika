@@ -72,24 +72,23 @@ jobs:
       - name: Build and Push Docker Image (with Cargo cache)
         uses: docker/build-push-action@v6
         with:
+          # Root context so Cargo.toml, crates/, etc are available
           context: .
           file: ./docker/ika-node/Dockerfile
 
           push: true
-
-          # Tag format: <network>-v<version>
           tags: |
             us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier:${{ inputs.network }}-v${{ inputs.version }}
 
-          # BuildKit cache stored in GitHub Actions
+          # BuildKit cache backed by GitHub Actions
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-          # Mount secret inside build (NOT as build arg!)
+          # Pass GH_DEPLOY_KEY securely as a BuildKit secret
           secrets: |
             GH_DEPLOY_KEY=${{ secrets.GH_DEPLOY_KEY }}
 
-          # build args (safe ones only)
+          # Normal build args (no secrets here)
           build-args: |
             NO_DEFAULT_FEATURES=true
             PROFILE=release
