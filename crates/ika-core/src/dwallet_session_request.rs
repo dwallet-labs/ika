@@ -32,7 +32,7 @@ pub struct DWalletSessionRequestMetricData {
 impl DWalletSessionRequestMetricData {
     pub fn to_labeled_string(&self) -> String {
         format!(
-            "protocol_name=\"{}\",curve=\"{}\",hash_scheme=\"{}\",signature_algorithm=\"{}\"",
+            "protocol_name=\"{}\" curve=\"{}\" hash_scheme=\"{}\" signature_algorithm=\"{}\"",
             self.name,
             self.curve(),
             self.hash_scheme(),
