@@ -215,6 +215,8 @@ where
                 .calculation_votes
                 .is_some()
             && coordinator_inner.next_epoch_active_committee.is_some()
+            && coordinator_inner.epoch_dwallet_network_encryption_keys_reconfiguration_completed
+                == coordinator_inner.dwallet_network_encryption_keys.size
             && !epoch_switch_state.calculated_protocol_pricing
         {
             info!(
@@ -230,7 +232,24 @@ where
                 .map(|c| c.key.clone())
                 .collect_vec();
 
-            let default_pricing_keys_chunked = default_pricing_keys.chunks(10).collect_vec();
+            let working_pricing = coordinator_inner
+                .pricing_and_fee_management
+                .calculation_votes
+                .unwrap()
+                .working_pricing
+                .pricing_map
+                .contents
+                .iter()
+                .map(|c| c.key.clone())
+                .collect_vec();
+
+            let filtered_default_pricing_keys = default_pricing_keys
+                .into_iter()
+                .filter(|p| !working_pricing.contains(p))
+                .collect_vec();
+
+            let default_pricing_keys_chunked =
+                filtered_default_pricing_keys.chunks(10).collect_vec();
             for default_pricing_keys_chunk in default_pricing_keys_chunked {
                 let result = retry_with_max_elapsed_time!(
                     Self::calculate_protocols_pricing(
