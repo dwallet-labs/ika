@@ -72,7 +72,9 @@ jobs:
       - name: Build and Push Docker Image (with Cargo cache)
         uses: docker/build-push-action@v6
         with:
-          context: ./docker/ika-node
+          context: .
+          file: ./docker/ika-node/Dockerfile
+
           push: true
 
           # Tag format: <network>-v<version>
