@@ -13,7 +13,7 @@ on:
           - devnet
         default: devnet
       version:
-        description: 'Version to tag the image (format: vX.Y.Z)'
+        description: 'Version to tag the image (semver format e.g., v1.0.0, v1.2.3-beta, v1.2.3+build.1semver format: vX.Y.Z)'
         required: true
         default: v1.0.0
         type: string
@@ -32,13 +32,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Validate version format
+      - name: Validate semver version format
         run: |
-          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Error: Version must be in format vX.Y.Z (e.g., v1.0.0)"
+          semver_regex='^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'\
+          '(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?'\
+          '(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+          
+          if [[ ! $VERSION =~ $semver_regex ]]; then
+            echo "Error: Version must be valid SemVer (e.g., v1.0.0, v1.2.3-beta, v1.2.3+build.1)"
             exit 1
           fi
-          echo "Version format is valid: ${{ inputs.version }}"
+          echo "Version semver format is valid: ${{ inputs.version }}"
 
       - name: Authenticate to Google Cloud
         uses: 'google-github-actions/auth@v3'
