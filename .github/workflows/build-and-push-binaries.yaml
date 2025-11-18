@@ -64,7 +64,7 @@ jobs:
         run: |
           SEMVER_REGEX='^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
           
-          if [[ ! $VERSION =~ SEMVER_REGEX ]]; then
+          if [[ ! "${{ inputs.version }}" =~ SEMVER_REGEX ]]; then
             echo "Error: Version must be valid SemVer (e.g., 1.0.0, 1.2.3-beta, 1.2.3+build.1)"
             exit 1
           fi
