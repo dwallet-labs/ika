@@ -730,9 +730,9 @@ impl DWalletMPCService {
             validator=?validator_name,
             party_id,
             session_type=?request.session_type,
-            protocol_data=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
             error=?error,
-            "rejecting session."
+            "rejecting session. {:?}",
+            DWalletSessionRequestMetricData::from(&request.protocol_data).to_string()
         );
 
         let consensus_adapter = self.dwallet_submit_to_consensus.clone();
