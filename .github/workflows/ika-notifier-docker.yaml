@@ -23,8 +23,7 @@ env:
 
 jobs:
   build-and-push:
-    #runs-on: ubuntu-latest
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
 
     permissions:
       contents: read
