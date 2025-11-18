@@ -13,9 +13,9 @@ on:
           - devnet
         default: devnet
       version:
-        description: 'Version to tag the image (semver format e.g., v1.0.0, v1.2.3-beta, v1.2.3+build.1semver format: vX.Y.Z)'
+        description: 'Version to tag the image (semver format e.g., 1.0.0, 1.2.3-beta, 1.2.3+build.1)'
         required: true
-        default: v1.0.0
+        default: 1.0.0
         type: string
 
 env:
@@ -34,12 +34,10 @@ jobs:
 
       - name: Validate semver version format
         run: |
-          semver_regex='^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'\
-          '(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?'\
-          '(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+          SEMVER_REGEX='^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
           
-          if [[ ! $VERSION =~ $semver_regex ]]; then
-            echo "Error: Version must be valid SemVer (e.g., v1.0.0, v1.2.3-beta, v1.2.3+build.1)"
+          if [[ ! $VERSION =~ SEMVER_REGEX ]]; then
+            echo "Error: Version must be valid SemVer (e.g., 1.0.0, 1.2.3-beta, 1.2.3+build.1)"
             exit 1
           fi
           echo "Version semver format is valid: ${{ inputs.version }}"
@@ -74,7 +72,7 @@ jobs:
           # Set repository details
           REPO_NAME="us-docker.pkg.dev/common-449616/ika-common-containers"
           IMAGE_NAME="ika-proxy"
-          VERSION="${{ inputs.version }}"
+          VERSION="v${{ inputs.version }}"
           NETWORK="${{ inputs.network }}"
           
           # Set up environment variables for build script

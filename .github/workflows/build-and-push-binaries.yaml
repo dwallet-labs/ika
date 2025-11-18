@@ -13,9 +13,9 @@ on:
           - devnet
         default: devnet
       version:
-        description: 'Version to tag the binaries (semver format e.g., v1.0.0, v1.2.3-beta, v1.2.3+build.1)'
+        description: 'Version to tag the binaries (semver format e.g., 1.0.0, 1.2.3-beta, 1.2.3+build.1)'
         required: true
-        default: v1.0.0
+        default: 1.0.0
         type: string
 
 concurrency:
@@ -62,15 +62,14 @@ jobs:
 
       - name: Validate semver version format
         run: |
-          semver_regex='^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'\
-          '(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?'\
-          '(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+          SEMVER_REGEX='^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
           
-          if [[ ! $VERSION =~ $semver_regex ]]; then
-            echo "Error: Version must be valid SemVer (e.g., v1.0.0, v1.2.3-beta, v1.2.3+build.1)"
+          if [[ ! $VERSION =~ SEMVER_REGEX ]]; then
+            echo "Error: Version must be valid SemVer (e.g., 1.0.0, 1.2.3-beta, 1.2.3+build.1)"
             exit 1
           fi
           echo "Version semver format is valid: ${{ inputs.version }}"
+
 
       - name: Authenticate to Google Cloud
         uses: 'google-github-actions/auth@v3'
@@ -142,13 +141,13 @@ jobs:
 
       - name: Upload to GCP Artifact Registry (generic) for ${{ matrix.arch }}
         run: |
-          tar -czvf ${{ inputs.network }}-${{ inputs.version }}-linux-${{ matrix.arch }}.tar.gz artifacts/linux-${{ matrix.arch }}/
+          tar -czvf ${{ inputs.network }}-v${{ inputs.version }}-linux-${{ matrix.arch }}.tar.gz artifacts/linux-${{ matrix.arch }}/
           gcloud artifacts generic upload \
             --project="${GCP_PROJECT}" \
             --location="${GAR_LOCATION}" \
             --repository="${GAR_REPOSITORY}" \
             --package="linux-${{ matrix.arch }}" \
-            --version="${{ inputs.network }}-${{ inputs.version }}" \
+            --version="${{ inputs.network }}-v${{ inputs.version }}" \
             --source-directory="artifacts/linux-${{ matrix.arch }}"
 
       - name: Upload binary artifact (one per arch)
