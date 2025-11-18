@@ -29,6 +29,18 @@ pub struct DWalletSessionRequestMetricData {
     signature_algorithm: Option<DWalletSignatureAlgorithm>,
 }
 
+impl DWalletSessionRequestMetricData {
+    pub fn to_labeled_string(&self) -> String {
+        format!(
+            "protocol_name=\"{}\",curve=\"{}\",hash_scheme=\"{}\",signature_algorithm=\"{}\"",
+            self.name,
+            self.curve(),
+            self.hash_scheme(),
+            self.signature_algorithm()
+        )
+    }
+}
+
 impl fmt::Display for DWalletSessionRequestMetricData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self, f)
