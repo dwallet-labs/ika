@@ -87,12 +87,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     jq
 
-# Use jemalloc as memory allocator on amd64
-ENV LD_PRELOAD=""
-RUN if [ "$TARGETARCH" = "amd64" ]; then \
-      echo "/usr/lib/x86_64-linux-gnu/libjemalloc.so" > /etc/ld.so.preload; \
-    fi
-
 # Set working directory
 WORKDIR ${WORKDIR}/ika
 
