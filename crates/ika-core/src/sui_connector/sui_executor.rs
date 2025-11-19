@@ -8,12 +8,8 @@ use crate::dwallet_checkpoints::DWalletCheckpointStore;
 use crate::sui_connector::SuiNotifier;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::system_checkpoints::SystemCheckpointStore;
-use dwallet_mpc_types::mpc_protocol_configuration::{
-    MPC_PROTOCOLS_WITH_SIGNATURE_ALGORITHM, MPC_PROTOCOLS_WITHOUT_SIGNATURE_ALGORITHM,
-};
 use fastcrypto::traits::ToFromBytes;
 use ika_config::node::RunWithRange;
-use ika_protocol_config::ProtocolConfig;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::EpochId;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -186,18 +182,16 @@ where
             info!(
                 "Running network encryption key mid-epoch reconfiguration and Calculating protocol pricing"
             );
-            let supported_curves_to_signature_algorithms = coordinator_inner
-                .support_config
-                .supported_curves_to_signature_algorithms_to_hash_schemes
+
+            let default_pricing_keys = coordinator_inner
+                .pricing_and_fee_management
+                .default
+                .pricing_map
                 .contents
                 .iter()
-                .map(|c| {
-                    (
-                        c.key.clone(),
-                        c.value.contents.iter().map(|c| c.key.clone()).collect_vec(),
-                    )
-                })
-                .collect::<HashMap<_, _>>();
+                .map(|c| c.key.clone())
+                .collect_vec();
+
             let result = retry_with_max_elapsed_time!(
                 Self::request_mid_epoch_reconfiguration_and_calculate_protocols_pricing(
                     &self.sui_client,
@@ -205,7 +199,7 @@ where
                     network_encryption_key_ids.clone(),
                     sui_notifier,
                     self.notifier_tx_lock.clone(),
-                    &supported_curves_to_signature_algorithms,
+                    &default_pricing_keys
                 ),
                 Duration::from_secs(ONE_HOUR_IN_SECONDS)
             );
@@ -447,60 +441,57 @@ where
                     }
                 }
 
-                if Some(next_system_checkpoint_sequence_number) > last_submitted_system_checkpoint {
-                    if let Ok(Some(system_checkpoint)) = self
+                if Some(next_system_checkpoint_sequence_number) > last_submitted_system_checkpoint
+                    && let Ok(Some(system_checkpoint)) = self
                         .system_checkpoint_store
                         .get_system_checkpoint_by_sequence_number(
                             next_system_checkpoint_sequence_number,
                         )
-                    {
-                        self.metrics
-                            .system_checkpoint_sequence
-                            .set(next_dwallet_checkpoint_sequence_number as i64);
+                {
+                    self.metrics
+                        .system_checkpoint_sequence
+                        .set(next_dwallet_checkpoint_sequence_number as i64);
 
-                        let active_members: BlsCommittee =
-                            system_inner.validator_set().clone().active_committee;
-                        let auth_sig = system_checkpoint.auth_sig();
-                        let signature = auth_sig.signature.as_bytes().to_vec();
-                        let signers_bitmap =
-                            Self::calculate_signers_bitmap(&auth_sig.signers_map, &active_members);
-                        let message = bcs::to_bytes::<SystemCheckpointMessage>(
-                            &system_checkpoint.into_message(),
-                        )
-                        .expect("Serializing `system_checkpoint` message cannot fail");
+                    let active_members: BlsCommittee =
+                        system_inner.validator_set().clone().active_committee;
+                    let auth_sig = system_checkpoint.auth_sig();
+                    let signature = auth_sig.signature.as_bytes().to_vec();
+                    let signers_bitmap =
+                        Self::calculate_signers_bitmap(&auth_sig.signers_map, &active_members);
+                    let message =
+                        bcs::to_bytes::<SystemCheckpointMessage>(&system_checkpoint.into_message())
+                            .expect("Serializing `system_checkpoint` message cannot fail");
 
-                        info!("Signers_bitmap: {:?}", signers_bitmap);
-                        self.metrics.system_checkpoint_write_requests_total.inc();
-                        let response = retry_with_max_elapsed_time!(
-                            Self::handle_system_checkpoint_execution_task(
-                                ika_system_package_id,
-                                signature.clone(),
-                                signers_bitmap.clone(),
-                                message.clone(),
-                                sui_notifier,
-                                &self.sui_client.clone(),
-                                &self.metrics.clone(),
-                                self.notifier_tx_lock.clone(),
-                            ),
-                            Duration::from_secs(ONE_HOUR_IN_SECONDS)
-                        );
-                        if response.is_err() {
-                            panic!(
-                                "failed to submit system checkpoint for over an hour, err: {:?}",
-                                response.err()
-                            );
-                        }
-                        self.metrics.system_checkpoint_writes_success_total.inc();
-                        self.metrics
-                            .last_written_system_checkpoint_sequence
-                            .set(next_dwallet_checkpoint_sequence_number as i64);
-                        last_submitted_system_checkpoint =
-                            Some(next_system_checkpoint_sequence_number);
-                        info!(
-                            "Sui transaction successfully executed for system_checkpoint sequence number: {}",
-                            next_system_checkpoint_sequence_number
+                    info!("Signers_bitmap: {:?}", signers_bitmap);
+                    self.metrics.system_checkpoint_write_requests_total.inc();
+                    let response = retry_with_max_elapsed_time!(
+                        Self::handle_system_checkpoint_execution_task(
+                            ika_system_package_id,
+                            signature.clone(),
+                            signers_bitmap.clone(),
+                            message.clone(),
+                            sui_notifier,
+                            &self.sui_client.clone(),
+                            &self.metrics.clone(),
+                            self.notifier_tx_lock.clone(),
+                        ),
+                        Duration::from_secs(ONE_HOUR_IN_SECONDS)
+                    );
+                    if response.is_err() {
+                        panic!(
+                            "failed to submit system checkpoint for over an hour, err: {:?}",
+                            response.err()
                         );
                     }
+                    self.metrics.system_checkpoint_writes_success_total.inc();
+                    self.metrics
+                        .last_written_system_checkpoint_sequence
+                        .set(next_dwallet_checkpoint_sequence_number as i64);
+                    last_submitted_system_checkpoint = Some(next_system_checkpoint_sequence_number);
+                    info!(
+                        "Sui transaction successfully executed for system_checkpoint sequence number: {}",
+                        next_system_checkpoint_sequence_number
+                    );
                 }
             }
         }
@@ -565,14 +556,13 @@ where
         network_encryption_key_ids: Vec<ObjectID>,
         sui_notifier: &SuiNotifier,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
-        supported_curves_to_signature_algorithms: &HashMap<u32, Vec<u32>>,
+        default_pricing_keys: &Vec<PricingInfoKey>,
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
         let gas_coin = gas_coins
             .first()
             .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
         let mut ptb = ProgrammableTransactionBuilder::new();
-        let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
         let dwallet_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
             .await;
@@ -591,44 +581,29 @@ where
             );
         }
 
-        for (curve, signature_algorithms) in supported_curves_to_signature_algorithms {
+        for PricingInfoKey {
+            curve,
+            signature_algorithm,
+            protocol,
+        } in default_pricing_keys
+        {
             let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
+            let signature_algorithm_arg =
+                ptb.input(CallArg::Pure(bcs::to_bytes(signature_algorithm)?))?;
+            let protocol_arg = ptb.input(CallArg::Pure(bcs::to_bytes(protocol)?))?;
 
-            for protocol in MPC_PROTOCOLS_WITHOUT_SIGNATURE_ALGORITHM.iter() {
-                let protocol_arg = ptb.input(CallArg::Pure(bcs::to_bytes(protocol)?))?;
-                ptb.programmable_move_call(
-                    ika_dwallet_2pc_mpc_package_id,
-                    DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-                    ident_str!("calculate_pricing_votes").into(),
-                    vec![],
-                    vec![
-                        dwallet_coordinator_ptb_arg,
-                        curve_arg,
-                        none_option,
-                        protocol_arg,
-                    ],
-                );
-            }
-
-            for signature_algorithm in signature_algorithms {
-                let signature_algorithm_arg =
-                    ptb.input(CallArg::Pure(bcs::to_bytes(&Some(signature_algorithm))?))?;
-                for protocol in MPC_PROTOCOLS_WITH_SIGNATURE_ALGORITHM.iter() {
-                    let protocol_arg = ptb.input(CallArg::Pure(bcs::to_bytes(protocol)?))?;
-                    ptb.programmable_move_call(
-                        ika_dwallet_2pc_mpc_package_id,
-                        DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
-                        ident_str!("calculate_pricing_votes").into(),
-                        vec![],
-                        vec![
-                            dwallet_coordinator_ptb_arg,
-                            curve_arg,
-                            signature_algorithm_arg,
-                            protocol_arg,
-                        ],
-                    );
-                }
-            }
+            ptb.programmable_move_call(
+                ika_dwallet_2pc_mpc_package_id,
+                DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+                ident_str!("calculate_pricing_votes").into(),
+                vec![],
+                vec![
+                    dwallet_coordinator_ptb_arg,
+                    curve_arg,
+                    signature_algorithm_arg,
+                    protocol_arg,
+                ],
+            );
         }
 
         let transaction = super::build_sui_transaction(

@@ -1212,18 +1212,17 @@ impl DWalletCheckpointServiceNotify for DWalletCheckpointService {
             .tables
             .get_highest_verified_dwallet_checkpoint()?
             .map(|x| *x.sequence_number())
+            && sequence <= highest_verified_checkpoint
         {
-            if sequence <= highest_verified_checkpoint {
-                debug!(
-                    checkpoint_seq = sequence,
-                    signer=?signer,
-                    "Ignore dwallet checkpoint signature from a signer — already certified",
-                );
-                self.metrics
-                    .last_ignored_dwallet_checkpoint_signature_received
-                    .set(sequence as i64);
-                return Ok(());
-            }
+            debug!(
+                checkpoint_seq = sequence,
+                signer=?signer,
+                "Ignore dwallet checkpoint signature from a signer — already certified",
+            );
+            self.metrics
+                .last_ignored_dwallet_checkpoint_signature_received
+                .set(sequence as i64);
+            return Ok(());
         }
         debug!(
             checkpoint_seq=sequence,

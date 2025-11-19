@@ -754,10 +754,11 @@ pub(crate) async fn construct_unsigned_txn(
     )
     .await
     .map_err(|e| IkaError::DryRunFailed(e.to_string()))?;
-    if let SuiClientCommandResult::DryRun(dry_run) = dry_run {
-        if let Some(dry_run_err) = dry_run.execution_error_source {
-            return Err(IkaError::DryRunFailed(dry_run_err));
-        }
+    if let SuiClientCommandResult::DryRun(dry_run) = dry_run
+        && let Some(dry_run_err) = dry_run.execution_error_source
+    {
+        println!("{}", dry_run.effects);
+        return Err(IkaError::DryRunFailed(dry_run_err));
     };
 
     let gas_budget = sui::client_commands::estimate_gas_budget(

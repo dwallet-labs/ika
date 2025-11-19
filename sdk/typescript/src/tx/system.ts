@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { bcs } from '@mysten/bcs';
+import { bcs } from '@mysten/sui/bcs';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import type { IkaConfig } from '../client/types.js';

@@ -1244,13 +1244,13 @@ impl IkaNode {
                 debug_assert!(!latest_system_state.safe_mode());
             }
 
-            if let Err(err) = self.end_of_epoch_channel.send(*latest_system_state) {
-                if self.state.is_fullnode(&cur_epoch_store) {
-                    warn!(
-                        "Failed to send the end-of-epoch notification to subscriber: {:?}",
-                        err
-                    );
-                }
+            if let Err(err) = self.end_of_epoch_channel.send(*latest_system_state)
+                && self.state.is_fullnode(&cur_epoch_store)
+            {
+                warn!(
+                    "Failed to send the end-of-epoch notification to subscriber: {:?}",
+                    err
+                );
             }
             let (_, dwallet_coordinator_inner) =
                 sui_client.must_get_dwallet_coordinator_inner().await;

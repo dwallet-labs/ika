@@ -833,8 +833,8 @@ public fun commit_upgrade(self: &mut DWalletCoordinator, upgrade_package_approve
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
 /// This function can be called immediately after the upgrade is committed.
-public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtocolCap, ctx: &mut TxContext) {
-    self.try_migrate_impl(ctx);
+public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtocolCap) {
+    self.try_migrate_impl();
 }
 
 /// Try to migrate the coordinator object to the new package id.
@@ -842,16 +842,16 @@ public fun try_migrate_by_cap(self: &mut DWalletCoordinator, _: &VerifiedProtoco
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
 /// Call this function after the migration epoch is reached.
-public fun try_migrate(self: &mut DWalletCoordinator, ctx: &mut TxContext) {
+public fun try_migrate(self: &mut DWalletCoordinator) {
     assert!(self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e), EInvalidMigration);
-    self.try_migrate_impl(ctx);
+    self.try_migrate_impl();
 }
 
 /// Migrate the coordinator object to the new package id.
 ///
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `coordinator_inner` object if needed.
-fun try_migrate_impl(self: &mut DWalletCoordinator, _ctx: &mut TxContext) {
+fun try_migrate_impl(self: &mut DWalletCoordinator) {
     assert!(self.version < VERSION, EInvalidMigration);
     assert!(self.new_package_id.is_some(), EInvalidMigration);
     // Move the old coordinator inner to the new version.

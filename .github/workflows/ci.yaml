@@ -15,7 +15,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
   # Change to specific Rust release to pin or `stable` for the latest stable version.
-  rust_stable: 1.88
+  rust_stable: 1.90
   rust_nightly: nightly
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
@@ -67,10 +67,10 @@ jobs:
       - name: Globally rewrite any GitHub HTTPS to SSH
         run: |
           git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
-      - name: Install Rust 1.88
+      - name: Install Rust 1.90
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88
+          toolchain: 1.90
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Fmt Check
@@ -98,10 +98,10 @@ jobs:
         run: |
           git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
 
-      - name: Install Rust 1.88
+      - name: Install Rust 1.90
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88
+          toolchain: 1.90
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run Clippy

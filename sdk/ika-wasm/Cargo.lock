@@ -167,7 +167,7 @@ checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
 [[package]]
 name = "class_groups"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=2b2d223b#2b2d223bb4590e0295bdbf919585c4a6849bee95"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -189,7 +189,7 @@ dependencies = [
 [[package]]
 name = "commitment"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=2b2d223b#2b2d223bb4590e0295bdbf919585c4a6849bee95"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
 dependencies = [
  "crypto-bigint",
  "group 0.1.0",
@@ -566,7 +566,7 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=2b2d223b#2b2d223bb4590e0295bdbf919585c4a6849bee95"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
 dependencies = [
  "crypto-bigint",
  "curve25519-dalek 5.0.0-pre.1",
@@ -641,7 +641,7 @@ dependencies = [
 [[package]]
 name = "homomorphic_encryption"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=2b2d223b#2b2d223bb4590e0295bdbf919585c4a6849bee95"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
 dependencies = [
  "crypto-bigint",
  "group 0.1.0",
@@ -678,9 +678,9 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
 name = "js-sys"
-version = "0.3.81"
+version = "0.3.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec48937a97411dcb524a265206ccd4c90bb711fca92b2792c407f268825b9305"
+checksum = "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
@@ -748,7 +748,7 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 [[package]]
 name = "maurer"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=2b2d223b#2b2d223bb4590e0295bdbf919585c4a6849bee95"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -783,7 +783,7 @@ dependencies = [
 [[package]]
 name = "mpc"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=2b2d223b#2b2d223bb4590e0295bdbf919585c4a6849bee95"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
 dependencies = [
  "bcs",
  "commitment",
@@ -908,7 +908,7 @@ dependencies = [
 [[package]]
 name = "proof"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=2b2d223b#2b2d223bb4590e0295bdbf919585c4a6849bee95"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -1357,7 +1357,7 @@ dependencies = [
 [[package]]
 name = "twopc_mpc"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=2b2d223b#2b2d223bb4590e0295bdbf919585c4a6849bee95"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
 dependencies = [
  "class_groups",
  "commitment",
@@ -1424,22 +1424,21 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.104"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1da10c01ae9f1ae40cbfac0bac3b1e724b320abfcf52229f80b547c0d250e2d"
+checksum = "1edc8929d7499fc4e8f0be2262a241556cfc54a0bea223790e71446f2aab1ef5"
 dependencies = [
  "cfg-if",
  "once_cell",
  "rustversion",
  "wasm-bindgen-macro",
- "wasm-bindgen-shared",
 ]
 
 [[package]]
 name = "wasm-bindgen-backend"
-version = "0.2.104"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "671c9a5a66f49d8a47345ab942e2cb93c7d1d0339065d4f8139c486121b43b19"
+checksum = "2f0a0651a5c2bc21487bde11ee802ccaf4c51935d0d3d42a6101f98161700bc6"
 dependencies = [
  "bumpalo",
  "log",
@@ -1451,9 +1450,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.104"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ca60477e4c59f5f2986c50191cd972e3a50d8a95603bc9434501cf156a9a119"
+checksum = "7fe63fc6d09ed3792bd0897b314f53de8e16568c2b3f7982f468c0bf9bd0b407"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -1461,9 +1460,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.104"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f07d2f20d4da7b26400c9f4a0511e6e0345b040694e8a75bd41d578fa4421d7"
+checksum = "8ae87ea40c9f689fc23f209965b6fb8a99ad69aeeb0231408be24920604395de"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1474,18 +1473,18 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.104"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bad67dc8b2a1a6e5448428adec4c3e84c43e561d8c9ee8a9e5aabeb193ec41d1"
+checksum = "1a05d73b933a847d6cccdda8f838a22ff101ad9bf93e33684f39c1f5f0eece3d"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "web-sys"
-version = "0.3.81"
+version = "0.3.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9367c417a924a74cae129e6a2ae3b47fabb1f8995595ab474029da749a8be120"
+checksum = "33b6dd2ef9186f1f2072e409e99cd22a975331a6b3591b12c764e0e55c60d5d2"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
