@@ -312,7 +312,7 @@ pub fn bitcoin_address_from_dwallet_output_inner(
             Ok(pk.to_string())
         }
     };
-    Ok(public_key)
+    public_key
 }
 
 /// Check whether the centralized party (user)'s DKG output matches the decentralized party (network)'s DKG output.
