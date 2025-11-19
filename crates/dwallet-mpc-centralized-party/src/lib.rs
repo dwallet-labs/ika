@@ -34,6 +34,8 @@ use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_hash_scheme, try_into_signature_algorithm,
 };
+use k256::AffinePoint;
+use k256::elliptic_curve::group::GroupEncoding;
 use twopc_mpc::class_groups::DKGCentralizedPartyVersionedOutput;
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
@@ -442,15 +444,18 @@ fn public_key_from_dwallet_output_inner_secp256r1(
 
     Ok(bcs::to_bytes(&public_key)?)
 }
+type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
+
+pub type DKGDecentralizedOutput =
+    <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 
 pub fn bitcoin_address_from_dwallet_output_inner(
     dwallet_output: Vec<u8>,
 ) -> anyhow::Result<String> {
-    let dkg_output: VersionedDwalletDKGSecondRoundPublicOutput = bcs::from_bytes(&dwallet_output)?;
+    let dkg_output: VersionedDwalletDKGPublicOutput = bcs::from_bytes(&dwallet_output)?;
 
-    let public_key =
-    match dkg_output {
-        VersionedDwalletDKGSecondRoundPublicOutput::V1(dkg_output) => {
+    let public_key = match dkg_output {
+        VersionedDwalletDKGPublicOutput::V1(dkg_output) => {
             let output: DKGDecentralizedPartyOutputSecp256k1 = bcs::from_bytes(&dkg_output)?;
             let pk = bitcoin::secp256k1::PublicKey::from_slice(
                 &AffinePoint::from(output.public_key).to_bytes(),
@@ -458,32 +463,15 @@ pub fn bitcoin_address_from_dwallet_output_inner(
             .expect("creation of public key from affine failed");
             Ok(pk.to_string())
         }
-        VersionedDwalletDKGSecondRoundPublicOutput::V2(dkg_output) => {
-            let dkg_output: DKGDecentralizedOutput = bcs::from_bytes(&dkg_output)?;
-            let public_key = match dkg_output {
-                DKGDecentralizedPartyVersionedOutput::<
-                    { group::secp256k1::SCALAR_LIMBS },
-                    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    group::secp256k1::GroupElement,
-                >::UniversalPublicDKGOutput {
-                    output: dkg_output,
-                    ..
-                } => dkg_output.public_key,
-                DKGDecentralizedPartyVersionedOutput::<
-                    { group::secp256k1::SCALAR_LIMBS },
-                    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                    group::secp256k1::GroupElement,
-                >::TargetedPublicDKGOutput(output) => output.public_key,
-            };
-            let pk = bitcoin::secp256k1::PublicKey::from_slice(
-                &AffinePoint::from(public_key).to_bytes(),
-            )
-            .expect("creation of public key from affine failed");
+        VersionedDwalletDKGPublicOutput::V2 {
+            public_key_bytes, ..
+        } => {
+            let pk = bitcoin::secp256k1::PublicKey::from_slice(&public_key_bytes)
+                .expect("creation of public key from affine failed");
             Ok(pk.to_string())
         }
-    }
+    };
+    Ok(public_key)
 }
 
 /// Check whether the centralized party (user)'s DKG output matches the decentralized party (network)'s DKG output.
