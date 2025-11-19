@@ -1,0 +1,140 @@
+name: Build Binaries
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  RUSTDOCFLAGS: -Dwarnings
+  RUST_BACKTRACE: 1
+  rust_stable: 1.90
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+
+jobs:
+  build-binaries:
+    name: Build (all binaries) (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x64
+          - target: aarch64-unknown-linux-gnu
+            arch: arm64
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Setup SSH for manual git
+        if: env.GH_DEPLOY_KEY
+        run: |
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Globally rewrite any GitHub HTTPS to SSH
+        if: env.GH_DEPLOY_KEY
+        run: |
+          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation dependencies
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
+
+      - name: Configure cross-compilation
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml << 'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # cache per target (no per-binary split anymore)
+          key: ${{ matrix.target }}
+
+      - name: Build all binaries for ${{ matrix.target }}
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          set -euxo pipefail
+          bins=("ika" "ika-node")
+          for bin in "${bins[@]}"; do
+            cargo build --release --bin "$bin" --target "${{ matrix.target }}"
+          done
+
+      - name: Prepare binary artifact
+        run: |
+          set -euxo pipefail
+          outdir="artifacts/linux-${{ matrix.arch }}"
+          mkdir -p "$outdir"
+          cp "target/${{ matrix.target }}/release/ika" "$outdir/ika"
+          cp "target/${{ matrix.target }}/release/ika-node" "$outdir/ika-node"
+          chmod +x "$outdir/ika" "$outdir/ika-node"
+
+      - name: Upload binary artifact (one per arch)
+        uses: actions/upload-artifact@v5
+        with:
+          name: linux-${{ matrix.arch }}
+          path: artifacts/linux-${{ matrix.arch }}
+          if-no-files-found: error
+
+  summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: build-binaries
+    if: always()
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts/
+
+      - name: Create build summary
+        run: |
+          echo "## Built Binaries" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Binary | Architecture | Size |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------------|------|" >> "$GITHUB_STEP_SUMMARY"
+          shopt -s nullglob
+          for dir in artifacts/*/; do
+            arch="$(basename "$dir")"
+            for file in "$dir"*; do
+              if [ -f "$file" ]; then
+                bin="$(basename "$file")"
+                size="$(du -h "$file" | cut -f1)"
+                echo "| $bin | $arch | $size |" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            done
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "📦 **All binaries are available as downloadable artifacts from this workflow run.**" >> "$GITHUB_STEP_SUMMARY"

@@ -137,6 +137,7 @@ use sui::package::{UpgradeCap, UpgradeReceipt, UpgradeTicket};
 use sui::table::Table;
 use sui::table_vec::TableVec;
 use ika_common::upgrade_package_approver::UpgradePackageApprover;
+use sui::coin_registry::Currency;
 
 // === Errors ===
 
@@ -154,7 +155,8 @@ const EInvalidMigration: u64 = 1;
 ///
 /// Version History:
 /// - V1: Initial SystemInner implementation with core functionality
-const VERSION: u64 = 1;
+/// - V2: expose new functions: `epoch`, `validator_stake_amount`
+const VERSION: u64 = 2;
 
 // === Structs ===
 
@@ -620,9 +622,7 @@ public fun set_or_remove_witness_approving_advance_epoch_by_cap(
 /// to migrate changes in the `system_inner` object if needed.
 /// This function can be called immediately after the upgrade is committed.
 public fun try_migrate_by_cap(self: &mut System, cap: &ProtocolCap) {
-    let _ = self.inner().verify_protocol_cap(cap);
-    assert!(self.version < VERSION, EInvalidMigration);
-    assert!(self.new_package_id.is_some(), EInvalidMigration);
+    let _ = self.inner_without_version_check().verify_protocol_cap(cap);
     self.try_migrate_impl();
 }
 
@@ -632,8 +632,6 @@ public fun try_migrate_by_cap(self: &mut System, cap: &ProtocolCap) {
 /// to migrate changes in the `system_inner` object if needed.
 /// Call this function after the migration epoch is reached.
 public fun try_migrate(self: &mut System) {
-    assert!(self.version < VERSION, EInvalidMigration);
-    assert!(self.new_package_id.is_some(), EInvalidMigration);
     assert!(self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e), EInvalidMigration);
     self.try_migrate_impl();
 }
@@ -643,6 +641,9 @@ public fun try_migrate(self: &mut System) {
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `system_inner` object if needed.
 fun try_migrate_impl(self: &mut System) {
+    assert!(self.version < VERSION, EInvalidMigration);
+    assert!(self.new_package_id.is_some(), EInvalidMigration);
+    
     // Move the old system inner to the new version.
     let system_inner: SystemInner = dynamic_field::remove(&mut self.id, self.version);
     dynamic_field::add(&mut self.id, VERSION, system_inner);
@@ -681,6 +682,26 @@ public fun can_withdraw_staked_ika_early(self: &System, staked_ika: &StakedIka):
     self.inner().can_withdraw_staked_ika_early(staked_ika)
 }
 
+/// Return the current epoch number. Useful for applications that need a coarse-grained concept of time,
+/// since epochs are ever-increasing and epoch changes are intended to happen every 24 hours.
+public fun epoch(self: &System): u64 {
+    self.inner().epoch()
+}
+
+/// Returns the total amount staked with `validator_id`.
+/// Aborts if `validator_id` is not an active validator.
+public fun validator_stake_amount(self: &mut System, validator_id: ID): u64 {
+    self.inner_mut().validator_stake_amount(validator_id)
+}
+
+public fun claim_metadata_cap(
+    self: &mut System,
+    currency: &mut Currency<IKA>,
+    ctx: &mut TxContext,
+) {
+    self.inner_mut().claim_metadata_cap(currency, ctx);
+}
+
 // === Internals ===
 
 /// Get a mutable reference to `SystemInnerVX` from the `System`.
@@ -703,23 +724,9 @@ fun inner_without_version_check(self: &System): &SystemInner {
 // === Test Functions ===
 
 #[test_only]
-/// Return the current epoch number. Useful for applications that need a coarse-grained concept of time,
-/// since epochs are ever-increasing and epoch changes are intended to happen every 24 hours.
-public fun epoch(self: &System): u64 {
-    self.inner().epoch()
-}
-
-#[test_only]
 /// Returns unix timestamp of the start of current epoch
 public fun epoch_start_timestamp_ms(self: &mut System): u64 {
     self.inner().epoch_start_timestamp_ms()
-}
-
-#[test_only]
-/// Returns the total amount staked with `validator_id`.
-/// Aborts if `validator_id` is not an active validator.
-public fun validator_stake_amount(self: &mut System, validator_id: ID): u64 {
-    self.inner_mut().validator_stake_amount(validator_id)
 }
 
 #[test_only]

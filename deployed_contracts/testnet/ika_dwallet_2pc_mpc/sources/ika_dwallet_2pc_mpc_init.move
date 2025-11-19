@@ -57,7 +57,7 @@ public fun initialize(
     let InitCap { id, publisher } = init_cap;
     id.delete();
 
-    let package_id_string = type_name::get<InitCap>().get_address().into_bytes();
+    let package_id_string = type_name::with_defining_ids<InitCap>().address_string().into_bytes();
     let package_id = address::from_ascii_bytes(&package_id_string).to_id();
 
     coordinator::create(

@@ -24,7 +24,7 @@ use ika_core::consensus_manager::UpdatableConsensusClient;
 
 use ika_types::digests::ChainIdentifier;
 use ika_types::sui::{DWalletCoordinatorInner, SystemInner};
-use sui_types::base_types::ConciseableName;
+use sui_types::base_types::{ConciseableName, ObjectID};
 use tap::tap::TapFallible;
 use tokio::runtime::Handle;
 use tokio::sync::{Mutex, broadcast, watch};
@@ -78,6 +78,7 @@ use sui_types::crypto::KeypairTraits;
 
 use ika_core::consensus_adapter::SubmitToConsensus;
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
+use std::str::FromStr;
 use typed_store::DBMetrics;
 use typed_store::rocks::default_db_options;
 
@@ -265,6 +266,21 @@ impl IkaNode {
 
         let sui_client_metrics = SuiClientMetrics::new(&registry_service.default_registry());
 
+        let mut ika_dwallet_2pc_mpc_package_id_v2 = config
+            .sui_connector_config
+            .ika_dwallet_2pc_mpc_package_id_v2;
+
+        if ika_dwallet_2pc_mpc_package_id_v2.is_none()
+            && config.sui_connector_config.ika_dwallet_2pc_mpc_package_id
+                == ObjectID::from_str(
+                    "0xf02f5960c94fce1899a3795b5d11fd076bc70a8d0e20a2b19923d990ed490730",
+                )?
+        {
+            ika_dwallet_2pc_mpc_package_id_v2 = Some(ObjectID::from_str(
+                "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
+            )?)
+        }
+
         let ika_network_config = IkaNetworkConfig {
             packages: IkaPackageConfig {
                 ika_package_id: config.sui_connector_config.ika_package_id,
@@ -272,9 +288,7 @@ impl IkaNode {
                 ika_dwallet_2pc_mpc_package_id: config
                     .sui_connector_config
                     .ika_dwallet_2pc_mpc_package_id,
-                ika_dwallet_2pc_mpc_package_id_v2: config
-                    .sui_connector_config
-                    .ika_dwallet_2pc_mpc_package_id_v2,
+                ika_dwallet_2pc_mpc_package_id_v2,
                 ika_system_package_id: config.sui_connector_config.ika_system_package_id,
             },
             objects: IkaObjectsConfig {
@@ -332,13 +346,27 @@ impl IkaNode {
         //     .expect("EpochStartConfiguration of the current epoch must exist");
 
         let epoch_options = default_db_options().optimize_db_for_write_throughput(4);
+
+        let mut ika_dwallet_2pc_mpc_package_id_v2 = config
+            .sui_connector_config
+            .ika_dwallet_2pc_mpc_package_id_v2;
+
+        if ika_dwallet_2pc_mpc_package_id_v2.is_none()
+            && config.sui_connector_config.ika_dwallet_2pc_mpc_package_id
+                == ObjectID::from_str(
+                    "0xf02f5960c94fce1899a3795b5d11fd076bc70a8d0e20a2b19923d990ed490730",
+                )?
+        {
+            ika_dwallet_2pc_mpc_package_id_v2 = Some(ObjectID::from_str(
+                "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
+            )?)
+        }
+
         let packages_config = IkaNetworkConfig::new(
             config.sui_connector_config.ika_package_id,
             config.sui_connector_config.ika_common_package_id,
             config.sui_connector_config.ika_dwallet_2pc_mpc_package_id,
-            config
-                .sui_connector_config
-                .ika_dwallet_2pc_mpc_package_id_v2,
+            ika_dwallet_2pc_mpc_package_id_v2,
             config.sui_connector_config.ika_system_package_id,
             config.sui_connector_config.ika_system_object_id,
             config

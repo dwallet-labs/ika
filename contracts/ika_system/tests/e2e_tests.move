@@ -4,14 +4,13 @@
 #[allow(unused_mut_ref)]
 module ika_system::e2e_tests;
 
-use std::unit_test::assert_eq;
 use ika_system::{e2e_runner, test_utils};
+use std::unit_test::assert_eq;
 
 const HUNDRED_PERCENT_COMMISSION_RATE: u16 = 100_00; // 100.00% commission in bps
 
 const EPOCH_DURATION_MS: u64 = 24 * 60 * 60 * 1000; // 1 day
 const MID_CONFIGURATION_DELTA_MS: u64 = 24 * 60 * 60 * 1000 / 2; // 1 day / 2
-
 
 #[test]
 fun test_init_and_first_epoch_change() {
@@ -33,7 +32,7 @@ fun test_init_and_first_epoch_change() {
 
     runner.perform_mid_epoch_reconfiguration(
         &mut validators,
-        option::none()
+        option::none(),
     );
 
     assert_eq!(runner.epoch(), 1);
@@ -47,7 +46,7 @@ fun test_init_and_first_epoch_change() {
     // === check if epoch was changed as expected ===
 
     runner.perform_advance_epoch(
-        option::none()
+        option::none(),
     );
 
     assert_eq!(runner.epoch(), 2);
@@ -89,29 +88,32 @@ fun test_stake_after_committee_selection() {
 
     // === add stake to excluded validator ===
 
-    runner.tx!(excluded_validator.sui_address(), |system, _dwallet_2pc_mpc_coordinator, _clock, ctx| {
-        let (cap, operation_cap, commission_cap) = system.request_add_validator_candidate(
-            excluded_validator.name(),
-            excluded_validator.protocol_pubkey_bytes(),
-            excluded_validator.network_pubkey_bytes(),
-            excluded_validator.consensus_pubkey_bytes(),
-            excluded_validator.mpc_data(ctx),
-            excluded_validator.create_proof_of_possession(),
-            excluded_validator.network_address(),
-            excluded_validator.p2p_address(),
-            excluded_validator.consensus_address(),
-            excluded_validator.commission_rate(),
-            excluded_validator.metadata(),
-            ctx,
-        );
-        excluded_validator.set_validator_cap(cap);
-        excluded_validator.set_validator_operation_cap(operation_cap);
-        excluded_validator.set_validator_commission_cap(commission_cap);
-        let coin = test_utils::mint_inku(excluded_validator.stake_amount(), ctx);
-        let staked_ika = system.request_add_stake(coin, excluded_validator.validator_id(), ctx);
-        excluded_validator.staked_ika().push_back(staked_ika);
-        system.request_add_validator(excluded_validator.cap());
-    });
+    runner.tx!(
+        excluded_validator.sui_address(),
+        |system, _dwallet_2pc_mpc_coordinator, _clock, ctx| {
+            let (cap, operation_cap, commission_cap) = system.request_add_validator_candidate(
+                excluded_validator.name(),
+                excluded_validator.protocol_pubkey_bytes(),
+                excluded_validator.network_pubkey_bytes(),
+                excluded_validator.consensus_pubkey_bytes(),
+                excluded_validator.mpc_data(ctx),
+                excluded_validator.create_proof_of_possession(),
+                excluded_validator.network_address(),
+                excluded_validator.p2p_address(),
+                excluded_validator.consensus_address(),
+                excluded_validator.commission_rate(),
+                excluded_validator.metadata(),
+                ctx,
+            );
+            excluded_validator.set_validator_cap(cap);
+            excluded_validator.set_validator_operation_cap(operation_cap);
+            excluded_validator.set_validator_commission_cap(commission_cap);
+            let coin = test_utils::mint_inku(excluded_validator.stake_amount(), ctx);
+            let staked_ika = system.request_add_stake(coin, excluded_validator.validator_id(), ctx);
+            excluded_validator.staked_ika().push_back(staked_ika);
+            system.request_add_validator(excluded_validator.cap());
+        },
+    );
 
     // === complete reconfiguration ===
 
@@ -123,7 +125,7 @@ fun test_stake_after_committee_selection() {
     // === check if epoch was changed as expected ===
 
     runner.perform_advance_epoch(
-        option::none()
+        option::none(),
     );
 
     // === initiate epoch change ===
@@ -140,13 +142,13 @@ fun test_stake_after_committee_selection() {
 
     runner.perform_mid_epoch_reconfiguration(
         &mut validators,
-        option::none()
+        option::none(),
     );
 
     // === advance epoch ===
 
     runner.perform_advance_epoch(
-        option::none()
+        option::none(),
     );
 
     // === check if previously excluded validator is now also in the committee ===
@@ -166,13 +168,13 @@ fun test_stake_after_committee_selection() {
 
     runner.perform_mid_epoch_reconfiguration(
         &mut validators,
-        option::none()
+        option::none(),
     );
 
     // === advance epoch ===
 
     runner.perform_advance_epoch(
-        option::none()
+        option::none(),
     );
 
     assert_eq!(runner.epoch(), 4);
@@ -208,7 +210,11 @@ fun validator_voting_parameters() {
     validators.do_mut!(|validator| {
         runner.tx!(validator.sui_address(), |system, dwallet_2pc_mpc_coordinator, _clock, _ctx| {
             let pricing = test_utils::create_pricing_for_default_protocols(i * 1000);
-            system.set_pricing_vote(dwallet_2pc_mpc_coordinator, pricing, validator.operation_cap());
+            system.set_pricing_vote(
+                dwallet_2pc_mpc_coordinator,
+                pricing,
+                validator.operation_cap(),
+            );
 
             i = i + 1;
         });
@@ -220,13 +226,13 @@ fun validator_voting_parameters() {
 
     runner.perform_mid_epoch_reconfiguration(
         &mut validators,
-        option::none()
+        option::none(),
     );
 
     // === advance epoch ===
 
     runner.perform_advance_epoch(
-        option::none()
+        option::none(),
     );
 
     assert_eq!(runner.epoch(), 2);
@@ -253,7 +259,7 @@ fun test_mid_epoch_reconfiguration_too_soon_fail() {
     // One millisecond before mid epoch reconfiguration can be performed
     runner.perform_mid_epoch_reconfiguration(
         &mut validators,
-        option::some(MID_CONFIGURATION_DELTA_MS - 1)
+        option::some(MID_CONFIGURATION_DELTA_MS - 1),
     );
 
     abort 0
@@ -274,13 +280,12 @@ fun test_advance_epoch_too_soon_fail() {
 
     runner.perform_mid_epoch_reconfiguration(
         &mut validators,
-        option::none()
+        option::none(),
     );
-
 
     // One millisecond before advance epoch can be performed
     runner.perform_advance_epoch(
-        option::some(EPOCH_DURATION_MS - MID_CONFIGURATION_DELTA_MS - 1)
+        option::some(EPOCH_DURATION_MS - MID_CONFIGURATION_DELTA_MS - 1),
     );
 
     abort 0
@@ -313,17 +318,16 @@ fun test_epoch_change_with_rewards_and_commission() {
 
     runner.perform_mid_epoch_reconfiguration(
         &mut validators,
-        option::none()
+        option::none(),
     );
 
     // === advance epoch ===
 
     runner.perform_advance_epoch(
-        option::none()
+        option::none(),
     );
 
     assert_eq!(runner.epoch(), 2);
-
 
     // === check rewards for each validator ===
     // stake subsidy is 10% of the total supply: 10,000,000,000 (IKA) * 1,000,000,000 (INKU/IKA) * 10% = 1,000,000,000,000,000,000 INKU
@@ -335,7 +339,11 @@ fun test_epoch_change_with_rewards_and_commission() {
     // in total 27,3972,602,740,726 INKU for each validator
     validators.do_mut!(|validator| {
         runner.tx!(validator.sui_address(), |system, _dwallet_2pc_mpc_coordinator, _clock, ctx| {
-            let commission = system.collect_commission(validator.commission_cap(), option::none(), ctx);
+            let commission = system.collect_commission(
+                validator.commission_cap(),
+                option::none(),
+                ctx,
+            );
 
             assert_eq!(commission.burn_for_testing(), 273_972_602_739_726 + 1_000);
         });
@@ -424,40 +432,43 @@ fun withdraw_rewards_before_joining_committee() {
         option::none(),
     );
 
-    runner.tx!(excluded_validator.sui_address(), |system, _dwallet_2pc_mpc_coordinator, _clock, ctx| {
-        let (cap, operation_cap, commission_cap) = system.request_add_validator_candidate(
-            excluded_validator.name(),
-            excluded_validator.protocol_pubkey_bytes(),
-            excluded_validator.network_pubkey_bytes(),
-            excluded_validator.consensus_pubkey_bytes(),
-            excluded_validator.mpc_data(ctx),
-            excluded_validator.create_proof_of_possession(),
-            excluded_validator.network_address(),
-            excluded_validator.p2p_address(),
-            excluded_validator.consensus_address(),
-            excluded_validator.commission_rate(),
-            excluded_validator.metadata(),
-            ctx,
-        );
-        excluded_validator.set_validator_cap(cap);
-        excluded_validator.set_validator_operation_cap(operation_cap);
-        excluded_validator.set_validator_commission_cap(commission_cap);
-        let coin = test_utils::mint_inku(1_000_000_000, ctx);
-        let staked_ika = system.request_add_stake(coin, excluded_validator.validator_id(), ctx);
-        excluded_validator.staked_ika().push_back(staked_ika);
-    });
+    runner.tx!(
+        excluded_validator.sui_address(),
+        |system, _dwallet_2pc_mpc_coordinator, _clock, ctx| {
+            let (cap, operation_cap, commission_cap) = system.request_add_validator_candidate(
+                excluded_validator.name(),
+                excluded_validator.protocol_pubkey_bytes(),
+                excluded_validator.network_pubkey_bytes(),
+                excluded_validator.consensus_pubkey_bytes(),
+                excluded_validator.mpc_data(ctx),
+                excluded_validator.create_proof_of_possession(),
+                excluded_validator.network_address(),
+                excluded_validator.p2p_address(),
+                excluded_validator.consensus_address(),
+                excluded_validator.commission_rate(),
+                excluded_validator.metadata(),
+                ctx,
+            );
+            excluded_validator.set_validator_cap(cap);
+            excluded_validator.set_validator_operation_cap(operation_cap);
+            excluded_validator.set_validator_commission_cap(commission_cap);
+            let coin = test_utils::mint_inku(1_000_000_000, ctx);
+            let staked_ika = system.request_add_stake(coin, excluded_validator.validator_id(), ctx);
+            excluded_validator.staked_ika().push_back(staked_ika);
+        },
+    );
 
     // === perform mid epoch reconfiguration ===
 
     runner.perform_mid_epoch_reconfiguration(
         &mut validators,
-        option::none()
+        option::none(),
     );
 
     // === advance epoch ===
 
     runner.perform_advance_epoch(
-        option::none()
+        option::none(),
     );
 
     assert_eq!(runner.epoch(), 2);
@@ -465,31 +476,37 @@ fun withdraw_rewards_before_joining_committee() {
     assert_eq!(bls_committee.members().length(), validators.length());
     validators.do_ref!(|validator| assert!(bls_committee.contains(&validator.validator_id())));
 
-    runner.tx!(excluded_validator.sui_address(), |system, _dwallet_2pc_mpc_coordinator, _clock, ctx| {
-        let coin = system.withdraw_stake(excluded_validator.staked_ika().pop_back(), ctx);
-        coin.burn_for_testing();
-    });
+    runner.tx!(
+        excluded_validator.sui_address(),
+        |system, _dwallet_2pc_mpc_coordinator, _clock, ctx| {
+            let coin = system.withdraw_stake(excluded_validator.staked_ika().pop_back(), ctx);
+            coin.burn_for_testing();
+        },
+    );
 
     // === add stake to excluded validator again ===
 
-    runner.tx!(excluded_validator.sui_address(), |system, _dwallet_2pc_mpc_coordinator, _clock, ctx| {
-        let coin = test_utils::mint_inku(excluded_validator.stake_amount(), ctx);
-        let staked_ika = system.request_add_stake(coin, excluded_validator.validator_id(), ctx);
-        excluded_validator.staked_ika().push_back(staked_ika);
-        system.request_add_validator(excluded_validator.cap());
-    });
+    runner.tx!(
+        excluded_validator.sui_address(),
+        |system, _dwallet_2pc_mpc_coordinator, _clock, ctx| {
+            let coin = test_utils::mint_inku(excluded_validator.stake_amount(), ctx);
+            let staked_ika = system.request_add_stake(coin, excluded_validator.validator_id(), ctx);
+            excluded_validator.staked_ika().push_back(staked_ika);
+            system.request_add_validator(excluded_validator.cap());
+        },
+    );
 
     // === perform mid epoch reconfiguration ===
 
     runner.perform_mid_epoch_reconfiguration(
         &mut validators,
-        option::none()
+        option::none(),
     );
 
     // === advance epoch ===
 
     runner.perform_advance_epoch(
-        option::none()
+        option::none(),
     );
 
     validators.push_back(excluded_validator);

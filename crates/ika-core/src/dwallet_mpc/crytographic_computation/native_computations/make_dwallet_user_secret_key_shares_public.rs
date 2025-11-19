@@ -37,7 +37,7 @@ pub fn verify_secret_share(
         .map_err(|e| DwalletMPCError::SecretShareVerificationFailed(e.to_string())),
         (
             VersionedImportedSecretShare::V1(secret_share),
-            VersionedDwalletDKGPublicOutput::V2(dkg_output),
+            VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. },
         ) => verify_centralized_party_secret_key_share_v2(
             secret_share,
             dkg_output,

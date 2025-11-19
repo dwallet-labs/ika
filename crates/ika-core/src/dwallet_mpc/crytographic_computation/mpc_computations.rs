@@ -234,6 +234,7 @@ impl ProtocolCryptographicData {
                     public_input: public_input.clone(),
                     advance_request,
                     decryption_key_shares: decryption_key_shares.clone(),
+                    protocol_version: *protocol_version,
                 }
             }
             ProtocolData::DWalletDKGAndSign {
@@ -440,24 +441,59 @@ impl ProtocolCryptographicData {
                 advance_request:
                     DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256k1(advance_request),
                 protocol_version,
+                data,
                 ..
-            } => compute_imported_key_verification::<Secp256k1AsyncDKGProtocol>(
-                session_id,
-                party_id,
-                access_structure,
-                advance_request,
-                &public_input.clone(),
-                protocol_version,
-                &mut rng,
-            ),
+            } => {
+                let result = compute_imported_key_verification::<Secp256k1AsyncDKGProtocol>(
+                    data.curve,
+                    session_id,
+                    party_id,
+                    access_structure,
+                    advance_request,
+                    &public_input.clone(),
+                    protocol_version,
+                    &mut rng,
+                )?;
+
+                match result {
+                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                    }
+                    GuaranteedOutputDeliveryRoundResult::Finalize {
+                        public_output_value,
+                        malicious_parties,
+                        private_output,
+                    } => {
+                        if protocol_version.as_u64() == 1 {
+                            verify_encrypted_share(
+                                &data.encrypted_centralized_secret_share_and_proof,
+                                &public_output_value,
+                                &data.encryption_key,
+                                // DKG second is supported only for secp256k1.
+                                ProtocolPublicParametersByCurve::Secp256k1(
+                                    public_input.protocol_public_parameters.clone(),
+                                ),
+                            )?;
+                        }
+
+                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                            public_output_value,
+                            malicious_parties,
+                            private_output,
+                        })
+                    }
+                }
+            }
             ProtocolCryptographicData::ImportedKeyVerification {
                 public_input:
                     DWalletImportedKeyVerificationPublicInputByCurve::Secp256r1(public_input),
                 advance_request:
                     DWalletImportedKeyVerificationAdvanceRequestByCurve::Secp256r1(advance_request),
                 protocol_version,
+                data,
                 ..
             } => compute_imported_key_verification::<Secp256r1AsyncDKGProtocol>(
+                data.curve,
                 session_id,
                 party_id,
                 access_structure,
@@ -472,8 +508,10 @@ impl ProtocolCryptographicData {
                 advance_request:
                     DWalletImportedKeyVerificationAdvanceRequestByCurve::Curve25519(advance_request),
                 protocol_version,
+                data,
                 ..
             } => compute_imported_key_verification::<Curve25519AsyncDKGProtocol>(
+                data.curve,
                 session_id,
                 party_id,
                 access_structure,
@@ -488,8 +526,10 @@ impl ProtocolCryptographicData {
                 advance_request:
                     DWalletImportedKeyVerificationAdvanceRequestByCurve::Ristretto(advance_request),
                 protocol_version,
+                data,
                 ..
             } => compute_imported_key_verification::<RistrettoAsyncDKGProtocol>(
+                data.curve,
                 session_id,
                 party_id,
                 access_structure,
@@ -583,28 +623,26 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
+                        let decentralized_output: <Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
+                        let decentralized_output: <Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput = decentralized_output.into();
+
+                        let public_output_value =
+                            bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V1(bcs::to_bytes(
+                                &decentralized_output,
+                            )?))?;
+
                         verify_encrypted_share(
                             &data.encrypted_centralized_secret_share_and_proof,
                             // TODO (#1482): Check the protocol config and use this hack only for V1
                             // DWallets.
-                            &bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V1(
-                                public_output_value.clone(),
-                            ))?,
+                            &public_output_value,
                             &data.encryption_key,
                             // DKG second is supported only for secp256k1.
                             ProtocolPublicParametersByCurve::Secp256k1(
                                 public_input.protocol_public_parameters.clone(),
                             ),
-                            ProtocolVersion::from(1),
                         )?;
 
-                        let decentralized_output: <Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
-                        let decentralized_output: <Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput = decentralized_output.into();
-
-                        let public_output_value =
-                            bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V1(
-                                bcs::to_bytes(&decentralized_output).unwrap(),
-                            ))?;
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,
@@ -617,8 +655,10 @@ impl ProtocolCryptographicData {
                 public_input: DWalletDKGPublicInputByCurve::Secp256k1DWalletDKG(public_input),
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Secp256k1DWalletDKG(advance_request),
+                data,
                 ..
             } => Ok(compute_dwallet_dkg::<Secp256k1AsyncDKGProtocol>(
+                data.curve,
                 party_id,
                 access_structure,
                 session_id,
@@ -630,8 +670,10 @@ impl ProtocolCryptographicData {
                 public_input: DWalletDKGPublicInputByCurve::Secp256r1DWalletDKG(public_input),
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Secp256r1DWalletDKG(advance_request),
+                data,
                 ..
             } => Ok(compute_dwallet_dkg::<Secp256r1AsyncDKGProtocol>(
+                data.curve,
                 party_id,
                 access_structure,
                 session_id,
@@ -643,8 +685,10 @@ impl ProtocolCryptographicData {
                 public_input: DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input),
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::Curve25519DWalletDKG(advance_request),
+                data,
                 ..
             } => Ok(compute_dwallet_dkg::<Curve25519AsyncDKGProtocol>(
+                data.curve,
                 party_id,
                 access_structure,
                 session_id,
@@ -656,8 +700,10 @@ impl ProtocolCryptographicData {
                 public_input: DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input),
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
+                data,
                 ..
             } => Ok(compute_dwallet_dkg::<RistrettoAsyncDKGProtocol>(
+                data.curve,
                 party_id,
                 access_structure,
                 session_id,
@@ -749,6 +795,7 @@ impl ProtocolCryptographicData {
                 advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 decryption_key_shares,
                 data,
+                protocol_version,
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
@@ -769,6 +816,7 @@ impl ProtocolCryptographicData {
                     public_input,
                     Some(decryption_key_shares),
                     &data,
+                    protocol_version,
                     &mut rng,
                 )
             }
@@ -777,6 +825,7 @@ impl ProtocolCryptographicData {
                 advance_request: SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
                 decryption_key_shares,
                 data,
+                protocol_version,
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
@@ -797,6 +846,7 @@ impl ProtocolCryptographicData {
                     public_input,
                     Some(decryption_key_shares),
                     &data,
+                    protocol_version,
                     &mut rng,
                 )
             }
@@ -805,6 +855,7 @@ impl ProtocolCryptographicData {
                 advance_request: SignAdvanceRequestByProtocol::Secp256r1(advance_request),
                 decryption_key_shares,
                 data,
+                protocol_version,
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
@@ -825,6 +876,7 @@ impl ProtocolCryptographicData {
                     public_input,
                     Some(decryption_key_shares),
                     &data,
+                    protocol_version,
                     &mut rng,
                 )
             }
@@ -833,6 +885,7 @@ impl ProtocolCryptographicData {
                 advance_request: SignAdvanceRequestByProtocol::Curve25519(advance_request),
                 decryption_key_shares,
                 data,
+                protocol_version,
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
@@ -853,6 +906,7 @@ impl ProtocolCryptographicData {
                     public_input,
                     Some(decryption_key_shares),
                     &data,
+                    protocol_version,
                     &mut rng,
                 )
             }
@@ -861,6 +915,7 @@ impl ProtocolCryptographicData {
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 decryption_key_shares,
                 data,
+                protocol_version,
                 ..
             } => {
                 if mpc_round == MPC_SIGN_SECOND_ROUND {
@@ -881,6 +936,7 @@ impl ProtocolCryptographicData {
                     public_input,
                     Some(decryption_key_shares),
                     &data,
+                    protocol_version,
                     &mut rng,
                 )
             }
@@ -911,6 +967,7 @@ impl ProtocolCryptographicData {
                 }
 
                 compute_dwallet_dkg_and_sign::<Secp256k1ECDSAProtocol>(
+                    data.curve,
                     party_id,
                     access_structure,
                     session_id,
@@ -940,6 +997,7 @@ impl ProtocolCryptographicData {
                 }
 
                 compute_dwallet_dkg_and_sign::<Secp256k1TaprootProtocol>(
+                    data.curve,
                     party_id,
                     access_structure,
                     session_id,
@@ -969,6 +1027,7 @@ impl ProtocolCryptographicData {
                 }
 
                 compute_dwallet_dkg_and_sign::<Secp256r1ECDSAProtocol>(
+                    data.curve,
                     party_id,
                     access_structure,
                     session_id,
@@ -998,6 +1057,7 @@ impl ProtocolCryptographicData {
                 }
 
                 compute_dwallet_dkg_and_sign::<Curve25519EdDSAProtocol>(
+                    data.curve,
                     party_id,
                     access_structure,
                     session_id,
@@ -1027,6 +1087,7 @@ impl ProtocolCryptographicData {
                 }
 
                 compute_dwallet_dkg_and_sign::<RistrettoSchnorrkelSubstrateProtocol>(
+                    data.curve,
                     party_id,
                     access_structure,
                     session_id,
@@ -1205,22 +1266,27 @@ fn parse_signature_from_sign_output(
     match signature_algorithm {
         DWalletSignatureAlgorithm::ECDSASecp256k1 => {
             let signature: ECDSASecp256k1Signature = bcs::from_bytes(&public_output_value)?;
+
             Ok(signature.to_bytes().to_vec())
         }
         DWalletSignatureAlgorithm::ECDSASecp256r1 => {
             let signature: ECDSASecp256r1Signature = bcs::from_bytes(&public_output_value)?;
+
             Ok(signature.to_bytes().to_vec())
         }
         DWalletSignatureAlgorithm::EdDSA => {
             let signature: EdDSASignature = bcs::from_bytes(&public_output_value)?;
+
             Ok(signature.to_bytes().to_vec())
         }
         DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
             let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&public_output_value)?;
+
             Ok(signature.to_bytes().to_vec())
         }
         DWalletSignatureAlgorithm::Taproot => {
             let signature: TaprootSignature = bcs::from_bytes(&public_output_value)?;
+
             Ok(signature.to_bytes().to_vec())
         }
     }

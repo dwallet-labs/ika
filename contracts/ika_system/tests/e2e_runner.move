@@ -4,29 +4,31 @@
 #[allow(unused_mut_ref)]
 module ika_system::e2e_runner;
 
-use sui::{clock::{Self, Clock}, test_scenario::{Self, Scenario}, test_utils, coin};
 use ika_system::{
+    bls_committee::BlsCommittee,
+    dwallet_2pc_mpc_coordinator::DWalletCoordinator,
+    dwallet_checkpoint::{Self, dwallet_mpc_network_dkg_output},
+    dwallet_pricing::{Self, DWalletPricing},
     init,
     system::System,
     system_inner::ProtocolCap,
-    dwallet_2pc_mpc_coordinator::DWalletCoordinator,
-    test_validator::{Self, TestValidator},
     test_utils as ika_test_utils,
-    dwallet_checkpoint,
-    bls_committee::BlsCommittee,
+    test_validator::{Self, TestValidator}
 };
-use ika_system::dwallet_pricing;
-use sui::vec_map;
-use ika_system::dwallet_checkpoint::dwallet_mpc_network_dkg_output;
-use sui::coin::burn_for_testing;
-use ika_system::dwallet_pricing::DWalletPricing;
 use std::unit_test::assert_eq;
+use sui::{
+    clock::{Self, Clock},
+    coin::{Self, burn_for_testing},
+    test_scenario::{Self, Scenario},
+    test_utils,
+    vec_map
+};
 
 const DEFAULT_PROTOCOL_VERSION: u64 = 1;
 const DEFAULT_CHAIN_START_TIMESTAMP_MS: u64 = 1717244800000; // 2024-05-31 00:00:00 UTC
 const DEFAULT_EPOCH_DURATION_MS: u64 = 24 * 60 * 60 * 1000; // 1 day
 const DEFAULT_MID_CONFIGURATION_DELTA_MS: u64 = 24 * 60 * 60 * 1000 / 2; // 1 day / 2
-const DEFAULT_STAKE_SUBSIDY_START_EPOCH: u64 = 1; 
+const DEFAULT_STAKE_SUBSIDY_START_EPOCH: u64 = 1;
 const DEFAULT_STAKE_SUBSIDY_RATE: u16 = 1000; // 1000 BPS = 10%
 const DEFAULT_STAKE_SUBSIDY_PERIOD_LENGTH: u64 = 365; // 1 year
 const DEFAULT_MIN_VALIDATOR_COUNT: u64 = 4;
@@ -159,16 +161,36 @@ public fun reward_slashing_rate(mut self: InitBuilder, rate: u16): InitBuilder {
 
 /// Build the test runner with the given parameters.
 public fun build(self: InitBuilder): TestRunner {
-    let InitBuilder { admin, protocol_version, chain_start_timestamp_ms, epoch_duration_ms, stake_subsidy_start_epoch, stake_subsidy_rate, stake_subsidy_period_length, min_validator_count, max_validator_count, min_validator_joining_stake, reward_slashing_rate } = self;
+    let InitBuilder {
+        admin,
+        protocol_version,
+        chain_start_timestamp_ms,
+        epoch_duration_ms,
+        stake_subsidy_start_epoch,
+        stake_subsidy_rate,
+        stake_subsidy_period_length,
+        min_validator_count,
+        max_validator_count,
+        min_validator_joining_stake,
+        reward_slashing_rate,
+    } = self;
     let protocol_version = protocol_version.destroy_or!(DEFAULT_PROTOCOL_VERSION);
-    let chain_start_timestamp_ms = chain_start_timestamp_ms.destroy_or!(DEFAULT_CHAIN_START_TIMESTAMP_MS);
+    let chain_start_timestamp_ms = chain_start_timestamp_ms.destroy_or!(
+        DEFAULT_CHAIN_START_TIMESTAMP_MS,
+    );
     let epoch_duration_ms = epoch_duration_ms.destroy_or!(DEFAULT_EPOCH_DURATION_MS);
-    let stake_subsidy_start_epoch = stake_subsidy_start_epoch.destroy_or!(DEFAULT_STAKE_SUBSIDY_START_EPOCH);
+    let stake_subsidy_start_epoch = stake_subsidy_start_epoch.destroy_or!(
+        DEFAULT_STAKE_SUBSIDY_START_EPOCH,
+    );
     let stake_subsidy_rate = stake_subsidy_rate.destroy_or!(DEFAULT_STAKE_SUBSIDY_RATE);
-    let stake_subsidy_period_length = stake_subsidy_period_length.destroy_or!(DEFAULT_STAKE_SUBSIDY_PERIOD_LENGTH);
+    let stake_subsidy_period_length = stake_subsidy_period_length.destroy_or!(
+        DEFAULT_STAKE_SUBSIDY_PERIOD_LENGTH,
+    );
     let min_validator_count = min_validator_count.destroy_or!(DEFAULT_MIN_VALIDATOR_COUNT);
     let max_validator_count = max_validator_count.destroy_or!(DEFAULT_MAX_VALIDATOR_COUNT);
-    let min_validator_joining_stake = min_validator_joining_stake.destroy_or!(DEFAULT_MIN_VALIDATOR_JOINING_STAKE);
+    let min_validator_joining_stake = min_validator_joining_stake.destroy_or!(
+        DEFAULT_MIN_VALIDATOR_JOINING_STAKE,
+    );
     let reward_slashing_rate = reward_slashing_rate.destroy_or!(DEFAULT_REWARD_SLASHING_RATE);
 
     let mut scenario = test_scenario::begin(admin);
@@ -178,9 +200,15 @@ public fun build(self: InitBuilder): TestRunner {
 
     // We need an upgrade cap for package with address 0x0
     let ika_upgrade_cap = sui::package::test_publish(ctx.fresh_object_address().to_id(), ctx);
-    let ika_system_upgrade_cap = sui::package::test_publish(ctx.fresh_object_address().to_id(), ctx);
+    let ika_system_upgrade_cap = sui::package::test_publish(
+        ctx.fresh_object_address().to_id(),
+        ctx,
+    );
     let mut ika_treasury_cap = ika_test_utils::ika_treasury_for_testing(ctx);
-    ika_treasury_cap.supply_mut().increase_supply(10_000_000_000 * 1_000_000_000).destroy_for_testing();
+    ika_treasury_cap
+        .supply_mut()
+        .increase_supply(10_000_000_000 * 1_000_000_000)
+        .destroy_for_testing();
 
     scenario.next_tx(admin);
     let cap = scenario.take_from_sender<init::InitCap>();
@@ -391,7 +419,9 @@ public fun initialize_committee_for_epoch_one(
     initial_timestamp_ms: Option<u64>,
     increment_timestamp_ms_before_initialization: Option<u64>,
     default_pricing: Option<DWalletPricing>,
-    default_supported_curves_to_signature_algorithms_to_hash_schemes: Option<vec_map::VecMap<u32, vec_map::VecMap<u32, vector<u32>>>>,
+    default_supported_curves_to_signature_algorithms_to_hash_schemes: Option<
+        vec_map::VecMap<u32, vec_map::VecMap<u32, vector<u32>>>,
+    >,
 ) {
     let admin = runner.admin();
     runner.set_timestamp_ms(initial_timestamp_ms.destroy_or!(DEFAULT_CHAIN_START_TIMESTAMP_MS));
@@ -430,7 +460,6 @@ public fun initialize_committee_for_epoch_one(
         });
     });
 
-
     // === join committee each validator ===
 
     validators.do_ref!(|validator| {
@@ -442,9 +471,11 @@ public fun initialize_committee_for_epoch_one(
     // === advance clock and initialize ===
     // === check if epoch state is changed correctly ==
 
-    runner.increment_timestamp_ms(increment_timestamp_ms_before_initialization.destroy_or!(DEFAULT_EPOCH_DURATION_MS));
+    runner.increment_timestamp_ms(increment_timestamp_ms_before_initialization.destroy_or!(
+        DEFAULT_EPOCH_DURATION_MS,
+    ));
     runner.tx_for_initialization_with_protocol_cap!(admin, |system, protocol_cap, clock, ctx| {
-        let pricing = if(default_pricing.is_some()) {
+        let pricing = if (default_pricing.is_some()) {
             *default_pricing.borrow()
         } else {
             // default pricing is 0 for all protocols
@@ -460,12 +491,17 @@ public fun initialize_committee_for_epoch_one(
             pricing.insert_or_update_dwallet_pricing(0, option::some(0), 8, 0, 0, 0, 0);
             pricing
         };
-        let supported_curves_to_signature_algorithms_to_hash_schemes = if(default_supported_curves_to_signature_algorithms_to_hash_schemes.is_some()) {
+        let supported_curves_to_signature_algorithms_to_hash_schemes = if (
+            default_supported_curves_to_signature_algorithms_to_hash_schemes.is_some()
+        ) {
             *default_supported_curves_to_signature_algorithms_to_hash_schemes.borrow()
         } else {
             let mut supported_curves_to_signature_algorithms_to_hash_schemes = vec_map::empty();
             // default support to curve: secp256k1 -> signature algorithm: ecdsa -> hash scheme: keccak256, sha256
-            supported_curves_to_signature_algorithms_to_hash_schemes.insert(0u32, vec_map::from_keys_values(vector[0u32], vector[vector[0u32, 1u32]]));
+            supported_curves_to_signature_algorithms_to_hash_schemes.insert(
+                0u32,
+                vec_map::from_keys_values(vector[0u32], vector[vector[0u32, 1u32]]),
+            );
             supported_curves_to_signature_algorithms_to_hash_schemes
         };
         system.initialize(
@@ -476,7 +512,9 @@ public fun initialize_committee_for_epoch_one(
             clock,
             ctx,
         );
-        validators.do_ref!(|validator| assert!(system.active_committee().contains(&validator.validator_id())));       
+        validators.do_ref!(
+            |validator| assert!(system.active_committee().contains(&validator.validator_id())),
+        );
     });
 
     runner.perform_network_encryption_key_dkg(validators);
@@ -488,20 +526,60 @@ public fun perform_network_encryption_key_dkg(
 ) {
     let admin = runner.admin();
     let epoch = runner.epoch();
-    runner.tx_with_protocol_cap!(admin, |system, dwallet_2pc_mpc_coordinator, protocol_cap, _clock, ctx| {
-        system.request_dwallet_network_encryption_key_dkg_by_cap(dwallet_2pc_mpc_coordinator, protocol_cap, x"", ctx);
+    runner.tx_with_protocol_cap!(
+        admin,
+        |system, dwallet_2pc_mpc_coordinator, protocol_cap, _clock, ctx| {
+            system.request_dwallet_network_encryption_key_dkg_by_cap(
+                dwallet_2pc_mpc_coordinator,
+                protocol_cap,
+                x"",
+                ctx,
+            );
 
-        let dwallet_network_encryption_key_id = system.dwallet_2pc_mpc_coordinator_network_encryption_key_ids()[0];
-        let next_checkpoint_sequence_number = dwallet_2pc_mpc_coordinator.last_processed_checkpoint_sequence_number().map!(|x| x + 1).destroy_or!(0);
-        let dwallet_network_encryption_key_dkg_message = dwallet_checkpoint::dwallet_mpc_network_dkg_output(dwallet_network_encryption_key_id.to_bytes(), x"", true, vector[0u32], false);
-        let dwallet_checkpoint_message = dwallet_checkpoint::dwallet_checkpoint_message(epoch, next_checkpoint_sequence_number, 0, vector[dwallet_network_encryption_key_dkg_message]);
-        let dwallet_checkpoint_message_bytes = dwallet_checkpoint::dwallet_checkpoint_message_bytes(dwallet_checkpoint_message);
-        let dwallet_checkpoint_message_intent = dwallet_checkpoint::dwallet_checkpoint_message_intent(dwallet_checkpoint_message_bytes, epoch);
-        let (signature, members_bitmap) = test_validator::sign(validators, dwallet_checkpoint_message_intent);
-        let reimbursement = dwallet_2pc_mpc_coordinator.process_checkpoint_message_by_quorum(signature, members_bitmap, dwallet_checkpoint_message_bytes, x"", x"", x"", ctx);
+            let dwallet_network_encryption_key_id = system.dwallet_2pc_mpc_coordinator_network_encryption_key_ids()[
+                0,
+            ];
+            let next_checkpoint_sequence_number = dwallet_2pc_mpc_coordinator
+                .last_processed_checkpoint_sequence_number()
+                .map!(|x| x + 1)
+                .destroy_or!(0);
+            let dwallet_network_encryption_key_dkg_message = dwallet_checkpoint::dwallet_mpc_network_dkg_output(
+                dwallet_network_encryption_key_id.to_bytes(),
+                x"",
+                true,
+                vector[0u32],
+                false,
+            );
+            let dwallet_checkpoint_message = dwallet_checkpoint::dwallet_checkpoint_message(
+                epoch,
+                next_checkpoint_sequence_number,
+                0,
+                vector[dwallet_network_encryption_key_dkg_message],
+            );
+            let dwallet_checkpoint_message_bytes = dwallet_checkpoint::dwallet_checkpoint_message_bytes(
+                dwallet_checkpoint_message,
+            );
+            let dwallet_checkpoint_message_intent = dwallet_checkpoint::dwallet_checkpoint_message_intent(
+                dwallet_checkpoint_message_bytes,
+                epoch,
+            );
+            let (signature, members_bitmap) = test_validator::sign(
+                validators,
+                dwallet_checkpoint_message_intent,
+            );
+            let reimbursement = dwallet_2pc_mpc_coordinator.process_checkpoint_message_by_quorum(
+                signature,
+                members_bitmap,
+                dwallet_checkpoint_message_bytes,
+                x"",
+                x"",
+                x"",
+                ctx,
+            );
 
-        coin::burn_for_testing(reimbursement);        
-    });
+            coin::burn_for_testing(reimbursement);
+        },
+    );
 }
 
 public fun perform_network_encryption_key_reconfiguration(
@@ -511,24 +589,54 @@ public fun perform_network_encryption_key_reconfiguration(
     let admin = runner.admin();
     let epoch = runner.epoch();
     runner.tx!(admin, |system, dwallet_2pc_mpc_coordinator, _clock, ctx| {
-        let dwallet_network_encryption_key_id = system.dwallet_2pc_mpc_coordinator_network_encryption_key_ids()[0];
+        let dwallet_network_encryption_key_id = system.dwallet_2pc_mpc_coordinator_network_encryption_key_ids()[
+            0,
+        ];
 
-        let next_checkpoint_sequence_number = dwallet_2pc_mpc_coordinator.last_processed_checkpoint_sequence_number().map!(|x| x + 1).destroy_or!(0);
-        let dwallet_network_encryption_key_reconfiguration_message = dwallet_checkpoint::dwallet_mpc_network_reconfiguration_output(dwallet_network_encryption_key_id.to_bytes(), x"", true, vector[0u32], false);
-        let dwallet_checkpoint_message = dwallet_checkpoint::dwallet_checkpoint_message(epoch, next_checkpoint_sequence_number, 0, vector[dwallet_network_encryption_key_reconfiguration_message]);
-        let dwallet_checkpoint_message_bytes = dwallet_checkpoint::dwallet_checkpoint_message_bytes(dwallet_checkpoint_message);
-        let dwallet_checkpoint_message_intent = dwallet_checkpoint::dwallet_checkpoint_message_intent(dwallet_checkpoint_message_bytes, epoch);
-        let (signature, members_bitmap) = test_validator::sign(validators, dwallet_checkpoint_message_intent);
+        let next_checkpoint_sequence_number = dwallet_2pc_mpc_coordinator
+            .last_processed_checkpoint_sequence_number()
+            .map!(|x| x + 1)
+            .destroy_or!(0);
+        let dwallet_network_encryption_key_reconfiguration_message = dwallet_checkpoint::dwallet_mpc_network_reconfiguration_output(
+            dwallet_network_encryption_key_id.to_bytes(),
+            x"",
+            true,
+            vector[0u32],
+            false,
+        );
+        let dwallet_checkpoint_message = dwallet_checkpoint::dwallet_checkpoint_message(
+            epoch,
+            next_checkpoint_sequence_number,
+            0,
+            vector[dwallet_network_encryption_key_reconfiguration_message],
+        );
+        let dwallet_checkpoint_message_bytes = dwallet_checkpoint::dwallet_checkpoint_message_bytes(
+            dwallet_checkpoint_message,
+        );
+        let dwallet_checkpoint_message_intent = dwallet_checkpoint::dwallet_checkpoint_message_intent(
+            dwallet_checkpoint_message_bytes,
+            epoch,
+        );
+        let (signature, members_bitmap) = test_validator::sign(
+            validators,
+            dwallet_checkpoint_message_intent,
+        );
 
-        let reimbursement = dwallet_2pc_mpc_coordinator.process_checkpoint_message_by_quorum(signature, members_bitmap, dwallet_checkpoint_message_bytes, x"", x"", x"", ctx);
+        let reimbursement = dwallet_2pc_mpc_coordinator.process_checkpoint_message_by_quorum(
+            signature,
+            members_bitmap,
+            dwallet_checkpoint_message_bytes,
+            x"",
+            x"",
+            x"",
+            ctx,
+        );
 
-        coin::burn_for_testing(reimbursement);    
+        coin::burn_for_testing(reimbursement);
     });
 }
 
-public fun perform_default_pricing_calculation_votes(
-    runner: &mut TestRunner,
-) {
+public fun perform_default_pricing_calculation_votes(runner: &mut TestRunner) {
     let admin = runner.admin();
     runner.tx!(admin, |_system, dwallet_2pc_mpc_coordinator, _clock, _ctx| {
         dwallet_2pc_mpc_coordinator.calculate_pricing_votes(0, option::none(), 0);
@@ -549,7 +657,9 @@ public fun perform_mid_epoch_reconfiguration(
     increment_timestamp_ms: Option<u64>,
 ) {
     let admin = runner.admin();
-    runner.increment_timestamp_ms(increment_timestamp_ms.destroy_or!(DEFAULT_MID_CONFIGURATION_DELTA_MS));
+    runner.increment_timestamp_ms(increment_timestamp_ms.destroy_or!(
+        DEFAULT_MID_CONFIGURATION_DELTA_MS,
+    ));
     runner.tx!(admin, |system, dwallet_2pc_mpc_coordinator, clock, ctx| {
         system.request_reconfig_mid_epoch(dwallet_2pc_mpc_coordinator, clock, ctx);
     });
@@ -558,12 +668,11 @@ public fun perform_mid_epoch_reconfiguration(
     runner.perform_default_pricing_calculation_votes();
 }
 
-public fun perform_advance_epoch(
-    runner: &mut TestRunner,
-    increment_timestamp_ms: Option<u64>,
-) {
+public fun perform_advance_epoch(runner: &mut TestRunner, increment_timestamp_ms: Option<u64>) {
     let admin = runner.admin();
-    runner.increment_timestamp_ms(increment_timestamp_ms.destroy_or!(DEFAULT_EPOCH_DURATION_MS - DEFAULT_MID_CONFIGURATION_DELTA_MS));
+    runner.increment_timestamp_ms(increment_timestamp_ms.destroy_or!(
+        DEFAULT_EPOCH_DURATION_MS - DEFAULT_MID_CONFIGURATION_DELTA_MS,
+    ));
     runner.tx!(admin, |system, dwallet_2pc_mpc_coordinator, clock, ctx| {
         system.request_lock_epoch_sessions(dwallet_2pc_mpc_coordinator, clock);
         system.request_advance_epoch(dwallet_2pc_mpc_coordinator, clock, ctx);
@@ -580,55 +689,82 @@ public fun assert_pricing_values_for_default_protocols(
     assert_eq!(protocol0_value.borrow().consensus_validation_ika(), expected_pricing_value);
     assert_eq!(protocol0_value.borrow().computation_ika(), expected_pricing_value);
     assert_eq!(protocol0_value.borrow().gas_fee_reimbursement_sui(), expected_pricing_value);
-    assert_eq!(protocol0_value.borrow().gas_fee_reimbursement_sui_for_system_calls(), expected_pricing_value);
+    assert_eq!(
+        protocol0_value.borrow().gas_fee_reimbursement_sui_for_system_calls(),
+        expected_pricing_value,
+    );
 
     let protocol1_value = current_pricing.try_get_dwallet_pricing_value(0, option::none(), 1);
     assert_eq!(protocol1_value.borrow().consensus_validation_ika(), expected_pricing_value);
     assert_eq!(protocol1_value.borrow().computation_ika(), expected_pricing_value);
     assert_eq!(protocol1_value.borrow().gas_fee_reimbursement_sui(), expected_pricing_value);
-    assert_eq!(protocol1_value.borrow().gas_fee_reimbursement_sui_for_system_calls(), expected_pricing_value);
+    assert_eq!(
+        protocol1_value.borrow().gas_fee_reimbursement_sui_for_system_calls(),
+        expected_pricing_value,
+    );
 
     let protocol2_value = current_pricing.try_get_dwallet_pricing_value(0, option::none(), 2);
     assert_eq!(protocol2_value.borrow().consensus_validation_ika(), expected_pricing_value);
     assert_eq!(protocol2_value.borrow().computation_ika(), expected_pricing_value);
     assert_eq!(protocol2_value.borrow().gas_fee_reimbursement_sui(), expected_pricing_value);
-    assert_eq!(protocol2_value.borrow().gas_fee_reimbursement_sui_for_system_calls(), expected_pricing_value);
+    assert_eq!(
+        protocol2_value.borrow().gas_fee_reimbursement_sui_for_system_calls(),
+        expected_pricing_value,
+    );
 
     let protocol3_value = current_pricing.try_get_dwallet_pricing_value(0, option::none(), 3);
     assert_eq!(protocol3_value.borrow().consensus_validation_ika(), expected_pricing_value);
     assert_eq!(protocol3_value.borrow().computation_ika(), expected_pricing_value);
     assert_eq!(protocol3_value.borrow().gas_fee_reimbursement_sui(), expected_pricing_value);
-    assert_eq!(protocol3_value.borrow().gas_fee_reimbursement_sui_for_system_calls(), expected_pricing_value);
+    assert_eq!(
+        protocol3_value.borrow().gas_fee_reimbursement_sui_for_system_calls(),
+        expected_pricing_value,
+    );
 
     let protocol4_value = current_pricing.try_get_dwallet_pricing_value(0, option::none(), 4);
     assert_eq!(protocol4_value.borrow().consensus_validation_ika(), expected_pricing_value);
     assert_eq!(protocol4_value.borrow().computation_ika(), expected_pricing_value);
     assert_eq!(protocol4_value.borrow().gas_fee_reimbursement_sui(), expected_pricing_value);
-    assert_eq!(protocol4_value.borrow().gas_fee_reimbursement_sui_for_system_calls(), expected_pricing_value);
+    assert_eq!(
+        protocol4_value.borrow().gas_fee_reimbursement_sui_for_system_calls(),
+        expected_pricing_value,
+    );
 
     let protocol5_value = current_pricing.try_get_dwallet_pricing_value(0, option::some(0), 5);
     assert_eq!(protocol5_value.borrow().consensus_validation_ika(), expected_pricing_value);
     assert_eq!(protocol5_value.borrow().computation_ika(), expected_pricing_value);
     assert_eq!(protocol5_value.borrow().gas_fee_reimbursement_sui(), expected_pricing_value);
-    assert_eq!(protocol5_value.borrow().gas_fee_reimbursement_sui_for_system_calls(), expected_pricing_value);
+    assert_eq!(
+        protocol5_value.borrow().gas_fee_reimbursement_sui_for_system_calls(),
+        expected_pricing_value,
+    );
 
     let protocol6_value = current_pricing.try_get_dwallet_pricing_value(0, option::some(0), 6);
     assert_eq!(protocol6_value.borrow().consensus_validation_ika(), expected_pricing_value);
     assert_eq!(protocol6_value.borrow().computation_ika(), expected_pricing_value);
     assert_eq!(protocol6_value.borrow().gas_fee_reimbursement_sui(), expected_pricing_value);
-    assert_eq!(protocol6_value.borrow().gas_fee_reimbursement_sui_for_system_calls(), expected_pricing_value);
+    assert_eq!(
+        protocol6_value.borrow().gas_fee_reimbursement_sui_for_system_calls(),
+        expected_pricing_value,
+    );
 
     let protocol7_value = current_pricing.try_get_dwallet_pricing_value(0, option::some(0), 7);
     assert_eq!(protocol7_value.borrow().consensus_validation_ika(), expected_pricing_value);
     assert_eq!(protocol7_value.borrow().computation_ika(), expected_pricing_value);
     assert_eq!(protocol7_value.borrow().gas_fee_reimbursement_sui(), expected_pricing_value);
-    assert_eq!(protocol7_value.borrow().gas_fee_reimbursement_sui_for_system_calls(), expected_pricing_value);
+    assert_eq!(
+        protocol7_value.borrow().gas_fee_reimbursement_sui_for_system_calls(),
+        expected_pricing_value,
+    );
 
     let protocol8_value = current_pricing.try_get_dwallet_pricing_value(0, option::some(0), 8);
     assert_eq!(protocol8_value.borrow().consensus_validation_ika(), expected_pricing_value);
     assert_eq!(protocol8_value.borrow().computation_ika(), expected_pricing_value);
     assert_eq!(protocol8_value.borrow().gas_fee_reimbursement_sui(), expected_pricing_value);
-    assert_eq!(protocol8_value.borrow().gas_fee_reimbursement_sui_for_system_calls(), expected_pricing_value);
+    assert_eq!(
+        protocol8_value.borrow().gas_fee_reimbursement_sui_for_system_calls(),
+        expected_pricing_value,
+    );
 }
 
 #[allow(lint(self_transfer))]
@@ -639,23 +775,64 @@ public fun perform_dwallet_dkg_first_round(
 ) {
     let epoch = runner.epoch();
     runner.tx!(sender, |system, dwallet_2pc_mpc_coordinator, _clock, ctx| {
-        let dwallet_network_encryption_key_id = system.dwallet_2pc_mpc_coordinator_network_encryption_key_ids()[0];
+        let dwallet_network_encryption_key_id = system.dwallet_2pc_mpc_coordinator_network_encryption_key_ids()[
+            0,
+        ];
         let mut payment_ika = ika_test_utils::mint_ika(1_000, ctx);
         let mut payment_sui = ika_test_utils::mint_sui(1_000, ctx);
-        let session_identifier = dwallet_2pc_mpc_coordinator.register_session_identifier(ctx.fresh_object_address().to_bytes(), ctx);
-        let dwallet_cap = dwallet_2pc_mpc_coordinator.request_dwallet_dkg_first_round(dwallet_network_encryption_key_id, 0, session_identifier, &mut payment_ika, &mut payment_sui, ctx);
+        let session_identifier = dwallet_2pc_mpc_coordinator.register_session_identifier(
+            ctx.fresh_object_address().to_bytes(),
+            ctx,
+        );
+        let dwallet_cap = dwallet_2pc_mpc_coordinator.request_dwallet_dkg_first_round(
+            dwallet_network_encryption_key_id,
+            0,
+            session_identifier,
+            &mut payment_ika,
+            &mut payment_sui,
+            ctx,
+        );
 
-        let next_checkpoint_sequence_number = dwallet_2pc_mpc_coordinator.last_processed_checkpoint_sequence_number().map!(|x| x + 1).destroy_or!(0);
+        let next_checkpoint_sequence_number = dwallet_2pc_mpc_coordinator
+            .last_processed_checkpoint_sequence_number()
+            .map!(|x| x + 1)
+            .destroy_or!(0);
         let last_session_sequence_number = dwallet_2pc_mpc_coordinator.last_session_sequence_number();
-        let dwallet_network_encryption_key_dkg_message = dwallet_checkpoint::dkg_first_round_output(dwallet_cap.dwallet_id().to_bytes(), x"", false, last_session_sequence_number);
-        let dwallet_checkpoint_message = dwallet_checkpoint::dwallet_checkpoint_message(epoch, next_checkpoint_sequence_number, 0, vector[dwallet_network_encryption_key_dkg_message]);
-        let dwallet_checkpoint_message_bytes = dwallet_checkpoint::dwallet_checkpoint_message_bytes(dwallet_checkpoint_message);
-        let dwallet_checkpoint_message_intent = dwallet_checkpoint::dwallet_checkpoint_message_intent(dwallet_checkpoint_message_bytes, epoch);
-        let (signature, members_bitmap) = test_validator::sign(validators, dwallet_checkpoint_message_intent);
+        let dwallet_network_encryption_key_dkg_message = dwallet_checkpoint::dkg_first_round_output(
+            dwallet_cap.dwallet_id().to_bytes(),
+            x"",
+            false,
+            last_session_sequence_number,
+        );
+        let dwallet_checkpoint_message = dwallet_checkpoint::dwallet_checkpoint_message(
+            epoch,
+            next_checkpoint_sequence_number,
+            0,
+            vector[dwallet_network_encryption_key_dkg_message],
+        );
+        let dwallet_checkpoint_message_bytes = dwallet_checkpoint::dwallet_checkpoint_message_bytes(
+            dwallet_checkpoint_message,
+        );
+        let dwallet_checkpoint_message_intent = dwallet_checkpoint::dwallet_checkpoint_message_intent(
+            dwallet_checkpoint_message_bytes,
+            epoch,
+        );
+        let (signature, members_bitmap) = test_validator::sign(
+            validators,
+            dwallet_checkpoint_message_intent,
+        );
 
-        let reimbursement = dwallet_2pc_mpc_coordinator.process_checkpoint_message_by_quorum(signature, members_bitmap, dwallet_checkpoint_message_bytes, x"", x"", x"", ctx);
+        let reimbursement = dwallet_2pc_mpc_coordinator.process_checkpoint_message_by_quorum(
+            signature,
+            members_bitmap,
+            dwallet_checkpoint_message_bytes,
+            x"",
+            x"",
+            x"",
+            ctx,
+        );
 
-        coin::burn_for_testing(reimbursement);    
+        coin::burn_for_testing(reimbursement);
 
         transfer::public_transfer(dwallet_cap, ctx.sender());
         transfer::public_transfer(payment_ika, ctx.sender());

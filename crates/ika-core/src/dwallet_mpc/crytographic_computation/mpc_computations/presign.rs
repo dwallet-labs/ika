@@ -155,10 +155,10 @@ impl PresignPublicInputByProtocol {
             VersionedDwalletDKGPublicOutput::V1(dkg_output) => {
                 Self::try_new_v1(versioned_network_encryption_key_public_data, dkg_output)
             }
-            VersionedDwalletDKGPublicOutput::V2(output) => Self::try_new_v2(
+            VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => Self::try_new_v2(
                 protocol,
                 versioned_network_encryption_key_public_data,
-                Some(output),
+                Some(dkg_output),
             ),
         }
     }

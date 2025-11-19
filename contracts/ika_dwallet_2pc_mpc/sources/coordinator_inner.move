@@ -29,30 +29,34 @@
 module ika_dwallet_2pc_mpc::coordinator_inner;
 
 use ika::ika::IKA;
-use ika_common::address;
-use ika_common::advance_epoch_approver::AdvanceEpochApprover;
-use ika_common::bls_committee::{Self, BlsCommittee};
-use ika_common::protocol_cap::VerifiedProtocolCap;
-use ika_common::system_current_status_info::SystemCurrentStatusInfo;
-use ika_common::validator_cap::VerifiedValidatorOperationCap;
-use ika_dwallet_2pc_mpc::pricing::{PricingInfo, PricingInfoValue};
-use ika_dwallet_2pc_mpc::pricing_and_fee_manager::{Self, PricingAndFeeManager};
-use ika_dwallet_2pc_mpc::sessions_manager::{Self, SessionsManager, SessionIdentifier};
-use ika_dwallet_2pc_mpc::support_config::{Self, SupportConfig};
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::bcs;
-use sui::coin::Coin;
-use sui::ed25519::ed25519_verify;
-use sui::event;
-use sui::object_table::{Self, ObjectTable};
-use sui::sui::SUI;
-use sui::table::Table;
-use sui::table_vec::{Self, TableVec};
-use sui::vec_map::VecMap;
-use sui::dynamic_field;
-use ika_dwallet_2pc_mpc::support_config::GlobalPresignConfig;
-use sui::vec_map;
+use ika_common::{
+    address,
+    advance_epoch_approver::AdvanceEpochApprover,
+    bls_committee::{Self, BlsCommittee},
+    protocol_cap::VerifiedProtocolCap,
+    system_current_status_info::SystemCurrentStatusInfo,
+    validator_cap::VerifiedValidatorOperationCap
+};
+use ika_dwallet_2pc_mpc::{
+    pricing::{PricingInfo, PricingInfoValue},
+    pricing_and_fee_manager::{Self, PricingAndFeeManager},
+    sessions_manager::{Self, SessionsManager, SessionIdentifier},
+    support_config::{Self, SupportConfig, GlobalPresignConfig}
+};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    bcs,
+    coin::Coin,
+    dynamic_field,
+    ed25519::ed25519_verify,
+    event,
+    object_table::{Self, ObjectTable},
+    sui::SUI,
+    table::Table,
+    table_vec::{Self, TableVec},
+    vec_map::{Self, VecMap}
+};
 
 // === Constants ===
 
@@ -60,7 +64,6 @@ use sui::vec_map;
 const CHECKPOINT_MESSAGE_INTENT: vector<u8> = vector[1, 0, 0];
 /// Name of the global presign config in the extra fields
 const GLOBAL_PRESIGN_CONFIG_NAME_STR: vector<u8> = b"global_presign_config";
-
 
 // Protocol flags for different MPC operations
 // Used for pricing configuration and protocol identification
@@ -1037,8 +1040,6 @@ public struct RejectedDWalletDKGSecondRoundEvent has copy, drop, store {
     /// Public output that was being processed when rejection occurred
     public_output: vector<u8>,
 }
-
-
 
 // === DWallet DKG Events ===
 
@@ -2247,10 +2248,7 @@ public(package) fun advance_epoch(
     advance_epoch_approver.approve_advance_epoch_by_witness(dwallet_coordinator_witness(), balance);
 }
 
-public(package) fun has_dwallet(
-    self: &DWalletCoordinatorInner,
-    dwallet_id: ID,
-): bool {
+public(package) fun has_dwallet(self: &DWalletCoordinatorInner, dwallet_id: ID): bool {
     self.dwallets.contains(dwallet_id)
 }
 
@@ -2617,7 +2615,10 @@ public(package) fun sign_during_dkg_request(
 
     let presign_id = id.to_inner();
 
-    let dwallet_network_encryption_key_id = dynamic_field::remove(&mut id, b"dwallet_network_encryption_key_id");
+    let dwallet_network_encryption_key_id = dynamic_field::remove(
+        &mut id,
+        b"dwallet_network_encryption_key_id",
+    );
     id.delete();
 
     // Sanity checks: check that the IDs of the capability and presign match, and that they point to this dWallet.
@@ -2750,7 +2751,7 @@ public(package) fun request_dwallet_dkg(
     dwallet
         .encrypted_user_secret_key_shares
         .add(encrypted_user_secret_key_share_id, encrypted_user_share);
-    
+
     (dwallet_cap, sign_id)
 }
 
@@ -2809,7 +2810,11 @@ public fun request_dwallet_dkg_impl(
     let pricing_value = if (sign_during_dkg_request.is_some()) {
         self
             .pricing_and_fee_manager
-            .get_pricing_value_for_protocol(curve, option::some(sign_during_dkg_request.borrow().signature_algorithm), DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG)
+            .get_pricing_value_for_protocol(
+                curve,
+                option::some(sign_during_dkg_request.borrow().signature_algorithm),
+                DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG,
+            )
     } else {
         self
             .pricing_and_fee_manager
@@ -2848,7 +2853,6 @@ public fun request_dwallet_dkg_impl(
     };
 
     let sign_during_dkg_request = sign_during_dkg_request.map!(|sign_during_dkg_request| {
-
         let id = object::new(ctx);
         let sign_id = id.to_inner();
         dwallet
@@ -2923,7 +2927,7 @@ public fun request_dwallet_dkg_impl(
         .join_gas_fee_reimbursement_sui_system_call_balance(
             gas_fee_reimbursement_sui_for_system_calls,
         );
-    
+
     (dwallet_cap, sign_id)
 }
 
@@ -2974,20 +2978,18 @@ public(package) fun respond_dwallet_dkg(
             DWalletState::AwaitingNetworkDKGVerification => {
                 if (rejected) {
                     DWalletState::NetworkRejectedDKGVerification
-                } else if(dwallet.public_user_secret_key_share.is_some()) {
+                } else if (dwallet.public_user_secret_key_share.is_some()) {
                     DWalletState::Active {
                         public_output,
                     }
                 } else {
-                    if(encrypted_user_secret_key_share_id.is_some()) {
+                    if (encrypted_user_secret_key_share_id.is_some()) {
                         let encrypted_user_share = dwallet
                             .encrypted_user_secret_key_shares
                             .borrow_mut(*encrypted_user_secret_key_share_id.borrow());
                         encrypted_user_share.state =
                             EncryptedUserSecretKeyShareState::NetworkVerificationCompleted;
-                        
                     };
-                    
 
                     DWalletState::AwaitingKeyHolderSignature {
                         public_output,
@@ -2997,7 +2999,7 @@ public(package) fun respond_dwallet_dkg(
             _ => abort EWrongState,
         };
 
-    if(sign_id.is_some()) {
+    if (sign_id.is_some()) {
         let sign_id = *sign_id.borrow();
         let sign = dwallet.sign_sessions.borrow_mut(sign_id);
 
@@ -3097,8 +3099,6 @@ public(package) fun request_re_encrypt_user_share_for(
             },
             ctx,
         );
-
-
 
     self
         .pricing_and_fee_manager
@@ -3566,7 +3566,7 @@ public(package) fun request_presign(
 
     let global_presign_config = self.global_presign_config();
 
-    let is_global_presign = if(is_imported_key_dwallet) {
+    let is_global_presign = if (is_imported_key_dwallet) {
         global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm)
     } else {
         global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm)
@@ -3682,11 +3682,16 @@ public(package) fun request_global_presign(
     self.support_config.validate_curve_and_signature_algorithm(curve, signature_algorithm);
     self.validate_network_encryption_key_supports_curve(dwallet_network_encryption_key_id, curve);
     let global_presign_config = self.global_presign_config();
-    let is_global_presign = global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm) || global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm);
+    let is_global_presign =
+        global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm) || global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm);
     assert!(is_global_presign, EGlobalPresignNotAllowed);
 
     let mut id = object::new(ctx);
-    dynamic_field::add(&mut id, b"dwallet_network_encryption_key_id", dwallet_network_encryption_key_id);
+    dynamic_field::add(
+        &mut id,
+        b"dwallet_network_encryption_key_id",
+        dwallet_network_encryption_key_id,
+    );
 
     let presign_id = id.to_inner();
     let cap = UnverifiedPresignCap {
@@ -3949,9 +3954,15 @@ fun validate_and_initiate_sign(
         _ => abort EInvalidPresign,
     };
 
-    if(presign_dwallet_id.is_none()) {
-        let dwallet_network_encryption_key_id = dynamic_field::remove(&mut id, b"dwallet_network_encryption_key_id");
-        assert!(dwallet_network_encryption_key_id == dwallet.dwallet_network_encryption_key_id, EInvalidPresign);
+    if (presign_dwallet_id.is_none()) {
+        let dwallet_network_encryption_key_id = dynamic_field::remove(
+            &mut id,
+            b"dwallet_network_encryption_key_id",
+        );
+        assert!(
+            dwallet_network_encryption_key_id == dwallet.dwallet_network_encryption_key_id,
+            EInvalidPresign,
+        );
     };
     let presign_id = id.to_inner();
     id.delete();
@@ -3972,14 +3983,14 @@ fun validate_and_initiate_sign(
 
     let is_imported_key_dwallet = dwallet.is_imported_key_dwallet;
     let global_presign_config = self.global_presign_config();
-    let is_global_presign = if(is_imported_key_dwallet) {
+    let is_global_presign = if (is_imported_key_dwallet) {
         global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm)
     } else {
         global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm)
     };
 
     // Check that the presign is global, or that it belongs to this dWallet.
-    if(is_global_presign) {
+    if (is_global_presign) {
         assert!(presign_dwallet_id.is_none(), EOnlyGlobalPresignAllowed);
     } else {
         assert!(presign_dwallet_id.is_some_and!(|id| id == dwallet_id), EGlobalPresignNotAllowed);
@@ -4176,9 +4187,13 @@ public(package) fun request_future_sign(
     let presign_obj = self.presign_sessions.borrow(presign_cap.presign_id);
     assert!(presign_obj.curve == curve, EDWalletMismatch);
 
-    if(presign_obj.dwallet_id.is_none()) {
-        let presign_dwallet_network_encryption_key_id = *dynamic_field::borrow(&presign_obj.id, b"dwallet_network_encryption_key_id");
-        assert!(dwallet_network_encryption_key_id == presign_dwallet_network_encryption_key_id, EInvalidPresign);
+    if (presign_obj.dwallet_id.is_none()) {
+        let presign_dwallet_network_encryption_key_id =
+            *dynamic_field::borrow(&presign_obj.id, b"dwallet_network_encryption_key_id");
+        assert!(
+            dwallet_network_encryption_key_id == presign_dwallet_network_encryption_key_id,
+            EInvalidPresign,
+        );
     };
 
     let presign = match (presign_obj.state) {
@@ -4197,19 +4212,21 @@ public(package) fun request_future_sign(
 
     let signature_algorithm = presign_obj.signature_algorithm;
 
-    
     let global_presign_config = self.global_presign_config();
-    let is_global_presign = if(is_imported_key_dwallet) {
+    let is_global_presign = if (is_imported_key_dwallet) {
         global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm)
     } else {
         global_presign_config.is_global_presign_for_dkg(curve, signature_algorithm)
     };
 
     // Check that the presign is global, or that it belongs to this dWallet.
-    if(is_global_presign) {
+    if (is_global_presign) {
         assert!(presign_cap.dwallet_id.is_none(), EOnlyGlobalPresignAllowed);
     } else {
-        assert!(presign_cap.dwallet_id.is_some_and!(|id| id == dwallet_id), EGlobalPresignNotAllowed);
+        assert!(
+            presign_cap.dwallet_id.is_some_and!(|id| id == dwallet_id),
+            EGlobalPresignNotAllowed,
+        );
     };
 
     self
@@ -4891,7 +4908,6 @@ fun set_gas_fee_reimbursement_sui_system_call_value(
     });
 }
 
-
 /// This function is used to process a checkpoint message by cap.
 ///
 /// ### Parameters
@@ -4918,7 +4934,9 @@ public(package) fun set_gas_fee_reimbursement_sui_system_call_value_by_cap(
     gas_fee_reimbursement_sui_system_call_value: u64,
     _: &VerifiedProtocolCap,
 ) {
-    self.set_gas_fee_reimbursement_sui_system_call_value(gas_fee_reimbursement_sui_system_call_value);
+    self.set_gas_fee_reimbursement_sui_system_call_value(
+        gas_fee_reimbursement_sui_system_call_value,
+    );
 }
 
 /// Sets the supported curves, signature algorithms and hash schemes, and the default pricing.
@@ -5028,11 +5046,19 @@ public(package) fun set_global_presign_config(
     curve_to_signature_algorithms_for_imported_key: VecMap<u32, vector<u32>>,
     _: &VerifiedProtocolCap,
 ) {
-    if(self.extra_fields.contains(GLOBAL_PRESIGN_CONFIG_NAME_STR)) {
-        let global_presign_config: &mut GlobalPresignConfig = self.extra_fields.borrow_mut(GLOBAL_PRESIGN_CONFIG_NAME_STR);
-        global_presign_config.set_global_presign_config(curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key);
+    if (self.extra_fields.contains(GLOBAL_PRESIGN_CONFIG_NAME_STR)) {
+        let global_presign_config: &mut GlobalPresignConfig = self
+            .extra_fields
+            .borrow_mut(GLOBAL_PRESIGN_CONFIG_NAME_STR);
+        global_presign_config.set_global_presign_config(
+            curve_to_signature_algorithms_for_dkg,
+            curve_to_signature_algorithms_for_imported_key,
+        );
     } else {
-        let global_presign_config = support_config::create_global_presign_config(curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key);
+        let global_presign_config = support_config::create_global_presign_config(
+            curve_to_signature_algorithms_for_dkg,
+            curve_to_signature_algorithms_for_imported_key,
+        );
         self.extra_fields.add(GLOBAL_PRESIGN_CONFIG_NAME_STR, global_presign_config);
     };
 }
@@ -5105,11 +5131,14 @@ fun global_presign_config(self: &DWalletCoordinatorInner): &GlobalPresignConfig 
     self.extra_fields.borrow(GLOBAL_PRESIGN_CONFIG_NAME_STR)
 }
 
-public(package) fun migrate(
-    self: &mut DWalletCoordinatorInner,
-) {
-    if(!self.extra_fields.contains(GLOBAL_PRESIGN_CONFIG_NAME_STR)) {
-        self.extra_fields.add(GLOBAL_PRESIGN_CONFIG_NAME_STR, support_config::create_global_presign_config(vec_map::empty(), vec_map::empty()));
+public(package) fun migrate(self: &mut DWalletCoordinatorInner) {
+    if (!self.extra_fields.contains(GLOBAL_PRESIGN_CONFIG_NAME_STR)) {
+        self
+            .extra_fields
+            .add(
+                GLOBAL_PRESIGN_CONFIG_NAME_STR,
+                support_config::create_global_presign_config(vec_map::empty(), vec_map::empty()),
+            );
     };
 }
 
@@ -5231,10 +5260,7 @@ public fun validate_active_and_get_public_output(self: &DWallet): &vector<u8> {
 ///
 /// ### Returns
 /// True if the `SignSession` object exists, false otherwise
-public fun has_sign_session(
-    self: &DWallet,
-    sign_id: ID,
-): bool {
+public fun has_sign_session(self: &DWallet, sign_id: ID): bool {
     self.sign_sessions.contains(sign_id)
 }
 
@@ -5246,10 +5272,7 @@ public fun has_sign_session(
 ///
 /// ### Returns
 /// Reference to the `SignSession` object
-public fun get_sign_session(
-    self: &DWallet,
-    sign_id: ID,
-): &SignSession {
+public fun get_sign_session(self: &DWallet, sign_id: ID): &SignSession {
     self.sign_sessions.borrow(sign_id)
 }
 
@@ -5260,9 +5283,7 @@ public fun get_sign_session(
 ///
 /// ### Returns
 /// Option of the signature of the `SignSession` object
-public fun get_sign_signature(
-    self: &SignSession,
-): Option<vector<u8>> {
+public fun get_sign_signature(self: &SignSession): Option<vector<u8>> {
     match (&self.state) {
         SignState::Completed {
             signature,

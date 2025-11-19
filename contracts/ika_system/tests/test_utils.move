@@ -4,26 +4,26 @@
 /// Common test utilities for the tests.
 module ika_system::test_utils;
 
+use ika::ika::IKA;
+use ika_system::{
+    bls_committee,
+    dwallet_pricing::{Self, DWalletPricing},
+    ika_test_context::{Self, IkaTestContext},
+    mpc_data,
+    system_inner::SystemInner,
+    validator::{Self, Validator},
+    validator_cap::{ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap},
+    validator_info,
+    validator_metadata::{Self, ValidatorMetadata}
+};
 use std::string::String;
 use sui::{
+    address::from_u256,
     balance::{Self, Balance},
     bls12381::{Self, bls12381_min_pk_verify, g1_to_uncompressed_g1},
     coin::{Self, Coin, TreasuryCap},
-    sui::SUI,
+    sui::SUI
 };
-use ika::ika::IKA;
-use ika_system::{
-    ika_test_context::{Self, IkaTestContext},
-    bls_committee,
-    validator_metadata::{Self, ValidatorMetadata},
-    system_inner::SystemInner,
-    validator::{Self, Validator},
-    validator_info,
-    mpc_data,
-    validator_cap::{ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap},
-    dwallet_pricing::{Self, DWalletPricing},
-};
-use sui::address::from_u256;
 
 /// Debug macro for pretty printing values.
 /// The value must have a `.to_string()` method.
@@ -51,7 +51,6 @@ public macro fun assert_eq<$T: copy>($left: $T, $right: $T) {
 }
 
 // === Coins and Context ===
-
 
 public fun itctx(epoch: u64, committee_selected: bool): IkaTestContext {
     ika_test_context::new(epoch, committee_selected, bls_committee::empty())
@@ -150,7 +149,6 @@ public struct ValidatorBuilder has copy, drop {
     consensus_address: Option<String>,
     commission_rate: Option<u16>,
     metadata: Option<ValidatorMetadata>,
-
 }
 
 /// Test Utility: Creates a new `ValidatorBuilder` with default values.
@@ -182,34 +180,44 @@ public fun validator(): ValidatorBuilder {
     }
 }
 
-
 /// Sets the name for the validator.
 public fun name(mut self: ValidatorBuilder, name: String): ValidatorBuilder {
     self.name.fill(name);
     self
 }
 
-
 /// Sets the protocol key for the validator.
-public fun protocol_key_bytes(mut self: ValidatorBuilder, protocol_key_bytes: vector<u8>): ValidatorBuilder {
+public fun protocol_key_bytes(
+    mut self: ValidatorBuilder,
+    protocol_key_bytes: vector<u8>,
+): ValidatorBuilder {
     self.protocol_key_bytes.fill(protocol_key_bytes);
     self
 }
 
 /// Sets the network public key for the validator.
-public fun network_pubkey_bytes(mut self: ValidatorBuilder, network_pubkey_bytes: vector<u8>): ValidatorBuilder {
+public fun network_pubkey_bytes(
+    mut self: ValidatorBuilder,
+    network_pubkey_bytes: vector<u8>,
+): ValidatorBuilder {
     self.network_pubkey_bytes.fill(network_pubkey_bytes);
     self
 }
 
 /// Sets the consensus public key for the validator.
-public fun consensus_pubkey_bytes(mut self: ValidatorBuilder, consensus_pubkey_bytes: vector<u8>): ValidatorBuilder {
+public fun consensus_pubkey_bytes(
+    mut self: ValidatorBuilder,
+    consensus_pubkey_bytes: vector<u8>,
+): ValidatorBuilder {
     self.consensus_pubkey_bytes.fill(consensus_pubkey_bytes);
     self
 }
 
 /// Sets the MPC public data for the validator.
-public fun mpc_data_bytes(mut self: ValidatorBuilder, mpc_data_bytes: vector<u8>): ValidatorBuilder {
+public fun mpc_data_bytes(
+    mut self: ValidatorBuilder,
+    mpc_data_bytes: vector<u8>,
+): ValidatorBuilder {
     self.mpc_data_bytes.fill(mpc_data_bytes);
     self
 }
@@ -227,7 +235,10 @@ public fun p2p_address(mut self: ValidatorBuilder, p2p_address: String): Validat
 }
 
 /// Sets the consensus address for the validator.
-public fun consensus_address(mut self: ValidatorBuilder, consensus_address: String): ValidatorBuilder {
+public fun consensus_address(
+    mut self: ValidatorBuilder,
+    consensus_address: String,
+): ValidatorBuilder {
     self.consensus_address.fill(consensus_address);
     self
 }
@@ -245,7 +256,11 @@ public fun commission_rate(mut self: ValidatorBuilder, commission_rate: u16): Va
 }
 
 /// Builds a validator with the parameters set in the builder.
-public fun build(self: ValidatorBuilder, itctx: &IkaTestContext, ctx: &mut TxContext): (Validator, ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap) {
+public fun build(
+    self: ValidatorBuilder,
+    itctx: &IkaTestContext,
+    ctx: &mut TxContext,
+): (Validator, ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap) {
     let ValidatorBuilder {
         name,
         protocol_key_bytes,
@@ -262,11 +277,17 @@ public fun build(self: ValidatorBuilder, itctx: &IkaTestContext, ctx: &mut TxCon
     let protocol_key_bytes = protocol_key_bytes.destroy_with_default(bls_sk_for_testing());
     let protocol_pubkey_bytes = bls_min_pk_from_sk(&protocol_key_bytes);
     let proof_of_possession_bytes = bls_min_pk_sign(
-        &validator_info::proof_of_possession_intent_bytes(itctx.epoch(), ctx.sender(), protocol_pubkey_bytes),
+        &validator_info::proof_of_possession_intent_bytes(
+            itctx.epoch(),
+            ctx.sender(),
+            protocol_pubkey_bytes,
+        ),
         &protocol_key_bytes,
     );
 
-    let mpc_data_bytes = mpc_data_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab");
+    let mpc_data_bytes = mpc_data_bytes.destroy_with_default(
+        x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab",
+    );
 
     let mut mpc_data = mpc_data::empty(ctx);
     mpc_data.add_public_key_and_proof(mpc_data_bytes, mpc_data_bytes);
@@ -275,8 +296,12 @@ public fun build(self: ValidatorBuilder, itctx: &IkaTestContext, ctx: &mut TxCon
         itctx.epoch(),
         name.destroy_with_default(b"pool".to_string()),
         protocol_pubkey_bytes,
-        network_pubkey_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab"),
-        consensus_pubkey_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab"),
+        network_pubkey_bytes.destroy_with_default(
+            x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab",
+        ),
+        consensus_pubkey_bytes.destroy_with_default(
+            x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab",
+        ),
         mpc_data.finish(ctx),
         proof_of_possession_bytes,
         network_address.destroy_with_default(b"/ip4/127.0.0.1/tcp/8080/http".to_string()),
@@ -290,7 +315,11 @@ public fun build(self: ValidatorBuilder, itctx: &IkaTestContext, ctx: &mut TxCon
 
 /// Similar to `build` but registers the validator with the staking inner, using the
 /// same set of parameters.
-public fun register(self: ValidatorBuilder, inner: &mut SystemInner, ctx: &mut TxContext): (ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap) {
+public fun register(
+    self: ValidatorBuilder,
+    inner: &mut SystemInner,
+    ctx: &mut TxContext,
+): (ValidatorCap, ValidatorOperationCap, ValidatorCommissionCap) {
     let ValidatorBuilder {
         name,
         metadata,
@@ -306,11 +335,17 @@ public fun register(self: ValidatorBuilder, inner: &mut SystemInner, ctx: &mut T
     let protocol_key_bytes = protocol_key_bytes.destroy_with_default(bls_sk_for_testing());
     let protocol_pubkey_bytes = bls_min_pk_from_sk(&protocol_key_bytes);
     let proof_of_possession_bytes = bls_min_pk_sign(
-        &validator_info::proof_of_possession_intent_bytes(inner.epoch(), ctx.sender(), protocol_pubkey_bytes),
+        &validator_info::proof_of_possession_intent_bytes(
+            inner.epoch(),
+            ctx.sender(),
+            protocol_pubkey_bytes,
+        ),
         &protocol_key_bytes,
     );
 
-    let mpc_data_bytes = mpc_data_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab");
+    let mpc_data_bytes = mpc_data_bytes.destroy_with_default(
+        x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab",
+    );
 
     let mut mpc_data = mpc_data::empty(ctx);
     mpc_data.add_public_key_and_proof(mpc_data_bytes, mpc_data_bytes);
@@ -318,8 +353,12 @@ public fun register(self: ValidatorBuilder, inner: &mut SystemInner, ctx: &mut T
     inner.request_add_validator_candidate(
         name.destroy_with_default(b"pool".to_string()),
         protocol_pubkey_bytes,
-        network_pubkey_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab"),
-        consensus_pubkey_bytes.destroy_with_default(x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab"),
+        network_pubkey_bytes.destroy_with_default(
+            x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab",
+        ),
+        consensus_pubkey_bytes.destroy_with_default(
+            x"0e2b273530a00de66c9727c40f48be985da684286983f398ef7695b8a44677ab",
+        ),
         mpc_data.finish(ctx),
         proof_of_possession_bytes,
         network_address.destroy_with_default(b"/ip4/127.0.0.1/tcp/8080/http".to_string()),
@@ -432,11 +471,9 @@ public fun signers_to_bitmap(signers: &vector<u16>): vector<u8> {
 
 // === Pricing Helpers ===
 
-public fun create_pricing_for_default_protocols(
-    value: u64,
-): DWalletPricing {
+public fun create_pricing_for_default_protocols(value: u64): DWalletPricing {
     let mut pricing = dwallet_pricing::empty();
-    pricing.insert_or_update_dwallet_pricing(0, option::none(), 0, value, value, value,value);
+    pricing.insert_or_update_dwallet_pricing(0, option::none(), 0, value, value, value, value);
     pricing.insert_or_update_dwallet_pricing(0, option::none(), 1, value, value, value, value);
     pricing.insert_or_update_dwallet_pricing(0, option::none(), 2, value, value, value, value);
     pricing.insert_or_update_dwallet_pricing(0, option::none(), 3, value, value, value, value);

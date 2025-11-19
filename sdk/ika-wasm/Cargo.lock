@@ -33,16 +33,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b59d472eab27ade8d770dcb11da7201c11234bef9f82ce7aa517be028d462b"
 
 [[package]]
-name = "base58ck"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c8d66485a3a2ea485c1913c4572ce0256067a5377ac8c75c4960e1cda98605f"
-dependencies = [
- "bitcoin-internals",
- "bitcoin_hashes",
-]
-
-[[package]]
 name = "base64ct"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -56,60 +46,6 @@ checksum = "85b6598a2f5d564fb7855dc6b06fd1c38cff5a72bd8b863a4d021938497b440a"
 dependencies = [
  "serde",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "bech32"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d965446196e3b7decd44aa7ee49e31d630118f90ef12f97900f262eb915c951d"
-
-[[package]]
-name = "bitcoin"
-version = "0.32.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fda569d741b895131a88ee5589a467e73e9c4718e958ac9308e4f7dc44b6945"
-dependencies = [
- "base58ck",
- "bech32",
- "bitcoin-internals",
- "bitcoin-io",
- "bitcoin-units",
- "bitcoin_hashes",
- "hex-conservative",
- "hex_lit",
- "secp256k1",
-]
-
-[[package]]
-name = "bitcoin-internals"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30bdbe14aa07b06e6cfeffc529a1f099e5fbe249524f8125358604df99a4bed2"
-
-[[package]]
-name = "bitcoin-io"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b47c4ab7a93edb0c7198c5535ed9b52b63095f4e9b45279c6736cec4b856baf"
-
-[[package]]
-name = "bitcoin-units"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5285c8bcaa25876d07f37e3d30c303f2609179716e11d688f51e8f1fe70063e2"
-dependencies = [
- "bitcoin-internals",
-]
-
-[[package]]
-name = "bitcoin_hashes"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb18c03d0db0247e147a21a6faafd5a7eb851c743db062de72018b6b7e8e4d16"
-dependencies = [
- "bitcoin-io",
- "hex-conservative",
 ]
 
 [[package]]
@@ -149,16 +85,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
-name = "cc"
-version = "1.2.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5252b3d2648e5eedbc1a6f501e3c795e07025c1e93bbf8bbdd6eef7f447a6d54"
-dependencies = [
- "find-msvc-tools",
- "shlex",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -166,13 +92,13 @@ checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
 
 [[package]]
 name = "class_groups"
-version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
+version = "0.2.0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "commitment",
  "crypto-bigint",
  "crypto-primes",
- "group 0.1.0",
+ "group 0.2.0",
  "homomorphic_encryption",
  "itertools",
  "maurer",
@@ -188,11 +114,11 @@ dependencies = [
 
 [[package]]
 name = "commitment"
-version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
+version = "0.2.0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "crypto-bigint",
- "group 0.1.0",
+ "group 0.2.0",
  "merlin",
  "serde",
  "thiserror 2.0.12",
@@ -351,20 +277,18 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-centralized-party"
-version = "1.0.0"
+version = "1.1.5"
 dependencies = [
  "anyhow",
  "bcs",
- "bitcoin",
  "class_groups",
  "commitment",
  "console_log",
  "crypto-bigint",
  "dwallet-mpc-types",
  "getrandom 0.2.16",
- "group 0.1.0",
+ "group 0.2.0",
  "homomorphic_encryption",
- "k256",
  "log",
  "mpc",
  "rand_chacha",
@@ -379,12 +303,18 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-types"
-version = "1.0.0"
+version = "1.1.5"
 dependencies = [
+ "anyhow",
+ "bcs",
  "class_groups",
+ "crypto-bigint",
+ "curve25519-dalek 5.0.0-pre.1",
  "enum_dispatch",
- "group 0.1.0",
+ "group 0.2.0",
+ "k256",
  "lazy_static",
+ "p256",
  "schemars",
  "serde",
  "strum_macros",
@@ -394,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dwallet-mpc-centralized-party",
@@ -506,12 +436,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
 
 [[package]]
-name = "find-msvc-tools"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fd99930f64d146689264c637b5af2f0233a933bef0d8570e2526bf9e083192d"
-
-[[package]]
 name = "gcd"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -565,8 +489,8 @@ dependencies = [
 
 [[package]]
 name = "group"
-version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
+version = "0.2.0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "crypto-bigint",
  "curve25519-dalek 5.0.0-pre.1",
@@ -615,21 +539,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hex-conservative"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5313b072ce3c597065a808dbf612c4c8e8590bdbf8b579508bf7a762c5eae6cd"
-dependencies = [
- "arrayvec",
-]
-
-[[package]]
-name = "hex_lit"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3011d1213f159867b13cfd6ac92d2cd5f1345762c63be3554e84092d85a50bbd"
-
-[[package]]
 name = "hmac"
 version = "0.13.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -640,11 +549,11 @@ dependencies = [
 
 [[package]]
 name = "homomorphic_encryption"
-version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
+version = "0.2.0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "crypto-bigint",
- "group 0.1.0",
+ "group 0.2.0",
  "mpc",
  "serde",
  "thiserror 2.0.12",
@@ -747,12 +656,12 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "maurer"
-version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
+version = "0.2.0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "commitment",
  "crypto-bigint",
- "group 0.1.0",
+ "group 0.2.0",
  "homomorphic_encryption",
  "merlin",
  "mpc",
@@ -782,14 +691,14 @@ dependencies = [
 
 [[package]]
 name = "mpc"
-version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
+version = "0.2.0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "bcs",
  "commitment",
  "crypto-bigint",
  "gcd",
- "group 0.1.0",
+ "group 0.2.0",
  "itertools",
  "merlin",
  "rand",
@@ -907,13 +816,13 @@ dependencies = [
 
 [[package]]
 name = "proof"
-version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
+version = "0.2.0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "commitment",
  "crypto-bigint",
  "curve25519-dalek 5.0.0-pre.1",
- "group 0.1.0",
+ "group 0.2.0",
  "itertools",
  "merlin",
  "mpc",
@@ -1058,25 +967,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "secp256k1"
-version = "0.29.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
-dependencies = [
- "bitcoin_hashes",
- "secp256k1-sys",
-]
-
-[[package]]
-name = "secp256k1-sys"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4387882333d3aa8cb20530a17c69a3752e97837832f34f6dccc760e715001d9"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "semver"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1186,12 +1076,6 @@ checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
 ]
-
-[[package]]
-name = "shlex"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "signature"
@@ -1356,8 +1240,8 @@ dependencies = [
 
 [[package]]
 name = "twopc_mpc"
-version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=9a0261a#9a0261a6a0ce41a4e7f63e2ed54122870f0fb04d"
+version = "0.2.0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=3ae2d070#3ae2d0701ae708f45fc5e2b6da34c6cd432b1b8d"
 dependencies = [
  "class_groups",
  "commitment",
@@ -1366,7 +1250,7 @@ dependencies = [
  "ecdsa",
  "ed25519",
  "ed25519-dalek",
- "group 0.1.0",
+ "group 0.2.0",
  "homomorphic_encryption",
  "itertools",
  "k256",
