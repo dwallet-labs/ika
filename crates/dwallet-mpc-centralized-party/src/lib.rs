@@ -38,6 +38,7 @@ use k256::AffinePoint;
 use k256::elliptic_curve::group::GroupEncoding;
 use twopc_mpc::class_groups::DKGCentralizedPartyVersionedOutput;
 use twopc_mpc::decentralized_party::dkg;
+use twopc_mpc::dkg::decentralized_party::VersionedOutput;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature, VerifyingKey};
 use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
