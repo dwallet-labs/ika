@@ -250,6 +250,8 @@ export async function executeTestTransactionWithKeypair(
  */
 export async function generateTestKeypair(testName: string, curve: Curve = Curve.SECP256K1) {
 	const seed = createDeterministicSeed(testName);
+	// copilot log the seed
+	console.log(`Generated seed for test "${testName}":`, toHex(seed));
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
 	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve);

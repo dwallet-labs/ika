@@ -99,7 +99,7 @@ function verifySignature(
 /**
  * Setup and run complete DKG flow, returning all necessary components for signing
  */
-async function setupDKGFlow(
+export async function setupDKGFlow(
 	testName: string,
 	curve: Curve,
 ): Promise<{

@@ -7,7 +7,7 @@ import * as bitcoin from 'bitcoinjs-lib';
 import { networks, payments, Psbt } from 'bitcoinjs-lib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { Hash, SignatureAlgorithm } from '../../src/client/types';
+import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types';
 import {
 	createCompleteDWallet,
 	createCompleteDWalletV2,
@@ -22,6 +22,8 @@ import {
 	executeTestTransaction,
 	retryUntil,
 } from '../helpers/test-utils';
+import { curve } from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner';
+import { setupDKGFlow } from '../v2/all-combinations.test';
 
 // Setup shared resources before all tests
 beforeAll(async () => {
@@ -128,12 +130,12 @@ describe('DWallet Signing', () => {
 		// Use shared clients but create individual DWallet to avoid gas conflicts
 		const { suiClient, ikaClient } = await createIndividualTestSetup(testName);
 		const {
-			dWallet: activeDWallet,
-			encryptedUserSecretKeyShare,
+			ikaClient,
+			activeDWallet,
+			encryptedUserSecretKeyShareId,
 			userShareEncryptionKeys,
 			signerAddress,
-		} = await createCompleteDWalletV2(ikaClient, suiClient, testName);
-
+		} = await setupDKGFlow(testName, Curve.SECP256K1);
 		const dwalletBitcoinAddress = bitcoin_address_from_dwallet_output(
 			Uint8Array.from(activeDWallet.state.Active.public_output),
 		);
@@ -144,8 +146,9 @@ describe('DWallet Signing', () => {
 			'DWallet Components:',
 			{
 				activeDWallet: toBase64(activeDWallet),
-				encryptedUserSecretKeyShare: toBase64(encryptedUserSecretKeyShare),
+				encryptedUserSecretKeyShare: toBase64(encryptedUserSecretKeyShareId),
 				userShareEncryptionKeys: toBase64(userShareEncryptionKeys),
+				signerAddress: toBase64(signerAddress),
 			}
 		)
 
