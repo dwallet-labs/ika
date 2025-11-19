@@ -132,6 +132,9 @@ importers:
       '@noble/hashes':
         specifier: ^1.8.0
         version: 1.8.0
+      js-yaml:
+        specifier: ^4.1.0
+        version: 4.1.0
     devDependencies:
       '@ika.xyz/build-scripts':
         specifier: workspace:*
