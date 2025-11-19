@@ -1,98 +1,36 @@
-# syntax=docker/dockerfile:1.7
-
-# ==========================
-# Build stage
-# ==========================
-FROM rust:1.90-bullseye AS builder
-
-# Arguments
+# Build application
+#
+# Copy in all crates, Cargo.toml and Cargo.lock unmodified,
+# and build the application.
+FROM rust:1.81-bullseye AS builder
 ARG PROFILE=release
-ARG GIT_REVISION=unknown
-ARG WORKDIR=/opt
-ARG NO_DEFAULT_FEATURES=false
-
-# Environment
-ENV CARGO_HOME=/usr/local/cargo
+ARG GIT_REVISION
 ENV GIT_REVISION=$GIT_REVISION
-# Avoid rustup trying to self-update and download extra toolchains
-ENV RUSTUP_NO_SELF_UPDATE=1
+WORKDIR "$WORKDIR/ika"
+RUN apt-get update && apt-get install -y cmake clang
 
-# Set working directory
-WORKDIR ${WORKDIR}/ika
-
-# --------------------------
-# SSH key for private git (via BuildKit secret)
-# --------------------------
-# Secret is provided by docker/build-push-action:
-#   secrets:
-#     GH_DEPLOY_KEY=${{ secrets.GH_DEPLOY_KEY }}
-RUN --mount=type=secret,id=GH_DEPLOY_KEY \
-    mkdir -p ~/.ssh && \
-    cp /run/secrets/GH_DEPLOY_KEY ~/.ssh/id_ed25519 && \
-    chmod 600 ~/.ssh/id_ed25519 && \
-    ssh-keyscan github.com >> ~/.ssh/known_hosts
-
-# Rewrite GitHub HTTPS to SSH for private dependency
-RUN git config --global \
-    url."git@github.com:dwallet-labs/cryptography-private".insteadOf \
-    "https://github.com/dwallet-labs/cryptography-private"
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    cmake \
-    clang \
-    pkg-config \
-    libssl-dev
-
-# --------------------------
-# Workspace + dependencies
-# --------------------------
-
-# Root manifests
 COPY Cargo.toml Cargo.lock ./
-
-# Copy the full workspace directories so all members are present
+COPY consensus consensus
 COPY crates crates
-COPY contracts contracts
-COPY deployed_contracts deployed_contracts
+COPY ika-execution ika-execution
+COPY narwhal narwhal
+COPY external-crates external-crates
 
-# Fetch dependencies according to Cargo.lock
-RUN cargo fetch --locked
+RUN cargo build --profile ${PROFILE} --bin ika-node
 
-# Copy the rest of the repo (configs, scripts, etc.)
-COPY . .
+# Production Image
+FROM debian:bullseye-slim AS runtime
+# Use jemalloc as memory allocator
+RUN apt-get update && apt-get install -y libjemalloc-dev ca-certificates curl
+ENV LD_PRELOAD /usr/lib/x86_64-linux-gnu/libjemalloc.so
+ARG PROFILE=release
+WORKDIR "$WORKDIR/ika"
+# Both bench and release profiles copy from release dir
+COPY --from=builder /ika/target/release/ika-node /opt/ika/bin/ika-node
+# Support legacy usages of /usr/local/bin/ika-node
+COPY --from=builder /ika/target/release/ika-node /usr/local/bin
 
-# Single actual build
-RUN if [ "$NO_DEFAULT_FEATURES" = "true" ]; then \
-      cargo build --profile ${PROFILE} --locked --bin ika-node --no-default-features; \
-    else \
-      cargo build --profile ${PROFILE} --locked --bin ika-node; \
-    fi
-
-# ==========================
-# Runtime stage
-# ==========================
-FROM debian:stable-slim AS runtime
-
-ARG WORKDIR=/opt
 ARG BUILD_DATE
 ARG GIT_REVISION
-ARG PROFILE=release
-ARG TARGETARCH
-
-# Install runtime dependencies and jemalloc
-RUN apt-get update && apt-get install -y \
-    libjemalloc-dev \
-    ca-certificates \
-    curl \
-    jq
-
-# Set working directory
-WORKDIR ${WORKDIR}/ika
-
-# Copy the built binary from the builder stage
-COPY --from=builder /opt/ika/target/${PROFILE}/ika-node /usr/local/bin/ika-node
-
-# Build metadata
 LABEL build-date=$BUILD_DATE
 LABEL git-revision=$GIT_REVISION
