@@ -1,0 +1,142 @@
+[
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "ECDSASecp256k1",
+		"hash": "KECCAK256",
+		"dwalletId": "0x04ca89745d1526ae87222ad7147863dc9bf39ef0d1be89822c9adfaf1aa94d00",
+		"dkgDigest": "7ySZmsvuvq1ArYf6inbgaZjzn3sQ6b9R4kGrz6e2fZtb",
+		"activateDigest": "2eQmsR7DVARdsCcfL1jmgEbxmqnP1ZSTD3T7Dj8W6F8H",
+		"presignId": "0xc76d4746c30b4f728edc371bacc90d55d078f6458f1b511b8a234c125297eb5f",
+		"presignDigest": "ESpsVDaQbPQPA3GtNyZRLkMvUyhfpV4XF12d3sXaGjJQ",
+		"transferDigest": "PmZyYpqffoQ2iN3i1opnBkZ9sP6Kv7ia95DDkHU16ES",
+		"acceptTransferDigest": "57ikMrWWdQFRvJ2tj3u6p93B49fwx5H51Yhhfk2ujRDf",
+		"signId": "0x537e00c09a60d4c08d7854b65bfbd761b08ae3230d70cf9d8ee6253fdaf26d6c",
+		"signDigest": "GDqQtogARPYiSve8ffGsYwaUJ6B6AsCnfxL3z87DgpkZ",
+		"signature": [
+			206, 26, 166, 186, 198, 91, 251, 238, 227, 33, 170, 251, 160, 33, 218, 240, 71, 78, 99, 5, 58,
+			229, 90, 68, 140, 13, 238, 221, 208, 206, 158, 109, 82, 105, 140, 22, 212, 67, 210, 141, 130,
+			153, 57, 215, 128, 18, 106, 145, 130, 33, 134, 251, 241, 140, 19, 42, 18, 3, 48, 32, 20, 26,
+			20, 179
+		]
+	},
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "ECDSASecp256k1",
+		"hash": "SHA256",
+		"dwalletId": "0x514a74468157bdc1e75e5fb2f651f9b067b4958145847934d40942f11af5ef97",
+		"dkgDigest": "Fw7AXwocJ4DXhf42sggTyqSyweXzh14YVTR3NRffT9qY",
+		"activateDigest": "8FQNPdi1q7Gt2387QJ75cEfRSgqmWezbzejPoApWYRfD",
+		"presignId": "0x11de326a834ca175d7840cf06fd013c98e5a12c7b72b929bb3d23498308b4cb0",
+		"presignDigest": "C28WsuX1xWVtUJ1zhGU3fur4RKswmJXwXt9bE9P2iZiT",
+		"transferDigest": "Dk43aExnMP9WvGfDkgdFcSAQDNHPPZxYHKMhDPiWs64v",
+		"acceptTransferDigest": "5CDBCh7rVa6fM3dgzD5KUEqMvuB4seaACUvoCumvrvFT",
+		"signId": "0x3fde18d61ad31f522641252bd9c0bfaca2a937d33fecb652b3c9d6e53d50a5c1",
+		"signDigest": "Av3pvyVtbN5fDXr2U1Y3mE2RxrfeDrGeyiTHwLDrz53Y",
+		"signature": [
+			231, 28, 179, 231, 191, 136, 125, 42, 126, 66, 142, 57, 65, 139, 1, 145, 73, 22, 252, 236,
+			182, 201, 109, 55, 206, 177, 106, 98, 80, 122, 89, 75, 101, 20, 54, 71, 72, 29, 91, 1, 64, 47,
+			253, 207, 86, 54, 59, 36, 36, 77, 206, 122, 142, 82, 100, 109, 197, 3, 166, 244, 49, 117, 69,
+			129
+		]
+	},
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "ECDSASecp256k1",
+		"hash": "DoubleSHA256",
+		"dwalletId": "0x24d6f6519591d641ef7dfbe376a4c8a33a6036e48d50f8fe7d6d970993441b5d",
+		"dkgDigest": "74GqJuYZ5k6nWby2z4ga4FMiBcJd43pd1csVVptADZ4j",
+		"activateDigest": "FTLndD1qWqwWoFnbGS6U17tM5yPNasSaqADyy5nFehBo",
+		"presignId": "0x2ce857699bbe28e23713249f16b7b8d872fa2f0658d7314d8ef39aadc2be6854",
+		"presignDigest": "Hg5VhKejCUptrdoji3fQLrKeYfY15GA3joLTk1pUStPt",
+		"transferDigest": "Bsesw2qqhSGiXe8DfTkrVpah3HMK8j3AAsbLDm8uq8s3",
+		"acceptTransferDigest": "5JU4mvbQ1qoDkxhWYnEPzrWCLbCWu7rTMRD5GaMDqukX",
+		"signId": "0x7b64f7bf71cb81feb180d57c3b25ae05a5889fa39215fadfed75d95949784242",
+		"signDigest": "4PwoVc6147pPUypzEy698cgbhQJgjiJqBUKm9vrkVRos",
+		"signature": [
+			96, 121, 125, 225, 209, 223, 141, 35, 126, 218, 207, 31, 193, 214, 128, 237, 118, 156, 2, 184,
+			54, 35, 140, 207, 78, 112, 241, 176, 146, 233, 70, 254, 32, 150, 175, 183, 91, 194, 244, 117,
+			211, 63, 89, 93, 169, 213, 201, 50, 191, 49, 227, 2, 94, 93, 237, 147, 252, 185, 253, 205, 29,
+			123, 204, 180
+		]
+	},
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "Taproot",
+		"hash": "SHA256",
+		"dwalletId": "0x8d2d85b86ee4f9fcec772190df909c86638927db6b090241e3143b4313dfee2d",
+		"dkgDigest": "jftMWiJ34r7Sy6VeC9SL8Un1FGP5zdn7M5eWG2teR7r",
+		"activateDigest": "Byst3pLZB46Ktx1ni3qVyKeSPova9GVHZVSJh8EVHhk9",
+		"presignId": "0x47e19b95d2127bee47979d56549c80de6aa02d4c8756d759ead5fea00fba56de",
+		"presignDigest": "7HFQNkSHXqC8EfHQbCJGQrLLZEp3bVEyMcxCx8L4rMgT",
+		"transferDigest": "ARmQzMuNm6Fz5baEqjUcd2j1594KjpbJzyEwNpucv9Vt",
+		"acceptTransferDigest": "5vzVNeuQFsdkJKYuqrHSr7YuVfipBhaeRgbyqP9j8zjx",
+		"signId": "0xcbf0e4f8f6cdb93ed9ada9ff3d0ec48982068da40d3ad93e581157dc355b1df9",
+		"signDigest": "7JNcixqrLoz9CrRXAcoFn4BkGeTDfaM7jLdR7sxf19R6",
+		"signature": [
+			178, 154, 7, 140, 203, 157, 175, 236, 245, 6, 72, 162, 44, 21, 75, 79, 122, 63, 86, 241, 149,
+			82, 146, 100, 197, 38, 195, 190, 179, 188, 121, 139, 23, 216, 184, 121, 58, 157, 147, 190,
+			219, 99, 195, 227, 22, 187, 186, 195, 172, 3, 174, 0, 199, 66, 132, 50, 20, 2, 25, 103, 110,
+			194, 250, 74
+		]
+	},
+	{
+		"curve": "SECP256R1",
+		"signatureAlgorithm": "ECDSASecp256r1",
+		"hash": "SHA256",
+		"dwalletId": "0xb4a33dad9a2663d169a0a64b0a2ff87f3feabf8554a9546c5f2ba4530c33c736",
+		"dkgDigest": "8YC3xsSdpnV4DqL5eifUP7tadfrf9MA9chnJ1ZhgPgPL",
+		"activateDigest": "DXTF8JC23YMvtR5AaTziUPBmgHGDuXPUZtGyZ6ZrTK4Q",
+		"presignId": "0x54d07f1178b35c72523f9958c8e2f3fcedd9fed99927460408072d371ef4c8c1",
+		"presignDigest": "2zRxZcRik7b4AQuNejA3K6gJsrtq5L4HKo6LS8fS4Hmi",
+		"transferDigest": "FFgjMMZjTb8sUeKK7RkGHhgUQ7Zbapdq93ZJDGr1uZpt",
+		"acceptTransferDigest": "GyB4LhAu6u6XdoN6GWAQzjt71VsJ6enHojEkum4BGenW",
+		"signId": "0xb74c93d746ae1bdfcba6f988774b4e6d8200c2e0efefe9f5531248c5697d23e8",
+		"signDigest": "3Jsz3rY9KEheL1t9pPLuWGstCK29rhsFk8KTrKfTZND2",
+		"signature": [
+			113, 242, 151, 201, 132, 2, 230, 183, 65, 158, 31, 102, 173, 36, 10, 65, 223, 168, 96, 191,
+			32, 174, 160, 19, 53, 175, 213, 222, 222, 180, 191, 34, 55, 0, 41, 227, 72, 227, 229, 30, 207,
+			241, 220, 125, 168, 46, 8, 235, 154, 72, 26, 48, 37, 176, 124, 36, 55, 68, 232, 246, 250, 63,
+			65, 221
+		]
+	},
+	{
+		"curve": "ED25519",
+		"signatureAlgorithm": "EdDSA",
+		"hash": "SHA512",
+		"dwalletId": "0x28621753bcbbb35274d33b36405e622b9187721131f324b46607ef3d51259109",
+		"dkgDigest": "HvH7abbaDExamztBLSZezkoyLMtCEEo8y9YuvNTmmEXJ",
+		"activateDigest": "FHnmGjAYJnFUKmqU6vQ9AkRMwe12x21zFTcUMn81X8MD",
+		"presignId": "0x839696fe36b2a5ef96b7e76b7c7be3e46f2e1a55cfde34e749f03640cbdec089",
+		"presignDigest": "A1iVABaTC2qrqRoKeLm2Qin6amRLy9m4v2vfffe94FsZ",
+		"transferDigest": "AdcfeqksWZYzeKS89pj2JM6GRq4mydXJaxTdYYggTQyu",
+		"acceptTransferDigest": "AikRci7S5EogmCyLKct4ne6BShNcRMJv13pBRyjAW5Cy",
+		"signId": "0x89e86747666da8350129e623e5cdc38d117e640a6d020851df8c30e16c56b7f2",
+		"signDigest": "2PXGhS9QLhQMWxQzMMYoEGJbDnMjuf4DWcJMBd6RfzAA",
+		"signature": [
+			195, 101, 111, 236, 177, 143, 211, 17, 216, 160, 31, 113, 45, 197, 226, 114, 34, 158, 141, 39,
+			115, 132, 164, 71, 124, 23, 223, 122, 100, 192, 44, 47, 86, 85, 19, 209, 130, 205, 204, 88,
+			107, 226, 243, 81, 25, 10, 159, 214, 158, 42, 69, 49, 125, 148, 159, 216, 20, 69, 29, 165,
+			221, 85, 10, 12
+		]
+	},
+	{
+		"curve": "RISTRETTO",
+		"signatureAlgorithm": "SchnorrkelSubstrate",
+		"hash": "Merlin",
+		"dwalletId": "0x306fd6a92184990add4ce768eb6efcc27dfdb3229ccbf3ce27a09e4ac66cd174",
+		"dkgDigest": "J7qp2qovuWPnm23ATuzkc9f8EQ1qDyzeZRmeG975Jrmq",
+		"activateDigest": "AKL8tKKXbp1eyugZBxA8xFUhAS8tXEY4em3rmveuuDBH",
+		"presignId": "0xb7a113e50d00eda1de3d5eba5059c0fa0dc0b4e716a9cff6b2b0f536f68fcd87",
+		"presignDigest": "F4XAUCrj6MJPxCn5n8h5vj91wvQYXXDAMvHTYSmgdYDp",
+		"transferDigest": "Hiy6TFgvBPdRcfD4Bf9ixQHnFvvkejEkhSfdcw2qxLXa",
+		"acceptTransferDigest": "6wFE3KAj3XdebbJdwueGDb9HkEWh2EqkRVWACqbvxV8j",
+		"signId": "0x9ab2c28d5c5a94c038b23d8f55c39829a0d5a87b3caaef57e0b227c36ea1a2ba",
+		"signDigest": "E8KRr6GmEc4qHzvqj5vsFpZSjyJdYgkV6e7iuKLdTvAL",
+		"signature": [
+			214, 227, 51, 126, 135, 233, 16, 83, 11, 89, 255, 191, 43, 109, 57, 66, 237, 207, 73, 175, 4,
+			11, 52, 254, 226, 253, 129, 64, 43, 245, 247, 86, 195, 135, 75, 57, 202, 96, 238, 30, 254,
+			209, 14, 178, 110, 64, 218, 216, 48, 239, 238, 48, 81, 17, 138, 117, 72, 220, 184, 198, 53,
+			67, 200, 136
+		]
+	}
+]
