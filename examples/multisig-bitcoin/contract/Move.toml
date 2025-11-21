@@ -2,13 +2,11 @@
 name = "ika_btc_multisig"
 edition = "2024.beta"
 license = "BSD-3-Clause-Clear"
-published-at = "0x34cb58cf2cfa859fab143194bb35ce65fe5674592947ca75d31ad2ea1add7205"
+published-at = "0x98eec1dd5a67695bf03d55d355c81eedfcca5f4aee196f295305acdd574b1e94"
 
 [dependencies]
-ika = { local = "../../../contracts/ika" }
-ika_dwallet_2pc_mpc = { local = "../../../contracts/ika_dwallet_2pc_mpc" }
+ika = { local = "../../../deployed_contracts/testnet/ika" }
+ika_dwallet_2pc_mpc = { local = "../../../deployed_contracts/testnet/ika_dwallet_2pc_mpc" }
 
 [addresses]
-ika_btc_multisig = "0x34cb58cf2cfa859fab143194bb35ce65fe5674592947ca75d31ad2ea1add7205"
-ika = "0xee5d4da55ded42f64bad7b9e33297d9fb9646875802caaf654c291dfb964f235"
-ika_dwallet_2pc_mpc = "0x4bd485cc90febffe238834cba1c62cce297cd4c5594bdbc596860f4c712aa0e4"
+ika_btc_multisig = "0x98eec1dd5a67695bf03d55d355c81eedfcca5f4aee196f295305acdd574b1e94"

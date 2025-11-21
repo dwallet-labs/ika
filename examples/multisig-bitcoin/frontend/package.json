@@ -7,8 +7,10 @@
 		"build": "next build",
 		"start": "next start",
 		"lint": "eslint",
-		"postinstall": "pnpm create-summaries && pnpm sui-ts-codegen generate",
-		"create-summaries": "cd ../contract && sui move summary"
+		"postinstall": "pnpm create-summaries && bash scripts/install_script.bash && pnpm sui-ts-codegen generate",
+		"create-summaries": "cd ../contract && sui move summary",
+		"publish": "bash scripts/publish_and_update.bash",
+		"update-address": "bash scripts/update_published_address.bash"
 	},
 	"dependencies": {
 		"@bitcoinerlab/secp256k1": "^1.2.0",

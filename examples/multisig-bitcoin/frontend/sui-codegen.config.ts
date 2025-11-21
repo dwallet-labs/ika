@@ -11,12 +11,8 @@ const config: SuiCodegenConfig = {
 			path: '../contract',
 			packageName: 'ika_btc_multisig',
 		},
-		{
-			package: '@local-pkg/ika',
-			path: '../../../contracts/ika',
-			packageName: 'ika',
-		},
 	],
+	generateSummaries: false,
 };
 
 export default config;
