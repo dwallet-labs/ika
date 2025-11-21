@@ -274,16 +274,18 @@ export class MultisigBitcoinWallet {
 
 		const byteVector = bcs.vector(bcs.u8());
 
-		transactionRequest({
-			package: this.packageAddress,
-			arguments: {
-				self: this.object.multisig,
-				coordinator: this.object.coordinator,
-				preimage: byteVector.serialize(preimage).parse(),
-				messageCentralizedSignature: byteVector.serialize(messageCentralizedSignature).parse(),
-				psbt: byteVector.serialize(psbt.toBuffer()).parse(),
-			},
-		})(transaction);
+		transaction.add(
+			transactionRequest({
+				package: this.packageAddress,
+				arguments: {
+					self: this.object.multisig,
+					coordinator: this.object.coordinator,
+					preimage: byteVector.serialize(preimage).parse(),
+					messageCentralizedSignature: byteVector.serialize(messageCentralizedSignature).parse(),
+					psbt: byteVector.serialize(psbt.toBuffer()).parse(),
+				},
+			}),
+		);
 
 		return {
 			transaction,

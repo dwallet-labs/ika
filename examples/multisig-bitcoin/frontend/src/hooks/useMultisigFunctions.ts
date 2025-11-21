@@ -9,7 +9,7 @@ import {
 } from '@ika.xyz/sdk';
 import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
 import { bcs } from '@mysten/sui/bcs';
-import { Transaction } from '@mysten/sui/transactions';
+import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 import * as bitcoin from 'bitcoinjs-lib';
 import invariant from 'tiny-invariant';
 
@@ -61,11 +61,12 @@ export const useMultisigFunctions = () => {
 
 		const transaction = new Transaction();
 
-		const initialIkaCoinForBalance = transaction.moveCall({
-			target: `0x2::coin::zero`,
-			arguments: [],
-			typeArguments: [`${ikaPackageId}::ika::IKA`],
-		});
+		const initialIkaCoinForBalance = transaction.add(
+			coinWithBalance({
+				type: `${ikaPackageId}::ika::IKA`,
+				balance: 10_000_000_000,
+			}),
+		);
 
 		const initialSuiCoinForBalance = transaction.splitCoins(transaction.gas, [1_000_000_000]);
 
@@ -85,47 +86,56 @@ export const useMultisigFunctions = () => {
 
 		const byteVector = bcs.vector(bcs.u8());
 
-		newMultisig({
-			package: multisigPackageId,
-			arguments: {
-				coordinator: coordinator,
-				initialIkaCoinForBalance: initialIkaCoinForBalance,
-				initialSuiCoinForBalance: initialSuiCoinForBalance,
-				dwalletNetworkEncryptionKeyId: (await ikaClient.getLatestNetworkEncryptionKey()).id,
-				centralizedPublicKeyShareAndProof: byteVector
-					.serialize(centralizedPublicKeyShareAndProof)
-					.parse(),
-				userPublicOutput: byteVector.serialize(userPublicOutput).parse(),
-				publicUserSecretKeyShare: byteVector.serialize(publicUserSecretKeyShare).parse(),
-				members,
-				approvalThreshold,
-				rejectionThreshold,
-				expirationDuration,
-				sessionIdentifier: byteVector.serialize(randomSessionIdentifier).parse(),
-			},
-		})(transaction);
+		transaction.add(
+			newMultisig({
+				package: multisigPackageId,
+				arguments: {
+					coordinator: coordinator,
+					initialIkaCoinForBalance: initialIkaCoinForBalance,
+					initialSuiCoinForBalance: initialSuiCoinForBalance,
+					dwalletNetworkEncryptionKeyId: (await ikaClient.getLatestNetworkEncryptionKey()).id,
+					centralizedPublicKeyShareAndProof: byteVector
+						.serialize(centralizedPublicKeyShareAndProof)
+						.parse(),
+					userPublicOutput: byteVector.serialize(userPublicOutput).parse(),
+					publicUserSecretKeyShare: byteVector.serialize(publicUserSecretKeyShare).parse(),
+					members,
+					approvalThreshold,
+					rejectionThreshold,
+					expirationDuration,
+					sessionIdentifier: byteVector.serialize(randomSessionIdentifier).parse(),
+				},
+			}),
+		);
 
 		await executeTransaction(transaction);
 	};
 
 	const addIkaBalanceToMultisig = async ({
 		multisig,
-		ikaCoin,
+		amount,
 	}: {
 		multisig: MultisigBitcoinWallet;
-		ikaCoin: string;
+		amount: bigint;
 	}) => {
 		invariant(account, 'Account not found');
 
 		const transaction = new Transaction();
 
-		addIkaBalance({
-			package: multisigPackageId,
-			arguments: {
-				self: multisig.object.multisig,
-				ikaCoin: ikaCoin,
-			},
-		})(transaction);
+		transaction.add(
+			addIkaBalance({
+				package: multisigPackageId,
+				arguments: {
+					self: multisig.object.multisig,
+					ikaCoin: transaction.add(
+						coinWithBalance({
+							type: `${ikaPackageId}::ika::IKA`,
+							balance: amount,
+						}),
+					),
+				},
+			}),
+		);
 
 		await executeTransaction(transaction);
 	};
@@ -141,13 +151,15 @@ export const useMultisigFunctions = () => {
 
 		const transaction = new Transaction();
 
-		addSuiBalance({
-			package: multisigPackageId,
-			arguments: {
-				self: multisig.object.multisig,
-				suiCoin: suiCoin,
-			},
-		})(transaction);
+		transaction.add(
+			addSuiBalance({
+				package: multisigPackageId,
+				arguments: {
+					self: multisig.object.multisig,
+					suiCoin: suiCoin,
+				},
+			}),
+		);
 
 		await executeTransaction(transaction);
 	};
@@ -157,13 +169,15 @@ export const useMultisigFunctions = () => {
 
 		const transaction = new Transaction();
 
-		addPresign({
-			package: multisigPackageId,
-			arguments: {
-				self: multisig.object.multisig,
-				coordinator: coordinator,
-			},
-		})(transaction);
+		transaction.add(
+			addPresign({
+				package: multisigPackageId,
+				arguments: {
+					self: multisig.object.multisig,
+					coordinator: coordinator,
+				},
+			}),
+		);
 
 		await executeTransaction(transaction);
 	};
@@ -181,14 +195,16 @@ export const useMultisigFunctions = () => {
 
 		const transaction = new Transaction();
 
-		voteRequest({
-			package: multisigPackageId,
-			arguments: {
-				self: multisig.object.multisig,
-				requestId: requestId,
-				vote: vote,
-			},
-		})(transaction);
+		transaction.add(
+			voteRequest({
+				package: multisigPackageId,
+				arguments: {
+					self: multisig.object.multisig,
+					requestId: requestId,
+					vote: vote,
+				},
+			}),
+		);
 
 		await executeTransaction(transaction);
 	};
@@ -204,14 +220,16 @@ export const useMultisigFunctions = () => {
 
 		const transaction = new Transaction();
 
-		executeRequest({
-			package: multisigPackageId,
-			arguments: {
-				self: multisig.object.multisig,
-				coordinator: coordinator,
-				requestId: requestId,
-			},
-		})(transaction);
+		transaction.add(
+			executeRequest({
+				package: multisigPackageId,
+				arguments: {
+					self: multisig.object.multisig,
+					coordinator: coordinator,
+					requestId: requestId,
+				},
+			}),
+		);
 
 		const transactionResult = await executeTransaction(transaction);
 
@@ -344,13 +362,15 @@ export const useMultisigFunctions = () => {
 
 		const transaction = new Transaction();
 
-		addMemberRequest({
-			package: multisigPackageId,
-			arguments: {
-				self: multisig.object.multisig,
-				memberAddress: memberAddress,
-			},
-		})(transaction);
+		transaction.add(
+			addMemberRequest({
+				package: multisigPackageId,
+				arguments: {
+					self: multisig.object.multisig,
+					memberAddress: memberAddress,
+				},
+			}),
+		);
 
 		await executeTransaction(transaction);
 	};
@@ -366,13 +386,15 @@ export const useMultisigFunctions = () => {
 
 		const transaction = new Transaction();
 
-		removeMemberRequest({
-			package: multisigPackageId,
-			arguments: {
-				self: multisig.object.multisig,
-				memberAddress: memberAddress,
-			},
-		})(transaction);
+		transaction.add(
+			removeMemberRequest({
+				package: multisigPackageId,
+				arguments: {
+					self: multisig.object.multisig,
+					memberAddress: memberAddress,
+				},
+			}),
+		);
 
 		await executeTransaction(transaction);
 	};
@@ -388,13 +410,15 @@ export const useMultisigFunctions = () => {
 
 		const transaction = new Transaction();
 
-		changeApprovalThresholdRequest({
-			package: multisigPackageId,
-			arguments: {
-				self: multisig.object.multisig,
-				newThreshold: newThreshold,
-			},
-		})(transaction);
+		transaction.add(
+			changeApprovalThresholdRequest({
+				package: multisigPackageId,
+				arguments: {
+					self: multisig.object.multisig,
+					newThreshold: newThreshold,
+				},
+			}),
+		);
 
 		await executeTransaction(transaction);
 	};
@@ -410,13 +434,15 @@ export const useMultisigFunctions = () => {
 
 		const transaction = new Transaction();
 
-		changeRejectionThresholdRequest({
-			package: multisigPackageId,
-			arguments: {
-				self: multisig.object.multisig,
-				newThreshold: newThreshold,
-			},
-		})(transaction);
+		transaction.add(
+			changeRejectionThresholdRequest({
+				package: multisigPackageId,
+				arguments: {
+					self: multisig.object.multisig,
+					newThreshold: newThreshold,
+				},
+			}),
+		);
 
 		await executeTransaction(transaction);
 	};
@@ -432,13 +458,15 @@ export const useMultisigFunctions = () => {
 
 		const transaction = new Transaction();
 
-		changeExpirationDurationRequest({
-			package: multisigPackageId,
-			arguments: {
-				self: multisig.object.multisig,
-				newDuration: newDuration,
-			},
-		})(transaction);
+		transaction.add(
+			changeExpirationDurationRequest({
+				package: multisigPackageId,
+				arguments: {
+					self: multisig.object.multisig,
+					newDuration: newDuration,
+				},
+			}),
+		);
 
 		await executeTransaction(transaction);
 	};
