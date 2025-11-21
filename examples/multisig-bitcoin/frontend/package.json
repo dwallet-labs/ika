@@ -1,0 +1,40 @@
+{
+	"name": "frontend",
+	"version": "0.1.0",
+	"private": true,
+	"scripts": {
+		"dev": "next dev --webpack",
+		"build": "next build",
+		"start": "next start",
+		"lint": "eslint",
+		"postinstall": "pnpm create-summaries && pnpm sui-ts-codegen generate",
+		"create-summaries": "cd ../contract && sui move summary"
+	},
+	"dependencies": {
+		"@bitcoinerlab/secp256k1": "^1.2.0",
+		"@ika.xyz/sdk": "^0.2.2",
+		"@mysten/codegen": "^0.5.9",
+		"@mysten/dapp-kit": "^0.19.8",
+		"@mysten/sui": "^1.43.1",
+		"@noble/curves": "^2.0.1",
+		"@noble/hashes": "^1.8.0",
+		"@tanstack/react-query": "^5.90.7",
+		"@types/bitcoinjs-lib": "^5.0.4",
+		"bitcoinjs-lib": "^7.0.0",
+		"comlink": "^4.4.2",
+		"next": "16.0.1",
+		"react": "19.2.0",
+		"react-dom": "19.2.0",
+		"tiny-invariant": "^1.3.3"
+	},
+	"devDependencies": {
+		"@tailwindcss/postcss": "^4",
+		"@types/node": "^20",
+		"@types/react": "^19",
+		"@types/react-dom": "^19",
+		"eslint": "^9",
+		"eslint-config-next": "16.0.1",
+		"tailwindcss": "^4",
+		"typescript": "^5"
+	}
+}
