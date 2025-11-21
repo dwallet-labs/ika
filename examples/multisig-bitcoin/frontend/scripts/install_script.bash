@@ -11,6 +11,7 @@ ADDRESS_MAPPING="../../contract/package_summaries/address_mapping.json"
 TESTNET_ADDRESSES="../../../../deployed_contracts/testnet/address.yaml"
 MOVE_TOML="../../contract/Move.toml"
 LAYOUT_TSX="../src/app/layout.tsx"
+USE_OBJECTS_TS="../src/hooks/useObjects.ts"
 
 # Check if files exist
 if [ ! -f "$ADDRESS_MAPPING" ]; then
@@ -33,10 +34,16 @@ if [ ! -f "$LAYOUT_TSX" ]; then
     exit 1
 fi
 
+if [ ! -f "$USE_OBJECTS_TS" ]; then
+    echo "Error: useObjects.ts not found at $USE_OBJECTS_TS"
+    exit 1
+fi
+
 # Extract addresses from YAML file
 IKA_PACKAGE_ID=$(grep "^ika_package_id:" "$TESTNET_ADDRESSES" | awk '{print $2}')
 IKA_COMMON_PACKAGE_ID=$(grep "^ika_common_package_id:" "$TESTNET_ADDRESSES" | awk '{print $2}')
 IKA_DWALLET_2PC_MPC_PACKAGE_ID=$(grep "^ika_dwallet_2pc_mpc_package_id:" "$TESTNET_ADDRESSES" | awk '{print $2}')
+IKA_COORDINATOR_OBJECT_ID=$(grep "^ika_coordinator_object_id:" "$TESTNET_ADDRESSES" | awk '{print $2}')
 
 # Extract published-at address from Move.toml
 PUBLISHED_AT=$(grep "^published-at" "$MOVE_TOML" | sed -E 's/published-at = "(.*)"/\1/')
@@ -45,6 +52,7 @@ echo "Updating address_mapping.json with testnet addresses..."
 echo "  ika: $IKA_PACKAGE_ID"
 echo "  ika_common: $IKA_COMMON_PACKAGE_ID"
 echo "  ika_dwallet_2pc_mpc: $IKA_DWALLET_2PC_MPC_PACKAGE_ID"
+echo "  coordinator: $IKA_COORDINATOR_OBJECT_ID"
 echo ""
 echo "Updating layout.tsx with published contract address..."
 echo "  published-at: $PUBLISHED_AT"
@@ -76,4 +84,14 @@ sed -i.bak \
 rm -f "$LAYOUT_TSX.bak"
 
 echo "✓ Layout.tsx updated successfully!"
+
+# Update useObjects.ts with the coordinator, multisigPackageId, and ikaPackageId
+sed -i.bak \
+    -e "s|coordinator: '0x[^']*'|coordinator: '$IKA_COORDINATOR_OBJECT_ID'|" \
+    -e "s|multisigPackageId: '0x[^']*'|multisigPackageId: '$PUBLISHED_AT'|" \
+    -e "s|ikaPackageId: '0x[^']*'|ikaPackageId: '$IKA_PACKAGE_ID'|" \
+    "$USE_OBJECTS_TS"
+rm -f "$USE_OBJECTS_TS.bak"
+
+echo "✓ useObjects.ts updated successfully!"
 
