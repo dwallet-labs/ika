@@ -3,17 +3,15 @@
 
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
-    BytesCentralizedPartyKeyShareVerification, DWalletDKGFirstParty, DWalletDKGPublicInputByCurve,
-    DWalletImportedKeyVerificationPublicInputByCurve, Secp256k1DWalletDKGParty,
-    dwallet_dkg_first_public_input, dwallet_dkg_second_public_input,
+    BytesCentralizedPartyKeyShareVerification, DWalletDKGPublicInputByCurve,
+    DWalletImportedKeyVerificationPublicInputByCurve,
 };
 use crate::dwallet_mpc::network_dkg::{
-    DwalletMPCNetworkKeys, network_dkg_v1_public_input, network_dkg_v2_public_input,
+    DwalletMPCNetworkKeys, network_dkg_v2_public_input,
 };
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationPartyPublicInputGenerator, ReconfigurationV1ToV2PartyPublicInputGenerator,
-    ReconfigurationV1toV2Party, ReconfigurationV2PartyPublicInputGenerator,
+    ReconfigurationV2PartyPublicInputGenerator,
 };
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -21,10 +19,9 @@ use crate::request_protocol_data::{
     EncryptedShareVerificationData, MakeDWalletUserSecretKeySharesPublicData,
     PartialSignatureVerificationData, PresignData, ProtocolData,
 };
-use class_groups::dkg;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    MPCPrivateInput, NetworkEncryptionKeyPublicDataTrait, ReconfigurationParty,
+    MPCPrivateInput,
     ReconfigurationV2Party,
 };
 use group::PartyID;
@@ -40,24 +37,13 @@ pub(crate) enum PublicInput {
     DWalletImportedKeyVerificationRequest(DWalletImportedKeyVerificationPublicInputByCurve),
     DWalletDKG(DWalletDKGPublicInputByCurve),
     DWalletDKGAndSign(DKGAndSignPublicInputByProtocol),
-    // Used only for V1 dWallets
-    DKGFirst(<DWalletDKGFirstParty as mpc::Party>::PublicInput),
-    // Used only for V1 dWallets
-    Secp256k1DWalletDKG(<Secp256k1DWalletDKGParty as mpc::Party>::PublicInput),
     Presign(PresignPublicInputByProtocol),
     Sign(SignPublicInputByProtocol),
-    NetworkEncryptionKeyDkgV1(<dkg::Secp256k1Party as mpc::Party>::PublicInput),
     NetworkEncryptionKeyDkgV2(
         <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
     ),
     EncryptedShareVerification(ProtocolPublicParametersByCurve),
     PartialSignatureVerification(ProtocolPublicParametersByCurve),
-    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
-    NetworkEncryptionKeyReconfigurationV1(<ReconfigurationParty as mpc::Party>::PublicInput),
-    // TODO (#1487): Remove temporary v1 to v2 & v1 reconfiguration code
-    NetworkEncryptionKeyReconfigurationV1ToV2(
-        <ReconfigurationV1toV2Party as mpc::Party>::PublicInput,
-    ),
     NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Party as mpc::Party>::PublicInput),
     MakeDWalletUserSecretKeySharesPublic(ProtocolPublicParametersByCurve),
 }
@@ -175,7 +161,6 @@ pub(crate) fn session_input_from_request(
             let class_groups_decryption_key = network_keys
                 .validator_private_dec_key_data
                 .class_groups_decryption_key;
-            if protocol_config.is_network_encryption_key_version_v2() {
                 Ok((
                     PublicInput::NetworkEncryptionKeyDkgV2(network_dkg_v2_public_input(
                         access_structure,
@@ -183,15 +168,7 @@ pub(crate) fn session_input_from_request(
                     )?),
                     Some(bcs::to_bytes(&class_groups_decryption_key)?),
                 ))
-            } else {
-                Ok((
-                    PublicInput::NetworkEncryptionKeyDkgV1(network_dkg_v1_public_input(
-                        access_structure,
-                        validators_class_groups_public_keys_and_proofs,
-                    )?),
-                    Some(bcs::to_bytes(&class_groups_decryption_key)?),
-                ))
-            }
+
         }
         ProtocolData::NetworkEncryptionKeyReconfiguration {
             dwallet_network_encryption_key_id,
@@ -204,27 +181,6 @@ pub(crate) fn session_input_from_request(
             let next_active_committee = next_active_committee.ok_or(
                 DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
             )?;
-            let key_version =
-                network_keys.get_network_key_version(dwallet_network_encryption_key_id)?;
-            if (key_version == 1) && protocol_config.is_network_encryption_key_version_v2() {
-                Ok((
-                    PublicInput::NetworkEncryptionKeyReconfigurationV1ToV2(<ReconfigurationV1toV2Party as ReconfigurationV1ToV2PartyPublicInputGenerator>::generate_public_input(
-                        committee,
-                        next_active_committee,
-                        network_keys
-                            .get_network_dkg_public_output(
-                                dwallet_network_encryption_key_id,
-                            )?,
-                        network_keys
-                            .get_decryption_key_share_public_parameters(
-                                dwallet_network_encryption_key_id,
-                            )?,
-                    )?),
-                    Some(bcs::to_bytes(
-                        &class_groups_decryption_key
-                    )?),
-                ))
-            } else if protocol_config.is_network_encryption_key_version_v2() {
                 Ok((
                     PublicInput::NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Party as ReconfigurationV2PartyPublicInputGenerator>::generate_public_input(
                         committee,
@@ -242,58 +198,7 @@ pub(crate) fn session_input_from_request(
                         &class_groups_decryption_key
                     )?),
                 ))
-            } else {
-                Ok((
-                    PublicInput::NetworkEncryptionKeyReconfigurationV1(<ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
-                        committee,
-                        next_active_committee,
-                        network_keys.get_decryption_key_share_public_parameters(
-                            dwallet_network_encryption_key_id,
-                        )?,
-                        network_keys
-                            .get_network_dkg_public_output(
-                                dwallet_network_encryption_key_id,
-                            )?,
-                    )?),
-                    Some(bcs::to_bytes(
-                        &class_groups_decryption_key
-                    )?),
-                ))
-            }
-        }
-        ProtocolData::DKGFirst {
-            dwallet_network_encryption_key_id,
-            ..
-        } => {
-            let protocol_public_parameters = network_keys
-                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?
-                .secp256k1_protocol_public_parameters()
-                .clone();
 
-            Ok((
-                PublicInput::DKGFirst(dwallet_dkg_first_public_input(&protocol_public_parameters)?),
-                None,
-            ))
-        }
-        ProtocolData::DKGSecond {
-            dwallet_network_encryption_key_id,
-            first_round_output,
-            centralized_public_key_share_and_proof,
-            ..
-        } => {
-            let protocol_public_parameters = network_keys
-                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?
-                .secp256k1_protocol_public_parameters()
-                .clone();
-
-            Ok((
-                PublicInput::Secp256k1DWalletDKG(dwallet_dkg_second_public_input(
-                    first_round_output,
-                    centralized_public_key_share_and_proof,
-                    protocol_public_parameters,
-                )?),
-                None,
-            ))
         }
         ProtocolData::Presign {
             data:

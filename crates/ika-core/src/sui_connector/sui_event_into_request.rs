@@ -1,7 +1,7 @@
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
-    dwallet_dkg_and_sign_protocol_data, dwallet_dkg_first_protocol_data, dwallet_dkg_protocol_data,
-    dwallet_dkg_second_protocol_data, encrypted_share_verification_protocol_data,
+    dwallet_dkg_and_sign_protocol_data, dwallet_dkg_protocol_data,
+    encrypted_share_verification_protocol_data,
     imported_key_verification_protocol_data,
     make_dwallet_user_secret_key_shares_public_protocol_data,
     network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data,
@@ -9,8 +9,8 @@ use crate::request_protocol_data::{
 };
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    DWALLET_SESSION_EVENT_STRUCT_NAME, DWalletDKGFirstRoundRequestEvent, DWalletDKGRequestEvent,
-    DWalletDKGSecondRoundRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent,
+    DWALLET_SESSION_EVENT_STRUCT_NAME, DWalletDKGRequestEvent,
+    DWalletEncryptionKeyReconfigurationRequestEvent,
     DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent,
     DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent,
     FutureSignRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent,
@@ -80,15 +80,6 @@ pub fn sui_event_into_session_request(
             pulled,
         )?
     } else if event_type.to_string().contains(
-        &DWalletDKGFirstRoundRequestEvent::type_(packages_config)
-            .name
-            .to_string(),
-    ) {
-        dwallet_dkg_first_party_session_request(
-            deserialize_event_contents::<DWalletDKGFirstRoundRequestEvent>(contents, pulled)?,
-            pulled,
-        )?
-    } else if event_type.to_string().contains(
         &DWalletDKGRequestEvent::type_(packages_config)
             .name
             .to_string(),
@@ -102,15 +93,6 @@ pub fn sui_event_into_session_request(
                 sign_during_dkg_request,
             )?,
         }
-    } else if event_type.to_string().contains(
-        &DWalletDKGSecondRoundRequestEvent::type_(packages_config)
-            .name
-            .to_string(),
-    ) {
-        dwallet_dkg_second_party_session_request(
-            deserialize_event_contents::<DWalletDKGSecondRoundRequestEvent>(contents, pulled)?,
-            pulled,
-        )?
     } else if event_type
         .to_string()
         .contains(&PresignRequestEvent::type_(packages_config).name.to_string())
@@ -243,38 +225,6 @@ fn dwallet_dkg_with_sign_session_request(
             deserialized_event.event_data.user_secret_key_share,
             sign_during_dkg_request,
         )?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-        pulled,
-    })
-}
-
-fn dwallet_dkg_first_party_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletDKGFirstRoundRequestEvent>,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: dwallet_dkg_first_protocol_data(deserialized_event.event_data.clone())?,
-        epoch: deserialized_event.epoch,
-        requires_network_key_data: true,
-        requires_next_active_committee: false,
-        pulled,
-    })
-}
-
-fn dwallet_dkg_second_party_session_request(
-    deserialized_event: DWalletSessionEvent<DWalletDKGSecondRoundRequestEvent>,
-    pulled: bool,
-) -> DwalletMPCResult<DWalletSessionRequest> {
-    Ok(DWalletSessionRequest {
-        session_type: deserialized_event.session_type,
-        session_identifier: deserialized_event.session_identifier_digest(),
-        session_sequence_number: deserialized_event.session_sequence_number,
-        protocol_data: dwallet_dkg_second_protocol_data(deserialized_event.event_data.clone())?,
         epoch: deserialized_event.epoch,
         requires_network_key_data: true,
         requires_next_active_committee: false,

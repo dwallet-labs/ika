@@ -36,8 +36,8 @@ use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::{
-    DKGFirstRoundOutput, DWalletCheckpointMessageKind, DWalletDKGOutput,
-    DWalletDKGSecondRoundOutput, DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput,
+    DWalletCheckpointMessageKind, DWalletDKGOutput,
+    DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput,
     MPCNetworkDKGOutput, MPCNetworkReconfigurationOutput,
     MakeDWalletUserSecretKeySharesPublicOutput, PartialSignatureVerificationOutput, PresignOutput,
     SignOutput,
@@ -859,33 +859,6 @@ impl DWalletMPCService {
                         session_sequence_number: session_request.session_sequence_number,
                     })
                 };
-                vec![tx]
-            }
-            ProtocolData::DKGFirst { dwallet_id, .. } => {
-                let tx = DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
-                    DKGFirstRoundOutput {
-                        dwallet_id: dwallet_id.to_vec(),
-                        output,
-                        session_sequence_number: session_request.session_sequence_number,
-                        rejected,
-                    },
-                );
-                vec![tx]
-            }
-            ProtocolData::DKGSecond {
-                dwallet_id,
-                encrypted_secret_share_id,
-                ..
-            } => {
-                let tx = DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(
-                    DWalletDKGSecondRoundOutput {
-                        output,
-                        dwallet_id: dwallet_id.to_vec(),
-                        encrypted_secret_share_id: encrypted_secret_share_id.to_vec(),
-                        rejected,
-                        session_sequence_number: session_request.session_sequence_number,
-                    },
-                );
                 vec![tx]
             }
             ProtocolData::Presign {
