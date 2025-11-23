@@ -321,7 +321,8 @@ async fn start(
             let epoch_duration_ms = epoch_duration_ms.unwrap_or(DEFAULT_EPOCH_DURATION_MS);
             let protocol_version = protocol_version.unwrap_or(1);
             swarm_builder = swarm_builder.with_epoch_duration_ms(epoch_duration_ms);
-            swarm_builder = swarm_builder.with_protocol_version(ProtocolVersion(protocol_version));
+            swarm_builder =
+                swarm_builder.with_protocol_version(ProtocolVersion::new(protocol_version));
         } else {
             let network_config: NetworkConfig = PersistedConfig::read(&network_config_path)
                 .map_err(|err| {
