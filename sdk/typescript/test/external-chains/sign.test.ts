@@ -134,6 +134,7 @@ describe('DWallet Signing', () => {
 			userShareEncryptionKeys,
 			signerAddress,
 		} = await setupDKGFlow(testName, Curve.SECP256K1);
+		console.log('DWallet created successfully.');
 		const dwalletBitcoinAddress = bitcoin_address_from_dwallet_output(
 			Uint8Array.from(activeDWallet.state.Active.public_output),
 		);

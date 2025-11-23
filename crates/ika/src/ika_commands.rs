@@ -23,6 +23,7 @@ use ika_swarm_config::validator_initialization_config::DEFAULT_NUMBER_OF_AUTHORI
 use sui_sdk::wallet_context::WalletContext;
 use tokio::runtime::Runtime;
 use tracing::info;
+use ika_types::committee::ProtocolVersion;
 
 // 24 Hours.
 const DEFAULT_EPOCH_DURATION_MS: u64 = 1000 * 60 * 60 * 24;
@@ -92,6 +93,8 @@ pub enum IkaCommand {
         /// `--force-reinitiation` is set, the epoch duration will be set to 60 seconds.
         #[clap(long)]
         epoch_duration_ms: Option<u64>,
+        #[clap(long)]
+        protocol_version: Option<u64>,
 
         /// Start the network without a fullnode
         #[clap(long = "no-full-node")]
@@ -178,6 +181,7 @@ impl IkaCommand {
                 sui_faucet_url,
                 no_full_node,
                 epoch_duration_ms,
+                protocol_version,
             } => {
                 let thread_builder = thread::Builder::new();
                 const SIXTEEN_MB: usize = 16777216;
@@ -192,6 +196,7 @@ impl IkaCommand {
                             config_dir.clone(),
                             force_reinitiation,
                             epoch_duration_ms,
+                            protocol_version,
                             sui_fullnode_rpc_url,
                             sui_faucet_url,
                             no_full_node,
@@ -259,6 +264,7 @@ async fn start(
     config: Option<PathBuf>,
     force_reinitiation: bool,
     epoch_duration_ms: Option<u64>,
+    protocol_version: Option<u64>,
     _sui_fullnode_rpc_url: String,
     _sui_faucet_url: String,
     no_full_node: bool,
@@ -313,7 +319,9 @@ async fn start(
             swarm_builder = swarm_builder
                 .committee_size(NonZeroUsize::new(DEFAULT_NUMBER_OF_AUTHORITIES).unwrap());
             let epoch_duration_ms = epoch_duration_ms.unwrap_or(DEFAULT_EPOCH_DURATION_MS);
+            let protocol_version = protocol_version.unwrap_or(1);
             swarm_builder = swarm_builder.with_epoch_duration_ms(epoch_duration_ms);
+            swarm_builder = swarm_builder.with_protocol_version(ProtocolVersion(protocol_version));
         } else {
             let network_config: NetworkConfig = PersistedConfig::read(&network_config_path)
                 .map_err(|err| {
