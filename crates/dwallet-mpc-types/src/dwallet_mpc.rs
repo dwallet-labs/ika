@@ -3,7 +3,6 @@
 
 use crate::mpc_protocol_configuration::try_into_curve;
 use class_groups::CiphertextSpaceValue;
-use class_groups::reconfiguration_backward_compatible::Secp256k1Party;
 use crypto_bigint::{Encoding, Uint};
 use enum_dispatch::enum_dispatch;
 use group::secp256k1;
@@ -546,8 +545,7 @@ impl NetworkEncryptionKeyPublicDataTrait for NetworkEncryptionKeyPublicDataV2 {
     }
 }
 
-pub type ReconfigurationParty = Secp256k1Party;
-pub type ReconfigurationV2Party = twopc_mpc::decentralized_party::reconfiguration::Party;
+pub type ReconfigurationParty = twopc_mpc::decentralized_party::reconfiguration::Party;
 
 pub fn public_key_from_dwallet_output_by_curve(
     curve: DWalletCurve,

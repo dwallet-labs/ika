@@ -1,8 +1,7 @@
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
     dwallet_dkg_and_sign_protocol_data, dwallet_dkg_protocol_data,
-    encrypted_share_verification_protocol_data,
-    imported_key_verification_protocol_data,
+    encrypted_share_verification_protocol_data, imported_key_verification_protocol_data,
     make_dwallet_user_secret_key_shares_public_protocol_data,
     network_encryption_key_dkg_protocol_data, network_encryption_key_reconfiguration_protocol_data,
     partial_signature_verification_protocol_data, presign_protocol_data, sign_protocol_data,
@@ -10,11 +9,11 @@ use crate::request_protocol_data::{
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     DWALLET_SESSION_EVENT_STRUCT_NAME, DWalletDKGRequestEvent,
-    DWalletEncryptionKeyReconfigurationRequestEvent,
-    DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent,
-    DWalletSessionEvent, DWalletSessionEventTrait, EncryptedShareVerificationRequestEvent,
-    FutureSignRequestEvent, IkaNetworkConfig, MakeDWalletUserSecretKeySharesPublicRequestEvent,
-    PresignRequestEvent, SESSIONS_MANAGER_MODULE_NAME, SignDuringDKGRequestEvent, SignRequestEvent,
+    DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
+    DWalletNetworkDKGEncryptionKeyRequestEvent, DWalletSessionEvent, DWalletSessionEventTrait,
+    EncryptedShareVerificationRequestEvent, FutureSignRequestEvent, IkaNetworkConfig,
+    MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
+    SESSIONS_MANAGER_MODULE_NAME, SignDuringDKGRequestEvent, SignRequestEvent,
 };
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;

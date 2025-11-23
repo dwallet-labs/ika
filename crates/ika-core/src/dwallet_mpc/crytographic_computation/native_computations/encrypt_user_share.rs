@@ -76,9 +76,9 @@ fn verify_centralized_secret_key_share_proof_v1(
     let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput =
         decentralized_output.into();
 
-    let VersionedEncryptionKeyValue::V1(encryption_key_value) = bcs::from_bytes(encryption_key_value)?;
-    let encryption_key_value =
-    bcs::from_bytes(&encryption_key_value).map_err(|e| {
+    let VersionedEncryptionKeyValue::V1(encryption_key_value) =
+        bcs::from_bytes(encryption_key_value)?;
+    let encryption_key_value = bcs::from_bytes(&encryption_key_value).map_err(|e| {
         bcs::Error::Custom(format!("Failed to deserialize encryption key value: {}", e))
     })?;
 

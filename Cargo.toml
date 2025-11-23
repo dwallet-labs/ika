@@ -73,13 +73,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.dependencies]
 crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = ["serde"] }
 
-mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070"}
-proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070"}
-class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070"}
-group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "3ae2d070"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ae2d070"}
+mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "cafeb4ae"}
+proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "cafeb4ae"}
+class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "cafeb4ae", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "cafeb4ae" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "cafeb4ae"}
+group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "cafeb4ae"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "cafeb4ae"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }

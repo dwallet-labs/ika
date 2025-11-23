@@ -11,12 +11,16 @@ use crate::dwallet_mpc::sign::{
     DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
     SignAdvanceRequestByProtocol, SignPublicInputByProtocol,
 };
-use crate::request_protocol_data::{DWalletDKGAndSignData, DWalletDKGData, EncryptedShareVerificationData, ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData, NetworkEncryptionKeyReconfigurationData, PartialSignatureVerificationData, PresignData, ProtocolData, SignData};
+use crate::request_protocol_data::{
+    DWalletDKGAndSignData, DWalletDKGData, EncryptedShareVerificationData,
+    ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData,
+    NetworkEncryptionKeyReconfigurationData, PartialSignatureVerificationData, PresignData,
+    ProtocolData, SignData,
+};
 use class_groups::SecretKeyShareSizedInteger;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
-use dwallet_mpc_types::dwallet_mpc::{ReconfigurationV2Party};
+use dwallet_mpc_types::dwallet_mpc::ReconfigurationParty;
 use group::PartyID;
-use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
@@ -27,7 +31,6 @@ pub(crate) enum ProtocolCryptographicData {
         data: ImportedKeyVerificationData,
         public_input: DWalletImportedKeyVerificationPublicInputByCurve,
         advance_request: DWalletImportedKeyVerificationAdvanceRequestByCurve,
-        protocol_version: ProtocolVersion,
     },
 
     MakeDWalletUserSecretKeySharesPublic {
@@ -45,7 +48,6 @@ pub(crate) enum ProtocolCryptographicData {
         data: PresignData,
         public_input: PresignPublicInputByProtocol,
         advance_request: PresignAdvanceRequestByProtocol,
-        protocol_version: ProtocolVersion,
     },
 
     Sign {
@@ -53,7 +55,6 @@ pub(crate) enum ProtocolCryptographicData {
         public_input: SignPublicInputByProtocol,
         advance_request: SignAdvanceRequestByProtocol,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
-        protocol_version: ProtocolVersion,
     },
     DWalletDKGAndSign {
         data: DWalletDKGAndSignData,
@@ -61,16 +62,16 @@ pub(crate) enum ProtocolCryptographicData {
         advance_request: DWalletDKGAndSignAdvanceRequestByProtocol,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
-    NetworkEncryptionKeyDkgV2 {
+    NetworkEncryptionKeyDkg {
         public_input: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
         advance_request:
             AdvanceRequest<<twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::Message>,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
-    NetworkEncryptionKeyV2Reconfiguration {
+    NetworkEncryptionKeyReconfiguration {
         data: NetworkEncryptionKeyReconfigurationData,
-        public_input: <ReconfigurationV2Party as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<ReconfigurationV2Party as mpc::Party>::Message>,
+        public_input: <ReconfigurationParty as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<ReconfigurationParty as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
 
@@ -173,7 +174,7 @@ impl ProtocolCryptographicData {
                     req.attempt_number
                 }
             },
-            ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration {
+            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                 advance_request,
                 ..
             } => advance_request.attempt_number,
@@ -197,7 +198,7 @@ impl ProtocolCryptographicData {
                     DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
                 ..
             } => advance_request.attempt_number,
-            ProtocolCryptographicData::NetworkEncryptionKeyDkgV2 {
+            ProtocolCryptographicData::NetworkEncryptionKeyDkg {
                 advance_request, ..
             } => advance_request.attempt_number,
         }
@@ -310,11 +311,11 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::EncryptedShareVerification { .. }
             | ProtocolCryptographicData::PartialSignatureVerification { .. }
             | ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => None,
-            ProtocolCryptographicData::NetworkEncryptionKeyV2Reconfiguration {
+            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                 advance_request,
                 ..
             } => Some(advance_request.mpc_round_number),
-            ProtocolCryptographicData::NetworkEncryptionKeyDkgV2 {
+            ProtocolCryptographicData::NetworkEncryptionKeyDkg {
                 advance_request, ..
             } => Some(advance_request.mpc_round_number),
         }
@@ -328,7 +329,6 @@ impl DWalletMPCManager {
         protocol_data: &ProtocolData,
         consensus_round: u64,
         public_input: PublicInput,
-        protocol_version: &ProtocolVersion,
     ) -> Result<Option<ProtocolCryptographicData>, DwalletMPCError> {
         match session_type {
             SessionComputationType::Native => {
@@ -350,7 +350,6 @@ impl DWalletMPCManager {
                     .validator_private_dec_key_data
                     .class_groups_decryption_key,
                 &self.network_keys,
-                protocol_version,
             ),
         }
     }

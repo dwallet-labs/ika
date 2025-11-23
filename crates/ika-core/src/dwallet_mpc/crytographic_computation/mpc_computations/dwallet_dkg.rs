@@ -5,17 +5,15 @@
 //!
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
-use dwallet_mpc_types::dwallet_mpc::VersionedNetworkEncryptionKeyPublicData;
 use commitment::CommitmentSizedNumber;
+use dwallet_mpc_types::dwallet_mpc::VersionedNetworkEncryptionKeyPublicData;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
-    VersionedDwalletDKGFirstRoundPublicOutput, VersionedDwalletDKGPublicOutput,
-    VersionedDwalletUserSecretShare, VersionedEncryptedUserShare, VersionedEncryptionKeyValue,
-    VersionedImportedDwalletOutgoingMessage,
+    VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
+    VersionedEncryptionKeyValue, VersionedImportedDwalletOutgoingMessage,
     VersionedPublicKeyShareAndProof, public_key_from_decentralized_dkg_output_by_curve_v2,
 };
 use group::{CsRng, PartyID};
-use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
@@ -29,7 +27,6 @@ use mpc::{
 use serde::Serialize;
 use std::collections::HashMap;
 use twopc_mpc::dkg::{CentralizedPartyKeyShareVerification, Protocol};
-use twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters;
 
 pub(crate) type Secp256k1DWalletImportedKeyVerificationParty =
     <Secp256k1AsyncDKGProtocol as Protocol>::TrustedDealerDKGDecentralizedParty;
@@ -607,7 +604,6 @@ pub fn compute_imported_key_verification<P: Protocol>(
     access_structure: &WeightedThresholdAccessStructure,
     advance_request: AdvanceRequest<<P::TrustedDealerDKGDecentralizedParty as Party>::Message>,
     public_input: &<P::TrustedDealerDKGDecentralizedParty as Party>::PublicInput,
-    protocol_version: ProtocolVersion,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let result = mpc::guaranteed_output_delivery::Party::<P::TrustedDealerDKGDecentralizedParty>::advance_with_guaranteed_output(
@@ -629,34 +625,14 @@ pub fn compute_imported_key_verification<P: Protocol>(
             malicious_parties,
             private_output,
         } => {
-            // Wrap the public output with its version.
-            let versioned_output = match protocol_version.as_u64() {
-                1 => {
-                    let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput = bcs::from_bytes(&public_output_value)?;
-                    let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyTargetedDKGOutput = decentralized_output.into();
-
-                    bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V1(bcs::to_bytes(
-                        &decentralized_output,
-                    )?))?
-                }
-                2 => {
-                    let public_key_bytes = public_key_from_decentralized_dkg_output_by_curve_v2(
-                        curve,
-                        &public_output_value,
-                    )
+            let public_key_bytes =
+                public_key_from_decentralized_dkg_output_by_curve_v2(curve, &public_output_value)
                     .map_err(|e| DwalletMPCError::InternalError(e.to_string()))?;
 
-                    bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2 {
-                        public_key_bytes,
-                        dkg_output: public_output_value,
-                    })?
-                }
-                _ => {
-                    return Err(DwalletMPCError::UnsupportedProtocolVersion(
-                        protocol_version.as_u64(),
-                    ));
-                }
-            };
+            let versioned_output = bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2 {
+                public_key_bytes,
+                dkg_output: public_output_value,
+            })?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value: versioned_output,

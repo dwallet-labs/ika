@@ -15,12 +15,11 @@ use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, MPCPublicOutput, NetworkEncryptionKeyPublicDataTrait,
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
-    VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput, VersionedSignOutput,
-    VersionedUserSignedMessage, public_key_from_decentralized_dkg_output_by_curve_v2,
+    VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput, VersionedUserSignedMessage,
+    public_key_from_decentralized_dkg_output_by_curve_v2,
 };
 use group::CsRng;
 use group::{HashScheme, OsCsRng, PartyID};
-use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
@@ -33,7 +32,6 @@ use rand_core::SeedableRng;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::error;
-use twopc_mpc::ecdsa::ECDSASecp256k1Signature;
 use twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS;
 use twopc_mpc::{dkg, sign};
 
@@ -934,7 +932,6 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
     public_input: <SignParty<P> as mpc::Party>::PublicInput,
     decryption_key_shares: Option<<SignParty<P> as AsynchronouslyAdvanceable>::PrivateInput>,
     sign_data: &SignData,
-    protocol_version: ProtocolVersion,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let result =
@@ -958,43 +955,23 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
             malicious_parties,
             private_output,
         } => {
-            let signature = match protocol_version.as_u64() {
-                1 => {
-                    // In V1, only ECDSA Secp256k1 is supported
-                    let signature: ECDSASecp256k1Signature = bcs::from_bytes(&public_output_value)?;
+            let signature = match parse_signature_from_sign_output(
+                &sign_data.signature_algorithm,
+                public_output_value,
+            ) {
+                Ok(signature) => Ok(signature),
+                Err(e) => {
+                    error!(
+                        session_identifier=?session_id,
+                        ?e,
+                        ?malicious_parties,
+                        signature_algorithm=?sign_data.signature_algorithm,
+                        should_never_happen = true,
+                        "failed to deserialize sign session result "
+                    );
 
-                    // For compatability, split the signature into scalars & serialize (the v1 signature format is two scalars).
-                    let signature = signature
-                        .signature()
-                        .map_err(|e| DwalletMPCError::InternalError(e.to_string()))?;
-
-                    Ok(bcs::to_bytes(&VersionedSignOutput::V1(bcs::to_bytes(
-                        &signature.split_scalars(),
-                    )?))?)
+                    Err(e)
                 }
-                2 => {
-                    match parse_signature_from_sign_output(
-                        &sign_data.signature_algorithm,
-                        public_output_value,
-                    ) {
-                        Ok(signature) => Ok(signature),
-                        Err(e) => {
-                            error!(
-                                session_identifier=?session_id,
-                                ?e,
-                                ?malicious_parties,
-                                signature_algorithm=?sign_data.signature_algorithm,
-                                should_never_happen = true,
-                                "failed to deserialize sign session result "
-                            );
-
-                            Err(e)
-                        }
-                    }
-                }
-                _ => Err(DwalletMPCError::UnsupportedProtocolVersion(
-                    protocol_version.as_u64(),
-                )),
             }?;
 
             // For Sign protocol, we don't need to wrap the output with version like presign does

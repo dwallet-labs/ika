@@ -21,7 +21,6 @@ use dwallet_mpc_types::dwallet_mpc::NetworkEncryptionKeyPublicDataTrait;
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
-use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
@@ -84,7 +83,6 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) network_dkg_third_round_delay: u64,
     pub(crate) decryption_key_reconfiguration_third_round_delay: u64,
     sui_data_receivers: SuiDataReceivers,
-    pub(crate) protocol_config: ProtocolConfig,
 }
 
 impl DWalletMPCManager {
@@ -97,7 +95,6 @@ impl DWalletMPCManager {
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
-        protocol_config: ProtocolConfig,
     ) -> Self {
         Self::try_new(
             validator_name,
@@ -108,7 +105,6 @@ impl DWalletMPCManager {
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics,
             sui_data_receivers,
-            protocol_config,
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -126,7 +122,6 @@ impl DWalletMPCManager {
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
-        protocol_config: ProtocolConfig,
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
@@ -166,7 +161,6 @@ impl DWalletMPCManager {
             committee,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
-            protocol_config,
         })
     }
 
@@ -411,7 +405,6 @@ impl DWalletMPCManager {
                     &request.protocol_data,
                     last_read_consensus_round,
                     public_input.clone(),
-                    &self.protocol_config.version,
                 )
                 .ok()?
                 .map(|protocol_cryptographic_data| {

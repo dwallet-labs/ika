@@ -36,9 +36,8 @@ use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::{
-    DWalletCheckpointMessageKind, DWalletDKGOutput,
-    DWalletImportedKeyVerificationOutput, EncryptedUserShareOutput,
-    MPCNetworkDKGOutput, MPCNetworkReconfigurationOutput,
+    DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletImportedKeyVerificationOutput,
+    EncryptedUserShareOutput, MPCNetworkDKGOutput, MPCNetworkReconfigurationOutput,
     MakeDWalletUserSecretKeySharesPublicOutput, PartialSignatureVerificationOutput, PresignOutput,
     SignOutput,
 };
@@ -117,7 +116,6 @@ impl DWalletMPCService {
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics.clone(),
             sui_data_receivers.clone(),
-            protocol_config.clone(),
         );
 
         Self {

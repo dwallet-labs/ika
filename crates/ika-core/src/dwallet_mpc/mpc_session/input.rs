@@ -6,13 +6,10 @@ use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationPublicInputByCurve,
 };
-use crate::dwallet_mpc::network_dkg::{
-    DwalletMPCNetworkKeys, network_dkg_v2_public_input,
-};
+use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
-use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationV2PartyPublicInputGenerator,
-};
+
+use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerator;
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
@@ -20,12 +17,8 @@ use crate::request_protocol_data::{
     PartialSignatureVerificationData, PresignData, ProtocolData,
 };
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{
-    MPCPrivateInput,
-    ReconfigurationV2Party,
-};
+use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, ReconfigurationParty};
 use group::PartyID;
-use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
@@ -39,12 +32,12 @@ pub(crate) enum PublicInput {
     DWalletDKGAndSign(DKGAndSignPublicInputByProtocol),
     Presign(PresignPublicInputByProtocol),
     Sign(SignPublicInputByProtocol),
-    NetworkEncryptionKeyDkgV2(
+    NetworkEncryptionKeyDkg(
         <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
     ),
     EncryptedShareVerification(ProtocolPublicParametersByCurve),
     PartialSignatureVerification(ProtocolPublicParametersByCurve),
-    NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Party as mpc::Party>::PublicInput),
+    NetworkEncryptionKeyReconfiguration(<ReconfigurationParty as mpc::Party>::PublicInput),
     MakeDWalletUserSecretKeySharesPublic(ProtocolPublicParametersByCurve),
 }
 
@@ -64,7 +57,6 @@ pub(crate) fn session_input_from_request(
         PartyID,
         ClassGroupsEncryptionKeyAndProof,
     >,
-    protocol_config: &ProtocolConfig,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
@@ -161,14 +153,13 @@ pub(crate) fn session_input_from_request(
             let class_groups_decryption_key = network_keys
                 .validator_private_dec_key_data
                 .class_groups_decryption_key;
-                Ok((
-                    PublicInput::NetworkEncryptionKeyDkgV2(network_dkg_v2_public_input(
-                        access_structure,
-                        validators_class_groups_public_keys_and_proofs,
-                    )?),
-                    Some(bcs::to_bytes(&class_groups_decryption_key)?),
-                ))
-
+            Ok((
+                PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
+                    access_structure,
+                    validators_class_groups_public_keys_and_proofs,
+                )?),
+                Some(bcs::to_bytes(&class_groups_decryption_key)?),
+            ))
         }
         ProtocolData::NetworkEncryptionKeyReconfiguration {
             dwallet_network_encryption_key_id,
@@ -181,8 +172,8 @@ pub(crate) fn session_input_from_request(
             let next_active_committee = next_active_committee.ok_or(
                 DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
             )?;
-                Ok((
-                    PublicInput::NetworkEncryptionKeyReconfigurationV2(<ReconfigurationV2Party as ReconfigurationV2PartyPublicInputGenerator>::generate_public_input(
+            Ok((
+                    PublicInput::NetworkEncryptionKeyReconfiguration(<ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
                         network_keys
@@ -198,7 +189,6 @@ pub(crate) fn session_input_from_request(
                         &class_groups_decryption_key
                     )?),
                 ))
-
         }
         ProtocolData::Presign {
             data:

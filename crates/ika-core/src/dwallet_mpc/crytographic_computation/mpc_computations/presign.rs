@@ -14,7 +14,6 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use dwallet_mpc_types::dwallet_mpc::{NetworkEncryptionKeyPublicDataTrait, VersionedPresignOutput};
 use group::{CsRng, PartyID};
-use ika_protocol_config::ProtocolVersion;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
@@ -358,7 +357,6 @@ pub fn compute_presign<P: presign::Protocol>(
     session_id: CommitmentSizedNumber,
     advance_request: AdvanceRequest<<P::PresignParty as mpc::Party>::Message>,
     public_input: <P::PresignParty as mpc::Party>::PublicInput,
-    protocol_version: ProtocolVersion,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let result =
@@ -382,33 +380,8 @@ pub fn compute_presign<P: presign::Protocol>(
             malicious_parties,
             private_output,
         } => {
-            // Wrap the public output with its version.
-            let public_output_value = match protocol_version.as_u64() {
-                1 => {
-                    let versioned_presign: <Secp256k1ECDSAProtocol as Protocol>::Presign =
-                        bcs::from_bytes(&public_output_value.clone())?;
-
-                    let targeted_presign = match versioned_presign {
-                        twopc_mpc::ecdsa::presign::VersionedPresign::TargetedPresign(presign) => {
-                            presign
-                        }
-                        twopc_mpc::ecdsa::presign::VersionedPresign::UniversalPresign(_) => {
-                            // In protocol version 1, we never generate universal presigns
-                            unreachable!()
-                        }
-                    };
-
-                    bcs::to_bytes(&VersionedPresignOutput::V1(bcs::to_bytes(
-                        &targeted_presign,
-                    )?))?
-                }
-                2 => bcs::to_bytes(&VersionedPresignOutput::V2(public_output_value))?,
-                _ => {
-                    return Err(DwalletMPCError::UnsupportedProtocolVersion(
-                        protocol_version.as_u64(),
-                    ));
-                }
-            };
+            let public_output_value =
+                bcs::to_bytes(&VersionedPresignOutput::V2(public_output_value))?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,

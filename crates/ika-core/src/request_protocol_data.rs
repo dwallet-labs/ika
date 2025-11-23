@@ -7,10 +7,10 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
 use group::HashScheme;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    DWalletDKGRequestEvent,
-    DWalletEncryptionKeyReconfigurationRequestEvent, DWalletImportedKeyVerificationRequestEvent,
-    DWalletNetworkDKGEncryptionKeyRequestEvent, EncryptedShareVerificationRequestEvent,
-    FutureSignRequestEvent, MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
+    DWalletDKGRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent,
+    DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent,
+    EncryptedShareVerificationRequestEvent, FutureSignRequestEvent,
+    MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
     SignDuringDKGRequestEvent, SignRequestEvent, UserSecretKeyShareEventType,
 };
 use sui_types::base_types::ObjectID;
