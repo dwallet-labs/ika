@@ -20,10 +20,10 @@ use crate::validator_commands::IkaValidatorCommand;
 use ika_swarm::memory::Swarm;
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::validator_initialization_config::DEFAULT_NUMBER_OF_AUTHORITIES;
+use ika_types::committee::ProtocolVersion;
 use sui_sdk::wallet_context::WalletContext;
 use tokio::runtime::Runtime;
 use tracing::info;
-use ika_types::committee::ProtocolVersion;
 
 // 24 Hours.
 const DEFAULT_EPOCH_DURATION_MS: u64 = 1000 * 60 * 60 * 24;
