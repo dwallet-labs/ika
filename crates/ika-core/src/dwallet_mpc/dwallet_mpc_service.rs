@@ -730,9 +730,9 @@ impl DWalletMPCService {
             validator=?validator_name,
             party_id,
             session_type=?request.session_type,
-            protocol_data=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
             error=?error,
-            "rejecting session."
+            "rejecting session. {}",
+            DWalletSessionRequestMetricData::from(&request.protocol_data).to_labeled_string()
         );
 
         let consensus_adapter = self.dwallet_submit_to_consensus.clone();
@@ -796,9 +796,9 @@ impl DWalletMPCService {
         rejected: bool,
     ) -> Vec<DWalletCheckpointMessageKind> {
         info!(
-            mpc_protocol=?DWalletSessionRequestMetricData::from(&session_request.protocol_data),
             session_identifier=?session_identifier,
-            "Creating session output message for checkpoint"
+            "Creating session output message for checkpoint {}",
+            DWalletSessionRequestMetricData::from(&session_request.protocol_data).to_labeled_string()
         );
         match &session_request.protocol_data {
             ProtocolData::DWalletDKG {

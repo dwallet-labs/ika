@@ -151,7 +151,7 @@ impl DWalletSession {
     ) {
         let mpc_protocol = match &self.status {
             SessionStatus::Active { request, .. } => {
-                DWalletSessionRequestMetricData::from(&request.protocol_data).to_string()
+                DWalletSessionRequestMetricData::from(&request.protocol_data).to_labeled_string()
             }
             SessionStatus::WaitingForSessionRequest => {
                 "Unknown - waiting for session request".to_string()
@@ -174,8 +174,8 @@ impl DWalletSession {
             receiving_authority=?self.validator_name,
             consensus_round=?consensus_round,
             message_size_bytes=?message.message.len(),
-            ?mpc_protocol,
-            "Received a dWallet MPC message",
+            "Received a dWallet MPC message {}",
+            mpc_protocol
         );
 
         let SessionComputationType::MPC {
@@ -430,10 +430,10 @@ impl DWalletMPCManager {
         if !request.pulled && request.epoch != self.epoch_id {
             warn!(
                 session_identifier=?session_identifier,
-                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
                 session_source=?request.session_type,
                 event_epoch=?request.epoch,
-                "received an event for a different epoch, skipping"
+                "received an event for a different epoch, skipping {}",
+                DWalletSessionRequestMetricData::from(&request.protocol_data).to_labeled_string()
             );
 
             return None;
@@ -449,10 +449,10 @@ impl DWalletMPCManager {
             // We don't yet have the data for this network encryption key,
             // so we add it to the queue.
             debug!(
-                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
                 session_source=?request.session_type,
                 network_encryption_key_id=?network_encryption_key_id,
-                "Adding request to pending for the network key"
+                "Adding request to pending for the network key {}",
+                DWalletSessionRequestMetricData::from(&request.protocol_data).to_labeled_string()
             );
 
             let request_pending_for_this_network_key = self
@@ -475,9 +475,9 @@ impl DWalletMPCManager {
             // We don't have the next active committee yet,
             // so we have to add this request to the pending queue until it arrives.
             debug!(
-                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
                 session_source=?request.session_type,
-                "Adding request to pending for the next epoch active committee"
+                "Adding request to pending for the next epoch active committee {}",
+                DWalletSessionRequestMetricData::from(&request.protocol_data).to_labeled_string()
             );
 
             if self
@@ -594,10 +594,10 @@ impl DWalletMPCService {
             Ok(requests) => {
                 for request in &requests {
                     debug!(
-                        request_type=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
                         session_identifier=?request.session_identifier,
                         current_epoch=?self.epoch,
-                        "Received a request from Sui"
+                        "Received a request from Sui {}",
+                        DWalletSessionRequestMetricData::from(&request.protocol_data).to_labeled_string()
                     );
                 }
 
