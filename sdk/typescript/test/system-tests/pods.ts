@@ -193,11 +193,8 @@ export async function createPVCs(kc: KubeConfig, namespaceName: string, numOfVal
 	});
 }
 
-export async function createPods(kc: KubeConfig, namespaceName: string, numOfValidators: number) {
+export async function createFullnodePod(namespaceName: string, kc: KubeConfig) {
 	const k8sApi = kc.makeApiClient(CoreV1Api);
-	for (let i = 0; i < numOfValidators; i++) {
-		await createValidatorPod(kc, namespaceName, i + 1);
-	}
 	const fullnodePod = {
 		metadata: {
 			name: `ika-fullnode`,
@@ -266,4 +263,11 @@ export async function createPods(kc: KubeConfig, namespaceName: string, numOfVal
 		namespace: namespaceName,
 		body: fullnodePod,
 	});
+}
+
+export async function createPods(kc: KubeConfig, namespaceName: string, numOfValidators: number) {
+	for (let i = 0; i < numOfValidators; i++) {
+		await createValidatorPod(kc, namespaceName, i + 1);
+	}
+	await createFullnodePod(namespaceName, kc);
 }

@@ -173,12 +173,10 @@ async function requestAndWaitForPresign(
 	expect(presignRequestEvent).toBeDefined();
 	expect(presignRequestEvent.event_data.presign_id).toBeDefined();
 
-	const presignObject = await retryUntil(
-		() =>
-			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
-		(presign) => presign !== null,
-		30,
-		2000,
+	const presignObject = await ikaClient.getPresignInParticularState(
+		presignRequestEvent.event_data.presign_id,
+		'Completed',
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	expect(presignObject).toBeDefined();
@@ -262,7 +260,7 @@ async function signAndVerify(
 		curve,
 		signatureAlgorithm,
 		'Completed',
-		{ timeout: 60000, interval: 1000 },
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	const dWallet = await ikaClient.getDWalletInParticularState(
@@ -300,7 +298,7 @@ async function signAndVerify(
 /**
  * Test a specific combination of curve, signature algorithm, and hash
  */
-async function testCombination(
+export async function testSignCombination(
 	curve: Curve,
 	signatureAlgorithm: SignatureAlgorithm,
 	hash: Hash,
@@ -345,7 +343,7 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 	// ECDSASecp256k1 + SECP256K1 combinations (3 tests)
 	describe('ECDSASecp256k1 on SECP256K1', () => {
 		it('should work with KECCAK256', async () => {
-			await testCombination(
+			await testSignCombination(
 				Curve.SECP256K1,
 				SignatureAlgorithm.ECDSASecp256k1,
 				Hash.KECCAK256,
@@ -354,7 +352,7 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 		});
 
 		it('should work with SHA256', async () => {
-			await testCombination(
+			await testSignCombination(
 				Curve.SECP256K1,
 				SignatureAlgorithm.ECDSASecp256k1,
 				Hash.SHA256,
@@ -363,7 +361,7 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 		});
 
 		it('should work with DoubleSHA256', async () => {
-			await testCombination(
+			await testSignCombination(
 				Curve.SECP256K1,
 				SignatureAlgorithm.ECDSASecp256k1,
 				Hash.DoubleSHA256,
@@ -375,7 +373,7 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 	// Taproot + SECP256K1 combinations (1 test)
 	describe('Taproot on SECP256K1', () => {
 		it('should work with SHA256', async () => {
-			await testCombination(
+			await testSignCombination(
 				Curve.SECP256K1,
 				SignatureAlgorithm.Taproot,
 				Hash.SHA256,
@@ -387,7 +385,7 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 	// ECDSASecp256r1 + SECP256R1 combinations (1 test)
 	describe('ECDSASecp256r1 on SECP256R1', () => {
 		it('should work with SHA256', async () => {
-			await testCombination(
+			await testSignCombination(
 				Curve.SECP256R1,
 				SignatureAlgorithm.ECDSASecp256r1,
 				Hash.SHA256,
@@ -399,14 +397,19 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 	// EdDSA + ED25519 combination (1 test)
 	describe('EdDSA on ED25519', () => {
 		it('should work with SHA512', async () => {
-			await testCombination(Curve.ED25519, SignatureAlgorithm.EdDSA, Hash.SHA512, 'eddsa-sha512');
+			await testSignCombination(
+				Curve.ED25519,
+				SignatureAlgorithm.EdDSA,
+				Hash.SHA512,
+				'eddsa-sha512',
+			);
 		});
 	});
 
 	// SchnorrkelSubstrate + RISTRETTO combination (1 test)
 	describe('SchnorrkelSubstrate on RISTRETTO', () => {
 		it('should work with Merlin', async () => {
-			await testCombination(
+			await testSignCombination(
 				Curve.RISTRETTO,
 				SignatureAlgorithm.SchnorrkelSubstrate,
 				Hash.Merlin,
