@@ -3,7 +3,7 @@
 import { bitcoin_address_from_dwallet_output } from '@ika.xyz/ika-wasm';
 import { public_key_from_dwallet_output } from '@ika.xyz/mpc-wasm';
 import { Transaction } from '@mysten/sui/transactions';
-import * as bitcoin from 'bitcoinjs-lib';
+import * as bitcoin from 'z';
 import { networks, payments, Psbt } from 'bitcoinjs-lib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -127,8 +127,6 @@ describe('DWallet Signing', () => {
 	it('should create a DWallet and print its address', async () => {
 		const testName = 'dwallet-sign-test';
 
-		// Use shared clients but create individual DWallet to avoid gas conflicts
-		const { suiClient, ikaClient } = await createIndividualTestSetup(testName);
 		const {
 			ikaClient,
 			activeDWallet,
