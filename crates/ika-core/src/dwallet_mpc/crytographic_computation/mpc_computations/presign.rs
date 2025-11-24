@@ -7,12 +7,12 @@
 
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use commitment::CommitmentSizedNumber;
+use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DWalletSignatureAlgorithm, MPCPublicOutput,
-    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
-    VersionedNetworkEncryptionKeyPublicData,
+    NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
+    VersionedDwalletDKGPublicOutput,
 };
-use dwallet_mpc_types::dwallet_mpc::{NetworkEncryptionKeyPublicDataTrait, VersionedPresignOutput};
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
@@ -143,7 +143,7 @@ impl PresignAdvanceRequestByProtocol {
 impl PresignPublicInputByProtocol {
     pub(crate) fn try_new(
         protocol: DWalletSignatureAlgorithm,
-        versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        versioned_network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
     ) -> DwalletMPCResult<Self> {
         if dwallet_public_output.is_none() {
@@ -162,7 +162,7 @@ impl PresignPublicInputByProtocol {
         }
     }
     pub(crate) fn try_new_v1(
-        versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        versioned_network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         dwallet_public_output: MPCPublicOutput,
     ) -> DwalletMPCResult<Self> {
         let decentralized_party_dkg_output =
@@ -182,7 +182,7 @@ impl PresignPublicInputByProtocol {
 
     pub(crate) fn try_new_v2(
         protocol: DWalletSignatureAlgorithm,
-        versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        versioned_network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         dwallet_dkg_output: Option<MPCPublicOutput>,
     ) -> DwalletMPCResult<Self> {
         let input = match protocol {
@@ -219,7 +219,7 @@ impl PresignPublicInputByProtocol {
             }
             DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .ristretto_protocol_public_parameters()?;
+                    .ristretto_protocol_public_parameters();
 
                 let pub_input =
                     <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput::from((
@@ -251,7 +251,7 @@ impl PresignPublicInputByProtocol {
             }
             DWalletSignatureAlgorithm::EdDSA => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .curve25519_protocol_public_parameters()?;
+                    .curve25519_protocol_public_parameters();
 
                 let pub_input =
                     <PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput::from((
@@ -283,7 +283,7 @@ impl PresignPublicInputByProtocol {
             }
             DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .secp256r1_protocol_public_parameters()?;
+                    .secp256r1_protocol_public_parameters();
 
                 let pub_input =
                     <PresignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput::from((
