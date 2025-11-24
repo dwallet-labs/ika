@@ -67,13 +67,13 @@ async fn encrypt_secret_share() {
         key_id,
         ObjectID::from_bytes(
             dwallet_test_result
-                .dkg_second_round_output
+                .dkg_output
                 .dwallet_id
                 .clone(),
         )
         .unwrap(),
         encrypted_secret_share,
-        dwallet_test_result.dkg_second_round_output.output,
+        dwallet_test_result.dkg_output.output,
         dwallet_test_result.class_groups_encryption_key.clone(),
     );
     let (_, encrypted_secret_share_checkpoint) = utils::advance_mpc_flow_until_completion(

@@ -16,7 +16,7 @@ use dwallet_mpc_centralized_party::{
 };
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
-use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGSecondRoundOutput};
+use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletDKGSecondRoundOutput};
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
@@ -69,7 +69,7 @@ async fn dwallet_dkg_first_round() {
 
 pub(crate) struct DWalletTestResult {
     pub(crate) flow_completion_consensus_round: Round,
-    pub(crate) dkg_second_round_output: DWalletDKGSecondRoundOutput,
+    pub(crate) dkg_output: DWalletDKGOutput,
     pub(crate) dwallet_secret_key_share: Vec<u8>,
     pub(crate) class_groups_encryption_key: Vec<u8>,
 }
@@ -77,7 +77,7 @@ pub(crate) struct DWalletTestResult {
 #[tokio::test]
 #[cfg(test)]
 /// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
-async fn create_dwallet() {
+async fn create_dwallet_simple_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let (
@@ -147,8 +147,8 @@ async fn make_dwallet_public() {
         [4; 32],
         4,
         key_id,
-        ObjectID::from_bytes(&result.dkg_second_round_output.dwallet_id).unwrap(),
-        result.dkg_second_round_output.output,
+        ObjectID::from_bytes(&result.dkg_output.dwallet_id).unwrap(),
+        result.dkg_output.output,
         result.dwallet_secret_key_share,
     );
     let (_, verified_dwallet_checkpoint) = utils::advance_mpc_flow_until_completion(
@@ -380,7 +380,7 @@ pub(crate) async fn create_dwallet_test(
     );
     let (consensus_round, dwallet_second_round_checkpoint) =
         utils::advance_mpc_flow_until_completion(test_state, consensus_round).await;
-    let DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(
+    let DWalletCheckpointMessageKind::RespondDWalletDKGOutput(
         decentralized_party_dkg_public_output,
     ) = dwallet_second_round_checkpoint
         .messages()
@@ -393,7 +393,7 @@ pub(crate) async fn create_dwallet_test(
     info!("DWallet DKG second round completed");
     DWalletTestResult {
         flow_completion_consensus_round: consensus_round,
-        dkg_second_round_output: decentralized_party_dkg_public_output.clone(),
+        dkg_output: decentralized_party_dkg_public_output.clone(),
         dwallet_secret_key_share: centralized_dwallet_dkg_result.centralized_secret_output,
         class_groups_encryption_key: encryption_key,
     }

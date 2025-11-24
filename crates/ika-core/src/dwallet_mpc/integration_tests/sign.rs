@@ -53,7 +53,7 @@ async fn sign() {
         create_network_key_test(&mut test_state).await;
     let DWalletTestResult {
         flow_completion_consensus_round: consensus_round,
-        dkg_second_round_output: decentralized_party_dkg_public_output,
+        dkg_output: decentralized_party_dkg_public_output,
         dwallet_secret_key_share: dwallet_secret_share,
         ..
     } = create_dwallet_test(
@@ -149,7 +149,7 @@ async fn future_sign() {
         create_network_key_test(&mut test_state).await;
     let DWalletTestResult {
         flow_completion_consensus_round: consensus_round,
-        dkg_second_round_output: decentralized_party_dkg_public_output,
+        dkg_output: decentralized_party_dkg_public_output,
         dwallet_secret_key_share: dwallet_secret_share,
         ..
     } = create_dwallet_test(
