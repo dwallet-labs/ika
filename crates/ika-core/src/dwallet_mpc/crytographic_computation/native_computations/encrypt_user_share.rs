@@ -111,7 +111,7 @@ fn verify_centralized_secret_key_share_proof_v2(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
                 encryption_key_value,
-                pp,
+                &pp,
             )
         }
         ProtocolPublicParametersByCurve::Secp256r1(pp) => {
@@ -119,7 +119,7 @@ fn verify_centralized_secret_key_share_proof_v2(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
                 encryption_key_value,
-                pp,
+                &pp,
             )
         }
         ProtocolPublicParametersByCurve::Curve25519(pp) => {
@@ -127,7 +127,7 @@ fn verify_centralized_secret_key_share_proof_v2(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
                 encryption_key_value,
-                pp,
+                &pp,
             )
         }
         ProtocolPublicParametersByCurve::Ristretto(pp) => {
@@ -135,7 +135,7 @@ fn verify_centralized_secret_key_share_proof_v2(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
                 encryption_key_value,
-                pp,
+                &pp,
             )
         }
     }
@@ -147,13 +147,13 @@ fn verify_centralized_secret_key_share_proof<P: dkg::Protocol>(
     encrypted_centralized_secret_share_and_proof: &[u8],
     decentralized_dkg_output: P::DecentralizedPartyDKGOutput,
     encryption_key_value: &[u8],
-    protocol_public_parameters: P::ProtocolPublicParameters,
+    protocol_public_parameters: &P::ProtocolPublicParameters,
 ) -> anyhow::Result<()> {
     let VersionedEncryptionKeyValue::V1(encryption_key_value) =
         bcs::from_bytes(encryption_key_value)?;
 
     P::verify_encryption_of_centralized_party_share_proof(
-        &protocol_public_parameters,
+        protocol_public_parameters,
         decentralized_dkg_output,
         bcs::from_bytes(&encryption_key_value)?,
         bcs::from_bytes(encrypted_centralized_secret_share_and_proof)?,

@@ -6,12 +6,12 @@
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::VersionedNetworkEncryptionKeyPublicData;
+use dwallet_mpc_types::dwallet_mpc::NetworkEncryptionKeyPublicData;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkEncryptionKeyPublicDataTrait, SerializedWrappedMPCPublicOutput,
-    VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
-    VersionedEncryptionKeyValue, VersionedImportedDwalletOutgoingMessage,
-    VersionedPublicKeyShareAndProof, public_key_from_decentralized_dkg_output_by_curve_v2,
+    DWalletCurve, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
+    VersionedDwalletUserSecretShare, VersionedEncryptedUserShare, VersionedEncryptionKeyValue,
+    VersionedImportedDwalletOutgoingMessage, VersionedPublicKeyShareAndProof,
+    public_key_from_decentralized_dkg_output_by_curve_v2,
 };
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -198,7 +198,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
     pub fn try_new(
         session_identifier: CommitmentSizedNumber,
         curve: &DWalletCurve,
-        encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         centralized_party_message: &[u8],
         secret_share_verification_type: BytesCentralizedPartyKeyShareVerification,
     ) -> DwalletMPCResult<Self> {
@@ -230,7 +230,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
             }
             DWalletCurve::Secp256r1 => {
                 let protocol_public_parameters =
-                    encryption_key_public_data.secp256r1_protocol_public_parameters()?;
+                    encryption_key_public_data.secp256r1_protocol_public_parameters();
                 let centralized_party_message: VersionedImportedDwalletOutgoingMessage =
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
@@ -251,7 +251,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
             }
             DWalletCurve::Curve25519 => {
                 let protocol_public_parameters =
-                    encryption_key_public_data.curve25519_protocol_public_parameters()?;
+                    encryption_key_public_data.curve25519_protocol_public_parameters();
                 let centralized_party_message: VersionedImportedDwalletOutgoingMessage =
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
@@ -272,7 +272,7 @@ impl DWalletImportedKeyVerificationPublicInputByCurve {
             }
             DWalletCurve::Ristretto => {
                 let protocol_public_parameters =
-                    encryption_key_public_data.ristretto_protocol_public_parameters()?;
+                    encryption_key_public_data.ristretto_protocol_public_parameters();
                 let centralized_party_message: VersionedImportedDwalletOutgoingMessage =
                     bcs::from_bytes(centralized_party_message)
                         .map_err(DwalletMPCError::BcsError)?;
@@ -419,7 +419,7 @@ where
 impl DWalletDKGPublicInputByCurve {
     pub fn try_new(
         curve: &DWalletCurve,
-        encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         centralized_party_public_key_share_buf: &SerializedWrappedMPCPublicOutput,
         centralized_party_key_share_verification: BytesCentralizedPartyKeyShareVerification,
     ) -> DwalletMPCResult<Self> {
@@ -459,7 +459,7 @@ impl DWalletDKGPublicInputByCurve {
                     }
                 };
                 let input = (
-                    encryption_key_public_data.secp256r1_protocol_public_parameters()?,
+                    encryption_key_public_data.secp256r1_protocol_public_parameters(),
                     centralized_party_public_key_share,
                     centralized_party_key_share_verification.try_into()?,
                 )
@@ -475,7 +475,7 @@ impl DWalletDKGPublicInputByCurve {
                     }
                 };
                 let input = (
-                    encryption_key_public_data.curve25519_protocol_public_parameters()?,
+                    encryption_key_public_data.curve25519_protocol_public_parameters(),
                     centralized_party_public_key_share,
                     centralized_party_key_share_verification.try_into()?,
                 )
@@ -491,7 +491,7 @@ impl DWalletDKGPublicInputByCurve {
                     }
                 };
                 let input = (
-                    encryption_key_public_data.ristretto_protocol_public_parameters()?,
+                    encryption_key_public_data.ristretto_protocol_public_parameters(),
                     centralized_party_public_key_share,
                     centralized_party_key_share_verification.try_into()?,
                 )

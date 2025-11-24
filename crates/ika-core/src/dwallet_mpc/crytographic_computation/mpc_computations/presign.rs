@@ -7,12 +7,12 @@
 
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use commitment::CommitmentSizedNumber;
+use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DWalletSignatureAlgorithm, MPCPublicOutput,
-    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
-    VersionedNetworkEncryptionKeyPublicData,
+    NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
+    VersionedDwalletDKGPublicOutput,
 };
-use dwallet_mpc_types::dwallet_mpc::{NetworkEncryptionKeyPublicDataTrait, VersionedPresignOutput};
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
@@ -143,33 +143,33 @@ impl PresignAdvanceRequestByProtocol {
 impl PresignPublicInputByProtocol {
     pub(crate) fn try_new(
         protocol: DWalletSignatureAlgorithm,
-        versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
     ) -> DwalletMPCResult<Self> {
         if dwallet_public_output.is_none() {
-            return Self::try_new_v2(protocol, versioned_network_encryption_key_public_data, None);
+            return Self::try_new_v2(protocol, network_encryption_key_public_data, None);
         }
         // Safe to unwrap as we checked for None above
         match bcs::from_bytes(&dwallet_public_output.unwrap())? {
             VersionedDwalletDKGPublicOutput::V1(dkg_output) => {
-                Self::try_new_v1(versioned_network_encryption_key_public_data, dkg_output)
+                Self::try_new_v1(network_encryption_key_public_data, dkg_output)
             }
             VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => Self::try_new_v2(
                 protocol,
-                versioned_network_encryption_key_public_data,
+                network_encryption_key_public_data,
                 Some(dkg_output),
             ),
         }
     }
     pub(crate) fn try_new_v1(
-        versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         dwallet_public_output: MPCPublicOutput,
     ) -> DwalletMPCResult<Self> {
         let decentralized_party_dkg_output =
             bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(&dwallet_public_output)?;
 
         let protocol_public_parameters =
-            versioned_network_encryption_key_public_data.secp256k1_protocol_public_parameters();
+            network_encryption_key_public_data.secp256k1_protocol_public_parameters();
 
         let public_input: <PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput = (
             protocol_public_parameters,
@@ -182,13 +182,13 @@ impl PresignPublicInputByProtocol {
 
     pub(crate) fn try_new_v2(
         protocol: DWalletSignatureAlgorithm,
-        versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         dwallet_dkg_output: Option<MPCPublicOutput>,
     ) -> DwalletMPCResult<Self> {
         let input = match protocol {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .secp256k1_protocol_public_parameters();
+                let protocol_public_parameters =
+                    network_encryption_key_public_data.secp256k1_protocol_public_parameters();
 
                 let public_input =
                     <PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput::from((
@@ -218,8 +218,8 @@ impl PresignPublicInputByProtocol {
                 PresignPublicInputByProtocol::Secp256k1ECDSA(public_input)
             }
             DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .ristretto_protocol_public_parameters()?;
+                let protocol_public_parameters =
+                    network_encryption_key_public_data.ristretto_protocol_public_parameters();
 
                 let pub_input =
                     <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput::from((
@@ -250,8 +250,8 @@ impl PresignPublicInputByProtocol {
                 PresignPublicInputByProtocol::SchnorrkelSubstrate(pub_input)
             }
             DWalletSignatureAlgorithm::EdDSA => {
-                let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .curve25519_protocol_public_parameters()?;
+                let protocol_public_parameters =
+                    network_encryption_key_public_data.curve25519_protocol_public_parameters();
 
                 let pub_input =
                     <PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput::from((
@@ -282,8 +282,8 @@ impl PresignPublicInputByProtocol {
                 PresignPublicInputByProtocol::EdDSA(pub_input)
             }
             DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .secp256r1_protocol_public_parameters()?;
+                let protocol_public_parameters =
+                    network_encryption_key_public_data.secp256r1_protocol_public_parameters();
 
                 let pub_input =
                     <PresignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput::from((
@@ -314,8 +314,8 @@ impl PresignPublicInputByProtocol {
                 PresignPublicInputByProtocol::Secp256r1ECDSA(pub_input)
             }
             DWalletSignatureAlgorithm::Taproot => {
-                let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .secp256k1_protocol_public_parameters();
+                let protocol_public_parameters =
+                    network_encryption_key_public_data.secp256k1_protocol_public_parameters();
 
                 let pub_input =
                     <PresignParty<Secp256k1TaprootProtocol> as mpc::Party>::PublicInput::from((
