@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { writeFileSync } from 'fs';
 import type * as WasmModule from '@ika.xyz/ika-wasm';
 
 let wasmModule: typeof WasmModule | null = null;
@@ -86,6 +87,10 @@ export async function create_dkg_centralized_output_v2(
 	protocolPublicParameters: Uint8Array,
 	session_id: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array, Uint8Array]> {
+	console.log('curve:', curve);
+
+	writeFileSync('protocol_pp_base64.txt', Buffer.from(protocolPublicParameters).toString('base64'));
+	writeFileSync('session_id_base64.txt', Buffer.from(session_id).toString('base64'));
 	const wasm = await getWasmModule();
 	return wasm.create_dkg_centralized_output_v2(curve, protocolPublicParameters, session_id);
 }

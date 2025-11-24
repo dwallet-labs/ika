@@ -154,6 +154,16 @@ async function upgradeValidatorsDockerImage(kc: KubeConfig, startIndex = 0, endI
 }
 
 describe('system tests', () => {
+	it('should verify the network key version is v2', async () => {
+		const suiClient = createTestSuiClient();
+		const ikaClient = createTestIkaClient(suiClient);
+		await ikaClient.initialize();
+		const networkKey = await ikaClient.getConfiguredNetworkEncryptionKey();
+		let networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.networkDKGOutputID);
+		const networkKeyVersion = network_key_version(networkKeyBytes);
+		expect(networkKeyVersion).toBe(2);
+	});
+
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
 		const v2NetworkKeyDockerTag =
 			'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-node:testnet-v1.1.4';

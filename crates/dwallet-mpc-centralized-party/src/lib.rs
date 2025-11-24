@@ -136,7 +136,10 @@ fn centralized_dkg_output_v2<P: twopc_mpc::dkg::Protocol>(
     protocol_pp: Vec<u8>,
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    let protocol_public_parameters: P::ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
+    let protocol_public_parameters: P::ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)
+        .map_err(
+            |e| anyhow!("failed to deserialize protocol public parameters: {:?}", e),
+        )?;
     let session_identifier = CommitmentSizedNumber::from_le_slice(&session_id);
     let round_result = P::DKGCentralizedPartyRound::advance(
         (),
@@ -144,7 +147,7 @@ fn centralized_dkg_output_v2<P: twopc_mpc::dkg::Protocol>(
         &(protocol_public_parameters, session_identifier).into(),
         &mut OsCsRng,
     )
-    .map_err(|e| anyhow!("advance() failed on the DKGCentralizedParty: {}", e.into()))?;
+    .map_err(|e| anyhow!("advance() failed on the DKGCentralizedParty: {:?}", e))?;
 
     // Centralized Public Key Share and Proof.
     let public_key_share_and_proof =
