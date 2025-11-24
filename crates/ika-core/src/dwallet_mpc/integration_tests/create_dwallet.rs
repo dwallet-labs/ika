@@ -2,8 +2,7 @@ use crate::SuiDataSenders;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    IntegrationTestState, send_start_dwallet_dkg_first_round_event,
-    send_start_dwallet_dkg_event,
+    IntegrationTestState, send_start_dwallet_dkg_event, send_start_dwallet_dkg_first_round_event,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
@@ -346,12 +345,13 @@ pub(crate) async fn create_dwallet_test(
         .expect("At least one service should exist")
         .epoch;
     let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes).unwrap();
-    let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output_by_curve_v2(
-        0,
-        protocol_pp.clone(),
-        dwallet_dkg_session_identifier.try_into().unwrap(),
-    )
-    .unwrap();
+    let centralized_dwallet_dkg_result =
+        dwallet_mpc_centralized_party::create_dkg_output_by_curve_v2(
+            0,
+            protocol_pp.clone(),
+            dwallet_dkg_session_identifier.try_into().unwrap(),
+        )
+        .unwrap();
     let (encryption_key, _) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
     let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v2(
         0,
@@ -362,17 +362,21 @@ pub(crate) async fn create_dwallet_test(
         protocol_pp,
     )
     .unwrap();
+    let encrypted_secret_share_id = ObjectID::random();
+    let dwallet_id = ObjectID::random();
+    let encryption_key_id = ObjectID::random();
     send_start_dwallet_dkg_event(
         epoch_id,
         &test_state.sui_data_senders,
         [3; 32],
         3,
         network_key_id,
-        ObjectID::from_bytes(&dwallet_dkg_first_round_output.dwallet_id).unwrap(),
-        dwallet_dkg_first_round_output.output,
+        encrypted_secret_share_id,
+        dwallet_id,
         centralized_dwallet_dkg_result.public_key_share_and_proof,
         encrypted_secret_key_share_and_proof,
         encryption_key.clone(),
+        encryption_key_id,
     );
     let (consensus_round, dwallet_second_round_checkpoint) =
         utils::advance_mpc_flow_until_completion(test_state, consensus_round).await;
