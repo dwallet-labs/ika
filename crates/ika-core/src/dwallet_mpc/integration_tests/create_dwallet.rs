@@ -3,7 +3,7 @@ use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     IntegrationTestState, send_start_dwallet_dkg_first_round_event,
-    send_start_dwallet_dkg_second_round_event,
+    send_start_dwallet_dkg_event,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
@@ -345,31 +345,16 @@ pub(crate) async fn create_dwallet_test(
         .first()
         .expect("At least one service should exist")
         .epoch;
-    send_start_dwallet_dkg_first_round_event(
-        epoch_id,
-        &mut test_state.sui_data_senders,
-        dwallet_dkg_session_identifier,
-        2,
-        network_key_id,
-    );
-    info!("Starting DWallet DKG first round");
-    let (consensus_round, dkg_first_round_checkpoint) =
-        utils::advance_mpc_flow_until_completion(test_state, consensus_round).await;
-    let DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
-        dwallet_dkg_first_round_output,
-    ) = dkg_first_round_checkpoint.messages().clone().pop().unwrap()
-    else {
-        panic!("Expected DWallet DKG first round output message");
-    };
-    info!("DWallet DKG first round completed");
     let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes).unwrap();
-    let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output_v1(
+    let centralized_dwallet_dkg_result = dwallet_mpc_centralized_party::create_dkg_output_by_curve_v2(
+        0,
         protocol_pp.clone(),
-        dwallet_dkg_first_round_output.output.clone(),
+        dwallet_dkg_session_identifier.try_into().unwrap(),
     )
     .unwrap();
     let (encryption_key, _) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
-    let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v1(
+    let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v2(
+        0,
         centralized_dwallet_dkg_result
             .centralized_secret_output
             .clone(),
@@ -377,7 +362,7 @@ pub(crate) async fn create_dwallet_test(
         protocol_pp,
     )
     .unwrap();
-    send_start_dwallet_dkg_second_round_event(
+    send_start_dwallet_dkg_event(
         epoch_id,
         &test_state.sui_data_senders,
         [3; 32],

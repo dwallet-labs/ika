@@ -639,19 +639,19 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
     });
 }
 
-pub(crate) fn send_start_dwallet_dkg_second_round_event(
+pub(crate) fn send_start_dwallet_dkg_event(
     epoch_id: EpochId,
     sui_data_senders: &[SuiDataSenders],
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID,
+    encrypted_user_secret_key_share_id: ObjectID,
     dwallet_id: ObjectID,
-    first_round_output: Vec<u8>,
     centralized_public_key_share_and_proof: Vec<u8>,
     encrypted_centralized_secret_share_and_proof: Vec<u8>,
     encryption_key: Vec<u8>,
+    encryption_key_id: ObjectID,
 ) {
-    let encrypted_user_secret_key_share_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
@@ -667,11 +667,11 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
                         centralized_public_key_share_and_proof:
                             centralized_public_key_share_and_proof.clone(),
                         user_secret_key_share: UserSecretKeyShareEventType::Encrypted {
-                            encrypted_user_secret_key_share_id,
+                            encrypted_user_secret_key_share_id: encrypted_user_secret_key_share_id.clone(),
                             encrypted_centralized_secret_share_and_proof:
                                 encrypted_centralized_secret_share_and_proof.clone(),
                             encryption_key: encryption_key.clone(),
-                            encryption_key_id: ObjectID::random(),
+                            encryption_key_id: encryption_key_id.clone(),
                             encryption_key_address: Default::default(),
                             signer_public_key: vec![],
                         },
