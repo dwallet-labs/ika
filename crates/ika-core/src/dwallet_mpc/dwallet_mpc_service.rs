@@ -163,7 +163,6 @@ impl DWalletMPCService {
                 0,
                 DWalletMPCMetrics::new(&Registry::new()),
                 sui_data_receivers.clone(),
-                ProtocolConfig::get_for_min_version(),
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
