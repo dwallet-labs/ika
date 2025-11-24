@@ -1,5 +1,5 @@
 use crate::SuiDataSenders;
-use crate::dwallet_mpc::integration_tests::create_dwallet::create_dwallet_test;
+use crate::dwallet_mpc::integration_tests::create_dwallet::create_dwallet_test_inner;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
@@ -45,7 +45,7 @@ async fn encrypt_secret_share() {
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
-    let dwallet_test_result = create_dwallet_test(
+    let dwallet_test_result = create_dwallet_test_inner(
         &mut test_state,
         consensus_round,
         key_id,

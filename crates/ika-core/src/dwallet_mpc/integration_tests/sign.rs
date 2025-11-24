@@ -1,6 +1,6 @@
 use crate::SuiDataSenders;
 use crate::dwallet_mpc::integration_tests::create_dwallet::{
-    DWalletTestResult, create_dwallet_test,
+    DWalletTestResult, create_dwallet_test_inner,
 };
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
@@ -56,7 +56,7 @@ async fn sign() {
         dkg_output: decentralized_party_dkg_public_output,
         dwallet_secret_key_share: dwallet_secret_share,
         ..
-    } = create_dwallet_test(
+    } = create_dwallet_test_inner(
         &mut test_state,
         consensus_round,
         network_key_id,
@@ -152,7 +152,7 @@ async fn future_sign() {
         dkg_output: decentralized_party_dkg_public_output,
         dwallet_secret_key_share: dwallet_secret_share,
         ..
-    } = create_dwallet_test(
+    } = create_dwallet_test_inner(
         &mut test_state,
         consensus_round,
         network_key_id,

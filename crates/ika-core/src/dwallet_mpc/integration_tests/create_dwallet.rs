@@ -77,7 +77,7 @@ pub(crate) struct DWalletTestResult {
 #[tokio::test]
 #[cfg(test)]
 /// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
-async fn create_dwallet_simple_test() {
+async fn create_dwallet_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let (
@@ -104,7 +104,7 @@ async fn create_dwallet_simple_test() {
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
-    create_dwallet_test(&mut test_state, consensus_round, key_id, network_key_bytes).await;
+    create_dwallet_test_inner(&mut test_state, consensus_round, key_id, network_key_bytes).await;
     info!("DWallet DKG second round completed");
 }
 
@@ -140,7 +140,7 @@ async fn make_dwallet_public() {
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
     let result =
-        create_dwallet_test(&mut test_state, consensus_round, key_id, network_key_bytes).await;
+        create_dwallet_test_inner(&mut test_state, consensus_round, key_id, network_key_bytes).await;
     send_make_dwallet_public_event(
         epoch_id,
         &test_state.sui_data_senders,
@@ -331,7 +331,7 @@ async fn create_imported_dwallet_v2() {
     info!("DWallet DKG second round completed");
 }
 
-pub(crate) async fn create_dwallet_test(
+pub(crate) async fn create_dwallet_test_inner(
     test_state: &mut IntegrationTestState,
     start_consensus_round: Round,
     network_key_id: ObjectID,
