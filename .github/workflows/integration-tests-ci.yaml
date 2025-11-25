@@ -44,4 +44,4 @@ jobs:
         run: rustup target add x86_64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
       - name: Run Integration Tests
-        run: cargo test -p ika-core --release --features test-utils --color=always -- --nocapture
+        run: cargo test -p ika-core --lib dwallet_mpc::integration_tests --release --features test-utils --color=always -- --nocapture
