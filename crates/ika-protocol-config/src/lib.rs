@@ -313,10 +313,6 @@ impl ProtocolConfig {
     pub fn consensus_zstd_compression(&self) -> bool {
         self.feature_flags.consensus_zstd_compression
     }
-
-    pub fn is_network_encryption_key_version_v2(&self) -> bool {
-        self.network_encryption_key_version.is_some_and(|v| v == 2)
-    }
 }
 
 #[cfg(not(msim))]

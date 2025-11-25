@@ -13,10 +13,9 @@ use crate::request_protocol_data::{DWalletDKGAndSignData, SignData};
 use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureAlgorithm, MPCPublicOutput, NetworkEncryptionKeyPublicDataTrait,
-    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
-    VersionedNetworkEncryptionKeyPublicData, VersionedPresignOutput, VersionedUserSignedMessage,
-    public_key_from_decentralized_dkg_output_by_curve_v2,
+    DWalletCurve, DWalletSignatureAlgorithm, MPCPublicOutput, NetworkEncryptionKeyPublicData,
+    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput, VersionedPresignOutput,
+    VersionedUserSignedMessage, public_key_from_decentralized_dkg_output_by_curve_v2,
 };
 use group::CsRng;
 use group::{HashScheme, OsCsRng, PartyID};
@@ -327,7 +326,7 @@ impl SignPublicInputByProtocol {
         message_centralized_signature: &SerializedWrappedMPCPublicOutput,
         hash_scheme: HashScheme,
         access_structure: &WeightedThresholdAccessStructure,
-        versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        versioned_network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         protocol: DWalletSignatureAlgorithm,
     ) -> DwalletMPCResult<Self> {
         let expected_decrypters =
@@ -449,9 +448,9 @@ impl SignPublicInputByProtocol {
             }
             DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let decryption_pp = versioned_network_encryption_key_public_data
-                    .ristretto_decryption_key_share_public_parameters()?;
+                    .ristretto_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .ristretto_protocol_public_parameters()?;
+                    .ristretto_protocol_public_parameters();
 
                 let public_input =
                     generate_sign_public_input::<RistrettoSchnorrkelSubstrateProtocol>(
@@ -469,9 +468,9 @@ impl SignPublicInputByProtocol {
             }
             DWalletSignatureAlgorithm::EdDSA => {
                 let decryption_pp = versioned_network_encryption_key_public_data
-                    .curve25519_decryption_key_share_public_parameters()?;
+                    .curve25519_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .curve25519_protocol_public_parameters()?;
+                    .curve25519_protocol_public_parameters();
 
                 let public_input = generate_sign_public_input::<Curve25519EdDSAProtocol>(
                     protocol_public_parameters,
@@ -488,9 +487,9 @@ impl SignPublicInputByProtocol {
             }
             DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let decryption_pp = versioned_network_encryption_key_public_data
-                    .secp256r1_decryption_key_share_public_parameters()?;
+                    .secp256r1_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .secp256r1_protocol_public_parameters()?;
+                    .secp256r1_protocol_public_parameters();
 
                 let public_input = generate_sign_public_input::<Secp256r1ECDSAProtocol>(
                     protocol_public_parameters,
@@ -518,7 +517,7 @@ impl DKGAndSignPublicInputByProtocol {
         message_centralized_signature: &SerializedWrappedMPCPublicOutput,
         hash_scheme: HashScheme,
         access_structure: &WeightedThresholdAccessStructure,
-        versioned_network_encryption_key_public_data: &VersionedNetworkEncryptionKeyPublicData,
+        versioned_network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         protocol: DWalletSignatureAlgorithm,
     ) -> DwalletMPCResult<Self> {
         let expected_decrypters =
@@ -577,9 +576,9 @@ impl DKGAndSignPublicInputByProtocol {
             }
             DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 let decryption_pp = versioned_network_encryption_key_public_data
-                    .ristretto_decryption_key_share_public_parameters()?;
+                    .ristretto_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .ristretto_protocol_public_parameters()?;
+                    .ristretto_protocol_public_parameters();
                 let DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
@@ -602,9 +601,9 @@ impl DKGAndSignPublicInputByProtocol {
             }
             DWalletSignatureAlgorithm::EdDSA => {
                 let decryption_pp = versioned_network_encryption_key_public_data
-                    .curve25519_decryption_key_share_public_parameters()?;
+                    .curve25519_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .curve25519_protocol_public_parameters()?;
+                    .curve25519_protocol_public_parameters();
                 let DWalletDKGPublicInputByCurve::Curve25519DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
@@ -626,9 +625,9 @@ impl DKGAndSignPublicInputByProtocol {
             }
             DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let decryption_pp = versioned_network_encryption_key_public_data
-                    .secp256r1_decryption_key_share_public_parameters()?;
+                    .secp256r1_decryption_key_share_public_parameters();
                 let protocol_public_parameters = versioned_network_encryption_key_public_data
-                    .secp256r1_protocol_public_parameters()?;
+                    .secp256r1_protocol_public_parameters();
                 let DWalletDKGPublicInputByCurve::Secp256r1DWalletDKG(public_input) =
                     dwallet_dkg_public_input
                 else {
