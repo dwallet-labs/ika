@@ -307,7 +307,7 @@ pub(crate) async fn create_dwallet_test_inner(
         dwallet_mpc_centralized_party::create_dkg_output_by_curve_v2(
             0,
             protocol_pp.clone(),
-            dwallet_dkg_session_identifier.try_into().unwrap(),
+            dwallet_dkg_session_identifier.clone().try_into().unwrap(),
         )
         .unwrap();
     let (encryption_key, _) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
@@ -326,7 +326,7 @@ pub(crate) async fn create_dwallet_test_inner(
     send_start_dwallet_dkg_event(
         epoch_id,
         &test_state.sui_data_senders,
-        [3; 32],
+        dwallet_dkg_session_identifier.try_into().unwrap(),
         3,
         network_key_id,
         encrypted_secret_share_id,
