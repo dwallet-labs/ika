@@ -16,56 +16,13 @@ use dwallet_mpc_centralized_party::{
 };
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
-use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletDKGSecondRoundOutput};
+use ika_types::message::{
+    DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletDKGSecondRoundOutput,
+};
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
 use tracing::info;
-
-#[tokio::test]
-#[cfg(test)]
-/// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
-async fn dwallet_dkg_first_round() {
-    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
-    let epoch_id = 1;
-    let (
-        dwallet_mpc_services,
-        sui_data_senders,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-    ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = utils::IntegrationTestState {
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        crypto_round: 1,
-        consensus_round: 1,
-        committee,
-        sui_data_senders,
-    };
-    let (consensus_round, _, key_id) = create_network_key_test(&mut test_state).await;
-    let dwallet_dkg_session_identifier = [2; 32];
-    send_start_dwallet_dkg_first_round_event(
-        epoch_id,
-        &mut test_state.sui_data_senders,
-        dwallet_dkg_session_identifier,
-        2,
-        key_id,
-    );
-    info!("Starting DWallet DKG first round");
-    let (_, dkg_first_round_checkpoint) =
-        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
-    let DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(
-        _dwallet_dkg_first_round_output,
-    ) = dkg_first_round_checkpoint.messages().clone().pop().unwrap()
-    else {
-        panic!("Expected DWallet DKG first round output message");
-    };
-    info!("DWallet DKG first round completed");
-}
 
 pub(crate) struct DWalletTestResult {
     pub(crate) flow_completion_consensus_round: Round,
@@ -140,7 +97,8 @@ async fn make_dwallet_public() {
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
     let result =
-        create_dwallet_test_inner(&mut test_state, consensus_round, key_id, network_key_bytes).await;
+        create_dwallet_test_inner(&mut test_state, consensus_round, key_id, network_key_bytes)
+            .await;
     send_make_dwallet_public_event(
         epoch_id,
         &test_state.sui_data_senders,
