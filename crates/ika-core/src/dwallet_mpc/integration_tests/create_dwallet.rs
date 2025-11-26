@@ -346,9 +346,13 @@ pub(crate) async fn create_dwallet_test_inner(
         .pop()
         .unwrap()
     else {
-        panic!("Expected DWallet DKG second round output message");
+        panic!("Expected DWallet DKG output message");
     };
-    info!("DWallet DKG second round completed");
+    assert!(
+        !decentralized_party_dkg_public_output.rejected,
+        "DWallet DKG should not be rejected"
+    );
+    info!("DWallet DKG completed");
     DWalletTestResult {
         flow_completion_consensus_round: consensus_round,
         dkg_output: decentralized_party_dkg_public_output.clone(),
