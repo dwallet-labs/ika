@@ -87,6 +87,15 @@ export async function create_dkg_centralized_output_v2(
 	session_id: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array, Uint8Array]> {
 	const wasm = await getWasmModule();
+	console.log('curve:', curve);
+	console.log('session_id (base64):', Buffer.from(session_id).toString('base64'));
+
+	const fs = await import('fs');
+	fs.writeFileSync(
+		'protocol_pp_base64.txt',
+		Buffer.from(protocolPublicParameters).toString('base64'),
+	);
+
 	return wasm.create_dkg_centralized_output_v2(curve, protocolPublicParameters, session_id);
 }
 
