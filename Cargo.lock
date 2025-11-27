@@ -2297,11 +2297,11 @@ name = "class_groups"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
- "commitment",
+ "commitment 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "criterion",
  "crypto-bigint 0.7.0-rc.9",
  "crypto-primes",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "homomorphic_encryption",
  "itertools 0.14.0",
  "maurer",
@@ -2470,10 +2470,21 @@ dependencies = [
 [[package]]
 name = "commitment"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "crypto-bigint 0.7.0-rc.9",
  "group 0.2.0",
+ "merlin",
+ "serde",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "commitment"
+version = "0.2.0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
+dependencies = [
+ "crypto-bigint 0.7.0-rc.9",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "merlin",
  "serde",
  "thiserror 2.0.12",
@@ -3634,7 +3645,7 @@ dependencies = [
  "class_groups",
  "crypto-bigint 0.7.0-rc.9",
  "dwallet-rng",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "ika-types",
  "serde",
  "twopc_mpc",
@@ -3648,12 +3659,12 @@ dependencies = [
  "base64 0.22.1",
  "bcs",
  "class_groups",
- "commitment",
+ "commitment 0.2.0",
  "console_log",
  "crypto-bigint 0.7.0-rc.9",
  "dwallet-mpc-types",
  "getrandom 0.2.16",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "homomorphic_encryption",
  "log",
  "mpc",
@@ -3677,7 +3688,7 @@ dependencies = [
  "crypto-bigint 0.7.0-rc.9",
  "curve25519-dalek 5.0.0-pre.1",
  "enum_dispatch",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "k256 0.14.0-pre.11",
  "lazy_static",
  "p256 0.14.0-pre.11",
@@ -3692,9 +3703,9 @@ dependencies = [
 name = "dwallet-rng"
 version = "1.1.5"
 dependencies = [
- "commitment",
+ "commitment 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "fastcrypto",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "ika-types",
  "merlin",
  "mpc",
@@ -5035,6 +5046,26 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.2.0"
+dependencies = [
+ "crypto-bigint 0.7.0-rc.9",
+ "curve25519-dalek 5.0.0-pre.1",
+ "hash2curve",
+ "itertools 0.14.0",
+ "k256 0.14.0-pre.11",
+ "p256 0.14.0-pre.11",
+ "rand_chacha 0.9.0",
+ "rand_core 0.9.3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0-rc.2",
+ "sha3 0.11.0-rc.3",
+ "subtle",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "group"
+version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "crypto-bigint 0.7.0-rc.9",
@@ -5338,7 +5369,7 @@ source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf44
 dependencies = [
  "criterion",
  "crypto-bigint 0.7.0-rc.9",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "mpc",
  "rayon",
  "rstest",
@@ -5823,7 +5854,7 @@ dependencies = [
  "bcs",
  "chrono",
  "class_groups",
- "commitment",
+ "commitment 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "consensus-config",
  "consensus-core",
  "dashmap",
@@ -5837,7 +5868,7 @@ dependencies = [
  "eyre",
  "fastcrypto",
  "futures",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "homomorphic_encryption",
  "ika-config",
  "ika-network",
@@ -6161,7 +6192,7 @@ dependencies = [
  "enum_dispatch",
  "eyre",
  "fastcrypto",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "hex",
  "ika-protocol-config",
  "jsonrpsee 0.25.1",
@@ -7417,9 +7448,9 @@ name = "maurer"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
- "commitment",
+ "commitment 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "crypto-bigint 0.7.0-rc.9",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "homomorphic_encryption",
  "merlin",
  "mpc",
@@ -8485,11 +8516,11 @@ version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "bcs",
- "commitment",
+ "commitment 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "criterion",
  "crypto-bigint 0.7.0-rc.9",
  "gcd",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "itertools 0.14.0",
  "merlin",
  "rand 0.9.0",
@@ -10143,10 +10174,10 @@ name = "proof"
 version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
- "commitment",
+ "commitment 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "crypto-bigint 0.7.0-rc.9",
  "curve25519-dalek 5.0.0-pre.1",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "itertools 0.14.0",
  "merlin",
  "mpc",
@@ -15721,13 +15752,13 @@ version = "0.2.0"
 source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "class_groups",
- "commitment",
+ "commitment 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "crypto-bigint 0.7.0-rc.9",
  "curve25519-dalek 5.0.0-pre.1",
  "ecdsa 0.17.0-rc.7",
  "ed25519 3.0.0-rc.1",
  "ed25519-dalek 3.0.0-pre.1",
- "group 0.2.0",
+ "group 0.2.0 (git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae)",
  "homomorphic_encryption",
  "itertools 0.14.0",
  "k256 0.14.0-pre.11",
