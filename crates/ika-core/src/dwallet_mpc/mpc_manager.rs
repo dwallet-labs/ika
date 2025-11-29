@@ -217,6 +217,7 @@ impl DWalletMPCManager {
                         consensus_round,
                         ?session_identifier,
                         ?malicious_authorities,
+                        rejected = output.rejected(),
                         "MPC output reached quorum"
                     );
                 }
@@ -225,7 +226,8 @@ impl DWalletMPCManager {
                         consensus_round,
                         ?session_identifier,
                         ?output,
-                        "MPC output did not reach quorum"
+                        rejected = output.rejected(),
+                        "MPC output yet to reach quorum"
                     );
                 }
             };
@@ -519,6 +521,7 @@ impl DWalletMPCManager {
                                     continue;
                                 }
                                 info!(key_id=?key_id, "Updating (decrypting new shares) network key for key_id");
+                                debug!(key_id=?key_id, key=?key, "Updating network key");
                                 if let Err(e) = self
                                     .network_keys
                                     .update_network_key(key_id, &key, &self.access_structure)
