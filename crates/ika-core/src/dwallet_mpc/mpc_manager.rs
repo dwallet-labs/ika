@@ -1,7 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::SuiDataReceivers;
 use crate::dwallet_mpc::crytographic_computation::{
     ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
 };
@@ -16,6 +15,7 @@ use crate::dwallet_mpc::{
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::{SuiDataReceivers, debug_variable_chunks};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::NetworkEncryptionKeyPublicDataTrait;
 use dwallet_rng::RootSeed;
@@ -503,7 +503,14 @@ impl DWalletMPCManager {
 
                     let mut results = vec![];
                     for (key_id, key_data) in new_keys {
-                        debug!(key_id=?key_id, key_data=?key_data, "Instantiating network key");
+                        info!(key_id=?key_id, "Instantiating network key");
+                        if let Ok(key_data_bcs) = bcs::to_bytes(&key_data) {
+                            debug_variable_chunks(
+                                format!("Instantiating network key {:?}", key_id).as_str(),
+                                "key_data",
+                                &key_data_bcs,
+                            );
+                        }
 
                         let res = instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
                             key_data.current_epoch,

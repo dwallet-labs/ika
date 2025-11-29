@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::debug_variable_chunks;
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
@@ -72,6 +73,52 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
         let current_tangible_party_id_to_upcoming =
             current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);
 
+        if let Ok(current_access_structure_bcs) = bcs::to_bytes(&current_access_structure) {
+            debug!(
+                current_access_structure=?current_access_structure,
+                current_access_structure_bcs=%hex::encode(&current_access_structure_bcs),
+                "Instantiating public input for reconfiguration v2 [current_access_structure]"
+            );
+        }
+
+        if let Ok(upcoming_access_structure_bcs) = bcs::to_bytes(&upcoming_access_structure) {
+            debug!(
+                upcoming_access_structure=?upcoming_access_structure,
+                upcoming_access_structure_bcs=%hex::encode(&upcoming_access_structure_bcs),
+                "Instantiating public input for reconfiguration v2 [upcoming_access_structure]"
+            );
+        }
+
+        if let Ok(current_tangible_party_id_to_upcoming_bcs) =
+            bcs::to_bytes(&current_tangible_party_id_to_upcoming)
+        {
+            debug!(
+                current_tangible_party_id_to_upcoming=?current_tangible_party_id_to_upcoming,
+                current_tangible_party_id_to_upcoming_bcs=%hex::encode(&current_tangible_party_id_to_upcoming_bcs),
+                "Instantiating public input for reconfiguration v2 [current_tangible_party_id_to_upcoming]"
+            );
+        }
+
+        if let Ok(current_encryption_keys_per_crt_prime_and_proofs_bcs) =
+            bcs::to_bytes(&current_encryption_keys_per_crt_prime_and_proofs)
+        {
+            debug_variable_chunks(
+                "Instantiating public input for reconfiguration v2 [current_encryption_keys_per_crt_prime_and_proofs]",
+                "current_encryption_keys_per_crt_prime_and_proofs",
+                &current_encryption_keys_per_crt_prime_and_proofs_bcs,
+            );
+        }
+
+        if let Ok(upcoming_encryption_keys_per_crt_prime_and_proofs_bcs) =
+            bcs::to_bytes(&upcoming_encryption_keys_per_crt_prime_and_proofs)
+        {
+            debug_variable_chunks(
+                "Instantiating public input for reconfiguration v2 [upcoming_encryption_keys_per_crt_prime_and_proofs]",
+                "upcoming_encryption_keys_per_crt_prime_and_proofs",
+                &upcoming_encryption_keys_per_crt_prime_and_proofs_bcs,
+            );
+        }
+
         match network_dkg_public_output {
             VersionedNetworkDkgOutput::V1(network_dkg_public_output) => {
                 match latest_reconfiguration_public_output {
@@ -92,15 +139,16 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                             ));
                         };
 
-                        debug!(
-                            current_access_structure=?current_access_structure,
-                            upcoming_access_structure=?upcoming_access_structure,
-                            current_encryption_keys_per_crt_prime_and_proofs=?current_encryption_keys_per_crt_prime_and_proofs,
-                            upcoming_encryption_keys_per_crt_prime_and_proofs=?upcoming_encryption_keys_per_crt_prime_and_proofs,
-                            network_dkg_public_output=?network_dkg_public_output,
-                            latest_reconfiguration_public_output=?latest_reconfiguration_public_output,
-                            current_tangible_party_id_to_upcoming=?current_tangible_party_id_to_upcoming,
-                            "Instantiating public input for reconfiguration v2 from reconfiguration output  (with v2 DKG output)"
+                        debug_variable_chunks(
+                            "Instantiating public input for reconfiguration v2 [network_dkg_public_output (v1)]",
+                            "network_dkg_public_output",
+                            &network_dkg_public_output
+                        );
+
+                        debug_variable_chunks(
+                            "Instantiating public input for reconfiguration v2 [latest_reconfiguration_public_output]",
+                            "latest_reconfiguration_public_output",
+                            &latest_reconfiguration_public_output
                         );
 
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
@@ -125,14 +173,10 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                         let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
                             bcs::from_bytes(&network_dkg_public_output)?;
 
-                        debug!(
-                            current_access_structure=?current_access_structure,
-                            upcoming_access_structure=?upcoming_access_structure,
-                            current_encryption_keys_per_crt_prime_and_proofs=?current_encryption_keys_per_crt_prime_and_proofs,
-                            upcoming_encryption_keys_per_crt_prime_and_proofs=?upcoming_encryption_keys_per_crt_prime_and_proofs,
-                            network_dkg_public_output=?network_dkg_public_output,
-                            current_tangible_party_id_to_upcoming=?current_tangible_party_id_to_upcoming,
-                            "Instantiating public input for reconfiguration v2 from v2 DKG output"
+                        debug_variable_chunks(
+                            "Instantiating public input for reconfiguration v2 [network_dkg_public_output (v2)]",
+                            "network_dkg_public_output",
+                            &network_dkg_public_output
                         );
 
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
@@ -162,15 +206,16 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                         let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
                             bcs::from_bytes(&network_dkg_public_output)?;
 
-                        debug!(
-                            current_access_structure=?current_access_structure,
-                            upcoming_access_structure=?upcoming_access_structure,
-                            current_encryption_keys_per_crt_prime_and_proofs=?current_encryption_keys_per_crt_prime_and_proofs,
-                            upcoming_encryption_keys_per_crt_prime_and_proofs=?upcoming_encryption_keys_per_crt_prime_and_proofs,
-                            network_dkg_public_output=?network_dkg_public_output,
-                            latest_reconfiguration_public_output=?latest_reconfiguration_public_output,
-                            current_tangible_party_id_to_upcoming=?current_tangible_party_id_to_upcoming,
-                            "Instantiating public input for reconfiguration v2 from reconfiguration output (with v2 DKG output)"
+                        debug_variable_chunks(
+                            "Instantiating public input for reconfiguration v2 [network_dkg_public_output (v2)]",
+                            "network_dkg_public_output",
+                            &network_dkg_public_output
+                        );
+
+                        debug_variable_chunks(
+                            "Instantiating public input for reconfiguration v2 [latest_reconfiguration_public_output]",
+                            "latest_reconfiguration_public_output",
+                            &latest_reconfiguration_public_output
                         );
 
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
@@ -241,6 +286,68 @@ impl ReconfigurationV1ToV2PartyPublicInputGenerator for ReconfigurationV1toV2Par
             network_dkg_public_output=?network_dkg_public_output,
             current_tangible_party_id_to_upcoming=?current_tangible_party_id_to_upcoming,
             "Instantiating public input for reconfiguration v1 to v2"
+        );
+
+        if let Ok(current_access_structure_bcs) = bcs::to_bytes(&current_access_structure) {
+            debug!(
+                current_access_structure=?current_access_structure,
+                current_access_structure_bcs=%hex::encode(&current_access_structure_bcs),
+                "Instantiating public input for reconfiguration v1 to v2 [current_access_structure]"
+            );
+        }
+
+        if let Ok(upcoming_access_structure_bcs) = bcs::to_bytes(&upcoming_access_structure) {
+            debug!(
+                upcoming_access_structure=?upcoming_access_structure,
+                upcoming_access_structure_bcs=%hex::encode(&upcoming_access_structure_bcs),
+                "Instantiating public input for reconfiguration v1 to v2 [upcoming_access_structure]"
+            );
+        }
+
+        if let Ok(current_tangible_party_id_to_upcoming_bcs) =
+            bcs::to_bytes(&current_tangible_party_id_to_upcoming)
+        {
+            debug!(
+                current_tangible_party_id_to_upcoming=?current_tangible_party_id_to_upcoming,
+                current_tangible_party_id_to_upcoming_bcs=%hex::encode(&current_tangible_party_id_to_upcoming_bcs),
+                "Instantiating public input for reconfiguration v1 to v2 [current_tangible_party_id_to_upcoming]"
+            );
+        }
+
+        if let Ok(current_encryption_keys_per_crt_prime_and_proofs_bcs) =
+            bcs::to_bytes(&current_encryption_keys_per_crt_prime_and_proofs)
+        {
+            debug_variable_chunks(
+                "Instantiating public input for reconfiguration v1 to v2 [current_encryption_keys_per_crt_prime_and_proofs]",
+                "current_encryption_keys_per_crt_prime_and_proofs",
+                &current_encryption_keys_per_crt_prime_and_proofs_bcs,
+            );
+        }
+
+        if let Ok(upcoming_encryption_keys_per_crt_prime_and_proofs_bcs) =
+            bcs::to_bytes(&upcoming_encryption_keys_per_crt_prime_and_proofs)
+        {
+            debug_variable_chunks(
+                "Instantiating public input for reconfiguration v1 to v2 [upcoming_encryption_keys_per_crt_prime_and_proofs]",
+                "upcoming_encryption_keys_per_crt_prime_and_proofs",
+                &upcoming_encryption_keys_per_crt_prime_and_proofs_bcs,
+            );
+        }
+
+        if let Ok(decryption_key_share_public_parameters_bcs) =
+            bcs::to_bytes(&decryption_key_share_public_parameters)
+        {
+            debug_variable_chunks(
+                "Instantiating public input for reconfiguration v1 to v2 [decryption_key_share_public_parameters]",
+                "decryption_key_share_public_parameters",
+                &decryption_key_share_public_parameters_bcs,
+            );
+        }
+
+        debug_variable_chunks(
+            "Instantiating public input for reconfiguration v1 to v2 [network_dkg_public_output]",
+            "network_dkg_public_output",
+            &network_dkg_public_output,
         );
 
         let public_input: <ReconfigurationV1toV2Party as Party>::PublicInput =
