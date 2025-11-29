@@ -21,6 +21,7 @@ use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::{Party, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
+use tracing::debug;
 use twopc_mpc::ProtocolPublicParameters;
 use twopc_mpc::secp256k1::class_groups::{
     FUNDAMENTAL_DISCRIMINANT_LIMBS, NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -67,6 +68,10 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
 
         let upcoming_encryption_keys_per_crt_prime_and_proofs =
             extract_encryption_keys_from_committee(&upcoming_committee)?;
+
+        let current_tangible_party_id_to_upcoming =
+            current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);
+
         match network_dkg_public_output {
             VersionedNetworkDkgOutput::V1(network_dkg_public_output) => {
                 match latest_reconfiguration_public_output {
@@ -87,14 +92,24 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                             ));
                         };
 
+                        debug!(
+                            current_access_structure=?current_access_structure,
+                            upcoming_access_structure=?upcoming_access_structure,
+                            current_encryption_keys_per_crt_prime_and_proofs=?current_encryption_keys_per_crt_prime_and_proofs,
+                            upcoming_encryption_keys_per_crt_prime_and_proofs=?upcoming_encryption_keys_per_crt_prime_and_proofs,
+                            network_dkg_public_output=?network_dkg_public_output,
+                            latest_reconfiguration_public_output=?latest_reconfiguration_public_output,
+                            current_tangible_party_id_to_upcoming=?current_tangible_party_id_to_upcoming,
+                            "Instantiating public input for reconfiguration v2 from reconfiguration output  (with v2 DKG output)"
+                        );
+
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
                                 &current_access_structure,
                                 upcoming_access_structure,
                                 current_encryption_keys_per_crt_prime_and_proofs.clone(),
                                 upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
-                                current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
-                                    .clone(),
+                                current_tangible_party_id_to_upcoming,
                                 bcs::from_bytes(&network_dkg_public_output)?,
                                 bcs::from_bytes(&latest_reconfiguration_public_output)?,
                             )
@@ -110,14 +125,23 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                         let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
                             bcs::from_bytes(&network_dkg_public_output)?;
 
+                        debug!(
+                            current_access_structure=?current_access_structure,
+                            upcoming_access_structure=?upcoming_access_structure,
+                            current_encryption_keys_per_crt_prime_and_proofs=?current_encryption_keys_per_crt_prime_and_proofs,
+                            upcoming_encryption_keys_per_crt_prime_and_proofs=?upcoming_encryption_keys_per_crt_prime_and_proofs,
+                            network_dkg_public_output=?network_dkg_public_output,
+                            current_tangible_party_id_to_upcoming=?current_tangible_party_id_to_upcoming,
+                            "Instantiating public input for reconfiguration v2 from v2 DKG output"
+                        );
+
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_dkg_output(
                                 &current_access_structure,
                                 upcoming_access_structure,
                                 current_encryption_keys_per_crt_prime_and_proofs.clone(),
                                 upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
-                                current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
-                                    .clone(),
+                                current_tangible_party_id_to_upcoming,
                                 public_output,
                             )
                                 .map_err(DwalletMPCError::from)?;
@@ -138,14 +162,24 @@ impl ReconfigurationV2PartyPublicInputGenerator for ReconfigurationV2Party {
                         let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
                             bcs::from_bytes(&network_dkg_public_output)?;
 
+                        debug!(
+                            current_access_structure=?current_access_structure,
+                            upcoming_access_structure=?upcoming_access_structure,
+                            current_encryption_keys_per_crt_prime_and_proofs=?current_encryption_keys_per_crt_prime_and_proofs,
+                            upcoming_encryption_keys_per_crt_prime_and_proofs=?upcoming_encryption_keys_per_crt_prime_and_proofs,
+                            network_dkg_public_output=?network_dkg_public_output,
+                            latest_reconfiguration_public_output=?latest_reconfiguration_public_output,
+                            current_tangible_party_id_to_upcoming=?current_tangible_party_id_to_upcoming,
+                            "Instantiating public input for reconfiguration v2 from reconfiguration output (with v2 DKG output)"
+                        );
+
                         let public_input: <ReconfigurationV2Party as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
                                 &current_access_structure,
                                 upcoming_access_structure,
                                 current_encryption_keys_per_crt_prime_and_proofs.clone(),
                                 upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
-                                current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
-                                    .clone(),
+                                current_tangible_party_id_to_upcoming,
                                 public_output.into(),
                                 bcs::from_bytes(&latest_reconfiguration_public_output)?,
                             )
@@ -196,14 +230,26 @@ impl ReconfigurationV1ToV2PartyPublicInputGenerator for ReconfigurationV1toV2Par
         let upcoming_encryption_keys_per_crt_prime_and_proofs =
             extract_encryption_keys_from_committee(&upcoming_committee)?;
 
+        let current_tangible_party_id_to_upcoming =
+            current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);
+
+        debug!(
+            current_access_structure=?current_access_structure,
+            upcoming_access_structure=?upcoming_access_structure,
+            current_encryption_keys_per_crt_prime_and_proofs=?current_encryption_keys_per_crt_prime_and_proofs,
+            upcoming_encryption_keys_per_crt_prime_and_proofs=?upcoming_encryption_keys_per_crt_prime_and_proofs,
+            network_dkg_public_output=?network_dkg_public_output,
+            current_tangible_party_id_to_upcoming=?current_tangible_party_id_to_upcoming,
+            "Instantiating public input for reconfiguration v1 to v2"
+        );
+
         let public_input: <ReconfigurationV1toV2Party as Party>::PublicInput =
             <ReconfigurationV1toV2Party as Party>::PublicInput::new(
                 &current_access_structure,
                 upcoming_access_structure,
-                current_encryption_keys_per_crt_prime_and_proofs.clone(),
-                upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
-                current_tangible_party_id_to_upcoming(current_committee, upcoming_committee)
-                    .clone(),
+                current_encryption_keys_per_crt_prime_and_proofs,
+                upcoming_encryption_keys_per_crt_prime_and_proofs,
+                current_tangible_party_id_to_upcoming,
                 decryption_key_share_public_parameters,
                 bcs::from_bytes(&network_dkg_public_output)?,
             )

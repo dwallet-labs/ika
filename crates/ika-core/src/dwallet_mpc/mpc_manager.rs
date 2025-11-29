@@ -475,6 +475,11 @@ impl DWalletMPCManager {
                         .borrow_and_update()
                         .clone();
 
+                    debug!(
+                        committee=?committee,
+                        "Received next (upcoming) active committee"
+                    );
+
                     if committee.epoch == self.epoch_id + 1 {
                         self.next_active_committee = Some(committee);
 
@@ -498,6 +503,8 @@ impl DWalletMPCManager {
 
                     let mut results = vec![];
                     for (key_id, key_data) in new_keys {
+                        debug!(key_id=?key_id, key_data=?key_data, "Instantiating network key");
+
                         let res = instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
                             key_data.current_epoch,
                             self.access_structure.clone(),
@@ -521,7 +528,6 @@ impl DWalletMPCManager {
                                     continue;
                                 }
                                 info!(key_id=?key_id, "Updating (decrypting new shares) network key for key_id");
-                                debug!(key_id=?key_id, key=?key, "Updating network key");
                                 if let Err(e) = self
                                     .network_keys
                                     .update_network_key(key_id, &key, &self.access_structure)

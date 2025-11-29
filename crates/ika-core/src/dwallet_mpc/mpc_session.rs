@@ -477,6 +477,8 @@ impl DWalletMPCManager {
             // so we have to add this request to the pending queue until it arrives.
             debug!(
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+                request=?request,
+                session_identifier=?request.session_identifier,
                 session_source=?request.session_type,
                 "Adding request to pending for the next epoch active committee"
             );
@@ -510,21 +512,11 @@ impl DWalletMPCManager {
             self.validators_class_groups_public_keys_and_proofs.clone(),
             &self.protocol_config,
         ) {
-            Ok((public_input, private_input)) => {
-                debug!(
-                    session_request=?request,
-                    session_source=?request.session_type,
-                    session_identifier=?request.session_identifier,
-                    public_input=?public_input,
-                    "Got public input for session request"
-                );
-
-                SessionStatus::Active {
-                    public_input,
-                    private_input,
-                    request: request.clone(),
-                }
-            }
+            Ok((public_input, private_input)) => SessionStatus::Active {
+                public_input,
+                private_input,
+                request: request.clone(),
+            },
             Err(e) => {
                 error!(error=?e, ?request, "create session input from dWallet request with error");
                 SessionStatus::Failed
