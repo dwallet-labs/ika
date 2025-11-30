@@ -1,7 +1,6 @@
 'use client';
 
 import {
-	createUserSignMessageWithPublicOutput,
 	Curve,
 	DWalletWithState,
 	Hash,
@@ -12,12 +11,12 @@ import {
 import { bcs } from '@mysten/sui/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
-import { schnorr } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2';
 import * as bitcoin from 'bitcoinjs-lib';
 
 import { transactionRequest } from '../generated/ika_btc_multisig/multisig';
 import * as MultisigModule from '../generated/ika_btc_multisig/multisig';
+import { createSignatureWithWorker } from '../workers/api';
 
 export interface UTXO {
 	txid: string;
@@ -69,7 +68,7 @@ export class MultisigBitcoinWallet {
 
 		// Ensure we have x-only public key (32 bytes) for BIP-340 Schnorr signatures
 		if (this.publicKey.length === 33) {
-			this.publicKey = publicKey.slice(1);
+			this.publicKey = this.publicKey.slice(1);
 		}
 
 		if (this.publicKey.length !== 32) {
@@ -141,6 +140,40 @@ export class MultisigBitcoinWallet {
 		const utxos = await this.getUTXOs();
 		const balance = utxos.reduce((sum, utxo) => sum + BigInt(utxo.value), BigInt(0));
 		return balance;
+	}
+
+	async getBalanceWithUnconfirmed(): Promise<{
+		confirmed: bigint;
+		unconfirmed: bigint;
+		total: bigint;
+	}> {
+		try {
+			const response = await fetch(`${this.apiBaseUrl}/address/${this.address}/utxo`);
+
+			if (!response.ok) {
+				throw new Error(`Failed to fetch UTXOs: ${response.statusText}`);
+			}
+
+			const utxos: UTXO[] = await response.json();
+
+			const confirmed = utxos
+				.filter((utxo) => utxo.status.confirmed)
+				.reduce((sum, utxo) => sum + BigInt(utxo.value), BigInt(0));
+
+			const unconfirmed = utxos
+				.filter((utxo) => !utxo.status.confirmed)
+				.reduce((sum, utxo) => sum + BigInt(utxo.value), BigInt(0));
+
+			return {
+				confirmed,
+				unconfirmed,
+				total: confirmed + unconfirmed,
+			};
+		} catch (error) {
+			throw new Error(
+				`Error fetching balance: ${error instanceof Error ? error.message : 'Unknown error'}`,
+			);
+		}
 	}
 
 	/**
@@ -261,16 +294,16 @@ export class MultisigBitcoinWallet {
 			leafHash, // Include leaf hash for script path
 		);
 
-		const messageCentralizedSignature = await createUserSignMessageWithPublicOutput(
-			await this.ikaClient.getProtocolPublicParameters(this.object.dWallet),
-			Uint8Array.from(this.object.dWallet.state.Active.public_output),
-			Uint8Array.from(this.object.dWallet.public_user_secret_key_share ?? new Uint8Array(32)),
-			Uint8Array.from(presign.state.Completed.presign),
-			preimage,
-			Hash.SHA256,
-			SignatureAlgorithm.Taproot,
-			Curve.SECP256K1,
-		);
+		const messageCentralizedSignature = await createSignatureWithWorker({
+			protocolPublicParameters: Array.from(await this.ikaClient.getProtocolPublicParameters()),
+			publicOutput: Array.from(this.object.dWallet.state.Active.public_output),
+			publicUserSecretKeyShare: Array.from(this.object.dWallet.public_user_secret_key_share ?? []),
+			presign: Array.from(presign.state.Completed.presign),
+			preimage: Array.from(preimage),
+			hash: Hash.SHA256,
+			signatureAlgorithm: SignatureAlgorithm.Taproot,
+			curve: Curve.SECP256K1,
+		});
 
 		const byteVector = bcs.vector(bcs.u8());
 
@@ -291,7 +324,7 @@ export class MultisigBitcoinWallet {
 			transaction,
 			preimage,
 			psbt,
-			messageCentralizedSignature,
+			messageCentralizedSignature: new Uint8Array(messageCentralizedSignature),
 		};
 	}
 
@@ -315,21 +348,14 @@ export class MultisigBitcoinWallet {
 	}
 
 	/**
-	 * Estimate the fee for a transaction with a single input (script path)
-	 */
-	estimateFee(feeRate: number, hasChange: boolean = true): bigint {
-		// Script path input: ~68 vbytes (includes script + control block)
-		// Output: ~43 vbytes
-		const estimatedSize = 1 * 68 + (hasChange ? 2 : 1) * 43 + 10;
-		return BigInt(Math.ceil(estimatedSize * feeRate));
-	}
-
-	/**
 	 * Find a suitable UTXO for a transaction
 	 * Prefers UTXOs that can cover the amount + fee with minimal change
 	 */
 	findSuitableUTXO(utxos: UTXO[], amount: bigint, feeRate: number): UTXO | null {
-		const estimatedFee = this.estimateFee(feeRate, true);
+		// Script path input: ~68 vbytes (includes script + control block)
+		// Output: ~43 vbytes
+		const estimatedSize = 1 * 68 + 2 * 43 + 10;
+		const estimatedFee = BigInt(Math.ceil(estimatedSize * feeRate));
 		const totalNeeded = amount + estimatedFee;
 
 		// Sort UTXOs by value (ascending)
@@ -379,6 +405,117 @@ export class MultisigBitcoinWallet {
 			throw new Error(
 				`Error broadcasting transaction: ${error instanceof Error ? error.message : 'Unknown error'}`,
 			);
+		}
+	}
+
+	/**
+	 * Check if a transaction with specific outputs has been broadcasted by searching address history
+	 * This is a heuristic check that looks for transactions at this address with matching output patterns
+	 * @param psbt - The PSBT containing the transaction
+	 * @param createdAfter - Optional timestamp to filter transactions created after this time (in seconds)
+	 * @returns Object with potential match information
+	 */
+	async findBroadcastedTransactionByOutputs(
+		psbt: bitcoin.Psbt,
+		createdAfter?: number,
+	): Promise<{
+		found: boolean;
+		txid?: string;
+		confirmed?: boolean;
+		confirmations?: number;
+		blockHeight?: number;
+	}> {
+		try {
+			// Get the unsigned transaction from PSBT
+			const tx = bitcoin.Transaction.fromBuffer(psbt.data.getTransaction());
+
+			// Build expected output addresses
+			const network = this.bitcoinNetwork;
+			const expectedOutputs = tx.outs.map((output) => {
+				try {
+					const address = bitcoin.address.fromOutputScript(output.script, network);
+					return {
+						address,
+						value: Number(output.value),
+					};
+				} catch {
+					return {
+						address: null,
+						value: Number(output.value),
+					};
+				}
+			});
+
+			console.log('Looking for transaction with outputs:', expectedOutputs);
+			console.log('Created after timestamp:', createdAfter);
+
+			// Fetch recent transactions for this address
+			const response = await fetch(`${this.apiBaseUrl}/address/${this.address}/txs`);
+
+			if (!response.ok) {
+				console.error('Failed to fetch transactions:', response.statusText);
+				return { found: false };
+			}
+
+			const transactions = await response.json();
+			const currentHeight = await this.#getCurrentBlockHeight();
+
+			console.log(`Checking ${transactions.length} transactions...`);
+
+			// Look for a transaction with matching outputs
+			for (const txData of transactions) {
+				// Filter by timestamp if provided (both are in Unix seconds)
+				// createdAfter is in seconds, block_time is also in seconds
+				if (createdAfter && txData.status?.block_time) {
+					if (txData.status.block_time < createdAfter) {
+						continue;
+					}
+				}
+
+				// Check if the outputs match
+				if (txData.vout && txData.vout.length === expectedOutputs.length) {
+					let outputsMatch = true;
+
+					for (let i = 0; i < expectedOutputs.length; i++) {
+						const expectedOutput = expectedOutputs[i];
+						const actualOutput = txData.vout[i];
+
+						// Check if value matches
+						if (actualOutput.value !== expectedOutput.value) {
+							outputsMatch = false;
+							break;
+						}
+
+						// Also check address if available
+						if (expectedOutput.address && actualOutput.scriptpubkey_address) {
+							if (actualOutput.scriptpubkey_address !== expectedOutput.address) {
+								outputsMatch = false;
+								break;
+							}
+						}
+					}
+
+					if (outputsMatch) {
+						console.log('Found matching transaction:', txData.txid);
+						return {
+							found: true,
+							txid: txData.txid,
+							confirmed: txData.status?.confirmed ?? false,
+							confirmations:
+								currentHeight && txData.status?.block_height
+									? currentHeight - txData.status.block_height + 1
+									: 0,
+							blockHeight: txData.status?.block_height,
+						};
+					}
+				}
+			}
+
+			console.log('No matching transaction found');
+			return { found: false };
+		} catch (error) {
+			console.error('Error searching for broadcasted transaction:', error);
+			return { found: false };
 		}
 	}
 
@@ -788,6 +925,21 @@ export class MultisigBitcoinWallet {
 			throw new Error(
 				`Error fetching transaction: ${error instanceof Error ? error.message : 'Unknown error'}`,
 			);
+		}
+	}
+
+	async #getCurrentBlockHeight(): Promise<number | null> {
+		try {
+			const response = await fetch(`${this.apiBaseUrl}/blocks/tip/height`);
+
+			if (!response.ok) {
+				return null;
+			}
+
+			const height = await response.text();
+			return parseInt(height, 10);
+		} catch (error) {
+			return null;
 		}
 	}
 }

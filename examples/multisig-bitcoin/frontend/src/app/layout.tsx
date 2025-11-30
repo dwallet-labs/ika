@@ -7,17 +7,15 @@ import '@mysten/dapp-kit/dist/index.css';
 
 import ecc from '@bitcoinerlab/secp256k1';
 import { getNetworkConfig } from '@ika.xyz/sdk';
-import {
-	ConnectButton,
-	createNetworkConfig,
-	SuiClientProvider,
-	WalletProvider,
-} from '@mysten/dapp-kit';
+import { createNetworkConfig, SuiClientProvider, WalletProvider } from '@mysten/dapp-kit';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as bitcoin from 'bitcoinjs-lib';
+import { Toaster } from 'sonner';
 
+import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { IkaClientProvider } from '../components/providers/IkaClientProvider';
+import { MultisigProvider } from '../contexts/MultisigContext';
 
 // Initialize ECC library for bitcoinjs-lib (required for crypto operations)
 // @bitcoinerlab/secp256k1 is pure JavaScript (no WASM) and works well in browsers
@@ -34,7 +32,22 @@ const geistMono = Geist_Mono({
 	subsets: ['latin'],
 });
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+	defaultOptions: {
+		queries: {
+			// Enable refetching on window focus for better UX
+			refetchOnWindowFocus: true,
+			// Enable refetch on reconnect
+			refetchOnReconnect: true,
+			// Data is fresh for 30 seconds, then will refetch on next use
+			staleTime: 30 * 1000,
+			// Keep in cache for 5 minutes
+			gcTime: 5 * 60 * 1000,
+			// Retry failed requests only once
+			retry: 1,
+		},
+	},
+});
 
 const { networkConfig } = createNetworkConfig({
 	localnet: { url: getFullnodeUrl('localnet') },
@@ -48,43 +61,45 @@ export default function RootLayout({
 	children: React.ReactNode;
 }>) {
 	return (
-		<html lang="en">
-			<body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-				<QueryClientProvider client={queryClient}>
-					<SuiClientProvider
-						networks={networkConfig}
-						defaultNetwork="testnet"
-						createClient={(_, config) =>
-							new SuiClient({
-								url: config.url,
-								mvr: {
-									overrides: {
-										packages: {
-											'@local-pkg/multisig-contract': '0x98eec1dd5a67695bf03d55d355c81eedfcca5f4aee196f295305acdd574b1e94',
+		<html lang="en" className="dark">
+			<head>
+				<title>bitisi - bitcoin multisig on sui</title>
+				<meta
+					name="description"
+					content="Secure bitcoin multisig wallets powered by IKA protocol on Sui"
+				/>
+			</head>
+			<body className={`${geistMono.variable} antialiased`}>
+				<ErrorBoundary>
+					<QueryClientProvider client={queryClient}>
+						<SuiClientProvider
+							networks={networkConfig}
+							defaultNetwork="testnet"
+							createClient={(_, config) =>
+								new SuiClient({
+									url: config.url,
+									mvr: {
+										overrides: {
+											packages: {
+												'@local-pkg/multisig-contract':
+													'0x98eec1dd5a67695bf03d55d355c81eedfcca5f4aee196f295305acdd574b1e94',
+											},
 										},
 									},
-								},
-							})
-						}
-					>
-						<WalletProvider autoConnect>
-							<IkaClientProvider config={getNetworkConfig('testnet')}>
-								<div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-black dark:text-zinc-100">
-									<header className="sticky top-0 z-20 border-b border-zinc-200/60 bg-white/60 backdrop-blur supports-[backdrop-filter]:bg-white/60 dark:border-zinc-800/60 dark:bg-black/40">
-										<div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-											<div className="flex items-center gap-2 text-sm font-medium tracking-tight">
-												<div className="h-2.5 w-2.5 rounded-full bg-zinc-900 dark:bg-zinc-100" />
-												<span>IKA Bitcoin Multisig</span>
-											</div>
-											<ConnectButton />
-										</div>
-									</header>
-									<main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
-								</div>
-							</IkaClientProvider>
-						</WalletProvider>
-					</SuiClientProvider>
-				</QueryClientProvider>
+								})
+							}
+						>
+							<WalletProvider autoConnect>
+								<IkaClientProvider config={getNetworkConfig('testnet')}>
+									<MultisigProvider>
+										{children}
+										<Toaster position="top-right" richColors />
+									</MultisigProvider>
+								</IkaClientProvider>
+							</WalletProvider>
+						</SuiClientProvider>
+					</QueryClientProvider>
+				</ErrorBoundary>
 			</body>
 		</html>
 	);

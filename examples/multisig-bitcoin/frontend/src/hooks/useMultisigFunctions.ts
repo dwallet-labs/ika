@@ -3,7 +3,6 @@ import {
 	createRandomSessionIdentifier,
 	Curve,
 	objResToBcs,
-	prepareDKGAsync,
 	SessionsManagerModule,
 	SignatureAlgorithm,
 } from '@ika.xyz/sdk';
@@ -29,6 +28,7 @@ import {
 import * as MultisigModule from '../generated/ika_btc_multisig/multisig';
 import { Request } from '../generated/ika_btc_multisig/multisig_request';
 import { MultisigBitcoinWallet, UTXO } from '../multisig/bitcoin';
+import { prepareDKGWithWorker } from '../workers/api';
 import { useExecuteTransaction } from './useExecuteTransaction';
 import { useIkaClient } from './useIkaClient';
 import { useIds } from './useObjects';
@@ -72,17 +72,21 @@ export const useMultisigFunctions = () => {
 
 		const randomSessionIdentifier = createRandomSessionIdentifier();
 
-		const {
-			userPublicOutput,
-			userSecretKeyShare: publicUserSecretKeyShare,
-			userDKGMessage: centralizedPublicKeyShareAndProof,
-		} = await prepareDKGAsync(
-			ikaClient,
-			Curve.SECP256K1,
-			userShareEncryptionKeys,
-			randomSessionIdentifier,
-			account.address,
-		);
+		// Use worker for DKG computatio
+		const result = await prepareDKGWithWorker({
+			protocolPublicParameters: Array.from(await ikaClient.getProtocolPublicParameters()),
+			curve: Curve.SECP256K1,
+			userShareEncryptionKeysBytes: Array.from(
+				userShareEncryptionKeys.toShareEncryptionKeysBytes(),
+			),
+			sessionIdentifier: Array.from(randomSessionIdentifier),
+			userAddress: account.address,
+		});
+
+		// Deserialize results
+		const userPublicOutput = new Uint8Array(result?.userPublicOutput ?? []);
+		const publicUserSecretKeyShare = new Uint8Array(result?.userSecretKeyShare ?? []);
+		const centralizedPublicKeyShareAndProof = new Uint8Array(result?.userDKGMessage ?? []);
 
 		const byteVector = bcs.vector(bcs.u8());
 
@@ -142,14 +146,16 @@ export const useMultisigFunctions = () => {
 
 	const addSuiBalanceToMultisig = async ({
 		multisig,
-		suiCoin,
+		amount,
 	}: {
 		multisig: MultisigBitcoinWallet;
-		suiCoin: string;
+		amount: bigint;
 	}) => {
 		invariant(account, 'Account not found');
 
 		const transaction = new Transaction();
+
+		const suiCoin = transaction.splitCoins(transaction.gas, [amount]);
 
 		transaction.add(
 			addSuiBalance({
