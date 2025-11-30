@@ -6,11 +6,12 @@
 //! It integrates both DKG parties (each representing a round in the DKG protocol).
 
 use commitment::CommitmentSizedNumber;
+use dwallet_mpc_types::dwallet_mpc::NetworkEncryptionKeyPublicData;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
-    VersionedDwalletDKGPublicOutput, VersionedDwalletUserSecretShare, VersionedEncryptedUserShare,
-    VersionedEncryptionKeyValue, VersionedImportedDwalletOutgoingMessage,
-    VersionedPublicKeyShareAndProof, public_key_from_decentralized_dkg_output_by_curve_v2,
+    DWalletCurve, SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput,
+    VersionedDwalletUserSecretShare, VersionedEncryptedUserShare, VersionedEncryptionKeyValue,
+    VersionedImportedDwalletOutgoingMessage, VersionedPublicKeyShareAndProof,
+    public_key_from_decentralized_dkg_output_by_curve_v2,
 };
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};

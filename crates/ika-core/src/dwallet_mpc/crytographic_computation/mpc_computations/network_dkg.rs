@@ -28,6 +28,7 @@ use mpc::{
 };
 use rand_chacha::ChaCha20Rng;
 use std::collections::HashMap;
+use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tokio::sync::oneshot;
 use tracing::error;
@@ -355,31 +356,50 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
             let public_output: <dkg::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
 
-            let decryption_key_share_public_parameters = public_output
-                .secp256k1_decryption_key_share_public_parameters(access_structure)
-                .map_err(DwalletMPCError::from)?;
+            let secp256k1_protocol_public_parameters =
+                Arc::new(public_output.secp256k1_protocol_public_parameters()?);
+
+            let secp256k1_decryption_key_share_public_parameters = Arc::new(
+                public_output
+                    .secp256k1_decryption_key_share_public_parameters(access_structure)
+                    .map_err(DwalletMPCError::from)?,
+            );
+
+            let network_dkg_output = mpc_public_output;
+
+            let secp256r1_protocol_public_parameters =
+                Arc::new(public_output.secp256r1_protocol_public_parameters()?);
+            let secp256r1_decryption_key_share_public_parameters = Arc::new(
+                public_output.secp256r1_decryption_key_share_public_parameters(access_structure)?,
+            );
+
+            let ristretto_protocol_public_parameters =
+                Arc::new(public_output.ristretto_protocol_public_parameters()?);
+            let ristretto_decryption_key_share_public_parameters = Arc::new(
+                public_output.ristretto_decryption_key_share_public_parameters(access_structure)?,
+            );
+
+            let curve25519_protocol_public_parameters =
+                Arc::new(public_output.curve25519_protocol_public_parameters()?);
+
+            let curve25519_decryption_key_share_public_parameters = Arc::new(
+                public_output
+                    .curve25519_decryption_key_share_public_parameters(access_structure)?,
+            );
 
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,
                 state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
                 latest_network_reconfiguration_public_output: None,
-                secp256k1_decryption_key_share_public_parameters:
-                    decryption_key_share_public_parameters,
-                secp256r1_protocol_public_parameters: public_output
-                    .secp256r1_protocol_public_parameters()?,
-                secp256r1_decryption_key_share_public_parameters: public_output
-                    .secp256r1_decryption_key_share_public_parameters(access_structure)?,
-                ristretto_protocol_public_parameters: public_output
-                    .ristretto_protocol_public_parameters()?,
-                ristretto_decryption_key_share_public_parameters: public_output
-                    .ristretto_decryption_key_share_public_parameters(access_structure)?,
-                curve25519_protocol_public_parameters: public_output
-                    .curve25519_protocol_public_parameters()?,
-                network_dkg_output: mpc_public_output,
-                secp256k1_protocol_public_parameters: public_output
-                    .secp256k1_protocol_public_parameters()?,
-                curve25519_decryption_key_share_public_parameters: public_output
-                    .curve25519_decryption_key_share_public_parameters(access_structure)?,
+                network_dkg_output,
+                secp256k1_protocol_public_parameters,
+                secp256k1_decryption_key_share_public_parameters,
+                secp256r1_protocol_public_parameters,
+                secp256r1_decryption_key_share_public_parameters,
+                ristretto_protocol_public_parameters,
+                ristretto_decryption_key_share_public_parameters,
+                curve25519_protocol_public_parameters,
+                curve25519_decryption_key_share_public_parameters,
             })
         }
     }

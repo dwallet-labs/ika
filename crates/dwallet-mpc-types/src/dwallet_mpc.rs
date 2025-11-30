@@ -8,6 +8,7 @@ use enum_dispatch::enum_dispatch;
 use group::secp256k1;
 use k256::elliptic_curve::group::GroupEncoding;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use thiserror::Error;
 use twopc_mpc::class_groups::{DKGCentralizedPartyOutput, DKGCentralizedPartyVersionedOutput};
 use twopc_mpc::class_groups::{DKGDecentralizedPartyOutput, DKGDecentralizedPartyVersionedOutput};
@@ -107,23 +108,23 @@ pub struct NetworkEncryptionKeyPublicData {
     /// On first instance it will be equal to `latest_public_output`.
     pub network_dkg_output: VersionedNetworkDkgOutput,
     pub secp256k1_protocol_public_parameters:
-        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+        Arc<twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters>,
     /// The public parameters of the decryption key shares,
     /// updated only after a successful network DKG or Reconfiguration.
     pub secp256k1_decryption_key_share_public_parameters:
-        class_groups::Secp256k1DecryptionKeySharePublicParameters,
+        Arc<class_groups::Secp256k1DecryptionKeySharePublicParameters>,
     pub secp256r1_protocol_public_parameters:
-        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+        Arc<twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters>,
     pub secp256r1_decryption_key_share_public_parameters:
-        class_groups::Secp256r1DecryptionKeySharePublicParameters,
+        Arc<class_groups::Secp256r1DecryptionKeySharePublicParameters>,
     pub ristretto_protocol_public_parameters:
-        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+        Arc<twopc_mpc::ristretto::class_groups::ProtocolPublicParameters>,
     pub ristretto_decryption_key_share_public_parameters:
-        class_groups::RistrettoDecryptionKeySharePublicParameters,
+        Arc<class_groups::RistrettoDecryptionKeySharePublicParameters>,
     pub curve25519_protocol_public_parameters:
-        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+        Arc<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters>,
     pub curve25519_decryption_key_share_public_parameters:
-        class_groups::Curve25519DecryptionKeySharePublicParameters,
+        Arc<class_groups::Curve25519DecryptionKeySharePublicParameters>,
 }
 
 #[derive(
@@ -322,50 +323,50 @@ impl NetworkEncryptionKeyPublicData {
 
     pub fn secp256k1_decryption_key_share_public_parameters(
         &self,
-    ) -> class_groups::Secp256k1DecryptionKeySharePublicParameters {
+    ) -> Arc<class_groups::Secp256k1DecryptionKeySharePublicParameters> {
         self.secp256k1_decryption_key_share_public_parameters
             .clone()
     }
 
-    pub fn secp256k1_protocol_public_parameters(&self) -> ProtocolPublicParameters {
+    pub fn secp256k1_protocol_public_parameters(&self) -> Arc<ProtocolPublicParameters> {
         self.secp256k1_protocol_public_parameters.clone()
     }
 
     pub fn secp256r1_protocol_public_parameters(
         &self,
-    ) -> twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters {
+    ) -> Arc<twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters> {
         self.secp256r1_protocol_public_parameters.clone()
     }
 
     pub fn ristretto_protocol_public_parameters(
         &self,
-    ) -> twopc_mpc::ristretto::class_groups::ProtocolPublicParameters {
+    ) -> Arc<twopc_mpc::ristretto::class_groups::ProtocolPublicParameters> {
         self.ristretto_protocol_public_parameters.clone()
     }
 
     pub fn curve25519_protocol_public_parameters(
         &self,
-    ) -> twopc_mpc::curve25519::class_groups::ProtocolPublicParameters {
+    ) -> Arc<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters> {
         self.curve25519_protocol_public_parameters.clone()
     }
 
     pub fn secp256r1_decryption_key_share_public_parameters(
         &self,
-    ) -> class_groups::Secp256r1DecryptionKeySharePublicParameters {
+    ) -> Arc<class_groups::Secp256r1DecryptionKeySharePublicParameters> {
         self.secp256r1_decryption_key_share_public_parameters
             .clone()
     }
 
     pub fn ristretto_decryption_key_share_public_parameters(
         &self,
-    ) -> class_groups::RistrettoDecryptionKeySharePublicParameters {
+    ) -> Arc<class_groups::RistrettoDecryptionKeySharePublicParameters> {
         self.ristretto_decryption_key_share_public_parameters
             .clone()
     }
 
     pub fn curve25519_decryption_key_share_public_parameters(
         &self,
-    ) -> class_groups::Curve25519DecryptionKeySharePublicParameters {
+    ) -> Arc<class_groups::Curve25519DecryptionKeySharePublicParameters> {
         self.curve25519_decryption_key_share_public_parameters
             .clone()
     }

@@ -15,6 +15,7 @@ use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::{Party, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
     /// Generates the public input required for the reconfiguration protocol.
@@ -188,38 +189,35 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
+
             let secp256k1_protocol_public_parameters =
-                twopc_mpc::decentralized_party::reconfiguration::PublicOutput::secp256k1_protocol_public_parameters(
-                    &public_output,
-                )
-                    .map_err(DwalletMPCError::from)?;
+                Arc::new(public_output.secp256k1_protocol_public_parameters()?);
+
+            let secp256k1_decryption_key_share_public_parameters = Arc::new(
+                public_output
+                    .secp256k1_decryption_key_share_public_parameters(access_structure)
+                    .map_err(DwalletMPCError::from)?,
+            );
+
             let secp256r1_protocol_public_parameters =
-                twopc_mpc::decentralized_party::reconfiguration::PublicOutput::secp256r1_protocol_public_parameters(
-                    &public_output,
-                )
-                    .map_err(DwalletMPCError::from)?;
+                Arc::new(public_output.secp256r1_protocol_public_parameters()?);
+            let secp256r1_decryption_key_share_public_parameters = Arc::new(
+                public_output.secp256r1_decryption_key_share_public_parameters(access_structure)?,
+            );
+
             let ristretto_protocol_public_parameters =
-                twopc_mpc::decentralized_party::reconfiguration::PublicOutput::ristretto_protocol_public_parameters(
-                    &public_output,
-                )
-                    .map_err(DwalletMPCError::from)?;
+                Arc::new(public_output.ristretto_protocol_public_parameters()?);
+            let ristretto_decryption_key_share_public_parameters = Arc::new(
+                public_output.ristretto_decryption_key_share_public_parameters(access_structure)?,
+            );
+
             let curve25519_protocol_public_parameters =
-                twopc_mpc::decentralized_party::reconfiguration::PublicOutput::curve25519_protocol_public_parameters(
-                    &public_output,
-                )
-                    .map_err(DwalletMPCError::from)?;
-            let secp256k1_decryption_key_share_public_parameters = public_output
-                .secp256k1_decryption_key_share_public_parameters(access_structure)
-                .map_err(DwalletMPCError::from)?;
-            let secp256r1_decryption_key_share_public_parameters = public_output
-                .secp256r1_decryption_key_share_public_parameters(access_structure)
-                .map_err(DwalletMPCError::from)?;
-            let ristretto_decryption_key_share_public_parameters = public_output
-                .ristretto_decryption_key_share_public_parameters(access_structure)
-                .map_err(DwalletMPCError::from)?;
-            let curve25519_decryption_key_share_public_parameters = public_output
-                .curve25519_decryption_key_share_public_parameters(access_structure)
-                .map_err(DwalletMPCError::from)?;
+                Arc::new(public_output.curve25519_protocol_public_parameters()?);
+
+            let curve25519_decryption_key_share_public_parameters = Arc::new(
+                public_output
+                    .curve25519_decryption_key_share_public_parameters(access_structure)?,
+            );
 
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,
