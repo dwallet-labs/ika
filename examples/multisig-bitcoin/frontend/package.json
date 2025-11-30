@@ -4,10 +4,10 @@
 	"private": true,
 	"scripts": {
 		"dev": "next dev --webpack",
-		"build": "next build",
+		"build": "next build --webpack",
 		"start": "next start",
 		"lint": "eslint",
-		"postinstall": "pnpm create-summaries && bash scripts/install_script.bash && pnpm sui-ts-codegen generate",
+		"postinstall": "(test -d ../contract && pnpm create-summaries || echo 'Skipping create-summaries') && (test -f scripts/install_script.bash && bash scripts/install_script.bash || echo 'Skipping install script') && (test -f sui-codegen.config.ts && pnpm sui-ts-codegen generate || echo 'Skipping codegen')",
 		"create-summaries": "cd ../contract && sui move summary",
 		"publish": "bash scripts/publish_and_update.bash",
 		"update-address": "bash scripts/update_published_address.bash"

@@ -27,8 +27,6 @@ export function IkaClientProvider({
 		const ikaConfig = config || getNetworkConfig(network);
 
 		return new IkaClient({
-			// TODO(fesal): fix this by updating the SDK to use the correct type for the suiClient
-			// @ts-expect-error - suiClient is not typed correctly
 			suiClient,
 			config: ikaConfig,
 			cache: true,
