@@ -136,17 +136,8 @@ fn centralized_dkg_output_v2<P: twopc_mpc::dkg::Protocol>(
     protocol_pp: Vec<u8>,
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
-    // web_sys::console::log_1(&"centralized_dkg_output_v2: reached start".into());
-
     let protocol_public_parameters: P::ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
-    // web_sys::console::log_1(&"centralized_dkg_output_v2: reached after protocol_pp".into());
-
     let session_identifier = CommitmentSizedNumber::from_le_slice(&session_id);
-    // web_sys::console::log_1(
-    //     &"centralized_dkg_output_v2: reached after CommitmentSizedNumber".into(),
-    // );
-
-    // web_sys::console::log_1(&"centralized_dkg_output_v2: reached before advance".into());
     let round_result = P::DKGCentralizedPartyRound::advance(
         (),
         &(),
@@ -154,7 +145,6 @@ fn centralized_dkg_output_v2<P: twopc_mpc::dkg::Protocol>(
         &mut OsCsRng,
     )
     .map_err(|e| anyhow!("advance() failed on the DKGCentralizedParty: {}", e.into()))?;
-    // web_sys::console::log_1(&"centralized_dkg_output_v2: reached after advance".into());
 
     // Centralized Public Key Share and Proof.
     let public_key_share_and_proof =
