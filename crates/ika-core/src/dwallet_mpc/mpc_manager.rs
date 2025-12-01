@@ -653,14 +653,22 @@ impl DWalletMPCManager {
 
     /// Records malicious actors that were identified as part of the execution of an MPC session.
     pub(crate) fn record_malicious_actors(&mut self, authorities: &HashSet<AuthorityName>) {
-        self.malicious_actors.extend(authorities);
+        if !authorities.is_empty() {
+            self.malicious_actors.extend(authorities);
 
-        if self.is_malicious_actor(&self.validator_name) {
-            self.recognized_self_as_malicious = true;
+            if self.is_malicious_actor(&self.validator_name) {
+                self.recognized_self_as_malicious = true;
+
+                error!(
+                    authority=?self.validator_name,
+                    "node recognized itself as malicious"
+                );
+            }
 
             error!(
                 authority=?self.validator_name,
-                "node recognized itself as malicious"
+                malicious_authorities =? authorities,
+                "malicious actors identified & recorded"
             );
         }
     }
