@@ -16,8 +16,8 @@ use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::{Party, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
-use tracing::debug;
 use std::sync::Arc;
+use tracing::debug;
 
 pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
     /// Generates the public input required for the reconfiguration protocol.
