@@ -65,13 +65,7 @@ async fn encrypt_secret_share() {
         [4; 32],
         4,
         key_id,
-        ObjectID::from_bytes(
-            dwallet_test_result
-                .dkg_output
-                .dwallet_id
-                .clone(),
-        )
-        .unwrap(),
+        ObjectID::from_bytes(dwallet_test_result.dkg_output.dwallet_id.clone()).unwrap(),
         encrypted_secret_share,
         dwallet_test_result.dkg_output.output,
         dwallet_test_result.class_groups_encryption_key.clone(),
