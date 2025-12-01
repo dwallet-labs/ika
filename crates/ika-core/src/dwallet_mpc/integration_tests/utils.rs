@@ -646,7 +646,7 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID,
     dwallet_id: ObjectID,
-    first_round_output: Vec<u8>,
+    _first_round_output: Vec<u8>,
     centralized_public_key_share_and_proof: Vec<u8>,
     encrypted_centralized_secret_share_and_proof: Vec<u8>,
     encryption_key: Vec<u8>,

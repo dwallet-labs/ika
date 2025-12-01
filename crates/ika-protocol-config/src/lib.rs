@@ -262,6 +262,7 @@ pub struct ProtocolConfig {
     decryption_key_reconfiguration_third_round_delay: Option<u64>,
     network_dkg_third_round_delay: Option<u64>,
     network_encryption_key_version: Option<u64>,
+    reconfiguration_message_version: Option<u64>,
 }
 
 // feature flags
@@ -312,6 +313,10 @@ impl ProtocolConfig {
 
     pub fn consensus_zstd_compression(&self) -> bool {
         self.feature_flags.consensus_zstd_compression
+    }
+
+    pub fn is_reconfiguration_message_version_v2(&self) -> bool {
+        self.reconfiguration_message_version.is_some_and(|v| v == 2)
     }
 }
 
@@ -478,6 +483,7 @@ impl ProtocolConfig {
             decryption_key_reconfiguration_third_round_delay: Some(10),
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
+            reconfiguration_message_version: Some(1),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);
@@ -492,6 +498,9 @@ impl ProtocolConfig {
                 1 => unreachable!(),
                 2 => {
                     cfg.network_encryption_key_version = Some(2);
+                }
+                3 => {
+                    cfg.reconfiguration_message_version = Some(2);
                 }
                 // Use this template when making changes:
                 //

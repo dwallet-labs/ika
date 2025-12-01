@@ -19,12 +19,14 @@ use crate::request_protocol_data::{
 };
 use class_groups::SecretKeyShareSizedInteger;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
-use dwallet_mpc_types::dwallet_mpc::{ReconfigurationParty, ReconfigurationPartyBackwardCompatible};
+use dwallet_mpc_types::dwallet_mpc::{
+    ReconfigurationParty, ReconfigurationPartyBackwardCompatible,
+};
 use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
-use ika_protocol_config::ProtocolVersion;
 
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ProtocolCryptographicData {
@@ -72,7 +74,8 @@ pub(crate) enum ProtocolCryptographicData {
     NetworkEncryptionKeyReconfigurationBackwardCompatible {
         data: NetworkEncryptionKeyReconfigurationData,
         public_input: <ReconfigurationPartyBackwardCompatible as mpc::Party>::PublicInput,
-        advance_request: AdvanceRequest<<ReconfigurationPartyBackwardCompatible as mpc::Party>::Message>,
+        advance_request:
+            AdvanceRequest<<ReconfigurationPartyBackwardCompatible as mpc::Party>::Message>,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
     NetworkEncryptionKeyReconfiguration {
@@ -344,7 +347,7 @@ impl DWalletMPCManager {
         protocol_data: &ProtocolData,
         consensus_round: u64,
         public_input: PublicInput,
-        protocol_version: &ProtocolVersion,
+        protocol_config: &ProtocolConfig,
     ) -> Result<Option<ProtocolCryptographicData>, DwalletMPCError> {
         match session_type {
             SessionComputationType::Native => {
@@ -366,7 +369,7 @@ impl DWalletMPCManager {
                     .validator_private_dec_key_data
                     .class_groups_decryption_key,
                 &self.network_keys,
-                protocol_version
+                protocol_config,
             ),
         }
     }

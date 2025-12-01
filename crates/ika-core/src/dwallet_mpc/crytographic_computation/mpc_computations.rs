@@ -26,9 +26,13 @@ use crate::request_protocol_data::{
 };
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
-use dwallet_mpc_types::dwallet_mpc::{DWalletSignatureAlgorithm, ReconfigurationParty, ReconfigurationPartyBackwardCompatible, VersionedDecryptionKeyReconfigurationOutput};
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletSignatureAlgorithm, ReconfigurationParty, ReconfigurationPartyBackwardCompatible,
+    VersionedDecryptionKeyReconfigurationOutput,
+};
 use dwallet_rng::RootSeed;
 use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
@@ -46,7 +50,6 @@ use tracing::error;
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
 use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
 use twopc_mpc::sign::EncodableSignature;
-use ika_protocol_config::ProtocolVersion;
 
 pub(crate) mod dwallet_dkg;
 pub(crate) mod network_dkg;
@@ -66,7 +69,7 @@ impl ProtocolCryptographicData {
         decryption_key_reconfiguration_third_round_delay: u64,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
         decryption_key_shares: &DwalletMPCNetworkKeys,
-        protocol_version: &ProtocolVersion,
+        protocol_config: &ProtocolConfig,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
             ProtocolData::ImportedKeyVerification { data, .. } => {
@@ -241,27 +244,7 @@ impl ProtocolCryptographicData {
                 let decryption_key_shares = decryption_key_shares
                     .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                if protocol_version.as_u64() == 2 {
-                    let advance_request_result = Party::<ReconfigurationPartyBackwardCompatible>::ready_to_advance(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
-                        &serialized_messages_by_consensus_round,
-                    )?;
-
-                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                    else {
-                        return Ok(None);
-                    };
-
-                    ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBackwardCompatible {
-                        data: NetworkEncryptionKeyReconfigurationData {},
-                        public_input: public_input.clone(),
-                        advance_request,
-                        decryption_key_shares: decryption_key_shares.clone(),
-                    }
-                } else {
+                if protocol_config.is_reconfiguration_message_version_v2() {
                     let advance_request_result = Party::<ReconfigurationParty>::ready_to_advance(
                         party_id,
                         access_structure,
@@ -270,12 +253,35 @@ impl ProtocolCryptographicData {
                         &serialized_messages_by_consensus_round,
                     )?;
 
-                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
+                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                        advance_request_result
                     else {
                         return Ok(None);
                     };
 
                     ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
+                        data: NetworkEncryptionKeyReconfigurationData {},
+                        public_input: public_input.clone(),
+                        advance_request,
+                        decryption_key_shares: decryption_key_shares.clone(),
+                    }
+                } else {
+                    let advance_request_result =
+                        Party::<ReconfigurationPartyBackwardCompatible>::ready_to_advance(
+                            party_id,
+                            access_structure,
+                            consensus_round,
+                            HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
+                            &serialized_messages_by_consensus_round,
+                        )?;
+
+                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                        advance_request_result
+                    else {
+                        return Ok(None);
+                    };
+
+                    ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBackwardCompatible {
                         data: NetworkEncryptionKeyReconfigurationData {},
                         public_input: public_input.clone(),
                         advance_request,
@@ -873,7 +879,7 @@ impl ProtocolCryptographicData {
                         })
                     }
                 }
-            },
+            }
             ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                 public_input,
                 advance_request,
