@@ -24,7 +24,6 @@ tracing = "0.1.41"
 log = "0.4.27"
 console_log = "1.0.0"
 crypto-bigint.workspace = true
-base64 = "0.22.1"
 
 [features]
 wasm_js = ["group/wasm_js", "dep:getrandom"]
