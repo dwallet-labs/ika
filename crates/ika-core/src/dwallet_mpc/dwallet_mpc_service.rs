@@ -116,6 +116,7 @@ impl DWalletMPCService {
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics.clone(),
             sui_data_receivers.clone(),
+            protocol_config.clone(),
         );
 
         Self {
