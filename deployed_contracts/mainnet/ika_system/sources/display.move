@@ -16,11 +16,8 @@
 module ika_system::display;
 
 use ika_system::staked_ika::StakedIka;
-use std::string::String;
-use std::type_name;
-use sui::display::{Self, Display};
-use sui::object_bag::{Self, ObjectBag};
-use sui::package::Publisher;
+use std::{string::String, type_name};
+use sui::{display::{Self, Display}, object_bag::{Self, ObjectBag}, package::Publisher};
 
 // === Structs ===
 
@@ -39,7 +36,10 @@ public struct PublisherKey() has copy, drop, store;
 public(package) fun create(p: Publisher, staked_ika_image_url: String, ctx: &mut TxContext) {
     let mut inner = object_bag::new(ctx);
 
-    inner.add(type_name::get<StakedIka>(), init_staked_ika_display(&p, staked_ika_image_url, ctx));
+    inner.add(
+        type_name::with_defining_ids<StakedIka>(),
+        init_staked_ika_display(&p, staked_ika_image_url, ctx),
+    );
     inner.add(PublisherKey(), p);
 
     transfer::share_object(ObjectDisplay { id: object::new(ctx), inner })
