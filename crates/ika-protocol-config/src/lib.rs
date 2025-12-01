@@ -15,7 +15,7 @@ use sui_protocol_config_macros::{
 use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
-const MIN_PROTOCOL_VERSION: u64 = 1;
+const MIN_PROTOCOL_VERSION: u64 = 2;
 const MAX_PROTOCOL_VERSION: u64 = 2;
 
 // Record history of protocol version allocations here:
@@ -312,10 +312,6 @@ impl ProtocolConfig {
 
     pub fn consensus_zstd_compression(&self) -> bool {
         self.feature_flags.consensus_zstd_compression
-    }
-
-    pub fn is_network_encryption_key_version_v2(&self) -> bool {
-        self.network_encryption_key_version.is_some_and(|v| v == 2)
     }
 }
 

@@ -93,7 +93,7 @@ checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
 [[package]]
 name = "class_groups"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=c6bcacff#c6bcacffbae6823bb5db51f4af51b39cbabe8a7a"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -115,7 +115,7 @@ dependencies = [
 [[package]]
 name = "commitment"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=c6bcacff#c6bcacffbae6823bb5db51f4af51b39cbabe8a7a"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "crypto-bigint",
  "group 0.2.0",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-centralized-party"
-version = "1.1.7"
+version = "1.1.5"
 dependencies = [
  "anyhow",
  "bcs",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-types"
-version = "1.1.7"
+version = "1.1.5"
 dependencies = [
  "anyhow",
  "bcs",
@@ -490,7 +490,7 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=c6bcacff#c6bcacffbae6823bb5db51f4af51b39cbabe8a7a"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "crypto-bigint",
  "curve25519-dalek 5.0.0-pre.1",
@@ -550,7 +550,7 @@ dependencies = [
 [[package]]
 name = "homomorphic_encryption"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=c6bcacff#c6bcacffbae6823bb5db51f4af51b39cbabe8a7a"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "crypto-bigint",
  "group 0.2.0",
@@ -657,7 +657,7 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 [[package]]
 name = "maurer"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=c6bcacff#c6bcacffbae6823bb5db51f4af51b39cbabe8a7a"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -692,7 +692,7 @@ dependencies = [
 [[package]]
 name = "mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=c6bcacff#c6bcacffbae6823bb5db51f4af51b39cbabe8a7a"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "bcs",
  "commitment",
@@ -817,7 +817,7 @@ dependencies = [
 [[package]]
 name = "proof"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=c6bcacff#c6bcacffbae6823bb5db51f4af51b39cbabe8a7a"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -1241,7 +1241,7 @@ dependencies = [
 [[package]]
 name = "twopc_mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=c6bcacff#c6bcacffbae6823bb5db51f4af51b39cbabe8a7a"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=cafeb4ae#cafeb4aecf4429715e27dfe250f98e73cc7a9b25"
 dependencies = [
  "class_groups",
  "commitment",
