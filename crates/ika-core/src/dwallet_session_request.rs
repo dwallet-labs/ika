@@ -59,6 +59,10 @@ impl Ord for DWalletSessionRequest {
 }
 
 impl DWalletSessionRequestMetricData {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn curve(&self) -> String {
         let Some(curve) = self.curve else {
             return "Unknown".to_string();
