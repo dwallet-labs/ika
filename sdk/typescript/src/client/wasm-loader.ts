@@ -46,6 +46,9 @@ export async function encrypt_secret_share(
 	encryptionKey: Uint8Array,
 	protocolPublicParameters: Uint8Array,
 ): Promise<Uint8Array> {
+	console.log('user secret key share', Buffer.from(userSecretKeyShare).toString('base64'));
+	console.log('encryption key', Buffer.from(encryptionKey).toString('base64'));
+
 	const wasm = await getWasmModule();
 	return wasm.encrypt_secret_share(
 		curve,

@@ -307,7 +307,7 @@ pub(crate) async fn create_dwallet_test_inner(
         dwallet_mpc_centralized_party::create_dkg_output_by_curve_v2(
             0,
             protocol_pp.clone(),
-            dwallet_dkg_session_identifier.clone().try_into().unwrap(),
+            SessionIdentifier::new(SessionType::User, dwallet_dkg_session_identifier).to_vec(),
         )
         .unwrap();
     let (encryption_key, _) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
