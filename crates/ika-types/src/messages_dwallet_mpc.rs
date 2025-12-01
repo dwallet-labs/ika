@@ -63,6 +63,16 @@ pub struct DWalletMPCOutput {
     pub malicious_authorities: Vec<AuthorityName>,
 }
 
+impl DWalletMPCOutput {
+    pub fn rejected(&self) -> Option<bool> {
+        if let [output] = &self.output[..] {
+            output.rejected()
+        } else {
+            None
+        }
+    }
+}
+
 /// The message a Validator can send to the other parties while
 /// running a dWallet MPC session.
 #[derive(Clone, Debug, Serialize, Deserialize, Hash, PartialEq, Eq, Ord, PartialOrd)]

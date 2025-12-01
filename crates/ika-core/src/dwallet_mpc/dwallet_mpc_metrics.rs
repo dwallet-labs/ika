@@ -229,7 +229,7 @@ impl DWalletMPCMetrics {
     pub(crate) fn add_completion(&self, protocol_data: &DWalletSessionRequestMetricData) {
         self.completions_count
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 &protocol_data.hash_scheme(),
                 &protocol_data.signature_algorithm(),
@@ -250,7 +250,7 @@ impl DWalletMPCMetrics {
     ) {
         self.received_requests_start_count
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 &protocol_data.hash_scheme(),
                 &protocol_data.signature_algorithm(),
@@ -274,7 +274,7 @@ impl DWalletMPCMetrics {
         if mpc_round == "1" {
             self.session_start_count
                 .with_label_values(&[
-                    &protocol_data.to_string(),
+                    protocol_data.name(),
                     &protocol_data.curve(),
                     &protocol_data.hash_scheme(),
                     &protocol_data.signature_algorithm(),
@@ -283,7 +283,7 @@ impl DWalletMPCMetrics {
         }
         self.advance_mpc_calls
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 mpc_round,
                 &protocol_data.hash_scheme(),
@@ -295,7 +295,7 @@ impl DWalletMPCMetrics {
     pub(crate) fn add_compute_native_call(&self, protocol_data: &DWalletSessionRequestMetricData) {
         self.session_start_count
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 &protocol_data.hash_scheme(),
                 &protocol_data.signature_algorithm(),
@@ -303,7 +303,7 @@ impl DWalletMPCMetrics {
             .inc();
         self.native_calls
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 &protocol_data.hash_scheme(),
                 &protocol_data.signature_algorithm(),
@@ -327,7 +327,7 @@ impl DWalletMPCMetrics {
     ) {
         self.advance_completions
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 mpc_round,
                 &protocol_data.hash_scheme(),
@@ -337,7 +337,7 @@ impl DWalletMPCMetrics {
         let current_avg = self
             .computation_duration_avg
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 mpc_round,
                 &protocol_data.hash_scheme(),
@@ -347,7 +347,7 @@ impl DWalletMPCMetrics {
         let advance_completions_count = self
             .advance_completions
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 mpc_round,
                 &protocol_data.hash_scheme(),
@@ -358,7 +358,7 @@ impl DWalletMPCMetrics {
             / (advance_completions_count as f64);
         self.computation_duration_avg
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 mpc_round,
                 &protocol_data.hash_scheme(),
@@ -369,7 +369,7 @@ impl DWalletMPCMetrics {
             let current_variance = self
                 .computation_duration_variance
                 .with_label_values(&[
-                    &protocol_data.to_string(),
+                    protocol_data.name(),
                     &protocol_data.curve(),
                     mpc_round,
                     &protocol_data.hash_scheme(),
@@ -385,7 +385,7 @@ impl DWalletMPCMetrics {
             );
             self.computation_duration_variance
                 .with_label_values(&[
-                    &protocol_data.to_string(),
+                    protocol_data.name(),
                     &protocol_data.curve(),
                     mpc_round,
                     &protocol_data.hash_scheme(),
@@ -395,7 +395,7 @@ impl DWalletMPCMetrics {
         } else {
             self.computation_duration_variance
                 .with_label_values(&[
-                    &protocol_data.to_string(),
+                    protocol_data.name(),
                     &protocol_data.curve(),
                     mpc_round,
                     &protocol_data.hash_scheme(),
@@ -412,7 +412,7 @@ impl DWalletMPCMetrics {
     ) {
         self.native_completions
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 &protocol_data.hash_scheme(),
                 &protocol_data.signature_algorithm(),
@@ -421,7 +421,7 @@ impl DWalletMPCMetrics {
         let current_avg = self
             .computation_duration_avg
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 "0",
                 &protocol_data.hash_scheme(),
@@ -431,7 +431,7 @@ impl DWalletMPCMetrics {
         let advance_completions_count = self
             .native_completions
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 &protocol_data.hash_scheme(),
                 &protocol_data.signature_algorithm(),
@@ -442,7 +442,7 @@ impl DWalletMPCMetrics {
 
         self.computation_duration_avg
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 "0",
                 &protocol_data.hash_scheme(),
@@ -453,7 +453,7 @@ impl DWalletMPCMetrics {
             let current_variance = self
                 .computation_duration_variance
                 .with_label_values(&[
-                    &protocol_data.to_string(),
+                    protocol_data.name(),
                     &protocol_data.curve(),
                     "0",
                     &protocol_data.hash_scheme(),
@@ -469,7 +469,7 @@ impl DWalletMPCMetrics {
             );
             self.computation_duration_variance
                 .with_label_values(&[
-                    &protocol_data.to_string(),
+                    protocol_data.name(),
                     &protocol_data.curve(),
                     "0",
                     &protocol_data.hash_scheme(),
@@ -479,7 +479,7 @@ impl DWalletMPCMetrics {
         } else {
             self.computation_duration_variance
                 .with_label_values(&[
-                    &protocol_data.to_string(),
+                    protocol_data.name(),
                     &protocol_data.curve(),
                     "0",
                     &protocol_data.hash_scheme(),
@@ -506,7 +506,7 @@ impl DWalletMPCMetrics {
     ) {
         self.last_completion_duration
             .with_label_values(&[
-                &protocol_data.to_string(),
+                protocol_data.name(),
                 &protocol_data.curve(),
                 mpc_round,
                 &protocol_data.hash_scheme(),

@@ -10,6 +10,7 @@ edition = "2024"
 workspace = true
 
 [dependencies]
+hex.workspace = true
 group.workspace = true
 mpc.workspace = true
 twopc_mpc.workspace = true
