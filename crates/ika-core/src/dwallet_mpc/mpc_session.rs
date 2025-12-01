@@ -220,6 +220,7 @@ impl DWalletSession {
             output_messages=?output.output,
             consensus_round,
             status =? self.status,
+            rejected=output.rejected(),
             "Received a dWallet MPC output",
         );
 
@@ -476,6 +477,8 @@ impl DWalletMPCManager {
             // so we have to add this request to the pending queue until it arrives.
             debug!(
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+                request=?request,
+                session_identifier=?request.session_identifier,
                 session_source=?request.session_type,
                 "Adding request to pending for the next epoch active committee"
             );

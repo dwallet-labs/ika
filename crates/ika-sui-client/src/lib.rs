@@ -354,6 +354,10 @@ where
             .get_mpc_data_from_validators_pool(validators, read_next_mpc_data)
             .await
             .map_err(|e| {
+                self.sui_client_metrics
+                    .sui_rpc_errors
+                    .with_label_values(&["get_mpc_data_from_validators_pool"])
+                    .inc();
                 IkaError::SuiClientInternalError(format!(
                     "Can't get_mpc_data_from_validators_pool: {e}"
                 ))
@@ -379,6 +383,10 @@ where
                     .get_validators(validator_ids)
                     .await
                     .map_err(|e| {
+                        self.sui_client_metrics
+                            .sui_rpc_errors
+                            .with_label_values(&["get_epoch_start_system"])
+                            .inc();
                         IkaError::SuiClientInternalError(format!(
                             "Can't get_validators_from_object_table: {e}"
                         ))
@@ -387,6 +395,10 @@ where
                     .iter()
                     .map(|v| {
                         bcs::from_bytes::<StakingPool>(v).map_err(|e| {
+                            self.sui_client_metrics
+                                .sui_rpc_errors
+                                .with_label_values(&["get_epoch_start_system"])
+                                .inc();
                             IkaError::SuiClientSerializationError(format!(
                                 "Can't serialize StakingPool: {e}"
                             ))
@@ -399,6 +411,10 @@ where
                     .get_mpc_data_from_validators_pool(&validators, false)
                     .await
                     .map_err(|e| {
+                        self.sui_client_metrics
+                            .sui_rpc_errors
+                            .with_label_values(&["get_epoch_start_system"])
+                            .inc();
                         IkaError::SuiClientInternalError(format!(
                             "can't get_mpc_data_from_validators_pool: {e}"
                         ))
@@ -410,12 +426,19 @@ where
                     .members
                     .iter()
                     .map(|m| {
-                        let validator = validators.iter().find(|v| v.id == m.validator_id).ok_or(
-                            IkaError::InvalidCommittee(format!(
-                                "Validator with ID {} not found in the active committee",
-                                m.validator_id
-                            )),
-                        )?;
+                        let validator = validators
+                            .iter()
+                            .find(|v| v.id == m.validator_id)
+                            .ok_or_else(|| {
+                                self.sui_client_metrics
+                                    .sui_rpc_errors
+                                    .with_label_values(&["get_epoch_start_system"])
+                                    .inc();
+                                IkaError::InvalidCommittee(format!(
+                                    "Validator with ID {} not found in the active committee",
+                                    m.validator_id
+                                ))
+                            })?;
                         let info = validator.verified_validator_info();
                         Ok(EpochStartValidatorInfoV1 {
                             name: info.name.clone(),
@@ -464,6 +487,10 @@ where
             .get_validators(validator_ids)
             .await
             .map_err(|e| {
+                self.sui_client_metrics
+                    .sui_rpc_errors
+                    .with_label_values(&["get_validators_info_by_ids"])
+                    .inc();
                 IkaError::SuiClientInternalError(format!(
                     "failure in `get_validators_from_object_table()`: {e}"
                 ))
@@ -472,6 +499,10 @@ where
             .iter()
             .map(|v| {
                 bcs::from_bytes::<StakingPool>(v).map_err(|e| {
+                    self.sui_client_metrics
+                        .sui_rpc_errors
+                        .with_label_values(&["get_validators_info_by_ids"])
+                        .inc();
                     IkaError::SuiClientSerializationError(format!(
                         "failed to de-serialize Validator info: {e}"
                     ))
@@ -563,7 +594,13 @@ where
             .inner
             .query_events(filter.clone(), cursor)
             .await
-            .map_err(|e| IkaError::SuiClientInternalError(format!("Can't query_events: {e}")))?;
+            .map_err(|e| {
+                self.sui_client_metrics
+                    .sui_rpc_errors
+                    .with_label_values(&["query_events_by_module"])
+                    .inc();
+                IkaError::SuiClientInternalError(format!("Can't query_events: {e}"))
+            })?;
 
         // Safeguard check that all events are emitted from requested package and module
         assert!(events.data.iter().all(|event| {
@@ -574,6 +611,10 @@ where
 
     pub async fn get_chain_identifier(&self) -> IkaResult<String> {
         self.inner.get_chain_identifier().await.map_err(|e| {
+            self.sui_client_metrics
+                .sui_rpc_errors
+                .with_label_values(&["get_validators_info_by_ids"])
+                .inc();
             IkaError::SuiClientInternalError(format!("Can't get_chain_identifier: {e}"))
         })
     }
@@ -586,7 +627,7 @@ where
             ) else {
                 self.sui_client_metrics
                     .sui_rpc_errors
-                    .with_label_values(&["get_reference_gas_price"])
+                    .with_label_values(&["get_reference_gas_price_until_success"])
                     .inc();
                 error!("Failed to get gas price per unit size");
                 continue;
@@ -600,6 +641,10 @@ where
             .get_latest_checkpoint_sequence_number()
             .await
             .map_err(|e| {
+                self.sui_client_metrics
+                    .sui_rpc_errors
+                    .with_label_values(&["get_latest_checkpoint_sequence_number"])
+                    .inc();
                 IkaError::SuiClientInternalError(format!(
                     "Can't get_latest_checkpoint_sequence_number: {e}"
                 ))
@@ -651,6 +696,10 @@ where
             .get_network_encryption_keys(coordinator_inner)
             .await
             .map_err(|e| {
+                self.sui_client_metrics
+                    .sui_rpc_errors
+                    .with_label_values(&["get_dwallet_mpc_network_keys"])
+                    .inc();
                 IkaError::SuiClientInternalError(format!("can't get_network_encryption_keys: {e}"))
             })
     }
@@ -664,6 +713,10 @@ where
             .get_network_encryption_key_with_full_data_by_epoch(network_decryption_key, epoch)
             .await
             .map_err(|e| {
+                self.sui_client_metrics
+                    .sui_rpc_errors
+                    .with_label_values(&["get_network_encryption_key_with_full_data_by_epoch"])
+                    .inc();
                 IkaError::SuiClientInternalError(format!(
                     "Can't get_network_encryption_key_with_full_data_by_epoch: {e}"
                 ))
@@ -990,7 +1043,7 @@ impl SuiClientInner for SuiSdkClient {
                     mpc_data_from_all_validators.insert(validator.id, validator_mpc_data);
                 }
                 Err(e) => {
-                    warn!(
+                    error!(
                         validator_id=?validator.id,
                         error=?e,
                         "Failed to deserialize MPC data for a validator"

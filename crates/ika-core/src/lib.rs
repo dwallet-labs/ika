@@ -12,6 +12,7 @@ use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
 use tokio::sync::broadcast;
 use tokio::sync::watch::Receiver;
+use tracing::debug;
 
 pub mod authority;
 pub mod consensus_adapter;
@@ -107,5 +108,28 @@ impl SuiDataReceivers {
             },
             senders,
         )
+    }
+}
+
+pub fn debug_variable_chunks(msg: &str, name: &str, data: &[u8]) {
+    debug_variable_chunks_impl_with_size(msg, name, data, 16 * 1024);
+}
+
+/// Allows custom chunk size if you ever want 4KB, 32KB, etc.
+pub fn debug_variable_chunks_impl_with_size(msg: &str, name: &str, data: &[u8], chunk_size: usize) {
+    if data.is_empty() {
+        return;
+    }
+
+    for (i, chunk) in data.chunks(chunk_size).enumerate() {
+        let hex = hex::encode(chunk);
+        debug!(
+            message = %msg,
+            variable = %name,
+            part = i + 1,
+            total_parts = data.len().div_ceil(chunk_size),
+            bytes = chunk.len(),
+            value = %hex,
+        );
     }
 }
