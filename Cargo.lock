@@ -3629,7 +3629,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-classgroups-types"
-version = "1.1.5"
+version = "1.1.8"
 dependencies = [
  "class_groups",
  "crypto-bigint 0.7.0-rc.9",
@@ -3642,7 +3642,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-centralized-party"
-version = "1.1.5"
+version = "1.1.8"
 dependencies = [
  "anyhow",
  "bcs",
@@ -3668,7 +3668,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-types"
-version = "1.1.5"
+version = "1.1.8"
 dependencies = [
  "anyhow",
  "bcs",
@@ -3689,7 +3689,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-rng"
-version = "1.1.5"
+version = "1.1.8"
 dependencies = [
  "commitment",
  "fastcrypto",
@@ -5731,7 +5731,7 @@ dependencies = [
 
 [[package]]
 name = "ika"
-version = "1.1.5"
+version = "1.1.8"
 dependencies = [
  "anyhow",
  "bcs",
@@ -5765,7 +5765,7 @@ dependencies = [
 
 [[package]]
 name = "ika-archival"
-version = "1.1.5"
+version = "1.1.8"
 dependencies = [
  "anyhow",
  "byteorder",
@@ -5936,7 +5936,7 @@ dependencies = [
 
 [[package]]
 name = "ika-node"
-version = "1.1.5"
+version = "1.1.8"
 dependencies = [
  "anemo",
  "anemo-tower",
