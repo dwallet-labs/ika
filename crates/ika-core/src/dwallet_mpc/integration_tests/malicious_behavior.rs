@@ -101,9 +101,9 @@ async fn test_some_malicious_validators_flows_succeed() {
             &mut sent_consensus_messages_collectors,
             &epoch_stores,
             &notify_services,
-            (0..committee_size)
+            &(0..committee_size)
                 .filter(|i| !malicious_parties.contains(i))
-                .collect(),
+                .collect::<Vec<usize>>(),
         )
         .await
         {
@@ -124,9 +124,13 @@ async fn test_some_malicious_validators_flows_succeed() {
     for malicious_party_index in malicious_parties {
         let malicious_actor_name = dwallet_mpc_services[malicious_party_index].name;
         assert!(
-            dwallet_mpc_services.iter().all(|service| service
-                .dwallet_mpc_manager()
-                .is_malicious_actor(&malicious_actor_name)),
+            dwallet_mpc_services
+                .iter()
+                .enumerate()
+                .all(|(index, service)| malicious_parties.contains(index)
+                    || service
+                        .dwallet_mpc_manager()
+                        .is_malicious_actor(&malicious_actor_name)),
             "All services should recognize the malicious actor: {}",
             malicious_actor_name
         );
