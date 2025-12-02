@@ -127,7 +127,7 @@ async fn test_some_malicious_validators_flows_succeed() {
             dwallet_mpc_services
                 .iter()
                 .enumerate()
-                .all(|(index, service)| malicious_parties.contains(index)
+                .all(|(index, service)| malicious_parties.contains(&index)
                     || service
                         .dwallet_mpc_manager()
                         .is_malicious_actor(&malicious_actor_name)),
