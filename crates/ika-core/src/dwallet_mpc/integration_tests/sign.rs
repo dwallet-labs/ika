@@ -71,8 +71,6 @@ async fn sign_flow_test() {
         presign_session_identifier,
         4,
         network_key_id,
-        Some(ObjectID::from_bytes(&decentralized_party_dkg_public_output.dwallet_id).unwrap()),
-        Some(decentralized_party_dkg_public_output.output.clone()),
     );
     let (consensus_round, presign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
@@ -167,8 +165,6 @@ async fn future_sign() {
         presign_session_identifier,
         4,
         network_key_id,
-        Some(ObjectID::from_bytes(&decentralized_party_dkg_public_output.dwallet_id).unwrap()),
-        Some(decentralized_party_dkg_public_output.output.clone()),
     );
     let (consensus_round, presign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
@@ -378,8 +374,6 @@ pub(crate) fn send_start_presign_event(
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID,
-    dwallet_id: Option<ObjectID>,
-    dwallet_public_output: Option<Vec<u8>>,
 ) {
     let presign_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
