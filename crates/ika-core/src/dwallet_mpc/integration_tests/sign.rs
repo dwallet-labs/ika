@@ -23,7 +23,7 @@ use tracing::info;
 #[tokio::test]
 #[cfg(test)]
 /// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
-async fn sign() {
+async fn sign_flow_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let epoch_id = 1;
@@ -396,9 +396,9 @@ pub(crate) fn send_start_presign_event(
                         curve: DWalletCurve::Secp256k1,
                         signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
                     },
-                    dwallet_id,
+                    dwallet_id: None,
                     presign_id,
-                    dwallet_public_output: dwallet_public_output.clone(),
+                    dwallet_public_output: None,
                     dwallet_network_encryption_key_id,
                 },
                 epoch: 1,
