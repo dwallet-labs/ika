@@ -95,12 +95,15 @@ async fn test_some_malicious_validators_flows_succeed() {
     mpc_round += 1;
     info!("Starting malicious behavior test");
     loop {
-        if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
+        if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
             &committee,
             &mut dwallet_mpc_services,
             &mut sent_consensus_messages_collectors,
             &epoch_stores,
             &notify_services,
+            (0..committee_size)
+                .filter(|i| !malicious_parties.contains(i))
+                .collect(),
         )
         .await
         {

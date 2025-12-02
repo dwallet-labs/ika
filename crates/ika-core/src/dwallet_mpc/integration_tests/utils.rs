@@ -447,7 +447,8 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                     .currently_running_cryptographic_computations
                     .len(),
                 1,
-                "Pending for a non existent computation"
+                "Pending for a non existent computation for party id: {}",
+                i + 1,
             );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
