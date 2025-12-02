@@ -116,6 +116,7 @@ impl DWalletMPCService {
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics.clone(),
             sui_data_receivers.clone(),
+            protocol_config.clone(),
         );
 
         Self {
@@ -163,6 +164,7 @@ impl DWalletMPCService {
                 0,
                 DWalletMPCMetrics::new(&Registry::new()),
                 sui_data_receivers.clone(),
+                ProtocolConfig::get_for_min_version(),
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
