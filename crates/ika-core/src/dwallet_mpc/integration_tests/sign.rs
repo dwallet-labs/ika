@@ -117,7 +117,7 @@ async fn sign_flow_test() {
 #[tokio::test]
 #[cfg(test)]
 /// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
-async fn future_sign() {
+async fn future_sign_flow_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let epoch_id = 1;
@@ -210,8 +210,8 @@ async fn future_sign() {
     send_start_future_sign_event(
         epoch_id,
         &test_state.sui_data_senders,
-        [5; 32],
-        5,
+        [6; 32],
+        6,
         network_key_id,
         ObjectID::from_bytes(decentralized_party_dkg_public_output.dwallet_id).unwrap(),
         decentralized_party_dkg_public_output.output,
