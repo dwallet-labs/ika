@@ -19,8 +19,11 @@ use crate::request_protocol_data::{
 };
 use class_groups::SecretKeyShareSizedInteger;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
-use dwallet_mpc_types::dwallet_mpc::ReconfigurationParty;
+use dwallet_mpc_types::dwallet_mpc::{
+    ReconfigurationParty, ReconfigurationPartyBackwardCompatible,
+};
 use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
@@ -67,6 +70,13 @@ pub(crate) enum ProtocolCryptographicData {
         advance_request:
             AdvanceRequest<<twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::Message>,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
+    },
+    NetworkEncryptionKeyReconfigurationBackwardCompatible {
+        data: NetworkEncryptionKeyReconfigurationData,
+        public_input: <ReconfigurationPartyBackwardCompatible as mpc::Party>::PublicInput,
+        advance_request:
+            AdvanceRequest<<ReconfigurationPartyBackwardCompatible as mpc::Party>::Message>,
+        decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
     NetworkEncryptionKeyReconfiguration {
         data: NetworkEncryptionKeyReconfigurationData,
@@ -174,6 +184,10 @@ impl ProtocolCryptographicData {
                     req.attempt_number
                 }
             },
+            ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBackwardCompatible {
+                advance_request,
+                ..
+            } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                 advance_request,
                 ..
@@ -311,6 +325,10 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::EncryptedShareVerification { .. }
             | ProtocolCryptographicData::PartialSignatureVerification { .. }
             | ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => None,
+            ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBackwardCompatible {
+                advance_request,
+                ..
+            } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                 advance_request,
                 ..
@@ -329,6 +347,7 @@ impl DWalletMPCManager {
         protocol_data: &ProtocolData,
         consensus_round: u64,
         public_input: PublicInput,
+        protocol_config: &ProtocolConfig,
     ) -> Result<Option<ProtocolCryptographicData>, DwalletMPCError> {
         match session_type {
             SessionComputationType::Native => {
@@ -350,6 +369,7 @@ impl DWalletMPCManager {
                     .validator_private_dec_key_data
                     .class_groups_decryption_key,
                 &self.network_keys,
+                protocol_config,
             ),
         }
     }

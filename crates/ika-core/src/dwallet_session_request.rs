@@ -59,6 +59,10 @@ impl Ord for DWalletSessionRequest {
 }
 
 impl DWalletSessionRequestMetricData {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn curve(&self) -> String {
         let Some(curve) = self.curve else {
             return "Unknown".to_string();
@@ -225,6 +229,15 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                     signature_algorithm: None,
                 }
             }
+            ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBackwardCompatible {
+                data,
+                ..
+            } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: None,
+                hash_scheme: None,
+                signature_algorithm: None,
+            },
             ProtocolCryptographicData::NetworkEncryptionKeyDkg { .. } => {
                 DWalletSessionRequestMetricData {
                     name: "NetworkEncryptionKeyDkg".to_string(),

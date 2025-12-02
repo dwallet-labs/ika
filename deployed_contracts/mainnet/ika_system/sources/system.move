@@ -110,33 +110,40 @@
 module ika_system::system;
 
 use ika::ika::IKA;
-use ika_common::advance_epoch_approver::AdvanceEpochApprover;
-use ika_common::bls_committee::BlsCommittee;
-use ika_common::protocol_cap::{VerifiedProtocolCap, ProtocolCap};
-use ika_common::system_current_status_info::SystemCurrentStatusInfo;
-use ika_common::system_object_cap::SystemObjectCap;
-use ika_common::validator_cap::{
-    ValidatorCap,
-    ValidatorCommissionCap,
-    ValidatorOperationCap,
-    VerifiedValidatorCap,
-    VerifiedValidatorCommissionCap,
-    VerifiedValidatorOperationCap
+use ika_common::{
+    advance_epoch_approver::AdvanceEpochApprover,
+    bls_committee::BlsCommittee,
+    protocol_cap::{VerifiedProtocolCap, ProtocolCap},
+    system_current_status_info::SystemCurrentStatusInfo,
+    system_object_cap::SystemObjectCap,
+    upgrade_package_approver::UpgradePackageApprover,
+    validator_cap::{
+        ValidatorCap,
+        ValidatorCommissionCap,
+        ValidatorOperationCap,
+        VerifiedValidatorCap,
+        VerifiedValidatorCommissionCap,
+        VerifiedValidatorOperationCap
+    }
 };
-use ika_system::protocol_treasury::ProtocolTreasury;
-use ika_system::staked_ika::StakedIka;
-use ika_system::system_inner::{Self, SystemInner};
-use ika_system::token_exchange_rate::TokenExchangeRate;
-use ika_system::validator_metadata::ValidatorMetadata;
-use ika_system::validator_set::ValidatorSet;
+use ika_system::{
+    protocol_treasury::ProtocolTreasury,
+    staked_ika::StakedIka,
+    system_inner::{Self, SystemInner},
+    token_exchange_rate::TokenExchangeRate,
+    validator_metadata::ValidatorMetadata,
+    validator_set::ValidatorSet
+};
 use std::string::String;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::dynamic_field;
-use sui::package::{UpgradeCap, UpgradeReceipt, UpgradeTicket};
-use sui::table::Table;
-use sui::table_vec::TableVec;
-use ika_common::upgrade_package_approver::UpgradePackageApprover;
+use sui::{
+    clock::Clock,
+    coin::Coin,
+    coin_registry::Currency,
+    dynamic_field,
+    package::{UpgradeCap, UpgradeReceipt, UpgradeTicket},
+    table::Table,
+    table_vec::TableVec
+};
 
 // === Errors ===
 
@@ -154,7 +161,8 @@ const EInvalidMigration: u64 = 1;
 ///
 /// Version History:
 /// - V1: Initial SystemInner implementation with core functionality
-const VERSION: u64 = 1;
+/// - V2: expose new functions: `epoch`, `validator_stake_amount`
+const VERSION: u64 = 2;
 
 // === Structs ===
 
@@ -549,11 +557,18 @@ public fun verify_commission_cap(
 
 // === Upgrades ===
 
-public fun authorize_upgrade(self: &mut System, package_id: ID): (UpgradeTicket, UpgradePackageApprover) {
+public fun authorize_upgrade(
+    self: &mut System,
+    package_id: ID,
+): (UpgradeTicket, UpgradePackageApprover) {
     self.inner_mut().authorize_upgrade(package_id)
 }
 
-public fun commit_upgrade(self: &mut System, receipt: UpgradeReceipt, upgrade_package_approver: &mut UpgradePackageApprover) {
+public fun commit_upgrade(
+    self: &mut System,
+    receipt: UpgradeReceipt,
+    upgrade_package_approver: &mut UpgradePackageApprover,
+) {
     self.inner_mut().commit_upgrade(receipt, upgrade_package_approver);
     if (self.package_id == upgrade_package_approver.old_package_id()) {
         self.migration_epoch = option::some(upgrade_package_approver.migration_epoch());
@@ -620,9 +635,7 @@ public fun set_or_remove_witness_approving_advance_epoch_by_cap(
 /// to migrate changes in the `system_inner` object if needed.
 /// This function can be called immediately after the upgrade is committed.
 public fun try_migrate_by_cap(self: &mut System, cap: &ProtocolCap) {
-    let _ = self.inner().verify_protocol_cap(cap);
-    assert!(self.version < VERSION, EInvalidMigration);
-    assert!(self.new_package_id.is_some(), EInvalidMigration);
+    let _ = self.inner_without_version_check().verify_protocol_cap(cap);
     self.try_migrate_impl();
 }
 
@@ -632,9 +645,10 @@ public fun try_migrate_by_cap(self: &mut System, cap: &ProtocolCap) {
 /// to migrate changes in the `system_inner` object if needed.
 /// Call this function after the migration epoch is reached.
 public fun try_migrate(self: &mut System) {
-    assert!(self.version < VERSION, EInvalidMigration);
-    assert!(self.new_package_id.is_some(), EInvalidMigration);
-    assert!(self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e), EInvalidMigration);
+    assert!(
+        self.migration_epoch.is_some_and!(|e| self.inner_without_version_check().epoch() >= *e),
+        EInvalidMigration,
+    );
     self.try_migrate_impl();
 }
 
@@ -643,6 +657,9 @@ public fun try_migrate(self: &mut System) {
 /// This function sets the new package id and version and can be modified in future versions
 /// to migrate changes in the `system_inner` object if needed.
 fun try_migrate_impl(self: &mut System) {
+    assert!(self.version < VERSION, EInvalidMigration);
+    assert!(self.new_package_id.is_some(), EInvalidMigration);
+
     // Move the old system inner to the new version.
     let system_inner: SystemInner = dynamic_field::remove(&mut self.id, self.version);
     dynamic_field::add(&mut self.id, VERSION, system_inner);
@@ -681,6 +698,26 @@ public fun can_withdraw_staked_ika_early(self: &System, staked_ika: &StakedIka):
     self.inner().can_withdraw_staked_ika_early(staked_ika)
 }
 
+/// Return the current epoch number. Useful for applications that need a coarse-grained concept of time,
+/// since epochs are ever-increasing and epoch changes are intended to happen every 24 hours.
+public fun epoch(self: &System): u64 {
+    self.inner().epoch()
+}
+
+/// Returns the total amount staked with `validator_id`.
+/// Aborts if `validator_id` is not an active validator.
+public fun validator_stake_amount(self: &mut System, validator_id: ID): u64 {
+    self.inner_mut().validator_stake_amount(validator_id)
+}
+
+public fun claim_metadata_cap(
+    self: &mut System,
+    currency: &mut Currency<IKA>,
+    ctx: &mut TxContext,
+) {
+    self.inner_mut().claim_metadata_cap(currency, ctx);
+}
+
 // === Internals ===
 
 /// Get a mutable reference to `SystemInnerVX` from the `System`.
@@ -703,23 +740,9 @@ fun inner_without_version_check(self: &System): &SystemInner {
 // === Test Functions ===
 
 #[test_only]
-/// Return the current epoch number. Useful for applications that need a coarse-grained concept of time,
-/// since epochs are ever-increasing and epoch changes are intended to happen every 24 hours.
-public fun epoch(self: &System): u64 {
-    self.inner().epoch()
-}
-
-#[test_only]
 /// Returns unix timestamp of the start of current epoch
 public fun epoch_start_timestamp_ms(self: &mut System): u64 {
     self.inner().epoch_start_timestamp_ms()
-}
-
-#[test_only]
-/// Returns the total amount staked with `validator_id`.
-/// Aborts if `validator_id` is not an active validator.
-public fun validator_stake_amount(self: &mut System, validator_id: ID): u64 {
-    self.inner_mut().validator_stake_amount(validator_id)
 }
 
 #[test_only]

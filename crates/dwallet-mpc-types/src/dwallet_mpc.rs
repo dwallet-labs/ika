@@ -373,6 +373,8 @@ impl NetworkEncryptionKeyPublicData {
 }
 
 pub type ReconfigurationParty = twopc_mpc::decentralized_party::reconfiguration::Party;
+pub type ReconfigurationPartyBackwardCompatible =
+    twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party;
 
 pub fn public_key_from_dwallet_output_by_curve(
     curve: DWalletCurve,

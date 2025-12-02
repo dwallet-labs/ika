@@ -1,7 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::SuiDataReceivers;
 use crate::dwallet_mpc::crytographic_computation::{
     ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
 };
@@ -16,10 +15,12 @@ use crate::dwallet_mpc::{
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::{SuiDataReceivers, debug_variable_chunks};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
@@ -82,6 +83,7 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) network_dkg_third_round_delay: u64,
     pub(crate) decryption_key_reconfiguration_third_round_delay: u64,
     sui_data_receivers: SuiDataReceivers,
+    pub(crate) protocol_config: ProtocolConfig,
 }
 
 impl DWalletMPCManager {
@@ -94,6 +96,7 @@ impl DWalletMPCManager {
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
+        protocol_config: ProtocolConfig,
     ) -> Self {
         Self::try_new(
             validator_name,
@@ -104,6 +107,7 @@ impl DWalletMPCManager {
             decryption_key_reconfiguration_third_round_delay,
             dwallet_mpc_metrics,
             sui_data_receivers,
+            protocol_config,
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -121,6 +125,7 @@ impl DWalletMPCManager {
         decryption_key_reconfiguration_third_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
+        protocol_config: ProtocolConfig,
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
@@ -160,6 +165,7 @@ impl DWalletMPCManager {
             committee,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
+            protocol_config,
         })
     }
 
@@ -210,6 +216,7 @@ impl DWalletMPCManager {
                         consensus_round,
                         ?session_identifier,
                         ?malicious_authorities,
+                        rejected = output.rejected(),
                         "MPC output reached quorum"
                     );
                 }
@@ -218,7 +225,8 @@ impl DWalletMPCManager {
                         consensus_round,
                         ?session_identifier,
                         ?output,
-                        "MPC output did not reach quorum"
+                        rejected = output.rejected(),
+                        "MPC output yet to reach quorum"
                     );
                 }
             };
@@ -404,6 +412,7 @@ impl DWalletMPCManager {
                     &request.protocol_data,
                     last_read_consensus_round,
                     public_input.clone(),
+                    &self.protocol_config,
                 )
                 .ok()?
                 .map(|protocol_cryptographic_data| {
@@ -465,6 +474,11 @@ impl DWalletMPCManager {
                         .borrow_and_update()
                         .clone();
 
+                    debug!(
+                        committee=?committee,
+                        "Received next (upcoming) active committee"
+                    );
+
                     if committee.epoch == self.epoch_id + 1 {
                         self.next_active_committee = Some(committee);
 
@@ -488,6 +502,15 @@ impl DWalletMPCManager {
 
                     let mut results = vec![];
                     for (key_id, key_data) in new_keys {
+                        info!(key_id=?key_id, "Instantiating network key");
+                        if let Ok(key_data_bcs) = bcs::to_bytes(&key_data) {
+                            debug_variable_chunks(
+                                format!("Instantiating network key {:?}", key_id).as_str(),
+                                "key_data",
+                                &key_data_bcs,
+                            );
+                        }
+
                         let res = instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
                             key_data.current_epoch,
                             self.access_structure.clone(),
@@ -637,14 +660,22 @@ impl DWalletMPCManager {
 
     /// Records malicious actors that were identified as part of the execution of an MPC session.
     pub(crate) fn record_malicious_actors(&mut self, authorities: &HashSet<AuthorityName>) {
-        self.malicious_actors.extend(authorities);
+        if !authorities.is_empty() {
+            self.malicious_actors.extend(authorities);
 
-        if self.is_malicious_actor(&self.validator_name) {
-            self.recognized_self_as_malicious = true;
+            if self.is_malicious_actor(&self.validator_name) {
+                self.recognized_self_as_malicious = true;
+
+                error!(
+                    authority=?self.validator_name,
+                    "node recognized itself as malicious"
+                );
+            }
 
             error!(
                 authority=?self.validator_name,
-                "node recognized itself as malicious"
+                malicious_authorities =? authorities,
+                "malicious actors identified & recorded"
             );
         }
     }
