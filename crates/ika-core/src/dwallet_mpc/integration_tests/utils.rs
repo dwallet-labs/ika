@@ -668,12 +668,11 @@ pub(crate) fn send_start_dwallet_dkg_event(
                         centralized_public_key_share_and_proof:
                             centralized_public_key_share_and_proof.clone(),
                         user_secret_key_share: UserSecretKeyShareEventType::Encrypted {
-                            encrypted_user_secret_key_share_id: encrypted_user_secret_key_share_id
-                                .clone(),
+                            encrypted_user_secret_key_share_id,
                             encrypted_centralized_secret_share_and_proof:
                                 encrypted_centralized_secret_share_and_proof.clone(),
                             encryption_key: encryption_key.clone(),
-                            encryption_key_id: encryption_key_id.clone(),
+                            encryption_key_id,
                             encryption_key_address: Default::default(),
                             signer_public_key: vec![],
                         },

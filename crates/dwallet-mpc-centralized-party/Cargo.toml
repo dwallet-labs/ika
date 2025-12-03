@@ -6,7 +6,7 @@ version.workspace = true
 [dependencies]
 mpc.workspace = true
 twopc_mpc.workspace = true
-commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "37bb549f" }
+commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "abd7f010" }
 web-sys = "0.3.77"
 class_groups.workspace = true
 group.workspace = true

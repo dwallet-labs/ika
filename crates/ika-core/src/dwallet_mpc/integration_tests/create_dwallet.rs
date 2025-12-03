@@ -2,7 +2,7 @@ use crate::SuiDataSenders;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    IntegrationTestState, send_start_dwallet_dkg_event, send_start_dwallet_dkg_first_round_event,
+    IntegrationTestState, send_start_dwallet_dkg_event,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
@@ -16,9 +16,7 @@ use dwallet_mpc_centralized_party::{
 };
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
-use ika_types::message::{
-    DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletDKGSecondRoundOutput,
-};
+use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGOutput};
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
@@ -326,7 +324,7 @@ pub(crate) async fn create_dwallet_test_inner(
     send_start_dwallet_dkg_event(
         epoch_id,
         &test_state.sui_data_senders,
-        dwallet_dkg_session_identifier.try_into().unwrap(),
+        dwallet_dkg_session_identifier,
         3,
         network_key_id,
         encrypted_secret_share_id,
