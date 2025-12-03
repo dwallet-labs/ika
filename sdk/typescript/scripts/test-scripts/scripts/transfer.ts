@@ -22,7 +22,16 @@ import {
 	ZeroTrustDWallet,
 } from '../../../src/client/types';
 import { UserShareEncryptionKeys } from '../../../src/client/user-share-encryption-keys';
-import { alice, ALICE_IKA_COIN_ID, aliceAddress, bob, BOB_IKA_COIN_ID, bobAddress } from './const';
+import {
+	alice,
+	ALICE_IKA_COIN_ID,
+	aliceAddress,
+	bob,
+	BOB_IKA_COIN_ID,
+	bobAddress,
+	ikaClient,
+	suiClient,
+} from './const';
 
 type CurveSignatureHashCombination =
 	| {
@@ -113,13 +122,6 @@ interface CombinationResult {
 }
 
 export async function runTransferBenchmark() {
-	const suiClient = new SuiClient({ url: 'https://sui-testnet-rpc.publicnode.com' });
-
-	const ikaClient = new IkaClient({
-		suiClient,
-		config: getNetworkConfig('testnet'),
-	});
-
 	await ikaClient.initialize();
 
 	const latestNetworkEncryptionKey = await ikaClient.getLatestNetworkEncryptionKey();

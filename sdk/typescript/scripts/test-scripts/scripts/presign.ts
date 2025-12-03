@@ -10,7 +10,7 @@ import { IkaClient } from '../../../src/client/ika-client';
 import { IkaTransaction } from '../../../src/client/ika-transaction';
 import { getNetworkConfig } from '../../../src/client/network-configs';
 import { Curve, Hash, SignatureAlgorithm } from '../../../src/client/types';
-import { ALICE_IKA_COIN_ID, signer, signerAddress } from './const';
+import { ALICE_IKA_COIN_ID, ikaClient, signer, signerAddress, suiClient } from './const';
 
 type CurveSignatureHashCombination =
 	| {
@@ -84,12 +84,6 @@ const combinations: CurveSignatureHashCombination[] = [
 ];
 
 export async function runPresign() {
-	const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
-	const ikaClient = new IkaClient({
-		suiClient,
-		config: getNetworkConfig('testnet'),
-	});
-
 	await ikaClient.initialize();
 
 	const tx = new Transaction();

@@ -18,7 +18,7 @@ import {
 	ZeroTrustDWallet,
 } from '../../../src/client/types';
 import { UserShareEncryptionKeys } from '../../../src/client/user-share-encryption-keys';
-import { ALICE_IKA_COIN_ID, signer, signerAddress } from './const';
+import { ALICE_IKA_COIN_ID, ikaClient, signer, signerAddress, suiClient } from './const';
 
 interface SignResult {
 	signId: string;
@@ -29,13 +29,6 @@ interface SignResult {
 }
 
 export async function runBulkPresignSign() {
-	const suiClient = new SuiClient({ url: 'https://sui-testnet-rpc.publicnode.com' });
-
-	const ikaClient = new IkaClient({
-		suiClient,
-		config: getNetworkConfig('testnet'),
-	});
-
 	await ikaClient.initialize();
 
 	// Create SerialTransactionExecutor for efficient sequential execution

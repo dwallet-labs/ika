@@ -8,7 +8,7 @@ import { IkaTransaction } from '../../../src/client/ika-transaction';
 import { getNetworkConfig } from '../../../src/client/network-configs';
 import { Curve, Hash, SharedDWallet, SignatureAlgorithm } from '../../../src/client/types';
 import { UserShareEncryptionKeys } from '../../../src/client/user-share-encryption-keys';
-import { ALICE_IKA_COIN_ID, signer, signerAddress } from './const';
+import { ALICE_IKA_COIN_ID, ikaClient, signer, signerAddress, suiClient } from './const';
 
 type CurveSignatureHashCombination =
 	| {
@@ -96,13 +96,6 @@ interface CombinationResult {
 }
 
 export async function runSharedDKGPresignSign() {
-	const suiClient = new SuiClient({ url: 'https://sui-testnet-rpc.publicnode.com' });
-
-	const ikaClient = new IkaClient({
-		suiClient,
-		config: getNetworkConfig('testnet'),
-	});
-
 	await ikaClient.initialize();
 
 	const latestNetworkEncryptionKey = await ikaClient.getLatestNetworkEncryptionKey();
@@ -462,4 +455,3 @@ async function requestSign(
 }
 
 runSharedDKGPresignSign().catch(console.error);
-

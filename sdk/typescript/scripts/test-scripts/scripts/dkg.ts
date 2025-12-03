@@ -16,18 +16,18 @@ import { getNetworkConfig } from '../../../src/client/network-configs';
 import { Curve, Hash, SignatureAlgorithm } from '../../../src/client/types';
 import { UserShareEncryptionKeys } from '../../../src/client/user-share-encryption-keys';
 import { dwalletId } from '../../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner';
-import { ALICE_IKA_COIN_ID, signer, signerAddress } from './const';
+import { ALICE_IKA_COIN_ID, ikaClient, signer, signerAddress, suiClient } from './const';
 
 // Presign IDs for sign-during-DKG operations
 const PRESIGNS = {
-	SECP256K1_ECDSA_KECCAK256: '0x87c9fb403c4503990400e66120350fdb95cef400d5882f48308457a4b45d56b9',
-	SECP256K1_ECDSA_SHA256: '0x8afe04421904f9b3efb11e164646517446f399bc57d153f4e26dd07f65cb5810',
+	SECP256K1_ECDSA_KECCAK256: '0xfe5f000116a27bf81b19c2741c679cd8ef56fd6c792c47d181ef4852f9b5f228',
+	SECP256K1_ECDSA_SHA256: '0x205d9370b87fd4cd71da47a18fb24ad86eba3bb6a16fc9b2bb41293d71677ff5',
 	SECP256K1_ECDSA_DOUBLESHA256:
-		'0xa58798e595e9e271385358b6737f35078624307f0509eb42b6ec06701ff922a6',
-	SECP256K1_TAPROOT: '0x77b97257c773b236add1d3489bfe4f6493544bcd47729c8643801be0a424c671',
-	SECP256R1_ECDSA: '0x6bad243cc2c3a29f3e4ca35c67c9f2b141d0e7992896837e8354635657068ec2',
-	ED25519_EDDSA: '0xfd90413cd87d7d426ee7e05964fee14ef415fe8f426530e0bab79374a39ef4f2',
-	RISTRETTO_SCHNORRKEL: '0x051d4aaac8ff235b0108c45811184fe95b649491368697bbc3609ce437c038be',
+		'0x855193269374bf681ea3f2aae1bef1fd4149e5792f9040883468d86452f3c13d',
+	SECP256K1_TAPROOT: '0x0033625c2fbeb7ed1ca4c41f06926724792befd0e9ba6bb5ed6041d88b1b3a99',
+	SECP256R1_ECDSA: '0x7ddfec6841cda9d1156c33661f6ec1b904dcc8828ba13181fe37e636e5dbbfcd',
+	ED25519_EDDSA: '0xc4c7bc00e773cb4763c5e4f1cfb47d0db18937a75747a826ecf22b1efe8f6b9c',
+	RISTRETTO_SCHNORRKEL: '0x66fae111e4d41ec8efd9b715e4421101984d8c5fb22959c15a10280bd2c5dd8a',
 };
 
 type CurveSignatureHashCombination =
@@ -113,13 +113,6 @@ const combinations: CurveSignatureHashCombination[] = baseCombinations.flatMap((
 ]);
 
 export async function runDKG() {
-	const suiClient = new SuiClient({ url: 'https://sui-testnet-rpc.publicnode.com' });
-
-	const ikaClient = new IkaClient({
-		suiClient,
-		config: getNetworkConfig('testnet'),
-	});
-
 	await ikaClient.initialize();
 
 	// Create SerialTransactionExecutor for efficient sequential execution
