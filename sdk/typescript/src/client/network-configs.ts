@@ -24,9 +24,9 @@ export function getNetworkConfig(network: Network): IkaConfig {
 				packages: {
 					ikaPackage: '0x1f26bb2f711ff82dcda4d02c77d5123089cb7f8418751474b9fb744ce031526a',
 					ikaCommonPackage: '0x96fc75633b6665cf84690587d1879858ff76f88c10c945e299f90bf4e0985eb0',
-					ikaSystemPackage: '0xde05f49e5f1ee13ed06c1e243c0a8e8fe858e1d8689476fdb7009af8ddc3c38b',
+					ikaSystemPackage: '0xd69f947d7ee6f224dd0dd31ec3ec30c0dd0f713a1de55d564e8e98910c4f9553',
 					ikaDwallet2pcMpcPackage:
-						'0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293',
+						'0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77',
 				},
 				objects: {
 					ikaSystemObject: {
