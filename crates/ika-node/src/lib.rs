@@ -270,6 +270,7 @@ impl IkaNode {
             .sui_connector_config
             .ika_dwallet_2pc_mpc_package_id_v2;
 
+        // Testnet V2
         if ika_dwallet_2pc_mpc_package_id_v2.is_none()
             && config.sui_connector_config.ika_dwallet_2pc_mpc_package_id
                 == ObjectID::from_str(
@@ -278,6 +279,18 @@ impl IkaNode {
         {
             ika_dwallet_2pc_mpc_package_id_v2 = Some(ObjectID::from_str(
                 "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
+            )?)
+        }
+
+        // Mainnet V2
+        if ika_dwallet_2pc_mpc_package_id_v2.is_none()
+            && config.sui_connector_config.ika_dwallet_2pc_mpc_package_id
+                == ObjectID::from_str(
+                    "0xdd24c62739923fbf582f49ef190b4a007f981ca6eb209ca94f3a8eaf7c611317",
+                )?
+        {
+            ika_dwallet_2pc_mpc_package_id_v2 = Some(ObjectID::from_str(
+                "0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77",
             )?)
         }
 
@@ -351,6 +364,7 @@ impl IkaNode {
             .sui_connector_config
             .ika_dwallet_2pc_mpc_package_id_v2;
 
+        // Testnet V2
         if ika_dwallet_2pc_mpc_package_id_v2.is_none()
             && config.sui_connector_config.ika_dwallet_2pc_mpc_package_id
                 == ObjectID::from_str(
@@ -359,6 +373,18 @@ impl IkaNode {
         {
             ika_dwallet_2pc_mpc_package_id_v2 = Some(ObjectID::from_str(
                 "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
+            )?)
+        }
+
+        // Mainnet V2
+        if ika_dwallet_2pc_mpc_package_id_v2.is_none()
+            && config.sui_connector_config.ika_dwallet_2pc_mpc_package_id
+                == ObjectID::from_str(
+                    "0xdd24c62739923fbf582f49ef190b4a007f981ca6eb209ca94f3a8eaf7c611317",
+                )?
+        {
+            ika_dwallet_2pc_mpc_package_id_v2 = Some(ObjectID::from_str(
+                "0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77",
             )?)
         }
 

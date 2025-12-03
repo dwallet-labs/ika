@@ -15,8 +15,7 @@
 module ika_dwallet_2pc_mpc::pricing;
 
 use ika_common::bls_committee::BlsCommittee;
-use sui::priority_queue::{Self, PriorityQueue};
-use sui::vec_map::{Self, VecMap};
+use sui::{priority_queue::{Self, PriorityQueue}, vec_map::{Self, VecMap}};
 
 // === Structs ===
 

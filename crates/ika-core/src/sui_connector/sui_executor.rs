@@ -43,7 +43,7 @@ use sui_macros::fail_point_async;
 use sui_types::MOVE_STDLIB_PACKAGE_ID;
 use sui_types::base_types::{ObjectID, TransactionDigest};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
-use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction};
+use sui_types::transaction::{Argument, CallArg, Transaction};
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
 use tokio::time::{self, Duration};
@@ -189,23 +189,25 @@ where
                 .map(|(k, _)| *k)
                 .collect_vec();
 
-            let result = retry_with_max_elapsed_time!(
-                Self::request_mid_epoch_reconfiguration(
-                    &self.sui_client,
-                    ika_dwallet_2pc_mpc_package_id,
-                    network_encryption_for_reconfiguration_key_ids.clone(),
-                    sui_notifier,
-                    self.notifier_tx_lock.clone(),
-                ),
-                Duration::from_secs(ONE_HOUR_IN_SECONDS)
-            );
-            if result.is_err() {
-                panic!(
-                    "failed to network encryption key mid-epoch reconfiguration for over an hour: {:?}",
-                    result.err()
+            if !network_encryption_for_reconfiguration_key_ids.is_empty() {
+                let result = retry_with_max_elapsed_time!(
+                    Self::request_mid_epoch_reconfiguration(
+                        &self.sui_client,
+                        ika_dwallet_2pc_mpc_package_id,
+                        network_encryption_for_reconfiguration_key_ids.clone(),
+                        sui_notifier,
+                        self.notifier_tx_lock.clone(),
+                    ),
+                    Duration::from_secs(ONE_HOUR_IN_SECONDS)
                 );
+                if result.is_err() {
+                    panic!(
+                        "failed to network encryption key mid-epoch reconfiguration for over an hour: {:?}",
+                        result.err()
+                    );
+                }
+                info!("Successfully network encryption key mid-epoch reconfiguration");
             }
-            info!("Successfully network encryption key mid-epoch reconfiguration");
             epoch_switch_state.network_encryption_key_mid_epoch_reconfiguration = true;
         }
 
@@ -215,27 +217,24 @@ where
                 .calculation_votes
                 .is_some()
             && coordinator_inner.next_epoch_active_committee.is_some()
-            && coordinator_inner.epoch_dwallet_network_encryption_keys_reconfiguration_completed
-                == coordinator_inner.dwallet_network_encryption_keys.size
             && !epoch_switch_state.calculated_protocol_pricing
         {
-            info!(
-                "Running network encryption key mid-epoch reconfiguration and Calculating protocol pricing"
-            );
+            info!("Running calculating protocol pricing");
 
-            let default_pricing_keys = coordinator_inner
+            let calculation_votes = coordinator_inner
                 .pricing_and_fee_management
-                .default
+                .calculation_votes
+                .unwrap();
+
+            let default_pricing_keys = calculation_votes
+                .default_pricing
                 .pricing_map
                 .contents
                 .iter()
                 .map(|c| c.key.clone())
                 .collect_vec();
 
-            let working_pricing = coordinator_inner
-                .pricing_and_fee_management
-                .calculation_votes
-                .unwrap()
+            let working_pricing = calculation_votes
                 .working_pricing
                 .pricing_map
                 .contents
@@ -1142,40 +1141,4 @@ where
             }
         }
     }
-}
-
-/// Merge multiple gas coins into one by adding a `MergeCoins` command to the
-/// provided `ProgrammableTransactionBuilder`.
-/// If `gas_coins` has zero or one element, the function is no‑op.
-fn merge_gas_coins(
-    ptb: &mut ProgrammableTransactionBuilder,
-    gas_coins: &[sui_types::base_types::ObjectRef],
-) -> IkaResult<()> {
-    if gas_coins.len() <= 1 {
-        return Ok(());
-    }
-
-    info!("More than one gas coin was found, merging them into one gas coin.");
-
-    let coins: IkaResult<Vec<_>> = gas_coins
-        .iter()
-        .skip(1)
-        .map(|c| {
-            ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(*c)))
-                .map_err(|e| {
-                    IkaError::SuiConnectorInternalError(format!(
-                        "error merging coin ProgrammableTransactionBuilder::input: {e}"
-                    ))
-                })
-        })
-        .collect();
-
-    let coins = coins?;
-
-    ptb.command(sui_types::transaction::Command::MergeCoins(
-        Argument::GasCoin,
-        coins,
-    ));
-
-    Ok(())
 }

@@ -1,6 +1,6 @@
 use crate::SuiDataSenders;
 use crate::dwallet_mpc::integration_tests::create_dwallet::{
-    DWalletTestResult, create_dwallet_test,
+    DWalletTestResult, create_dwallet_test_inner,
 };
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
@@ -23,7 +23,7 @@ use tracing::info;
 #[tokio::test]
 #[cfg(test)]
 /// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
-async fn sign() {
+async fn sign_flow_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let epoch_id = 1;
@@ -53,10 +53,10 @@ async fn sign() {
         create_network_key_test(&mut test_state).await;
     let DWalletTestResult {
         flow_completion_consensus_round: consensus_round,
-        dkg_second_round_output: decentralized_party_dkg_public_output,
+        dkg_output: decentralized_party_dkg_public_output,
         dwallet_secret_key_share: dwallet_secret_share,
         ..
-    } = create_dwallet_test(
+    } = create_dwallet_test_inner(
         &mut test_state,
         consensus_round,
         network_key_id,
@@ -71,8 +71,6 @@ async fn sign() {
         presign_session_identifier,
         4,
         network_key_id,
-        Some(ObjectID::from_bytes(&decentralized_party_dkg_public_output.dwallet_id).unwrap()),
-        Some(decentralized_party_dkg_public_output.output.clone()),
     );
     let (consensus_round, presign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
@@ -119,7 +117,7 @@ async fn sign() {
 #[tokio::test]
 #[cfg(test)]
 /// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
-async fn future_sign() {
+async fn future_sign_flow_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let epoch_id = 1;
@@ -149,10 +147,10 @@ async fn future_sign() {
         create_network_key_test(&mut test_state).await;
     let DWalletTestResult {
         flow_completion_consensus_round: consensus_round,
-        dkg_second_round_output: decentralized_party_dkg_public_output,
+        dkg_output: decentralized_party_dkg_public_output,
         dwallet_secret_key_share: dwallet_secret_share,
         ..
-    } = create_dwallet_test(
+    } = create_dwallet_test_inner(
         &mut test_state,
         consensus_round,
         network_key_id,
@@ -167,8 +165,6 @@ async fn future_sign() {
         presign_session_identifier,
         4,
         network_key_id,
-        Some(ObjectID::from_bytes(&decentralized_party_dkg_public_output.dwallet_id).unwrap()),
-        Some(decentralized_party_dkg_public_output.output.clone()),
     );
     let (consensus_round, presign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
@@ -214,8 +210,8 @@ async fn future_sign() {
     send_start_future_sign_event(
         epoch_id,
         &test_state.sui_data_senders,
-        [5; 32],
-        5,
+        [6; 32],
+        6,
         network_key_id,
         ObjectID::from_bytes(decentralized_party_dkg_public_output.dwallet_id).unwrap(),
         decentralized_party_dkg_public_output.output,
@@ -378,8 +374,6 @@ pub(crate) fn send_start_presign_event(
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID,
-    dwallet_id: Option<ObjectID>,
-    dwallet_public_output: Option<Vec<u8>>,
 ) {
     let presign_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
@@ -396,9 +390,9 @@ pub(crate) fn send_start_presign_event(
                         curve: DWalletCurve::Secp256k1,
                         signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
                     },
-                    dwallet_id,
+                    dwallet_id: None,
                     presign_id,
-                    dwallet_public_output: dwallet_public_output.clone(),
+                    dwallet_public_output: None,
                     dwallet_network_encryption_key_id,
                 },
                 epoch: 1,
