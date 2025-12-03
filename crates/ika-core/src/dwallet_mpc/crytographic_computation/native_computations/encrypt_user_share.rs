@@ -57,38 +57,6 @@ pub(crate) fn verify_encrypted_share(
     }
 }
 
-pub(crate) fn deserialize_backward_compatible_secp256k1_encryption_key_value(
-    encryption_key_value: &[u8],
-) -> bcs::Result<
-    class_groups::CompactIbqf<{ class_groups::SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>,
-> {
-    match bcs::from_bytes(encryption_key_value) {
-        Ok(VersionedEncryptionKeyValue::V1(encryption_key_value)) => {
-            bcs::from_bytes(&encryption_key_value).map_err(|e| {
-                bcs::Error::Custom(format!("Failed to deserialize encryption key value: {}", e))
-            })
-        }
-        Err(_) => {
-            // Try backward compatible version
-            let representative: class_groups::Ibqf<
-                { class_groups::SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-            > = bcs::from_bytes(encryption_key_value).map_err(|e| {
-                bcs::Error::Custom(format!(
-                    "Failed to deserialize backward-compatible encryption key: {}",
-                    e
-                ))
-            })?;
-
-            representative.try_into().map_err(|e| {
-                bcs::Error::Custom(format!(
-                    "Failed to compress backward-compatible encryption key: {}",
-                    e
-                ))
-            })
-        }
-    }
-}
-
 fn verify_centralized_secret_key_share_proof_v1(
     encrypted_centralized_secret_share_and_proof: MPCPublicOutput,
     dkg_public_output: MPCPublicOutput,
@@ -108,8 +76,11 @@ fn verify_centralized_secret_key_share_proof_v1(
     let decentralized_output: <Secp256k1AsyncDKGProtocol as Protocol>::DecentralizedPartyDKGOutput =
         decentralized_output.into();
 
-    let encryption_key_value =
-        deserialize_backward_compatible_secp256k1_encryption_key_value(encryption_key_value)?;
+    let VersionedEncryptionKeyValue::V1(encryption_key_value) =
+        bcs::from_bytes(encryption_key_value)?;
+    let encryption_key_value = bcs::from_bytes(&encryption_key_value).map_err(|e| {
+        bcs::Error::Custom(format!("Failed to deserialize encryption key value: {}", e))
+    })?;
 
     <ECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_parameters,
@@ -140,7 +111,7 @@ fn verify_centralized_secret_key_share_proof_v2(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
                 encryption_key_value,
-                pp,
+                &pp,
             )
         }
         ProtocolPublicParametersByCurve::Secp256r1(pp) => {
@@ -148,7 +119,7 @@ fn verify_centralized_secret_key_share_proof_v2(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
                 encryption_key_value,
-                pp,
+                &pp,
             )
         }
         ProtocolPublicParametersByCurve::Curve25519(pp) => {
@@ -156,7 +127,7 @@ fn verify_centralized_secret_key_share_proof_v2(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
                 encryption_key_value,
-                pp,
+                &pp,
             )
         }
         ProtocolPublicParametersByCurve::Ristretto(pp) => {
@@ -164,7 +135,7 @@ fn verify_centralized_secret_key_share_proof_v2(
                 &encrypted_centralized_secret_share_and_proof,
                 bcs::from_bytes(&dkg_public_output)?,
                 encryption_key_value,
-                pp,
+                &pp,
             )
         }
     }
@@ -176,13 +147,13 @@ fn verify_centralized_secret_key_share_proof<P: dkg::Protocol>(
     encrypted_centralized_secret_share_and_proof: &[u8],
     decentralized_dkg_output: P::DecentralizedPartyDKGOutput,
     encryption_key_value: &[u8],
-    protocol_public_parameters: P::ProtocolPublicParameters,
+    protocol_public_parameters: &P::ProtocolPublicParameters,
 ) -> anyhow::Result<()> {
     let VersionedEncryptionKeyValue::V1(encryption_key_value) =
         bcs::from_bytes(encryption_key_value)?;
 
     P::verify_encryption_of_centralized_party_share_proof(
-        &protocol_public_parameters,
+        protocol_public_parameters,
         decentralized_dkg_output,
         bcs::from_bytes(&encryption_key_value)?,
         bcs::from_bytes(encrypted_centralized_secret_share_and_proof)?,

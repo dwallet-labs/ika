@@ -4,9 +4,7 @@
 module ika_system::protocol_treasury;
 
 use ika::ika::IKA;
-use sui::bag::{Self, Bag};
-use sui::balance::Balance;
-use sui::coin::TreasuryCap;
+use sui::{bag::{Self, Bag}, balance::Balance, coin::TreasuryCap, coin_registry::Currency};
 
 // === Errors ===
 
@@ -133,6 +131,18 @@ public fun stake_subsidy_amount_per_distribution(self: &ProtocolTreasury): u64 {
 /// Returns the number of distributions that have occurred.
 public(package) fun get_stake_subsidy_distribution_counter(self: &ProtocolTreasury): u64 {
     self.stake_subsidy_distribution_counter
+}
+
+public(package) fun claim_metadata_cap(
+    self: &mut ProtocolTreasury,
+    currency: &mut Currency<IKA>,
+    ctx: &mut TxContext,
+) {
+    if (!self.extra_fields.contains(b"ika_metadata_cap")) {
+        currency.set_treasury_cap_id(&self.treasury_cap);
+        let metadata_cap = currency.claim_metadata_cap(&self.treasury_cap, ctx);
+        self.extra_fields.add(b"ika_metadata_cap", metadata_cap);
+    };
 }
 
 #[test_only]

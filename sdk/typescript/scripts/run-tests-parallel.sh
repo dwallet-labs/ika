@@ -2,7 +2,7 @@
 
 # Get the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEST_DIR="$SCRIPT_DIR/../test/dkg-v2"
+TEST_DIR="$SCRIPT_DIR/../test/v2"
 
 # Find all test files recursively
 TEST_FILES=$(find "$TEST_DIR" -name "*.test.ts" -type f)

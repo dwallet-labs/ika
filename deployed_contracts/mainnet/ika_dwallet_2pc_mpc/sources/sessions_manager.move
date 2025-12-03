@@ -5,13 +5,15 @@ module ika_dwallet_2pc_mpc::sessions_manager;
 
 use ika::ika::IKA;
 use ika_dwallet_2pc_mpc::pricing::PricingInfoValue;
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::coin::Coin;
-use sui::event;
-use sui::object_table::{Self, ObjectTable};
-use sui::sui::SUI;
-use sui::table::{Self, Table};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    coin::Coin,
+    event,
+    object_table::{Self, ObjectTable},
+    sui::SUI,
+    table::{Self, Table}
+};
 
 // === Constants ===
 
@@ -231,19 +233,24 @@ public(package) fun lock_last_user_initiated_session_to_complete_in_current_epoc
 
 /// Registers a new session identifier.
 ///
+/// This function is used to register a new session identifier, the bytes length must be 32 bytes.
+/// SessionIdentifier's `identifier_preimage` is an keccak256 hash of the bytes and the sender address,
+/// this can be calculated on the client side before even calling this function onchain.
+///
 /// ### Parameters
 /// - `self`: Mutable reference to the session manager.
-/// - `identifier_preimage`: The preimage bytes for creating the session identifier.
+/// - `bytes`: The bytes for creating the session identifier, length must be 32 bytes.
 /// - `ctx`: Transaction context for object creation.
 public(package) fun register_session_identifier(
     self: &mut SessionsManager,
-    identifier_preimage: vector<u8>,
+    bytes: vector<u8>,
     ctx: &mut TxContext,
 ): SessionIdentifier {
-    assert!(
-        identifier_preimage.length() == SESSION_IDENTIFIER_LENGTH,
-        ESessionIdentifierInvalidLength,
-    );
+    assert!(bytes.length() == SESSION_IDENTIFIER_LENGTH, ESessionIdentifierInvalidLength);
+    let mut bytes_to_hash = ctx.sender().to_bytes();
+    bytes_to_hash.append(bytes);
+    let identifier_preimage = sui::hash::keccak256(&bytes_to_hash);
+
     assert!(
         !self.registered_user_session_identifiers.contains(identifier_preimage),
         ESessionIdentifierAlreadyRegistered,

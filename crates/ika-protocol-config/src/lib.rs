@@ -15,8 +15,8 @@ use sui_protocol_config_macros::{
 use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
-const MIN_PROTOCOL_VERSION: u64 = 1;
-const MAX_PROTOCOL_VERSION: u64 = 2;
+const MIN_PROTOCOL_VERSION: u64 = 2;
+const MAX_PROTOCOL_VERSION: u64 = 3;
 
 // Record history of protocol version allocations here:
 //
@@ -262,6 +262,7 @@ pub struct ProtocolConfig {
     decryption_key_reconfiguration_third_round_delay: Option<u64>,
     network_dkg_third_round_delay: Option<u64>,
     network_encryption_key_version: Option<u64>,
+    reconfiguration_message_version: Option<u64>,
 }
 
 // feature flags
@@ -314,8 +315,8 @@ impl ProtocolConfig {
         self.feature_flags.consensus_zstd_compression
     }
 
-    pub fn is_network_encryption_key_version_v2(&self) -> bool {
-        self.network_encryption_key_version.is_some_and(|v| v == 2)
+    pub fn is_reconfiguration_message_version_v2(&self) -> bool {
+        self.reconfiguration_message_version.is_some_and(|v| v == 2)
     }
 }
 
@@ -482,6 +483,7 @@ impl ProtocolConfig {
             decryption_key_reconfiguration_third_round_delay: Some(10),
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
+            reconfiguration_message_version: Some(1),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);
@@ -496,6 +498,9 @@ impl ProtocolConfig {
                 1 => unreachable!(),
                 2 => {
                     cfg.network_encryption_key_version = Some(2);
+                }
+                3 => {
+                    cfg.reconfiguration_message_version = Some(2);
                 }
                 // Use this template when making changes:
                 //

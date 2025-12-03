@@ -172,6 +172,41 @@ impl DWalletCheckpointMessageKind {
     pub fn digest(&self) -> MessageDigest {
         MessageDigest::new(default_hash(self))
     }
+    pub fn rejected(&self) -> Option<bool> {
+        match self {
+            DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(output) => {
+                Some(output.rejected)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(output) => {
+                Some(output.rejected)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(output) => {
+                Some(output.rejected)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletPresign(output) => Some(output.rejected),
+            DWalletCheckpointMessageKind::RespondDWalletSign(output) => Some(output.rejected),
+
+            DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(
+                output,
+            ) => Some(output.rejected),
+            DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(output) => {
+                Some(output.rejected)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(output) => {
+                Some(output.rejected)
+            }
+            DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(output) => {
+                Some(output.rejected)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(output) => {
+                Some(output.rejected)
+            }
+            DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(_) => None,
+            DWalletCheckpointMessageKind::SetGasFeeReimbursementSuiSystemCallValue(_) => None,
+            DWalletCheckpointMessageKind::EndOfPublish => None,
+            DWalletCheckpointMessageKind::RespondDWalletDKGOutput(output) => Some(output.rejected),
+        }
+    }
 }
 
 impl Display for DWalletCheckpointMessageKind {
