@@ -77,7 +77,8 @@ export async function getObjectWithType<TObject>(
 export function createDeterministicSeed(testName: string): Uint8Array {
 	if (!testSeeds.has(testName)) {
 		// Generate a random seed for this test on first call
-		const randomSeed = new Uint8Array(randomBytes(32));
+		let seed = new TextEncoder().encode('seed');
+		const randomSeed = new Uint8Array(seed);
 		testSeeds.set(testName, randomSeed);
 	}
 	return testSeeds.get(testName)!;

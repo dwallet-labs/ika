@@ -9,10 +9,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as bitcoin from 'z';
 
 import {
+	CoordinatorInnerModule,
 	createRandomSessionIdentifier,
 	getNetworkConfig,
 	IkaClient,
-	IkaTransaction, prepareDKGAsync,
+	IkaTransaction, prepareDKGAsync, SessionsManagerModule,
 	UserShareEncryptionKeys,
 } from '../../src';
 import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types';
@@ -327,7 +328,19 @@ describe('DWallet Signing', () => {
 
 		transaction.transferObjects([dWalletCap], signerAddress);
 
-		await executeTestTransactionWithKeypair(client, transaction, userKeypair);
+		const result = await executeTestTransactionWithKeypair(client, transaction, userKeypair);
+
+		const dkgEvent = result.events?.find((event) => {
+			return (
+				event.type.includes('DWalletDKGRequestEvent') && event.type.includes('DWalletSessionEvent')
+			);
+		});
+
+		const parsedDkgEvent = SessionsManagerModule.DWalletSessionEvent(
+			CoordinatorInnerModule.DWalletDKGRequestEvent,
+		).fromBase64(dkgEvent?.bcs as string);
+
+		const dWalletID = parsedDkgEvent.event_data.dwallet_id;
 
 		// Wait for the dWallet to become active (no user confirmation needed)
 		const activeDWallet = await ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
