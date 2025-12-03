@@ -2,12 +2,21 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 import { bitcoin_address_from_dwallet_output } from '@ika.xyz/ika-wasm';
 import { public_key_from_dwallet_output } from '@ika.xyz/mpc-wasm';
+import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
-import * as bitcoin from 'z';
 import { networks, payments, Psbt } from 'bitcoinjs-lib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import * as bitcoin from 'z';
 
+import {
+	createRandomSessionIdentifier,
+	getNetworkConfig,
+	IkaClient,
+	IkaTransaction, prepareDKGAsync,
+	UserShareEncryptionKeys,
+} from '../../src';
 import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types';
+import { curve } from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner';
 import {
 	createCompleteDWallet,
 	createCompleteDWalletV2,
@@ -19,11 +28,12 @@ import {
 	createTestIkaTransaction,
 	createTestMessage,
 	destroyEmptyTestIkaToken,
-	executeTestTransaction,
+	executeTestTransaction, executeTestTransactionWithKeypair, generateTestKeypair,
 	retryUntil,
 } from '../helpers/test-utils';
-import { curve } from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner';
 import { setupDKGFlow } from '../v2/all-combinations.test';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { toHex } from '@mysten/bcs';
 
 // Setup shared resources before all tests
 beforeAll(async () => {
@@ -113,13 +123,13 @@ async function getUTXO(
 
 function toBase64<T>(data: T): string {
 	if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
-		return Buffer.from(data as Uint8Array).toString("base64");
+		return Buffer.from(data as Uint8Array).toString('base64');
 	}
-	return Buffer.from(JSON.stringify(data)).toString("base64");
+	return Buffer.from(JSON.stringify(data)).toString('base64');
 }
 
 function fromBase64<T>(encoded: string): T {
-	const json = Buffer.from(encoded, "base64").toString("utf8");
+	const json = Buffer.from(encoded, 'base64').toString('utf8');
 	return JSON.parse(json) as T;
 }
 
@@ -141,15 +151,12 @@ describe('DWallet Signing', () => {
 		console.log("DWallet's Bitcoin address:", dwalletBitcoinAddress);
 
 		// log all the dwallet components as base 64
-		console.log(
-			'DWallet Components:',
-			{
-				activeDWallet: toBase64(activeDWallet),
-				encryptedUserSecretKeyShare: toBase64(encryptedUserSecretKeyShareId),
-				userShareEncryptionKeys: toBase64(userShareEncryptionKeys),
-				signerAddress: toBase64(signerAddress),
-			}
-		)
+		console.log('DWallet Components:', {
+			activeDWallet: toBase64(activeDWallet),
+			encryptedUserSecretKeyShare: toBase64(encryptedUserSecretKeyShareId),
+			userShareEncryptionKeys: toBase64(userShareEncryptionKeys),
+			signerAddress: toBase64(signerAddress),
+		});
 
 		return;
 	});
@@ -258,5 +265,77 @@ describe('DWallet Signing', () => {
 		);
 		expect(dWalletAfterSigning).toBeDefined();
 		expect(dWalletAfterSigning.state.$kind).toBe('Active');
+	});
+
+	it('should create a testnet dWallet and print its address', async () => {
+		const client = new SuiClient({ url: getFullnodeUrl('testnet') }); // mainnet / testnet
+
+		const ikaClient = new IkaClient({
+			suiClient: client,
+			config: getNetworkConfig('testnet'), // mainnet / testnet
+		});
+
+		await ikaClient.initialize();
+
+		const curve = Curve.SECP256R1; // or Curve.SECP256K1, Curve.ED25519, Curve.RISTRETTO
+
+		// Note: You still need UserShareEncryptionKeys for the DKG protocol itself,
+		// but not for the encrypted user share storage
+		let seed = new TextEncoder().encode('seed');
+		const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
+		const signerAddress = userKeypair.toSuiAddress();
+
+		const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+			seed,
+			curve,
+		);
+
+		const transaction = new Transaction();
+		const ikaTransaction = new IkaTransaction({
+			ikaClient,
+			transaction,
+			userShareEncryptionKeys, // <-- Needed for DKG protocol, not for storage
+		});
+
+		const identifier = createRandomSessionIdentifier();
+
+		// Prepare DKG - this generates the necessary cryptographic materials
+		const dkgRequestInput = await prepareDKGAsync(
+			ikaClient,
+			curve,
+			userShareEncryptionKeys,
+			identifier,
+			signerAddress,
+		);
+
+		const dWalletEncryptionKey = await ikaClient.getLatestNetworkEncryptionKey();
+
+		const ikaCoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
+
+		// Create a shared dWallet using requestDWalletDKGWithPublicUserShare
+		// The key difference: we pass publicUserSecretKeyShare instead of encrypted share
+		const [dWalletCap] = await ikaTransaction.requestDWalletDKGWithPublicUserShare({
+			publicKeyShareAndProof: dkgRequestInput.userDKGMessage,
+			publicUserSecretKeyShare: dkgRequestInput.userSecretKeyShare, // <-- Public, not encrypted
+			userPublicOutput: dkgRequestInput.userPublicOutput,
+			curve,
+			dwalletNetworkEncryptionKeyId: dWalletEncryptionKey.id,
+			ikaCoin,
+			suiCoin: transaction.gas,
+			sessionIdentifier: ikaTransaction.registerSessionIdentifier(identifier),
+		});
+
+		transaction.transferObjects([dWalletCap], signerAddress);
+
+		await executeTestTransactionWithKeypair(client, transaction, userKeypair);
+
+		// Wait for the dWallet to become active (no user confirmation needed)
+		const activeDWallet = await ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
+			timeout: 30000,
+			interval: 1000,
+		});
+
+		// Verify it's a shared dWallet
+		expect(activeDWallet.public_user_secret_key_share).toBeDefined();
 	});
 });
