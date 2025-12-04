@@ -1,0 +1,119 @@
+[
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "ECDSASecp256k1",
+		"hash": "KECCAK256",
+		"dwalletId": "0x645204a6156f7c92c28922a5e50cc2a6981102b80c501c1af6eb1f9057b1f574",
+		"dkgDigest": "7zSA4jnw2bT6ptwHW5EcvAT5WDorMStanEL84WTfAgF",
+		"presignId": "0xeab374d58a1b4c7bf5c636533423f5fc379d442b030f51c65b40ae9d914e097d",
+		"signId": "0x686ba786e202a53328f05815254aa03550130da71c1013e8b86ced0ba52b61d2",
+		"signature": [
+			18, 100, 209, 135, 168, 115, 112, 103, 55, 13, 191, 207, 129, 211, 9, 213, 114, 58, 234, 148,
+			55, 224, 91, 57, 97, 45, 111, 78, 116, 206, 43, 97, 58, 226, 95, 33, 122, 139, 4, 12, 3, 65,
+			202, 199, 85, 7, 37, 28, 4, 29, 189, 105, 6, 189, 185, 144, 208, 174, 245, 38, 46, 54, 47, 85
+		],
+		"dwalletState": "Active",
+		"signState": "Completed"
+	},
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "ECDSASecp256k1",
+		"hash": "SHA256",
+		"dwalletId": "0x5d2a1c38c35518df577675b5f91d677c815289655688be263144c0975a15578f",
+		"dkgDigest": "ERtAevv8YFRQrk6exbw3uspK7RBEWHpBjSXotkWQe2wJ",
+		"presignId": "0x761809a98a19849220aa32a7777e85db1e3e7419f58a511c6861fc87e0ab718a",
+		"signId": "0xd2558446aaf3ab0efd478b649dca2b2a8ca03bab9b193cd026956290b67ac9a3",
+		"signature": [
+			196, 85, 11, 170, 8, 132, 8, 147, 9, 49, 13, 28, 21, 116, 194, 157, 126, 16, 58, 142, 72, 221,
+			18, 84, 137, 76, 232, 201, 93, 121, 226, 116, 59, 175, 52, 176, 173, 249, 99, 108, 226, 174,
+			86, 15, 219, 67, 100, 64, 83, 53, 5, 160, 14, 83, 109, 87, 29, 107, 242, 161, 27, 137, 1, 156
+		],
+		"dwalletState": "Active",
+		"signState": "Completed"
+	},
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "ECDSASecp256k1",
+		"hash": "DoubleSHA256",
+		"dwalletId": "0xe2e302952327be64426605bcc3973cdd3cbf2e2f5904b6c11c3ec05bb99fd961",
+		"dkgDigest": "HRWbuLQJiuyRf4YErhWuB2fXj98EJKRvmj57U3e37nWz",
+		"presignId": "0x0ce7092f1bb07da3a2e39cac1a478a6d30a981fb1af49f4d053270cdf6edb03c",
+		"signId": "0x396ca03a29037055635f80c55a522e553d238234046b556a21b1c5ab03719120",
+		"signature": [
+			178, 129, 226, 51, 123, 157, 20, 75, 207, 112, 95, 11, 184, 29, 44, 188, 41, 250, 220, 47, 53,
+			170, 26, 58, 52, 34, 220, 124, 229, 155, 70, 233, 118, 149, 208, 143, 14, 197, 162, 161, 210,
+			73, 60, 19, 73, 205, 109, 221, 241, 203, 156, 231, 60, 94, 193, 180, 134, 19, 83, 47, 221, 60,
+			180, 74
+		],
+		"dwalletState": "Active",
+		"signState": "Completed"
+	},
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "Taproot",
+		"hash": "SHA256",
+		"dwalletId": "0x4ada78f7ced05c850c4b49f117ed57b18e24f49c61ec86629cfb46d158d1593a",
+		"dkgDigest": "4zb6bLY1vsw7qr9YdgXCCdcYPNHynRWzfWsBLrdbEnkD",
+		"presignId": "0x12a247e35b0403e3f188d6d769170452bcb4e8f2bce7fdb47567ddb9d9301432",
+		"signId": "0xfec390ade3722751e10616223411f29d059c7ec63bb43cc71bd8db01ec8448a3",
+		"signature": [
+			56, 94, 44, 99, 154, 117, 124, 30, 183, 232, 163, 93, 182, 218, 180, 121, 170, 43, 46, 145,
+			217, 14, 106, 202, 236, 164, 192, 255, 47, 163, 61, 198, 13, 128, 101, 252, 69, 48, 75, 182,
+			201, 66, 38, 148, 68, 98, 83, 62, 110, 90, 65, 223, 162, 35, 109, 194, 174, 26, 219, 85, 193,
+			162, 17, 191
+		],
+		"dwalletState": "Active",
+		"signState": "Completed"
+	},
+	{
+		"curve": "SECP256R1",
+		"signatureAlgorithm": "ECDSASecp256r1",
+		"hash": "SHA256",
+		"dwalletId": "0xac8599df000edd260a3db7b010bc8c7f381b07139e13ec409565b51ab0534698",
+		"dkgDigest": "CA97fGG3uRKeW5PZgaec3PZhi43NySNhmDuMaeVF2k6w",
+		"presignId": "0x9c111432aee0e61b0b367d182747ec633aebde95dcb70d1cf569117d4fb16daa",
+		"signId": "0x322fbbb565bc0065e3c1d7607f9333df06ff3e4066c8bcddffa4b9e5e0fb140b",
+		"signature": [
+			204, 130, 67, 143, 1, 100, 132, 208, 149, 13, 195, 8, 48, 94, 34, 165, 176, 94, 171, 66, 16,
+			252, 5, 97, 246, 46, 16, 34, 195, 37, 29, 102, 92, 71, 83, 83, 205, 209, 102, 195, 251, 166,
+			140, 180, 153, 179, 182, 53, 80, 47, 108, 1, 186, 235, 211, 120, 4, 3, 29, 201, 116, 16, 2,
+			239
+		],
+		"dwalletState": "Active",
+		"signState": "Completed"
+	},
+	{
+		"curve": "ED25519",
+		"signatureAlgorithm": "EdDSA",
+		"hash": "SHA512",
+		"dwalletId": "0x51f8e3042b6ea88c7a070c0dedd07e7f13bb4b77c7bee637e619311744664741",
+		"dkgDigest": "DzT6s5GX2QrCNocVQT9atedcCK3K8dJ69WUhrqWFqHkQ",
+		"presignId": "0xd7d56bff6adc509755c25f8e66aaee3d174728c9bc1f3801ffd65fe348d3ffd9",
+		"signId": "0xd4f68d57a932727d02457b8fe99874444b5d00aaa7e16d75d41f22f249941bc5",
+		"signature": [
+			74, 246, 36, 236, 79, 184, 51, 78, 43, 11, 222, 146, 164, 52, 85, 10, 255, 118, 5, 124, 226,
+			227, 114, 130, 41, 35, 185, 21, 181, 87, 162, 45, 160, 222, 138, 110, 113, 175, 156, 78, 55,
+			225, 8, 71, 25, 144, 43, 127, 246, 40, 187, 127, 167, 246, 113, 63, 18, 121, 127, 163, 105,
+			158, 222, 15
+		],
+		"dwalletState": "Active",
+		"signState": "Completed"
+	},
+	{
+		"curve": "RISTRETTO",
+		"signatureAlgorithm": "SchnorrkelSubstrate",
+		"hash": "Merlin",
+		"dwalletId": "0x180f964ffe1a2347f48d35f6a80951650ffdd8d48cb40ba4508bd89e1d036a57",
+		"dkgDigest": "GDo7S4vk3YqnN7WHTkeVd2BpvxBknuMXsWii5zmc2nMW",
+		"presignId": "0x9e6f12a5cc9e008a9f96ed6496a3ed8a2597bf8b43f132222da3ecd4ca986d5f",
+		"signId": "0xeb037610359f599728941c49424f6110f01c54fbc75133f0e7fff718216adcb0",
+		"signature": [
+			114, 66, 166, 137, 225, 16, 165, 182, 235, 196, 77, 101, 31, 157, 41, 129, 70, 90, 25, 180,
+			193, 7, 44, 162, 160, 54, 185, 182, 38, 99, 111, 68, 82, 248, 163, 212, 33, 120, 79, 30, 95,
+			190, 24, 135, 146, 47, 32, 156, 0, 101, 164, 62, 139, 201, 65, 74, 205, 243, 79, 163, 35, 108,
+			65, 137
+		],
+		"dwalletState": "Active",
+		"signState": "Completed"
+	}
+]

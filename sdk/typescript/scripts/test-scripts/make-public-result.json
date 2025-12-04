@@ -1,0 +1,118 @@
+[
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "ECDSASecp256k1",
+		"hash": "KECCAK256",
+		"dwalletId": "0xd033a6bff4da42a6b2a9a3181f18a8cb0f3b4e344e18e4e1157707093b12e12e",
+		"dkgDigest": "4Pav36CFh9X2kWwPxn7JEEX93ec2bQwU4TJZe5WkW9CF",
+		"makePublicDigest": "DkWiT8kQv5LvDCTKPRwkcoeJ6s66drdsNiZf1FJ7y8yZ",
+		"presignId": "0x0a15478b8d755881930e85da1464d59305f03492a94a03eba05d71b3181b3bcf",
+		"presignDigest": "CM2YgthmK27nUtNSKQxYTchmz5zyvytTdenjrjMKX2Uy",
+		"signId": "0x42bf507603491d2d47ad8814933e10c08c0f4502b9ab895a639c3400600524c6",
+		"signDigest": "3T7BmM25EPEhwqjQWgaNKgdHN6aeg6Md3AK9S4hMpF1p",
+		"signature": [
+			174, 48, 69, 21, 199, 162, 236, 144, 234, 185, 105, 115, 150, 203, 227, 66, 180, 134, 35, 129,
+			251, 89, 58, 48, 146, 16, 138, 237, 191, 1, 97, 23, 32, 74, 222, 71, 151, 204, 251, 65, 137,
+			2, 250, 124, 182, 63, 138, 130, 243, 170, 14, 30, 143, 38, 85, 120, 192, 50, 236, 70, 71, 180,
+			223, 96
+		]
+	},
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "ECDSASecp256k1",
+		"hash": "SHA256",
+		"dwalletId": "0xf16b42012944a54e9b41918f315fb491ad6ce69e15d67fbbe7ffa8d5e7a6b395",
+		"dkgDigest": "EhfsAzX2BiSvbqKcm33r5TJAJZsTewHevCrFV7a1t4pW",
+		"makePublicDigest": "RTJfQJuH4RbVjpnTbDJH51xwMYMjtpQELhAjWwXmkqb",
+		"presignId": "0xaa94d4f97d8844fee0b3c2e3b0c871490da79a67a588459f248f7b717f330ed6",
+		"presignDigest": "Etd3h8MPidfg2FHN9Zaz3CpFfYFVXQfpf1UBrRnu5A2K",
+		"signId": "0x313364dd8cc0b986ab5a3ed147b6fc3375b74dd265dfc454b9055785ceb84466",
+		"signDigest": "9DomKHcZ3ygeu5LNXx5oK3jxGVjCyuhM4fGRJL2QbHDb",
+		"signature": [
+			79, 169, 251, 4, 174, 211, 190, 179, 35, 11, 178, 104, 93, 89, 183, 60, 74, 156, 252, 81, 26,
+			170, 63, 97, 131, 179, 174, 162, 245, 201, 16, 229, 5, 49, 213, 117, 206, 37, 188, 203, 241,
+			82, 51, 239, 0, 241, 126, 191, 105, 43, 28, 78, 219, 107, 42, 148, 98, 244, 252, 113, 249, 70,
+			113, 149
+		]
+	},
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "ECDSASecp256k1",
+		"hash": "DoubleSHA256",
+		"dwalletId": "",
+		"dkgDigest": "",
+		"makePublicDigest": "",
+		"presignId": "",
+		"presignDigest": "",
+		"signId": "",
+		"signDigest": "",
+		"error": "User output signature is undefined"
+	},
+	{
+		"curve": "SECP256K1",
+		"signatureAlgorithm": "Taproot",
+		"hash": "SHA256",
+		"dwalletId": "0xe89d18a4fa24a68093a3d48786a92b9cd98be50db972da18c4f24e3b6b6c5bdf",
+		"dkgDigest": "CbdGuRzBqGV2cYZ5hntbXJ4cQeE9r2MSdSNpk5NgWgNn",
+		"makePublicDigest": "6e7DMx4rMFRNZquq5YdDsFTa4gphJv6cEuHCn5ddzfbp",
+		"presignId": "0x9e30945dc55be72898e7fb70e5c8315d6dcdb093eb1a8bae803d3540b846ba9e",
+		"presignDigest": "HcRRptqC4JDQcDQCtQ1oByfwttp8jVJXue8A3VTJoF64",
+		"signId": "0xb5c2b91e03bd0bc5fb0c9a66fef7574c1f5ce727566e11e070129e62834485c8",
+		"signDigest": "GuawtCzE5s5F2NvNTHCufteV2C79NSVggQ7cReBNajEY",
+		"signature": [
+			248, 246, 132, 0, 86, 232, 49, 67, 26, 156, 219, 198, 17, 106, 254, 8, 90, 19, 174, 87, 128,
+			101, 225, 200, 247, 118, 57, 110, 215, 0, 230, 130, 226, 7, 242, 141, 32, 91, 56, 219, 138,
+			26, 31, 18, 11, 23, 218, 83, 218, 184, 57, 5, 16, 162, 130, 97, 240, 109, 16, 183, 161, 41,
+			38, 188
+		]
+	},
+	{
+		"curve": "SECP256R1",
+		"signatureAlgorithm": "ECDSASecp256r1",
+		"hash": "SHA256",
+		"dwalletId": "",
+		"dkgDigest": "",
+		"makePublicDigest": "",
+		"presignId": "",
+		"presignDigest": "",
+		"signId": "",
+		"signDigest": "",
+		"error": "User output signature is undefined"
+	},
+	{
+		"curve": "ED25519",
+		"signatureAlgorithm": "EdDSA",
+		"hash": "SHA512",
+		"dwalletId": "0x12c99b307919027ebb8876c40fabc752f92ca5226c193d89745fb40c702fd1ec",
+		"dkgDigest": "ADv3YzzPrxWD7osrKxM96os8btwaRX6aw1pdjzo6anFv",
+		"makePublicDigest": "2mu4YxzuGRgceVRYB2jX2DvP43s4pWSiu7eDy4QVKZSN",
+		"presignId": "0xf6c59b1c44135b427625e21331c8e8a0fbc72850dd02ea4fcc8517a4a239e5d0",
+		"presignDigest": "Ho2NRrQNue5WXNMuseV2vjhzy26MmPb31zGSGtoX4N8p",
+		"signId": "0x18602bdd079413bec85becd5e25c8b52742851f95e3fe871955742e71948472a",
+		"signDigest": "4hVaAoTxqzXRoEPcQMu1BHKqpgxGW2kDJEHrTXobcZGi",
+		"signature": [
+			152, 37, 61, 118, 73, 21, 46, 46, 36, 207, 224, 202, 116, 207, 10, 176, 82, 121, 126, 59, 22,
+			176, 213, 126, 48, 74, 140, 70, 78, 16, 252, 91, 72, 184, 108, 228, 133, 179, 243, 75, 13, 40,
+			69, 186, 175, 149, 145, 248, 41, 48, 115, 37, 225, 143, 174, 159, 173, 150, 107, 116, 187,
+			115, 176, 9
+		]
+	},
+	{
+		"curve": "RISTRETTO",
+		"signatureAlgorithm": "SchnorrkelSubstrate",
+		"hash": "Merlin",
+		"dwalletId": "0xc56f8ce3e927aa7465da37055608a5ce6bf9bf2a735950dfccba7cae75344676",
+		"dkgDigest": "FDzzcR84jHdMYqvxgjjV4Gitdbixyx6CDKvjHQSLzukU",
+		"makePublicDigest": "75TDewfUHCL76AUteR2yZVPkMHZ2ihu3ES69mgpdSJYh",
+		"presignId": "0x9796b1d0f3f625031f0c809e5c04a8c32f711d4091ef8563485d51b5941a0a42",
+		"presignDigest": "Ctg16DWekhS349AB2Nb9kyKuJWuraHeUy53hwSE5HPQc",
+		"signId": "0x8002d6e2d8a9d7070df0e07879a61e88bd26750be149dd1343da91bc4065bfc6",
+		"signDigest": "7HQpcae9HadLAQ7cNKnT6QwEw5BB6BQYAbN6wtZ3qC65",
+		"signature": [
+			226, 231, 157, 166, 48, 50, 47, 91, 6, 35, 121, 4, 161, 182, 79, 100, 241, 124, 102, 48, 81,
+			60, 227, 174, 11, 183, 87, 200, 169, 162, 4, 40, 208, 197, 124, 163, 52, 127, 229, 179, 243,
+			63, 89, 195, 6, 45, 194, 198, 85, 150, 193, 104, 28, 42, 124, 166, 85, 82, 160, 17, 10, 35,
+			163, 137
+		]
+	}
+]
