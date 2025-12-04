@@ -25,6 +25,7 @@ use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
+use tracing::debug;
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
@@ -380,8 +381,19 @@ pub fn compute_presign<P: presign::Protocol>(
             malicious_parties,
             private_output,
         } => {
+            let presigns: Vec<P::Presign> = bcs::from_bytes(&public_output_value)?;
+            let presign = presigns.first().ok_or(DwalletMPCError::InternalError(
+                "at least one presign must be generated".to_string(),
+            ))?;
+
+            debug!(
+                session_id = ?session_id,
+                number_of_presigns = presigns.len(),
+                "generated multi-presigns",
+            );
+
             let public_output_value =
-                bcs::to_bytes(&VersionedPresignOutput::V2(public_output_value))?;
+                bcs::to_bytes(&VersionedPresignOutput::V2(bcs::to_bytes(&presign)?))?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
