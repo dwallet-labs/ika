@@ -6,11 +6,9 @@ sidebar_position: 1
 sidebar_label: Ika Client
 ---
 
-import { Construction, Info } from '../../../src/components/InfoBox';
+import { Info } from '../../../src/components/InfoBox';
 
 # Ika Client
-
-<Construction />
 
 Ika Client is the main entry point for interacting with the Ika protocol. It provides an easy way to query for the Ika protocol state and objects.
 

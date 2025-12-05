@@ -6,11 +6,9 @@ sidebar_position: 6
 sidebar_label: Cryptography Functions
 ---
 
-import { Info, Warning, Construction } from '../../src/components/InfoBox';
+import { Info, Warning } from '../../src/components/InfoBox';
 
 # Cryptography Functions
-
-<Construction />
 
 The Ika SDK provides a comprehensive set of cryptographic functions for creating and managing dWallets. These low-level functions handle Distributed Key Generation (DKG), encryption, signing, and verification operations.
 

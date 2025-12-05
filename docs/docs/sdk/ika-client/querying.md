@@ -6,11 +6,7 @@ sidebar_position: 2
 sidebar_label: Querying
 ---
 
-import { Construction } from '../../../src/components/InfoBox';
-
 # Querying
-
-<Construction />
 
 You can use `IkaClient` to query the Ika protocol state and objects. This guide covers all available query methods.
 
