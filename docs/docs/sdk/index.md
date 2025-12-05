@@ -6,12 +6,10 @@ sidebar_position: 1
 sidebar_label: Install Ika TypeScript SDK
 ---
 
-import { Construction, Info, Note } from '../../src/components/InfoBox';
+import { Info, Note } from '../../src/components/InfoBox';
 import Prerequisites from '../../src/components/Prerequisites';
 
 # Install the Ika SDK
-
-<Construction />
 
 The Ika TypeScript SDK is available in the [dwallet-labs/ika](https://github.com/dwallet-labs/ika) repository and as a package on npm.
 

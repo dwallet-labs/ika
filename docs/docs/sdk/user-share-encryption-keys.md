@@ -6,11 +6,9 @@ sidebar_position: 5
 sidebar_label: User Share Encryption Keys
 ---
 
-import { Info, Warning, Construction } from '../../src/components/InfoBox';
+import { Info, Warning } from '../../src/components/InfoBox';
 
 # User Share Encryption Keys
-
-<Construction />
 
 The `UserShareEncryptionKeys` class is a core component for managing cryptographic keys in the Ika network. It handles the creation and management of encryption/decryption keys and signing keypairs needed for secure user share operations. You pass it to `IkaTransaction` to perform user share operations.
 
