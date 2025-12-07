@@ -36,22 +36,6 @@ import { setupDKGFlow } from '../v2/all-combinations.test';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { toHex } from '@mysten/bcs';
 
-// Setup shared resources before all tests
-beforeAll(async () => {
-	await getSharedTestSetup();
-}, 60000); // 1 minute timeout for setup
-
-// Cleanup shared resources after all tests
-afterAll(async () => {
-	const sharedSetup = await getSharedTestSetup();
-	sharedSetup.cleanup();
-
-	// Force garbage collection if available
-	if (global.gc) {
-		global.gc();
-	}
-});
-
 /**
  * Enhanced test sign function that returns transaction results for validation
  */
