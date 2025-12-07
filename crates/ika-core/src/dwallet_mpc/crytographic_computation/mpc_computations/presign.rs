@@ -25,7 +25,7 @@ use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{info};
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
@@ -386,8 +386,8 @@ pub fn compute_presign<P: presign::Protocol>(
                 "at least one presign must be generated".to_string(),
             ))?;
 
-            debug!(
-                session_id = ?session_id,
+            info!(
+                session_id = ?hex::encode(session_id.to_be_bytes()),
                 number_of_presigns = presigns.len(),
                 "generated multi-presigns",
             );
