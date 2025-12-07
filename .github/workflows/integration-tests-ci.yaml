@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup SSH for manual git
         if: env.GH_DEPLOY_KEY
@@ -44,4 +44,4 @@ jobs:
         run: rustup target add x86_64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
       - name: Run Integration Tests
-        run: cargo test --profile release --no-default-features --color=always --lib dwallet_mpc::integration_tests
+        run: cargo test -p ika-core --lib dwallet_mpc::integration_tests --release --features test-utils --color=always -- --nocapture

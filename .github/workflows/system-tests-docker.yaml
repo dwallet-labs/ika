@@ -1,4 +1,4 @@
-name: Build & Upload Docker Image
+name: Build and Push System Test Docker Image
 
 on:
   workflow_dispatch:
@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
 
       - name: Set up Docker auth for GAR
         run: |

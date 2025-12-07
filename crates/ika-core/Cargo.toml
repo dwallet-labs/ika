@@ -10,6 +10,7 @@ edition = "2024"
 workspace = true
 
 [dependencies]
+hex.workspace = true
 group.workspace = true
 mpc.workspace = true
 twopc_mpc.workspace = true
@@ -18,6 +19,7 @@ class_groups = { workspace = true, features = ["threshold", "parallel"]}
 dwallet-rng.workspace = true
 dwallet-classgroups-types.workspace = true
 commitment.workspace = true
+k256.workspace = true
 rand_core = "0.9"
 dwallet-mpc-types.workspace = true
 anyhow = { workspace = true, features = ["backtrace"] }

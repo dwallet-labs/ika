@@ -56,7 +56,9 @@ export SUI_CHAIN_IDENTIFIER="custom"
 
 RUST_MIN_STACK=16777216
 
-RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
+if [ ! -f ../../../../target/release/"$BINARY_NAME" ]; then
+  RUST_MIN_STACK=$RUST_MIN_STACK cargo build --release --bin "$BINARY_NAME"
+fi
 cp ../../../../target/release/"$BINARY_NAME" .
 BINARY_NAME="$(pwd)/$BINARY_NAME"
 
@@ -152,8 +154,9 @@ done
 # Create the Ika system on Sui.
 ###############################
 rm -rf "$SUI_CONFIG_PATH"
-
-cargo build --bin ika-swarm-config
+if [ ! -f ../../../../../target/debug/ika-swarm-config ]; then
+  cargo build --bin ika-swarm-config
+fi
 cp ../../../../../target/debug/ika-swarm-config .
 
 # Publish IKA Modules (Creates the publisher config).

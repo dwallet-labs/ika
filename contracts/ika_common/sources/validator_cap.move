@@ -42,7 +42,11 @@ public struct VerifiedValidatorCommissionCap has drop {
 
 // === Public Functions ===
 
-public fun new_validator_cap(validator_id: ID, ctx: &mut TxContext, _: &SystemObjectCap): ValidatorCap {
+public fun new_validator_cap(
+    validator_id: ID,
+    ctx: &mut TxContext,
+    _: &SystemObjectCap,
+): ValidatorCap {
     ValidatorCap {
         id: object::new(ctx),
         validator_id,
@@ -75,7 +79,10 @@ public fun new_validator_commission_cap(
     }
 }
 
-public fun create_verified_validator_cap(cap: &ValidatorCap, _: &SystemObjectCap): VerifiedValidatorCap {
+public fun create_verified_validator_cap(
+    cap: &ValidatorCap,
+    _: &SystemObjectCap,
+): VerifiedValidatorCap {
     VerifiedValidatorCap {
         validator_id: cap.validator_id,
     }

@@ -1,6 +1,11 @@
 {
 	"name": "@ika.xyz/ika-wasm",
-	"description": "IKA MPC in WASM",
+	"description": "Ika wasm sdk",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dwallet-labs/ika",
+		"directory": "sdk/ika-wasm"
+	},
 	"scripts": {
 		"build": "npm run build:node && npm run build:web && npm run build:bundler",
 		"note": "wasm-pack uses release profile by default",
@@ -10,7 +15,7 @@
 		"prepare": "npm run build"
 	},
 	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
-	"version": "0.1.0",
+	"version": "0.2.1",
 	"license": "BSD-3-Clause-Clear",
 	"types": "./dist/web/dwallet_mpc_wasm.d.ts",
 	"exports": {

@@ -17,6 +17,7 @@ use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointMessage;
 use ika_types::messages_dwallet_mpc::{
     DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME, DWalletNetworkEncryptionKeyData,
+    DWalletNetworkEncryptionKeyState,
 };
 use ika_types::messages_system_checkpoints::SystemCheckpointMessage;
 use ika_types::sui::epoch_start_system::EpochStartSystem;
@@ -42,7 +43,7 @@ use sui_macros::fail_point_async;
 use sui_types::MOVE_STDLIB_PACKAGE_ID;
 use sui_types::base_types::{ObjectID, TransactionDigest};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
-use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction};
+use sui_types::transaction::{Argument, CallArg, Transaction};
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
 use tokio::time::{self, Duration};
@@ -72,6 +73,7 @@ struct EpochSwitchState {
     ran_mid_epoch: bool,
     ran_lock_last_session: bool,
     ran_request_advance_epoch: bool,
+    network_encryption_key_mid_epoch_reconfiguration: bool,
     calculated_protocol_pricing: bool,
 }
 
@@ -116,7 +118,7 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         ika_system_state_inner: &SystemInner,
-        network_encryption_key_ids: Vec<ObjectID>,
+        network_encryption_keys: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
         epoch_switch_state: &mut EpochSwitchState,
     ) {
         let Ok(clock) = self.sui_client.get_clock().await else {
@@ -170,44 +172,100 @@ where
         let DWalletCoordinatorInner::V1(coordinator_inner) = dwallet_coordinator_inner;
 
         if clock.timestamp_ms > mid_epoch_time
+            && coordinator_inner.next_epoch_active_committee.is_some()
+            // network_encryption_key_ids holds only keys that finished dkg
+            && coordinator_inner.dwallet_network_encryption_keys.size == network_encryption_keys.len() as u64
+            // check not all already completed
+            && coordinator_inner.epoch_dwallet_network_encryption_keys_reconfiguration_completed != coordinator_inner.dwallet_network_encryption_keys.size
+            && !epoch_switch_state.network_encryption_key_mid_epoch_reconfiguration
+        {
+            info!("Running network encryption key mid-epoch reconfiguration");
+
+            let network_encryption_for_reconfiguration_key_ids = network_encryption_keys
+                .iter()
+                .filter(|(_, v)| {
+                    v.state != DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration
+                })
+                .map(|(k, _)| *k)
+                .collect_vec();
+
+            if !network_encryption_for_reconfiguration_key_ids.is_empty() {
+                let result = retry_with_max_elapsed_time!(
+                    Self::request_mid_epoch_reconfiguration(
+                        &self.sui_client,
+                        ika_dwallet_2pc_mpc_package_id,
+                        network_encryption_for_reconfiguration_key_ids.clone(),
+                        sui_notifier,
+                        self.notifier_tx_lock.clone(),
+                    ),
+                    Duration::from_secs(ONE_HOUR_IN_SECONDS)
+                );
+                if result.is_err() {
+                    panic!(
+                        "failed to network encryption key mid-epoch reconfiguration for over an hour: {:?}",
+                        result.err()
+                    );
+                }
+                info!("Successfully network encryption key mid-epoch reconfiguration");
+            }
+            epoch_switch_state.network_encryption_key_mid_epoch_reconfiguration = true;
+        }
+
+        if clock.timestamp_ms > mid_epoch_time
             && coordinator_inner
                 .pricing_and_fee_management
                 .calculation_votes
                 .is_some()
             && coordinator_inner.next_epoch_active_committee.is_some()
-            // network_encryption_key_ids holds only keys that finished dkg
-            && coordinator_inner.dwallet_network_encryption_keys.size == network_encryption_key_ids.len() as u64
             && !epoch_switch_state.calculated_protocol_pricing
         {
-            info!(
-                "Running network encryption key mid-epoch reconfiguration and Calculating protocol pricing"
-            );
+            info!("Running calculating protocol pricing");
 
-            let default_pricing_keys = coordinator_inner
+            let calculation_votes = coordinator_inner
                 .pricing_and_fee_management
-                .default
+                .calculation_votes
+                .unwrap();
+
+            let default_pricing_keys = calculation_votes
+                .default_pricing
                 .pricing_map
                 .contents
                 .iter()
                 .map(|c| c.key.clone())
                 .collect_vec();
 
-            let result = retry_with_max_elapsed_time!(
-                Self::request_mid_epoch_reconfiguration_and_calculate_protocols_pricing(
-                    &self.sui_client,
-                    ika_dwallet_2pc_mpc_package_id,
-                    network_encryption_key_ids.clone(),
-                    sui_notifier,
-                    self.notifier_tx_lock.clone(),
-                    &default_pricing_keys
-                ),
-                Duration::from_secs(ONE_HOUR_IN_SECONDS)
-            );
-            if result.is_err() {
-                panic!(
-                    "failed to calculate protocols' pricing for over an hour: {:?}",
-                    result.err()
+            let working_pricing = calculation_votes
+                .working_pricing
+                .pricing_map
+                .contents
+                .iter()
+                .map(|c| c.key.clone())
+                .collect_vec();
+
+            let filtered_default_pricing_keys = default_pricing_keys
+                .into_iter()
+                .filter(|p| !working_pricing.contains(p))
+                .collect_vec();
+
+            let default_pricing_keys_chunked =
+                filtered_default_pricing_keys.chunks(5).collect_vec();
+            for default_pricing_keys_chunk in default_pricing_keys_chunked {
+                let result = retry_with_max_elapsed_time!(
+                    Self::calculate_protocols_pricing(
+                        &self.sui_client,
+                        ika_dwallet_2pc_mpc_package_id,
+                        sui_notifier,
+                        self.notifier_tx_lock.clone(),
+                        default_pricing_keys_chunk
+                    ),
+                    Duration::from_secs(ONE_HOUR_IN_SECONDS)
                 );
+                if result.is_err() {
+                    panic!(
+                        "failed to calculate protocols' pricing for over an hour: {:?}",
+                        result.err()
+                    );
+                }
             }
             info!("Successfully calculated protocols pricing");
             epoch_switch_state.calculated_protocol_pricing = true;
@@ -304,6 +362,7 @@ where
             ran_mid_epoch: false,
             ran_lock_last_session: false,
             ran_request_advance_epoch: false,
+            network_encryption_key_mid_epoch_reconfiguration: false,
             calculated_protocol_pricing: false,
         };
 
@@ -346,20 +405,14 @@ where
                 last_processed_system_checkpoint_sequence_number + 1;
 
             if let Some(sui_notifier) = self.sui_notifier.as_ref() {
-                let network_encryption_key_ids = {
-                    network_keys_receiver
-                        .borrow_and_update()
-                        .clone()
-                        .keys()
-                        .cloned()
-                        .collect_vec()
-                };
+                let network_encryption_keys =
+                    { network_keys_receiver.borrow_and_update().as_ref().clone() };
                 self.run_epoch_switch(
                     ika_system_package_id,
                     ika_dwallet_2pc_mpc_package_id,
                     sui_notifier,
                     &system_inner,
-                    network_encryption_key_ids,
+                    network_encryption_keys,
                     &mut epoch_switch_state,
                 )
                 .await;
@@ -550,18 +603,17 @@ where
         Ok(vector_arg)
     }
 
-    async fn request_mid_epoch_reconfiguration_and_calculate_protocols_pricing(
+    async fn request_mid_epoch_reconfiguration(
         sui_client: &Arc<SuiClient<C>>,
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         network_encryption_key_ids: Vec<ObjectID>,
         sui_notifier: &SuiNotifier,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
-        default_pricing_keys: &Vec<PricingInfoKey>,
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        let gas_coin = gas_coins
-            .first()
-            .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
+        // let gas_coin = gas_coins
+        //     .first()
+        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
         let mut ptb = ProgrammableTransactionBuilder::new();
         let dwallet_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
@@ -580,6 +632,36 @@ where
                 vec![dwallet_coordinator_ptb_arg, network_encryption_key_id_arg],
             );
         }
+
+        let transaction = super::build_sui_transaction(
+            sui_notifier.sui_address,
+            ptb.finish(),
+            sui_client,
+            gas_coins,
+            &sui_notifier.sui_key,
+        )
+        .await;
+
+        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
+    }
+
+    async fn calculate_protocols_pricing(
+        sui_client: &Arc<SuiClient<C>>,
+        ika_dwallet_2pc_mpc_package_id: ObjectID,
+        sui_notifier: &SuiNotifier,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        default_pricing_keys: &[PricingInfoKey],
+    ) -> anyhow::Result<SuiTransactionBlockResponse> {
+        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        // let gas_coin = gas_coins
+        //     .first()
+        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
+        let mut ptb = ProgrammableTransactionBuilder::new();
+        let dwallet_coordinator_arg = sui_client
+            .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
+            .await;
+
+        let dwallet_coordinator_ptb_arg = ptb.input(CallArg::Object(dwallet_coordinator_arg))?;
 
         for PricingInfoKey {
             curve,
@@ -610,7 +692,7 @@ where
             sui_notifier.sui_address,
             ptb.finish(),
             sui_client,
-            vec![*gas_coin],
+            gas_coins,
             &sui_notifier.sui_key,
         )
         .await;
@@ -692,9 +774,9 @@ where
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Running `process_mid_epoch()`");
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        let gas_coin = gas_coins
-            .first()
-            .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
+        // let gas_coin = gas_coins
+        //     .first()
+        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         let mut ptb = ProgrammableTransactionBuilder::new();
 
@@ -748,7 +830,7 @@ where
             sui_notifier.sui_address,
             ptb.finish(),
             sui_client,
-            vec![*gas_coin],
+            gas_coins,
             &sui_notifier.sui_key,
         )
         .await;
@@ -765,9 +847,9 @@ where
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Process `lock_last_active_session_sequence_number()`");
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        let gas_coin = gas_coins
-            .first()
-            .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
+        // let gas_coin = gas_coins
+        //     .first()
+        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         let mut ptb = ProgrammableTransactionBuilder::new();
 
@@ -814,7 +896,7 @@ where
             sui_notifier.sui_address,
             ptb.finish(),
             sui_client,
-            vec![*gas_coin],
+            gas_coins,
             &sui_notifier.sui_key,
         )
         .await;
@@ -831,9 +913,9 @@ where
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Running `process_request_advance_epoch()`");
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        let gas_coin = gas_coins
-            .first()
-            .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
+        // let gas_coin = gas_coins
+        //     .first()
+        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         let mut ptb = ProgrammableTransactionBuilder::new();
 
@@ -888,7 +970,7 @@ where
             sui_notifier.sui_address,
             ptb.finish(),
             sui_client,
-            vec![*gas_coin],
+            gas_coins,
             &sui_notifier.sui_key,
         )
         .await;
@@ -909,10 +991,10 @@ where
         let mut ptb = ProgrammableTransactionBuilder::new();
 
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        merge_gas_coins(&mut ptb, &gas_coins)?;
-        let gas_coin = gas_coins
-            .first()
-            .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
+        //merge_gas_coins(&mut ptb, &gas_coins)?;
+        // let gas_coin = gas_coins
+        //     .first()
+        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         let dwallet_2pc_mpc_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
@@ -967,7 +1049,7 @@ where
             sui_notifier.sui_address,
             ptb.finish(),
             sui_client,
-            vec![*gas_coin],
+            gas_coins,
             &sui_notifier.sui_key,
         )
         .await;
@@ -995,10 +1077,10 @@ where
         let mut ptb = ProgrammableTransactionBuilder::new();
 
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        merge_gas_coins(&mut ptb, &gas_coins)?;
-        let gas_coin = gas_coins
-            .first()
-            .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
+        // merge_gas_coins(&mut ptb, &gas_coins)?;
+        // let gas_coin = gas_coins
+        //     .first()
+        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         info!(
             "`signers_bitmap` @ handle_execution_task: {:?}",
@@ -1045,7 +1127,7 @@ where
             sui_notifier.sui_address,
             ptb.finish(),
             sui_client,
-            vec![*gas_coin],
+            gas_coins,
             &sui_notifier.sui_key,
         )
         .await;
@@ -1059,40 +1141,4 @@ where
             }
         }
     }
-}
-
-/// Merge multiple gas coins into one by adding a `MergeCoins` command to the
-/// provided `ProgrammableTransactionBuilder`.
-/// If `gas_coins` has zero or one element, the function is no‑op.
-fn merge_gas_coins(
-    ptb: &mut ProgrammableTransactionBuilder,
-    gas_coins: &[sui_types::base_types::ObjectRef],
-) -> IkaResult<()> {
-    if gas_coins.len() <= 1 {
-        return Ok(());
-    }
-
-    info!("More than one gas coin was found, merging them into one gas coin.");
-
-    let coins: IkaResult<Vec<_>> = gas_coins
-        .iter()
-        .skip(1)
-        .map(|c| {
-            ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(*c)))
-                .map_err(|e| {
-                    IkaError::SuiConnectorInternalError(format!(
-                        "error merging coin ProgrammableTransactionBuilder::input: {e}"
-                    ))
-                })
-        })
-        .collect();
-
-    let coins = coins?;
-
-    ptb.command(sui_types::transaction::Command::MergeCoins(
-        Argument::GasCoin,
-        coins,
-    ));
-
-    Ok(())
 }

@@ -3,55 +3,175 @@ import { exec } from 'node:child_process';
 import path from 'path';
 import * as TOML from '@iarna/toml';
 import { network_key_version } from '@ika.xyz/ika-wasm';
-import { dumpYaml, KubeConfig, loadYaml } from '@kubernetes/client-node';
-import { SuiClient } from '@mysten/sui/client';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { KubeConfig } from '@kubernetes/client-node';
 import { execa } from 'execa';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import yaml from 'js-yaml';
+import { describe, expect, it } from 'vitest';
 
-import { fetchAllDynamicFields, IkaClient } from '../../../src';
-import { createCompleteDWallet } from '../../helpers/dwallet-test-helpers';
+import { Curve, Hash, IkaClient, SignatureAlgorithm } from '../../../src';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
 	delay,
+	findIkaConfigFile,
 	generateTestKeypair,
 	requestTestFaucetFunds,
-	runSignFullFlowWithDWallet,
-	runSignFullFlowWithV1Dwallet,
-	runSignFullFlowWithV2Dwallet,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
-import { runSignFullFlowTestWithImportedDwallet } from '../../imported-dwallet/imported-dwallet-sign.test';
 import {
 	deployUpgradedPackage,
 	getProtocolCapID,
 	getPublisherKeypair,
 	migrateCoordinator,
 } from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
+import { testSignCombination } from '../../v2/all-combinations.test';
+import { testImportedKeyScenario } from '../../v2/imported-key.test';
 import { createConfigMaps } from '../config-map';
 import { deployIkaNetwork, NAMESPACE_NAME, NETWORK_SERVICE_NAME, TEST_ROOT_DIR } from '../globals';
-import { createPods, createValidatorPod, killAllPods, killValidatorPod } from '../pods';
+import {
+	createFullnodePod,
+	createPods,
+	createValidatorPod,
+	killAllPods,
+	killFullnodePod,
+	killValidatorPod,
+} from '../pods';
+
+async function testImportedDWalletFullFlowWithAllCurves() {
+	await testImportedKeyScenario(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.KECCAK256,
+		'ecdsa-secp256k1-keccak256',
+	);
+	console.log('Completed: ecdsa-secp256k1-keccak256');
+
+	await testImportedKeyScenario(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.SHA256,
+		'ecdsa-secp256k1-sha256',
+	);
+	console.log('Completed: ecdsa-secp256k1-sha256');
+
+	await testImportedKeyScenario(
+		Curve.SECP256K1,
+		SignatureAlgorithm.Taproot,
+		Hash.SHA256,
+		'taproot-sha256',
+	);
+	console.log('Completed: taproot-sha256');
+
+	await testImportedKeyScenario(
+		Curve.SECP256R1,
+		SignatureAlgorithm.ECDSASecp256r1,
+		Hash.SHA256,
+		'ecdsa-secp256r1-sha256',
+	);
+	console.log('Completed: ecdsa-secp256r1-sha256');
+
+	await testImportedKeyScenario(
+		Curve.ED25519,
+		SignatureAlgorithm.EdDSA,
+		Hash.SHA512,
+		'eddsa-sha512',
+	);
+	console.log('Completed: eddsa-sha512');
+
+	await testImportedKeyScenario(
+		Curve.RISTRETTO,
+		SignatureAlgorithm.SchnorrkelSubstrate,
+		Hash.Merlin,
+		'schnorrkel-merlin',
+	);
+	console.log('Completed: schnorrkel-merlin');
+}
+
+async function testSignFullFlowWithAllCurves() {
+	console.log('Starting: ecdsa-secp256k1-keccak256');
+	await testSignCombination(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.KECCAK256,
+		'ecdsa-secp256k1-keccak256',
+	);
+	console.log('Completed: ecdsa-secp256k1-keccak256');
+
+	await testSignCombination(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.SHA256,
+		'ecdsa-secp256k1-sha256',
+	);
+	console.log('Completed: ecdsa-secp256k1-sha256');
+
+	await testSignCombination(
+		Curve.SECP256K1,
+		SignatureAlgorithm.ECDSASecp256k1,
+		Hash.DoubleSHA256,
+		'ecdsa-secp256k1-double-sha256',
+	);
+	console.log('Completed: ecdsa-secp256k1-double-sha256');
+
+	await testSignCombination(
+		Curve.SECP256K1,
+		SignatureAlgorithm.Taproot,
+		Hash.SHA256,
+		'taproot-sha256',
+	);
+	console.log('Completed: taproot-sha256');
+
+	await testSignCombination(
+		Curve.SECP256R1,
+		SignatureAlgorithm.ECDSASecp256r1,
+		Hash.SHA256,
+		'ecdsa-secp256r1-sha256',
+	);
+	console.log('Completed: ecdsa-secp256r1-sha256');
+
+	await testSignCombination(Curve.ED25519, SignatureAlgorithm.EdDSA, Hash.SHA512, 'eddsa-sha512');
+	console.log('Completed: eddsa-sha512');
+
+	await testSignCombination(
+		Curve.RISTRETTO,
+		SignatureAlgorithm.SchnorrkelSubstrate,
+		Hash.Merlin,
+		'schnorrkel-merlin',
+	);
+	console.log('Completed: schnorrkel-merlin');
+}
+
+async function upgradeValidatorsDockerImage(kc: KubeConfig, startIndex = 0, endIndex?: number) {
+	for (let i = startIndex; i < endIndex; i++) {
+		try {
+			await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
+		} catch (e) {}
+	}
+	await delay(30);
+	for (let i = startIndex; i < endIndex; i++) {
+		await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
+	}
+}
 
 describe('system tests', () => {
 	it('run a full flow test of upgrading the network key version and the move code', async () => {
-		const v2NetworkKeyDockerTag = 'itaylevy134/ika-node:v2key6';
+		const v2NetworkKeyDockerTag =
+			'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-node:testnet-v1.1.4';
+		const v2NetworkKeyNotifierDockerTag =
+			'us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier:testnet-v1.1.3';
 
 		const testName = 'upgrade-network-key';
-		// Generate deterministic keypair for this test
 		const { userShareEncryptionKeys, signerPublicKey, signerAddress } =
 			await generateTestKeypair(testName);
-
-		// Request faucet funds for the test address
 		await requestTestFaucetFunds(signerAddress);
 		require('dotenv').config({ path: `${TEST_ROOT_DIR}/.env` });
-		// ------------ Create Ika Genesis ------------
-		const createIkaGenesisPath = `${TEST_ROOT_DIR}/create-ika-genesis-mac.sh`;
+		const mainnetCreateIkaGenesisPath = `${TEST_ROOT_DIR}/mainnet-create-ika-genesis.sh`;
+		const setSupportedAndPricingPath = `${TEST_ROOT_DIR}/set_supported_and_pricing.sh`;
 		await execa({
 			stdout: ['pipe', 'inherit'],
 			stderr: ['pipe', 'inherit'],
 			cwd: TEST_ROOT_DIR,
-		})`${createIkaGenesisPath}`;
+		})`${mainnetCreateIkaGenesisPath}`;
 
 		await fs.copyFile(
 			`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/ika_config.json`,
@@ -69,44 +189,50 @@ describe('system tests', () => {
 		let networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.networkDKGOutputID);
 		const networkKeyVersion = network_key_version(networkKeyBytes);
 		expect(networkKeyVersion).toBe(1);
-		console.log('Network key version is V1, creating a dWallet with it');
-		const dwallet = await createCompleteDWallet(ikaClient, suiClient, testName, true);
-		console.log('DWallet created successfully, running a full sign flow with it');
-		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
-		console.log('V1 dWallet full flow works, upgrading the validators docker image');
+		console.log('Network key version is V1, upgrading two validators to the new docker image');
+		const signer = await getPublisherKeypair();
 		process.env.DOCKER_TAG = v2NetworkKeyDockerTag;
+		process.env.NOTIFIER_DOCKER_TAG = v2NetworkKeyNotifierDockerTag;
 		const kc = new KubeConfig();
 		kc.loadFromDefault();
-		// Restart each validator pod one by one to pick up the docker tag change
-		for (let i = 0; i < Number(process.env.VALIDATOR_NUM); i++) {
-			try {
-				await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
-			} catch (e) {}
-			await delay(15);
-			await createValidatorPod(kc, NAMESPACE_NAME, i + 1);
-		}
-		console.log(
-			'All validators upgraded, running a full sign flow with the previously created v1 dWallet',
-		);
-		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
-		console.log(
-			'Signing with the old v1 dWallet works, waiting for the network key to upgrade to V2',
-		);
-		await waitForV2NetworkKey(ikaClient);
-		console.log('Network key upgraded to V2, verifying the v1 dWallet full flow still works');
-		await delay(3); // wait for a few seconds to release the gas objects
-		await runSignFullFlowWithDWallet(ikaClient, suiClient, dwallet, testName);
-		console.log(
-			'V1 dWallet full flow works with previously created dWallet, creating a new v1 dWallet and verifying it works',
-		);
-		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, testName, false);
-		console.log('V1 dWallet full flow works, upgrading the Move contracts to V2');
+		await upgradeValidatorsDockerImage(kc, 0, 2);
+		console.log('Two validators upgraded, upgrading the network pricing and curve configuration');
 
+		const protocolCapID = await getProtocolCapID(
+			suiClient,
+			signer.getPublicKey().toSuiAddress(),
+			ikaClient,
+		);
+		const jsonData = JSON.parse(await fs.readFile(findIkaConfigFile(), 'utf8'));
+		const wrapped = { envs: { localhost: jsonData } };
+
+		const yamlStr = yaml.dump(wrapped, { indent: 2 });
+		await fs.writeFile(
+			path.join(process.env.HOME!, '.ika/ika_config/ika_sui_config.yaml'),
+			yamlStr,
+		);
+		const pre_move_upgrade_pricing_path = `${TEST_ROOT_DIR}/upgrade-network-key/pre_default_pricing_test.yaml`;
+		const pre_supported_curves_config = `${TEST_ROOT_DIR}/upgrade-network-key/pre_supported_curves_to_signature_algorithms_to_hash_schemes.yaml`;
+		await execa({
+			stdout: ['pipe', 'inherit'],
+			stderr: ['pipe', 'inherit'],
+			cwd: TEST_ROOT_DIR,
+		})`${setSupportedAndPricingPath} ${protocolCapID} ${pre_move_upgrade_pricing_path} ${pre_supported_curves_config}`;
+
+		console.log(
+			'network configuration has been upgraded, upgrading the rest of the validators binary',
+		);
+		await upgradeValidatorsDockerImage(kc, 2, Number(process.env.VALIDATOR_NUM));
+		await killFullnodePod(kc, NAMESPACE_NAME);
+		await delay(30);
+		await createFullnodePod(NAMESPACE_NAME, kc);
+		console.log('All validators upgraded, waiting for the network key to upgrade to V2');
+		await waitForV2NetworkKey(ikaClient);
+		console.log('Network key upgraded to V2, upgrading the Move contracts to V2');
 		const twopc_mpc_contracts_path = path.join(
 			TEST_ROOT_DIR,
 			'../../../../contracts/ika_dwallet_2pc_mpc',
 		);
-
 		const ika_twopc_move_toml = TOML.parse(
 			await fs.readFile(path.join(twopc_mpc_contracts_path, 'Move.toml'), 'utf8'),
 		);
@@ -137,13 +263,6 @@ describe('system tests', () => {
 			TOML.stringify(ikaCommonToml),
 		);
 
-		const signer = await getPublisherKeypair();
-		const protocolCapID = await getProtocolCapID(
-			suiClient,
-			signer.getPublicKey().toSuiAddress(),
-			ikaClient,
-		);
-
 		const upgradedPackageID = await deployUpgradedPackage(
 			suiClient,
 			signer,
@@ -156,6 +275,29 @@ describe('system tests', () => {
 		console.log('running the migration to the upgraded package');
 
 		await migrateCoordinator(suiClient, signer, ikaClient, protocolCapID, upgradedPackageID);
+		wrapped.envs.localhost.packages.ika_dwallet_2pc_mpc_package_id = upgradedPackageID;
+		const yamlString = yaml.dump(wrapped, { indent: 2 });
+		await fs.writeFile(
+			path.join(process.env.HOME!, '.ika/ika_config/ika_sui_config.yaml'),
+			yamlString,
+		);
+
+		ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage = upgradedPackageID;
+
+		const post_move_upgrade_pricing_path = `${TEST_ROOT_DIR}/upgrade-network-key/post_default_pricing_test.yaml`;
+		const post_supported_curves_config = `${TEST_ROOT_DIR}/upgrade-network-key/post_supported_curves_to_signature_algorithms_to_hash_schemes.yaml`;
+		await execa({
+			stdout: ['pipe', 'inherit'],
+			stderr: ['pipe', 'inherit'],
+			cwd: TEST_ROOT_DIR,
+		})`${setSupportedAndPricingPath} ${protocolCapID} ${post_move_upgrade_pricing_path} ${post_supported_curves_config}`;
+		const ikaBinaryPath = `${TEST_ROOT_DIR}/ika`;
+		const globalPresignConfig = `${TEST_ROOT_DIR}/upgrade-network-key/global_presign_config.yaml`;
+		await execa({
+			stdout: ['pipe', 'inherit'],
+			stderr: ['pipe', 'inherit'],
+			cwd: TEST_ROOT_DIR,
+		})`${ikaBinaryPath} protocol set-global-presign-config --protocol-cap-id ${protocolCapID} --global-presign-config ${globalPresignConfig}`;
 
 		console.log('Migration complete, updating the validators with the new package ID');
 		await updateOperatorsConfigWithNewPackageID(upgradedPackageID);
@@ -164,16 +306,15 @@ describe('system tests', () => {
 		await delay(30);
 		await createPods(kc, NAMESPACE_NAME, Number(process.env.VALIDATOR_NUM));
 
-		console.log('Move contracts upgraded to V2, running sign full flow and verifying it works');
-		ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage = upgradedPackageID;
-		await runSignFullFlowWithV2Dwallet(ikaClient, suiClient, testName, false);
-		console.log('V2 dWallet full flow works, test completed successfully');
-
-		await runSignFullFlowTestWithImportedDwallet(testName, ikaClient, suiClient, false);
 		console.log(
-			'Imported dWallet full flow works, creating a new v2 dWallet and verifying it works',
+			'Move contracts upgraded to V2, running sign full flow with all curves and verifying it works',
 		);
-		// TODO (#1530): Verify sign works with all supported curves in the network key update system test
+		await testSignFullFlowWithAllCurves();
+		console.log(
+			'sign works with all curves, checking full flow with an imported dWallet with all curves',
+		);
+		await testImportedDWalletFullFlowWithAllCurves();
+		console.log('Imported dWallet full flow works with all curves, test complete successfully');
 	}, 3_600_000);
 });
 

@@ -37,7 +37,7 @@ pub fn verify_secret_share(
         .map_err(|e| DwalletMPCError::SecretShareVerificationFailed(e.to_string())),
         (
             VersionedImportedSecretShare::V1(secret_share),
-            VersionedDwalletDKGPublicOutput::V2(dkg_output),
+            VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. },
         ) => verify_centralized_party_secret_key_share_v2(
             secret_share,
             dkg_output,
@@ -83,28 +83,28 @@ fn verify_centralized_party_secret_key_share_v2(
             verify_centralized_party_secret_key_share::<Secp256k1AsyncDKGProtocol>(
                 &secret_share,
                 bcs::from_bytes(&dkg_output)?,
-                pp,
+                &pp,
             )
         }
         ProtocolPublicParametersByCurve::Secp256r1(pp) => {
             verify_centralized_party_secret_key_share::<Secp256r1AsyncDKGProtocol>(
                 &secret_share,
                 bcs::from_bytes(&dkg_output)?,
-                pp,
+                &pp,
             )
         }
         ProtocolPublicParametersByCurve::Curve25519(pp) => {
             verify_centralized_party_secret_key_share::<Curve25519AsyncDKGProtocol>(
                 &secret_share,
                 bcs::from_bytes(&dkg_output)?,
-                pp,
+                &pp,
             )
         }
         ProtocolPublicParametersByCurve::Ristretto(pp) => {
             verify_centralized_party_secret_key_share::<RistrettoAsyncDKGProtocol>(
                 &secret_share,
                 bcs::from_bytes(&dkg_output)?,
-                pp,
+                &pp,
             )
         }
     }
@@ -115,10 +115,10 @@ fn verify_centralized_party_secret_key_share_v2(
 fn verify_centralized_party_secret_key_share<P: dkg::Protocol>(
     secret_share: &[u8],
     decentralized_dkg_output: P::DecentralizedPartyDKGOutput,
-    protocol_public_parameters: P::ProtocolPublicParameters,
+    protocol_public_parameters: &P::ProtocolPublicParameters,
 ) -> anyhow::Result<()> {
     P::verify_centralized_party_public_key_share(
-        &protocol_public_parameters,
+        protocol_public_parameters,
         decentralized_dkg_output,
         bcs::from_bytes(secret_share)?,
     )

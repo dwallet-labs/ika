@@ -13,6 +13,15 @@ group.workspace = true
 enum_dispatch.workspace = true
 strum_macros.workspace = true
 lazy_static.workspace = true
+anyhow.workspace = true
+bcs.workspace = true
+crypto-bigint.workspace = true
+k256.workspace = true
+p256.workspace = true
+curve25519-dalek.workspace = true
 
 [lints]
 workspace = true
+
+[patch.crates-io]
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }

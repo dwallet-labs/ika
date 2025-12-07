@@ -17,6 +17,7 @@ use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKi
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier, SessionType,
+    UserSecretKeyShareEventType,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -446,7 +447,8 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                     .currently_running_cryptographic_computations
                     .len(),
                 1,
-                "Pending for a non existent computation"
+                "Pending for a non existent computation for party id: {}",
+                i + 1,
             );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -517,9 +519,7 @@ pub(crate) fn override_legit_messages_with_false_messages(
 }
 use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::{
-    DKGFirstData, DKGSecondData, NetworkEncryptionKeyDkgData, ProtocolData,
-};
+use crate::request_protocol_data::{DWalletDKGData, NetworkEncryptionKeyDkgData, ProtocolData};
 
 pub(crate) async fn send_start_network_dkg_event_to_all_parties(
     epoch_id: EpochId,
@@ -619,9 +619,13 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
                     session_identifier_preimage,
                 ),
                 session_sequence_number,
-                protocol_data: ProtocolData::DKGFirst {
-                    data: DKGFirstData {
+                protocol_data: ProtocolData::DWalletDKG {
+                    data: DWalletDKGData {
                         curve: DWalletCurve::Secp256k1,
+                        centralized_public_key_share_and_proof: vec![],
+                        user_secret_key_share: UserSecretKeyShareEventType::Public {
+                            public_user_secret_key_share: vec![],
+                        },
                     },
                     dwallet_id,
                     dwallet_network_encryption_key_id,
@@ -636,19 +640,19 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
     });
 }
 
-pub(crate) fn send_start_dwallet_dkg_second_round_event(
+pub(crate) fn send_start_dwallet_dkg_event(
     epoch_id: EpochId,
     sui_data_senders: &[SuiDataSenders],
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID,
+    encrypted_user_secret_key_share_id: ObjectID,
     dwallet_id: ObjectID,
-    first_round_output: Vec<u8>,
     centralized_public_key_share_and_proof: Vec<u8>,
     encrypted_centralized_secret_share_and_proof: Vec<u8>,
     encryption_key: Vec<u8>,
+    encryption_key_id: ObjectID,
 ) {
-    let encrypted_user_secret_key_share_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
@@ -658,19 +662,23 @@ pub(crate) fn send_start_dwallet_dkg_second_round_event(
                     session_identifier_preimage,
                 ),
                 session_sequence_number,
-                protocol_data: ProtocolData::DKGSecond {
-                    data: DKGSecondData {
+                protocol_data: ProtocolData::DWalletDKG {
+                    data: DWalletDKGData {
                         curve: DWalletCurve::Secp256k1,
-                        encrypted_centralized_secret_share_and_proof:
-                            encrypted_centralized_secret_share_and_proof.clone(),
-                        encryption_key: encryption_key.clone(),
+                        centralized_public_key_share_and_proof:
+                            centralized_public_key_share_and_proof.clone(),
+                        user_secret_key_share: UserSecretKeyShareEventType::Encrypted {
+                            encrypted_user_secret_key_share_id,
+                            encrypted_centralized_secret_share_and_proof:
+                                encrypted_centralized_secret_share_and_proof.clone(),
+                            encryption_key: encryption_key.clone(),
+                            encryption_key_id,
+                            encryption_key_address: Default::default(),
+                            signer_public_key: vec![],
+                        },
                     },
                     dwallet_id,
-                    encrypted_secret_share_id: encrypted_user_secret_key_share_id,
                     dwallet_network_encryption_key_id,
-                    first_round_output: first_round_output.clone(),
-                    centralized_public_key_share_and_proof: centralized_public_key_share_and_proof
-                        .clone(),
                 },
                 epoch: 1,
                 requires_network_key_data: true,

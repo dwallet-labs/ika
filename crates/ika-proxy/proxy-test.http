@@ -1,0 +1,9 @@
+### Send POST request with json body
+POST http://127.0.0.1:9186/publish/metrics
+Content-Type: application/json
+
+{
+  "name": "test_metric",
+  "value": 42,
+  "tags": {}
+}
