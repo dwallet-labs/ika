@@ -16,6 +16,7 @@ mpc.workspace = true
 twopc_mpc.workspace = true
 homomorphic_encryption.workspace = true
 class_groups = { workspace = true, features = ["threshold", "parallel"]}
+merlin.workspace = true
 dwallet-rng.workspace = true
 dwallet-classgroups-types.workspace = true
 commitment.workspace = true

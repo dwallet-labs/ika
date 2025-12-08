@@ -5847,6 +5847,7 @@ dependencies = [
  "itertools 0.14.0",
  "k256 0.14.0-pre.11",
  "lru 0.16.0",
+ "merlin",
  "mockall 0.13.1",
  "moka",
  "move-core-types",

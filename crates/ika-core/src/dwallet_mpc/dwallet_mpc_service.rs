@@ -865,10 +865,7 @@ impl DWalletMPCService {
                 };
                 vec![tx]
             }
-            ProtocolData::Presign {
-                presign_id,
-                ..
-            } => {
+            ProtocolData::Presign { presign_id, .. } => {
                 if let Some(presign_id) = presign_id {
                     let tx = DWalletCheckpointMessageKind::RespondDWalletPresign(PresignOutput {
                         presign: output,
@@ -880,7 +877,10 @@ impl DWalletMPCService {
 
                     vec![tx]
                 } else {
-                    error!(should_never_happen=true, "Presign ID is None in a Presign session needing a checkpoint");
+                    error!(
+                        should_never_happen = true,
+                        "Presign ID is None in a Presign session needing a checkpoint"
+                    );
 
                     vec![]
                 }
@@ -891,18 +891,23 @@ impl DWalletMPCService {
                 is_future_sign,
                 ..
             } => {
-                if let Some(dwallet_id) = dwallet_id && let Some(sign_id) = sign_id{
-                let tx = DWalletCheckpointMessageKind::RespondDWalletSign(SignOutput {
-                    signature: output,
-                    dwallet_id: dwallet_id.to_vec(),
-                    is_future_sign: *is_future_sign,
-                    sign_id: sign_id.to_vec(),
-                    rejected,
-                    session_sequence_number: session_request.session_sequence_number,
-                });
-                vec![tx]
+                if let Some(dwallet_id) = dwallet_id
+                    && let Some(sign_id) = sign_id
+                {
+                    let tx = DWalletCheckpointMessageKind::RespondDWalletSign(SignOutput {
+                        signature: output,
+                        dwallet_id: dwallet_id.to_vec(),
+                        is_future_sign: *is_future_sign,
+                        sign_id: sign_id.to_vec(),
+                        rejected,
+                        session_sequence_number: session_request.session_sequence_number,
+                    });
+                    vec![tx]
                 } else {
-                    error!(should_never_happen=true, "dWallet ID or Sign ID is None in a Sign session needing a checkpoint");
+                    error!(
+                        should_never_happen = true,
+                        "dWallet ID or Sign ID is None in a Sign session needing a checkpoint"
+                    );
 
                     vec![]
                 }

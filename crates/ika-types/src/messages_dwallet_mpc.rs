@@ -98,7 +98,7 @@ pub trait DWalletSessionEventTrait {
 pub enum SessionType {
     User,
     System,
-    InternalPresign
+    InternalPresign,
 }
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -137,7 +137,7 @@ impl SessionIdentifier {
                 b"INTERNAL",
                 &session_identifier_preimage,
             ]
-                .concat(),
+            .concat(),
         };
 
         let session_identifier = keccak256_digest(&session_type_unique_prefix);

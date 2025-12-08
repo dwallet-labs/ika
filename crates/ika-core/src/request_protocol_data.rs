@@ -249,6 +249,22 @@ pub fn dwallet_dkg_and_sign_protocol_data(
     })
 }
 
+pub fn internal_presign_protocol_data(
+    curve: DWalletCurve,
+    signature_algorithm: DWalletSignatureAlgorithm,
+    dwallet_network_encryption_key_id: ObjectID,
+) -> ProtocolData {
+    ProtocolData::Presign {
+        data: PresignData {
+            curve,
+            signature_algorithm,
+        },
+        presign_id: None,
+        dwallet_public_output: None,
+        dwallet_network_encryption_key_id,
+    }
+}
+
 pub fn presign_protocol_data(
     request_event_data: PresignRequestEvent,
 ) -> DwalletMPCResult<ProtocolData> {

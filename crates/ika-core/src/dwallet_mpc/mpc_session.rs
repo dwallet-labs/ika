@@ -425,10 +425,7 @@ impl DWalletMPCManager {
     ) -> Option<SessionStatus> {
         let session_identifier = request.session_identifier;
 
-        // Avoid instantiation of completed events by checking they belong to the current epoch.
-        // We only pull uncompleted events, so we skip the check for those,
-        // but pushed events might be completed.
-        if !request.pulled && request.epoch != self.epoch_id {
+        if !request.should_run_in_current_epoch(self.epoch_id) {
             warn!(
                 session_identifier=?session_identifier,
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),

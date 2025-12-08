@@ -91,7 +91,7 @@ pub(crate) struct DWalletMPCManager {
     // Different epochs will see repeating values of this variable,
     // but that is safe as they are synced within an epoch and
     // the session identifier is derived from the epoch as well.
-    next_internal_presign_sequence_number: u64
+    next_internal_presign_sequence_number: u64,
 }
 
 impl DWalletMPCManager {
@@ -178,7 +178,7 @@ impl DWalletMPCManager {
             decryption_key_reconfiguration_third_round_delay,
             schnorr_presign_second_round_delay,
             protocol_config,
-            next_internal_presign_sequence_number: 1
+            next_internal_presign_sequence_number: 1,
         })
     }
 
