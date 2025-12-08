@@ -99,6 +99,9 @@ impl DWalletMPCService {
         let decryption_key_reconfiguration_third_round_delay =
             protocol_config.decryption_key_reconfiguration_third_round_delay();
 
+        let schnorr_presign_second_round_delay =
+            protocol_config.schnorr_presign_second_round_delay();
+
         let root_seed = match node_config.root_seed_key_pair {
             None => {
                 error!("root_seed is not set in the node config, cannot start DWallet MPC service");
@@ -114,6 +117,7 @@ impl DWalletMPCService {
             root_seed,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
+            schnorr_presign_second_round_delay,
             dwallet_mpc_metrics.clone(),
             sui_data_receivers.clone(),
             protocol_config.clone(),
@@ -160,6 +164,7 @@ impl DWalletMPCService {
                 Arc::new(committee.clone()),
                 1,
                 seed,
+                0,
                 0,
                 0,
                 DWalletMPCMetrics::new(&Registry::new()),

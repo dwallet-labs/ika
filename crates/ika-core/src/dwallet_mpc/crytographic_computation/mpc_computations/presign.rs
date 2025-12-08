@@ -25,6 +25,7 @@ use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
+use tracing::info;
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
@@ -73,6 +74,7 @@ impl PresignAdvanceRequestByProtocol {
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
         consensus_round: u64,
+        schnorr_presign_second_round_delay: u64,
         serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match protocol {
@@ -82,6 +84,7 @@ impl PresignAdvanceRequestByProtocol {
                         party_id,
                         access_structure,
                         consensus_round,
+                        HashMap::new(),
                         &serialized_messages_by_consensus_round,
                     )?;
 
@@ -94,6 +97,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::from([(2, schnorr_presign_second_round_delay)]),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -106,6 +110,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::from([(2, schnorr_presign_second_round_delay)]),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -118,6 +123,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::from([(2, schnorr_presign_second_round_delay)]),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -129,6 +135,7 @@ impl PresignAdvanceRequestByProtocol {
                         party_id,
                         access_structure,
                         consensus_round,
+                        HashMap::new(),
                         &serialized_messages_by_consensus_round,
                     )?;
 
@@ -380,8 +387,19 @@ pub fn compute_presign<P: presign::Protocol>(
             malicious_parties,
             private_output,
         } => {
+            let presigns: Vec<P::Presign> = bcs::from_bytes(&public_output_value)?;
+            let presign = presigns.first().ok_or(DwalletMPCError::InternalError(
+                "at least one presign must be generated".to_string(),
+            ))?;
+
+            info!(
+                session_id = ?hex::encode(session_id.to_be_bytes()),
+                number_of_presigns = presigns.len(),
+                "generated multi-presigns",
+            );
+
             let public_output_value =
-                bcs::to_bytes(&VersionedPresignOutput::V2(public_output_value))?;
+                bcs::to_bytes(&VersionedPresignOutput::V2(bcs::to_bytes(&presign)?))?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,

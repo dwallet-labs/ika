@@ -66,6 +66,7 @@ impl ProtocolCryptographicData {
         public_input: PublicInput,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
+        schnorr_presign_second_round_delay: u64,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
         decryption_key_shares: &DwalletMPCNetworkKeys,
         _protocol_config: &ProtocolConfig,
@@ -128,6 +129,7 @@ impl ProtocolCryptographicData {
                     party_id,
                     access_structure,
                     consensus_round,
+                    schnorr_presign_second_round_delay,
                     serialized_messages_by_consensus_round,
                 )?;
 
@@ -902,13 +904,14 @@ fn try_ready_to_advance<P: mpc::Party + mpc::AsynchronouslyAdvanceable>(
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
     consensus_round: u64,
+    mpc_round_to_consensus_rounds_delay: HashMap<u64, u64>,
     serialized_messages_by_consensus_round: &HashMap<u64, HashMap<PartyID, Vec<u8>>>,
 ) -> DwalletMPCResult<Option<AdvanceRequest<<P>::Message>>> {
     let advance_request_result = mpc::guaranteed_output_delivery::Party::<P>::ready_to_advance(
         party_id,
         access_structure,
         consensus_round,
-        HashMap::new(),
+        mpc_round_to_consensus_rounds_delay,
         serialized_messages_by_consensus_round,
     )
     .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;

@@ -186,6 +186,7 @@ impl SignAdvanceRequestByProtocol {
                         party_id,
                         access_structure,
                         consensus_round,
+                        HashMap::new(),
                         &serialized_messages_by_consensus_round,
                     )?;
 
@@ -197,6 +198,7 @@ impl SignAdvanceRequestByProtocol {
                         party_id,
                         access_structure,
                         consensus_round,
+                        HashMap::new(),
                         &serialized_messages_by_consensus_round,
                     )?;
 
@@ -209,6 +211,7 @@ impl SignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::new(),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -220,6 +223,7 @@ impl SignAdvanceRequestByProtocol {
                         party_id,
                         access_structure,
                         consensus_round,
+                        HashMap::new(),
                         &serialized_messages_by_consensus_round,
                     )?;
 
@@ -231,6 +235,7 @@ impl SignAdvanceRequestByProtocol {
                         party_id,
                         access_structure,
                         consensus_round,
+                        HashMap::new(),
                         &serialized_messages_by_consensus_round,
                     )?;
 
@@ -258,6 +263,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::new(),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -270,6 +276,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::new(),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -282,6 +289,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::new(),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -294,6 +302,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::new(),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -306,6 +315,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::new(),
                     &serialized_messages_by_consensus_round,
                 )?;
 
