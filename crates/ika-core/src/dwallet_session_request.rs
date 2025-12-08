@@ -54,6 +54,11 @@ impl Ord for DWalletSessionRequest {
                 .session_sequence_number
                 .cmp(&other.session_sequence_number),
             (SessionType::User, SessionType::System) => Ordering::Greater,
+            (SessionType::InternalPresign, SessionType::InternalPresign) => self
+                .session_sequence_number
+                .cmp(&other.session_sequence_number),
+            (SessionType::InternalPresign, _) => Ordering::Greater,
+            (_, SessionType::InternalPresign) => Ordering::Less,
         }
     }
 }

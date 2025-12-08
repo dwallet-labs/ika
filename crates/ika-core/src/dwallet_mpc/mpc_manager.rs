@@ -85,6 +85,13 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) schnorr_presign_second_round_delay: u64,
     sui_data_receivers: SuiDataReceivers,
     pub(crate) protocol_config: ProtocolConfig,
+
+    // The sequence number of the next internal presign session.
+    // Starts from 1 in every epoch, and increases as they are spawned.
+    // Different epochs will see repeating values of this variable,
+    // but that is safe as they are synced within an epoch and
+    // the session identifier is derived from the epoch as well.
+    next_internal_presign_sequence_number: u64
 }
 
 impl DWalletMPCManager {
@@ -171,6 +178,7 @@ impl DWalletMPCManager {
             decryption_key_reconfiguration_third_round_delay,
             schnorr_presign_second_round_delay,
             protocol_config,
+            next_internal_presign_sequence_number: 1
         })
     }
 
@@ -317,7 +325,7 @@ impl DWalletMPCManager {
         &mut self,
         session_identifier: &SessionIdentifier,
         status: SessionStatus,
-        session_type: SessionComputationType,
+        session_computation_type: SessionComputationType,
     ) {
         info!(
             status=?status,
@@ -331,7 +339,7 @@ impl DWalletMPCManager {
             status,
             *session_identifier,
             self.party_id,
-            session_type,
+            session_computation_type,
         );
 
         info!(
@@ -373,7 +381,7 @@ impl DWalletMPCManager {
                     return None;
                 };
 
-                // Always advance system sessions, and only advance user session
+                // Always advance system and internal sessions, and only advance user session
                 // if they come before the last session to complete in the current epoch (at the current time).
                 let should_advance = match request.session_type {
                     SessionType::User => {
@@ -381,6 +389,7 @@ impl DWalletMPCManager {
                             <= self.last_session_to_complete_in_current_epoch
                     }
                     SessionType::System => true,
+                    SessionType::InternalPresign => true,
                 };
 
                 if should_advance {
