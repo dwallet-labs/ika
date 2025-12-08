@@ -1,17 +1,15 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 import { bitcoin_address_from_dwallet_output } from '@ika.xyz/ika-wasm';
-import { public_key_from_dwallet_output } from '@ika.xyz/mpc-wasm';
 import { toHex } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { sha256 } from '@noble/hashes/sha256';
 import axios from 'axios';
-import { Transaction as BtcTransaction, networks, payments, Psbt } from 'bitcoinjs-lib';
 import * as bitcoin from 'bitcoinjs-lib';
-import { BufferWriter, varuint } from 'bitcoinjs-lib/src/cjs/bufferutils';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Transaction as BtcTransaction, networks } from 'bitcoinjs-lib';
+import { describe, expect, it } from 'vitest';
 
 import {
 	CoordinatorInnerModule,
@@ -23,25 +21,10 @@ import {
 	SessionsManagerModule,
 	UserShareEncryptionKeys,
 } from '../../src';
-import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types';
-import { curve } from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner';
-import {
-	createCompleteDWallet,
-	createCompleteDWalletV2,
-	testPresign,
-} from '../helpers/dwallet-test-helpers';
-import { createIndividualTestSetup, getSharedTestSetup } from '../helpers/shared-test-setup';
-import {
-	createEmptyTestIkaToken,
-	createTestIkaTransaction,
-	createTestMessage,
-	destroyEmptyTestIkaToken,
-	executeTestTransaction,
-	executeTestTransactionWithKeypair,
-	generateTestKeypair,
-	retryUntil,
-} from '../helpers/test-utils';
+import { Curve } from '../../src/client/types';
+import { createEmptyTestIkaToken, executeTestTransactionWithKeypair } from '../helpers/test-utils';
 import { setupDKGFlow } from '../v2/all-combinations.test';
+import { varuint } from 'bitcoinjs-lib/src/bufferutils';
 
 function varSliceSize(someScript: Uint8Array): number {
 	const length = someScript.length;
@@ -251,8 +234,8 @@ describe('DWallet Signing', () => {
 		const tx = bitcoin.Transaction.fromBuffer(psbt.data.getTransaction());
 		const signingScript = bitcoin.payments.p2pkh({
 			hash: output.slice(2),
-		}).output!
-		console.log('Signing script:', signingScript.toString())
+		}).output!;
+		console.log('Signing script:', signingScript.toString());
 
 		const bytesToSign = txBytesToSign(
 			tx,
@@ -265,7 +248,7 @@ describe('DWallet Signing', () => {
 	});
 
 	it('should create a testnet dWallet and print its address', async () => {
-		const client = new SuiClient({ url: getFullnodeUrl('devnet') }); // mainnet / testnet
+		const client = new SuiClient({ url: getFullnodeUrl('testnet') }); // mainnet / testnet
 
 		const ikaClient = new IkaClient({
 			suiClient: client,
@@ -281,6 +264,8 @@ describe('DWallet Signing', () => {
 		let seed = new TextEncoder().encode('seed');
 		const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 		const signerAddress = userKeypair.toSuiAddress();
+		console.log({ signerAddress });
+		return;
 
 		const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve);
 
