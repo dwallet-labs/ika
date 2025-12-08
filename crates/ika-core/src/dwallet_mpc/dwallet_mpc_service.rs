@@ -377,6 +377,7 @@ impl DWalletMPCService {
             panic!("failed to get last consensus round from DB");
         };
 
+        // TODO: why is this while? last_consensus_round is never re-assigned
         while Some(last_consensus_round) > self.last_read_consensus_round {
             let mpc_messages = self
                 .epoch_store
@@ -477,6 +478,15 @@ impl DWalletMPCService {
                 );
 
                 panic!("consensus round must be in a ascending order");
+            }
+
+            // TODO: like this? also, this would cause crashing nodes to do this multiple times, how to fix?
+            let last_read_consensus_round = self.last_read_consensus_round.unwrap_or(0);
+            // TODO: it's kinda wierd not to do last_consensus_round now tbh, but special case for 0 too
+            for consensus_round in last_read_consensus_round..last_consensus_round {
+                // TODO: check protocol version here
+                self.dwallet_mpc_manager
+                    .instantiate_internal_presign_sessions(consensus_round);
             }
 
             // Let's start processing the MPC messages for the current round.
@@ -660,8 +670,6 @@ impl DWalletMPCService {
                             "malicious parties detected upon MPC session finalize",
                         );
 
-                        // TODO: we should now agree on this value, perhaps with a checkpoint, so that there would be a known point in time in which all validators mark these parties as malicious.
-
                         malicious_authorities
                     } else {
                         vec![]
@@ -669,7 +677,10 @@ impl DWalletMPCService {
 
                     match request.session_type {
                         // TODO: InternalSign
-                        SessionType::InternalPresign => {}
+                        SessionType::InternalPresign => {
+                            // TODO: create a message to be agreed on, including malicious parties, without the checkpoint.
+                            // TODO: take the output and place in the pool there, and account for malicious there.
+                        }
                         _ => {
                             let rejected = false;
 

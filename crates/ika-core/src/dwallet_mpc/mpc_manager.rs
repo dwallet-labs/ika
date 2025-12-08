@@ -354,40 +354,47 @@ impl DWalletMPCManager {
     /// synced with the consensus and thus with the other validators.
     pub(super) fn instantiate_internal_presign_sessions(&mut self, consensus_round: u64) {
         // TODO: do we want numbers here as consts in the code, or configrables?
-        if consensus_round.is_multiple_of(4) {
+        if consensus_round.is_multiple_of(40) {
             // TODO: check amount of presigns in the pool
 
             // TODO: put this in a func and call it for differnt session types & counts
 
             // TODO: decide how to get latest key
-            let dwallet_network_encryption_key_id = *self
+            if let [dwallet_network_encryption_key_id] = &self
                 .network_keys
                 .network_encryption_keys
                 .keys()
-                .next()
-                .unwrap();
-            let request = DWalletSessionRequest::new_internal_presign(
-                self.epoch_id,
-                consensus_round,
-                self.next_internal_presign_sequence_number,
-                // TODO: separate to func and take as parameter, loop on them
-                DWalletCurve::Curve25519,
-                DWalletSignatureAlgorithm::EdDSA,
-                dwallet_network_encryption_key_id,
-            );
+                .copied()
+                .collect_vec()[..]
+            {
+                let request = DWalletSessionRequest::new_internal_presign(
+                    self.epoch_id,
+                    consensus_round,
+                    self.next_internal_presign_sequence_number,
+                    // TODO: separate to func and take as parameter, loop on them
+                    DWalletCurve::Curve25519,
+                    DWalletSignatureAlgorithm::EdDSA,
+                    *dwallet_network_encryption_key_id,
+                );
 
-            let session_identifier = request.session_identifier;
-            let status = self.session_status_from_request(request, true);
+                let session_identifier = request.session_identifier;
+                let status = self.session_status_from_request(request, true);
 
-            let session_computation_type = SessionComputationType::MPC {
-                messages_by_consensus_round: HashMap::new(),
-            };
+                let session_computation_type = SessionComputationType::MPC {
+                    messages_by_consensus_round: HashMap::new(),
+                };
 
-            // TODO: log
+                info!(
+                    status=?status,
+                    consensus_round,
+                    ?session_identifier,
+                    "instantiating new internal presign session",
+                );
 
-            self.new_session(&session_identifier, status, session_computation_type);
+                self.new_session(&session_identifier, status, session_computation_type);
 
-            self.next_internal_presign_sequence_number += 1;
+                self.next_internal_presign_sequence_number += 1;
+            }
         }
     }
 
