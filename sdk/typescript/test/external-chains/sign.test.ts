@@ -6,10 +6,12 @@ import { toHex } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
+import { sha256 } from '@noble/hashes/sha256';
 import axios from 'axios';
-import { networks, payments, Psbt } from 'bitcoinjs-lib';
+import { Transaction as BtcTransaction, networks, payments, Psbt } from 'bitcoinjs-lib';
+import * as bitcoin from 'bitcoinjs-lib';
+import { BufferWriter, varuint } from 'bitcoinjs-lib/src/cjs/bufferutils';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import * as bitcoin from 'bitcoinjs-lib'
 
 import {
 	CoordinatorInnerModule,
@@ -41,54 +43,103 @@ import {
 } from '../helpers/test-utils';
 import { setupDKGFlow } from '../v2/all-combinations.test';
 
-/**
- * Enhanced test sign function that returns transaction results for validation
- */
-async function testSignWithResult(
-	ikaClient: any,
-	suiClient: any,
-	dWallet: any,
-	userShareEncryptionKeys: any,
-	presign: any,
-	encryptedUserSecretKeyShare: any,
-	message: Uint8Array,
-	hashScheme: Hash,
-	signatureAlgorithm: SignatureAlgorithm,
-	testName: string,
-) {
-	const transaction = new Transaction();
-	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction, userShareEncryptionKeys);
+function varSliceSize(someScript: Uint8Array): number {
+	const length = someScript.length;
 
-	const messageApproval = ikaTransaction.approveMessage({
-		dWalletCap: dWallet.dwallet_cap_id,
-		signatureAlgorithm,
-		hashScheme,
-		message,
-	});
+	return varuint.encodingLength(length) + length;
+}
 
-	const verifiedPresignCap = ikaTransaction.verifyPresignCap({
-		presign,
-	});
+function txBytesToSign(
+	tx: BtcTransaction,
+	inIndex: number,
+	prevOutScript: Uint8Array,
+	value: number,
+	hashType: number,
+): Buffer {
+	const ZERO: Buffer = Buffer.from(
+		'0000000000000000000000000000000000000000000000000000000000000000',
+		'hex',
+	);
 
-	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
+	let tbuffer: Buffer = Buffer.from([]);
+	let bufferWriter: BufferWriter;
 
-	await ikaTransaction.requestSign({
-		dWallet,
-		messageApproval,
-		verifiedPresignCap,
-		hashScheme,
-		presign,
-		encryptedUserSecretKeyShare,
-		message,
-		ikaCoin: emptyIKACoin,
-		suiCoin: transaction.gas,
-	});
+	let hashOutputs = ZERO;
+	let hashPrevious = ZERO;
+	let hashSequence = ZERO;
 
-	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
+	if (!(hashType & bitcoin.Transaction.SIGHASH_ANYONECANPAY)) {
+		tbuffer = Buffer.allocUnsafe(36 * tx.ins.length);
+		bufferWriter = new BufferWriter(tbuffer, 0);
 
-	const result = await executeTestTransaction(suiClient, transaction, testName);
+		tx.ins.forEach((txIn) => {
+			bufferWriter.writeSlice(txIn.hash);
+			bufferWriter.writeUInt32(txIn.index);
+		});
 
-	return result;
+		hashPrevious = Buffer.from(sha256(sha256(tbuffer)));
+	}
+
+	if (
+		!(hashType & bitcoin.Transaction.SIGHASH_ANYONECANPAY) &&
+		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_SINGLE &&
+		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_NONE
+	) {
+		tbuffer = Buffer.allocUnsafe(4 * tx.ins.length);
+		bufferWriter = new BufferWriter(tbuffer, 0);
+
+		tx.ins.forEach((txIn) => {
+			bufferWriter.writeUInt32(txIn.sequence);
+		});
+
+		hashSequence = Buffer.from(sha256(sha256(tbuffer)));
+	}
+
+	if (
+		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_SINGLE &&
+		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_NONE
+	) {
+		const txOutsSize = tx.outs.reduce((sum, output) => {
+			return sum + 8 + varSliceSize(output.script);
+		}, 0);
+
+		tbuffer = Buffer.allocUnsafe(txOutsSize);
+		bufferWriter = new BufferWriter(tbuffer, 0);
+
+		tx.outs.forEach((out) => {
+			bufferWriter.writeUInt64(out.value);
+			bufferWriter.writeVarSlice(out.script);
+		});
+
+		hashOutputs = Buffer.from(sha256(sha256(tbuffer)));
+	} else if ((hashType & 0x1f) === bitcoin.Transaction.SIGHASH_SINGLE && inIndex < tx.outs.length) {
+		const output = tx.outs[inIndex];
+
+		tbuffer = Buffer.allocUnsafe(8 + varSliceSize(output.script));
+		bufferWriter = new BufferWriter(tbuffer, 0);
+		bufferWriter.writeUInt64(output.value);
+		bufferWriter.writeVarSlice(output.script);
+
+		hashOutputs = Buffer.from(sha256(sha256(tbuffer)));
+	}
+
+	tbuffer = Buffer.allocUnsafe(156 + varSliceSize(prevOutScript));
+	bufferWriter = new BufferWriter(tbuffer, 0);
+
+	const input = tx.ins[inIndex];
+	bufferWriter.writeInt32(tx.version);
+	bufferWriter.writeSlice(hashPrevious);
+	bufferWriter.writeSlice(hashSequence);
+	bufferWriter.writeSlice(input.hash);
+	bufferWriter.writeUInt32(input.index);
+	bufferWriter.writeVarSlice(prevOutScript);
+	bufferWriter.writeUInt64(value);
+	bufferWriter.writeUInt32(input.sequence);
+	bufferWriter.writeSlice(hashOutputs);
+	bufferWriter.writeUInt32(tx.locktime);
+	bufferWriter.writeUInt32(hashType);
+
+	return tbuffer;
 }
 
 async function getUTXO(
@@ -161,7 +212,7 @@ describe('DWallet Signing', () => {
 		// Get the UTXO for the sender address.
 		const { utxo, txid, vout, satoshis } = await getUTXO(address);
 
-		const psbt = new bitcoin.Psbt({network: networks.testnet });
+		const psbt = new bitcoin.Psbt({ network: networks.testnet });
 
 		let output;
 
