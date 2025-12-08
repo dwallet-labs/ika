@@ -249,6 +249,19 @@ describe('DWallet Signing', () => {
 		}
 
 		const tx = bitcoin.Transaction.fromBuffer(psbt.data.getTransaction());
+		const signingScript = bitcoin.payments.p2pkh({
+			hash: output.slice(2),
+		}).output!
+		console.log('Signing script:', signingScript.toString())
+
+		const bytesToSign = txBytesToSign(
+			tx,
+			0,
+			signingScript,
+			satoshis,
+			bitcoin.Transaction.SIGHASH_ALL,
+		);
+		console.log('Raw transaction bytes to sign (hex):', bytesToSign.toString('hex'));
 	});
 
 	it('should create a testnet dWallet and print its address', async () => {
