@@ -42,7 +42,9 @@ use ika_types::message::{
     SignOutput,
 };
 use ika_types::messages_consensus::ConsensusTransaction;
-use ika_types::messages_dwallet_mpc::{SessionIdentifier, UserSecretKeyShareEventType};
+use ika_types::messages_dwallet_mpc::{
+    SessionIdentifier, SessionType, UserSecretKeyShareEventType,
+};
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
@@ -657,42 +659,64 @@ impl DWalletMPCService {
                                 ?malicious_authorities,
                             "malicious parties detected upon MPC session finalize",
                         );
+
+                        // TODO: we should now agree on this value, perhaps with a checkpoint, so that there would be a known point in time in which all validators mark these parties as malicious.
+
                         malicious_authorities
                     } else {
                         vec![]
                     };
 
-                    let rejected = false;
+                    match request.session_type {
+                        // TODO: InternalSign
+                        SessionType::InternalPresign => {}
+                        _ => {
+                            let rejected = false;
 
-                    let consensus_message = self.new_dwallet_mpc_output(
-                        session_identifier,
-                        &request,
-                        public_output_value,
-                        malicious_authorities,
-                        rejected,
-                    );
+                            let consensus_message = self.new_dwallet_mpc_output(
+                                session_identifier,
+                                &request,
+                                public_output_value,
+                                malicious_authorities,
+                                rejected,
+                            );
 
-                    if let Err(err) = consensus_adapter
-                        .submit_to_consensus(&[consensus_message])
-                        .await
-                    {
-                        error!(
-                            ?session_identifier,
-                            validator=?validator_name,
-                            error=?err,
-                            "failed to submit an MPC output message to consensus",
-                        );
+                            if let Err(err) = consensus_adapter
+                                .submit_to_consensus(&[consensus_message])
+                                .await
+                            {
+                                error!(
+                                    ?session_identifier,
+                                    validator=?validator_name,
+                                    error=?err,
+                                    "failed to submit an MPC output message to consensus",
+                                );
+                            }
+                        }
                     }
                 }
                 Err(err) => {
-                    self.submit_failed_session(
-                        session_identifier,
-                        &request,
-                        &validator_name.to_string(),
-                        party_id,
-                        err,
-                    )
-                    .await;
+                    match request.session_type {
+                        // TODO: InternalSign
+                        SessionType::InternalPresign => {
+                            error!(
+                                should_never_happen =? true,
+                                session_identifier=?session.session_identifier,
+                                ?err,
+                                "internal presign session failed",
+                            );
+                        }
+                        _ => {
+                            self.submit_failed_session(
+                                session_identifier,
+                                &request,
+                                &validator_name.to_string(),
+                                party_id,
+                                err,
+                            )
+                            .await;
+                        }
+                    }
                 }
             }
         }
