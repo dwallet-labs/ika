@@ -375,7 +375,7 @@ pub(crate) fn send_start_presign_event(
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID,
 ) {
-    let presign_id = ObjectID::random();
+    let presign_id = Some(ObjectID::random());
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {

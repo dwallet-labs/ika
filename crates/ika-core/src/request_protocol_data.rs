@@ -128,16 +128,15 @@ pub enum ProtocolData {
 
     Presign {
         data: PresignData,
-        dwallet_id: Option<ObjectID>,
-        presign_id: ObjectID,
+        presign_id: Option<ObjectID>,
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
         dwallet_network_encryption_key_id: ObjectID,
     },
 
     Sign {
         data: SignData,
-        dwallet_id: ObjectID,
-        sign_id: ObjectID,
+        dwallet_id: Option<ObjectID>,
+        sign_id: Option<ObjectID>,
         is_future_sign: bool,
         dwallet_network_encryption_key_id: ObjectID,
         dwallet_decentralized_public_output: SerializedWrappedMPCPublicOutput,
@@ -261,8 +260,7 @@ pub fn presign_protocol_data(
                 request_event_data.signature_algorithm,
             )?,
         },
-        dwallet_id: request_event_data.dwallet_id,
-        presign_id: request_event_data.presign_id,
+        presign_id: Some(request_event_data.presign_id),
         dwallet_public_output: request_event_data.dwallet_public_output,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
     })
@@ -282,8 +280,8 @@ pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCRes
                 request_event_data.hash_scheme,
             )?,
         },
-        dwallet_id: request_event_data.dwallet_id,
-        sign_id: request_event_data.sign_id,
+        dwallet_id: Some(request_event_data.dwallet_id),
+        sign_id: Some(request_event_data.sign_id),
         is_future_sign: request_event_data.is_future_sign,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
         dwallet_decentralized_public_output: request_event_data.dwallet_decentralized_public_output,
