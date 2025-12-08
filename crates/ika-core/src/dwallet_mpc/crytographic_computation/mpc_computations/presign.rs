@@ -74,6 +74,7 @@ impl PresignAdvanceRequestByProtocol {
         party_id: PartyID,
         access_structure: &WeightedThresholdAccessStructure,
         consensus_round: u64,
+        schnorr_presign_second_round_delay: u64,
         serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match protocol {
@@ -83,6 +84,7 @@ impl PresignAdvanceRequestByProtocol {
                         party_id,
                         access_structure,
                         consensus_round,
+                        HashMap::new(),
                         &serialized_messages_by_consensus_round,
                     )?;
 
@@ -95,6 +97,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::from([(2, schnorr_presign_second_round_delay)]),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -107,6 +110,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::from([(2, schnorr_presign_second_round_delay)]),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -119,6 +123,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
+                    HashMap::from([(2, schnorr_presign_second_round_delay)]),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -130,6 +135,7 @@ impl PresignAdvanceRequestByProtocol {
                         party_id,
                         access_structure,
                         consensus_round,
+                        HashMap::new(),
                         &serialized_messages_by_consensus_round,
                     )?;
 

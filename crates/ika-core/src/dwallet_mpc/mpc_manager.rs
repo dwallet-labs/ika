@@ -82,6 +82,7 @@ pub(crate) struct DWalletMPCManager {
 
     pub(crate) network_dkg_third_round_delay: u64,
     pub(crate) decryption_key_reconfiguration_third_round_delay: u64,
+    pub(crate) schnorr_presign_second_round_delay: u64,
     sui_data_receivers: SuiDataReceivers,
     pub(crate) protocol_config: ProtocolConfig,
 }
@@ -94,6 +95,7 @@ impl DWalletMPCManager {
         root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
+        schnorr_presign_second_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
         protocol_config: ProtocolConfig,
@@ -105,6 +107,7 @@ impl DWalletMPCManager {
             root_seed,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
+            schnorr_presign_second_round_delay,
             dwallet_mpc_metrics,
             sui_data_receivers,
             protocol_config,
@@ -123,6 +126,7 @@ impl DWalletMPCManager {
         root_seed: RootSeed,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
+        schnorr_presign_second_round_delay: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
         protocol_config: ProtocolConfig,
@@ -165,6 +169,7 @@ impl DWalletMPCManager {
             committee,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
+            schnorr_presign_second_round_delay,
             protocol_config,
         })
     }

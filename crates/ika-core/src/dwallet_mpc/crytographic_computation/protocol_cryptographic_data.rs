@@ -348,6 +348,7 @@ impl DWalletMPCManager {
                 public_input.clone(),
                 self.network_dkg_third_round_delay,
                 self.decryption_key_reconfiguration_third_round_delay,
+                self.schnorr_presign_second_round_delay,
                 self.network_keys
                     .validator_private_dec_key_data
                     .class_groups_decryption_key,
