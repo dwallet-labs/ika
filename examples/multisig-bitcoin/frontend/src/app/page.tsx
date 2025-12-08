@@ -1,7 +1,7 @@
 'use client';
 
 import { ConnectButton, useCurrentAccount } from '@mysten/dapp-kit';
-import { Menu, Wallet } from 'lucide-react';
+import { AlertTriangle, Menu, Wallet } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { BalanceDisplay } from '@/components/common/BalanceDisplay';
@@ -9,6 +9,15 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { CreateMultisigModal } from '@/components/modals/CreateMultisigModal';
 import { MultisigDetailsView } from '@/components/multisig/MultisigDetailsView';
 import { AppSidebar } from '@/components/sidebar/AppSidebar';
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import {
 	Sheet,
@@ -35,6 +44,7 @@ export default function Dashboard() {
 	const { selectedMultisig, selectMultisig, selectedMultisigId } = useMultisigContext();
 	const [createMultisigOpen, setCreateMultisigOpen] = useState(false);
 	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+	const [warningOpen, setWarningOpen] = useState(true);
 	const { ikaPackageId } = useIds();
 	const isMobile = useIsMobile();
 
@@ -305,6 +315,35 @@ export default function Dashboard() {
 
 	return (
 		<div className="flex h-screen bg-background overflow-hidden">
+			{/* Warning Dialog */}
+			<AlertDialog open={warningOpen} onOpenChange={setWarningOpen}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<div className="flex items-center gap-2 text-destructive">
+							<AlertTriangle className="h-5 w-5" />
+							<AlertDialogTitle>⚠️ Testnet Only - Developer Warning</AlertDialogTitle>
+						</div>
+						<AlertDialogDescription className="text-left space-y-2 pt-2">
+							<p className="font-semibold text-foreground">
+								This Bitcoin multisig demo is provided for developer testing and educational
+								purposes only and must be used on Bitcoin testnet only (not mainnet).
+							</p>
+							<p>
+								It has not been audited and may contain bugs or unexpected behavior. Do not use it
+								with real funds or production wallets. Use only test keys and disposable test
+								amounts.
+							</p>
+							<p className="font-semibold text-destructive">You assume all risk by proceeding.</p>
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogAction onClick={() => setWarningOpen(false)}>
+							I Understand - Proceed with Testnet Only
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+
 			{/* Desktop Sidebar */}
 			<div className="hidden md:block w-80 border-r shrink-0">
 				<AppSidebar onCreateNew={() => setCreateMultisigOpen(true)} />
