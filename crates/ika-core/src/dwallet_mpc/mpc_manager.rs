@@ -7,6 +7,7 @@ use crate::dwallet_mpc::crytographic_computation::{
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_session::{
     DWalletMPCSessionOutput, DWalletSession, SessionComputationType, SessionStatus,
+    session_input_from_request,
 };
 use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
@@ -17,6 +18,7 @@ use crate::dwallet_mpc::{
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::{SuiDataReceivers, debug_variable_chunks};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
@@ -317,6 +319,76 @@ impl DWalletMPCManager {
         };
 
         session.add_message(consensus_round, sender_party_id, message);
+    }
+
+    pub(super) fn session_status_from_request(
+        &self,
+        request: DWalletSessionRequest,
+        is_internal: bool,
+    ) -> SessionStatus {
+        match session_input_from_request(
+            &request,
+            &self.access_structure,
+            &self.committee,
+            &self.network_keys,
+            self.next_active_committee.clone(),
+            self.validators_class_groups_public_keys_and_proofs.clone(),
+        ) {
+            Ok((public_input, private_input)) => SessionStatus::Active {
+                public_input,
+                private_input,
+                request,
+            },
+            Err(e) => {
+                if is_internal {
+                    error!(                        should_never_happen =? true, error=?e, ?request, "create internal session input from dWallet request with error");
+                } else {
+                    error!(error=?e, ?request, "create session input from dWallet request with error");
+                }
+                SessionStatus::Failed
+            }
+        }
+    }
+
+    /// Instantiates internal presign sessions based on predefined logic that is
+    /// synced with the consensus and thus with the other validators.
+    pub(super) fn instantiate_internal_presign_sessions(&mut self, consensus_round: u64) {
+        // TODO: do we want numbers here as consts in the code, or configrables?
+        if consensus_round.is_multiple_of(4) {
+            // TODO: check amount of presigns in the pool
+
+            // TODO: put this in a func and call it for differnt session types & counts
+
+            // TODO: decide how to get latest key
+            let dwallet_network_encryption_key_id = *self
+                .network_keys
+                .network_encryption_keys
+                .keys()
+                .next()
+                .unwrap();
+            let request = DWalletSessionRequest::new_internal_presign(
+                self.epoch_id,
+                consensus_round,
+                self.next_internal_presign_sequence_number,
+                // TODO: separate to func and take as parameter, loop on them
+                DWalletCurve::Curve25519,
+                DWalletSignatureAlgorithm::EdDSA,
+                dwallet_network_encryption_key_id,
+            );
+
+            let session_identifier = request.session_identifier;
+            let status = self.session_status_from_request(request, true);
+
+            let session_computation_type = SessionComputationType::MPC {
+                messages_by_consensus_round: HashMap::new(),
+            };
+
+            // TODO: log
+
+            self.new_session(&session_identifier, status, session_computation_type);
+
+            self.next_internal_presign_sequence_number += 1;
+        }
     }
 
     /// Creates a new session with SID `session_identifier`,

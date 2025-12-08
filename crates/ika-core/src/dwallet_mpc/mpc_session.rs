@@ -500,24 +500,7 @@ impl DWalletMPCManager {
             return None;
         }
 
-        let status = match session_input_from_request(
-            &request,
-            &self.access_structure,
-            &self.committee,
-            &self.network_keys,
-            self.next_active_committee.clone(),
-            self.validators_class_groups_public_keys_and_proofs.clone(),
-        ) {
-            Ok((public_input, private_input)) => SessionStatus::Active {
-                public_input,
-                private_input,
-                request: request.clone(),
-            },
-            Err(e) => {
-                error!(error=?e, ?request, "create session input from dWallet request with error");
-                SessionStatus::Failed
-            }
-        };
+        let status = self.session_status_from_request(request.clone(), false);
 
         self.dwallet_mpc_metrics
             .add_received_request_start(&(&request.protocol_data).into());

@@ -702,7 +702,7 @@ impl DWalletMPCService {
                             error!(
                                 should_never_happen =? true,
                                 session_identifier=?session.session_identifier,
-                                ?err,
+                                error=?err,
                                 "internal presign session failed",
                             );
                         }
