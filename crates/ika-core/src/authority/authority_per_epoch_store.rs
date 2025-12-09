@@ -941,6 +941,22 @@ impl AuthorityPerEpochStore {
                 }
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::DWalletInternalMPCOutput(output),
+                ..
+            }) => {
+                // When sending an MPC output, the validator also includes its public key.
+                // Here, we verify that the public key used to sign this transaction matches
+                // the provided public key.
+                // This public key is later used to identify the authority that sent the MPC message.
+                if transaction.sender_authority() != output.authority {
+                    warn!(
+                        "DWalletInternalMPCOutput authority {} does not match its author from consensus {}",
+                        output.authority, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::DWalletMPCMessage(message),
                 ..
             }) => {
@@ -1341,6 +1357,10 @@ impl AuthorityPerEpochStore {
         match &transaction {
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::DWalletMPCOutput(..),
+                ..
+            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::DWalletInternalMPCOutput(..),
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {

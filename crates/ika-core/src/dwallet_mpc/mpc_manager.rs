@@ -363,7 +363,12 @@ impl DWalletMPCManager {
             // TODO: decide how to get first key - but that's outside? we want the checkpoint separately for the first
             // TODO: make sure this is correct still
 
-            if let Some((dwallet_network_encryption_key_id, _)) = self.network_keys.network_encryption_keys.iter().min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch)) {
+            if let Some((dwallet_network_encryption_key_id, _)) = self
+                .network_keys
+                .network_encryption_keys
+                .iter()
+                .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
+            {
                 let request = DWalletSessionRequest::new_internal_presign(
                     self.epoch_id,
                     consensus_round,

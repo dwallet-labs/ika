@@ -59,24 +59,25 @@ pub struct DWalletMPCOutput {
     pub authority: AuthorityName,
     pub session_identifier: SessionIdentifier,
     /// The final value of the MPC session.
+    // TODO: why is this a vec, and why not have a vec in `DWalletMPCInternalOutput`?
     pub output: Vec<DWalletCheckpointMessageKind>,
     pub malicious_authorities: Vec<AuthorityName>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct DWalletMPCOutputV2 {
+pub struct DWalletInternalMPCOutput {
     /// The authority that sent the output.
     pub authority: AuthorityName,
     pub session_identifier: SessionIdentifier,
     /// The final value of the MPC session.
-    pub output: DWalletMPCOutputOptions,
+    pub output: DWalletInternalMPCOutputKind,
     pub malicious_authorities: Vec<AuthorityName>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-enum DWalletMPCOutputOptions {
-    Checkpoint(Vec<DWalletCheckpointMessageKind>),
-    InternalPresign()//todo
+#[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Debug, Serialize, Deserialize)]
+pub enum DWalletInternalMPCOutputKind {
+    InternalPresign(Vec<u8>),
+    InternalSign(Vec<u8>),
 }
 
 impl DWalletMPCOutput {

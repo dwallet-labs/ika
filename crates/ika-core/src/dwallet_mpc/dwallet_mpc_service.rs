@@ -43,7 +43,7 @@ use ika_types::message::{
 };
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
-    SessionIdentifier, SessionType, UserSecretKeyShareEventType,
+    DWalletInternalMPCOutputKind, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -811,18 +811,28 @@ impl DWalletMPCService {
         malicious_authorities: Vec<AuthorityName>,
         rejected: bool,
     ) -> ConsensusTransaction {
-        let output = Self::build_dwallet_checkpoint_message_kinds_from_output(
-            &session_identifier,
-            session_request,
-            output,
-            rejected,
-        );
-        ConsensusTransaction::new_dwallet_mpc_output(
-            self.name,
-            session_identifier,
-            output,
-            malicious_authorities,
-        )
+        match session_request.session_type {
+            SessionType::InternalPresign => ConsensusTransaction::new_dwallet_internal_mpc_output(
+                self.name,
+                session_identifier,
+                DWalletInternalMPCOutputKind::InternalPresign(output),
+                malicious_authorities,
+            ),
+            SessionType::User | SessionType::System => {
+                let output = Self::build_dwallet_checkpoint_message_kinds_from_output(
+                    &session_identifier,
+                    session_request,
+                    output,
+                    rejected,
+                );
+                ConsensusTransaction::new_dwallet_mpc_output(
+                    self.name,
+                    session_identifier,
+                    output,
+                    malicious_authorities,
+                )
+            }
+        }
     }
 
     fn build_dwallet_checkpoint_message_kinds_from_output(
