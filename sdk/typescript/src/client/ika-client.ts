@@ -700,7 +700,7 @@ export class IkaClient {
 		const response = await this.client.getOwnedObjects({
 			owner: address,
 			filter: {
-				StructType: `${this.ikaConfig.packages.ikaDwallet2pcMpcPackage}::coordinator_inner::DWalletCap`,
+				StructType: `${this.ikaConfig.packages.ikaDwallet2pcMpcOriginalPackage}::coordinator_inner::DWalletCap`,
 			},
 			options: {
 				showBcs: true,
