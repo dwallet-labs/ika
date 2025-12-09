@@ -251,7 +251,7 @@ describe('DWallet Signing', () => {
 		psbt.addOutput({
 			address: recipientAddress,
 			// @ts-ignore
-			value: amount,
+			value: BigInt(amount),
 		});
 
 		// Calculate change and add change output if necessary,
