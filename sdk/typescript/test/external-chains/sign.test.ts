@@ -24,7 +24,7 @@ import {
 import { Curve } from '../../src/client/types';
 import { createEmptyTestIkaToken, executeTestTransactionWithKeypair } from '../helpers/test-utils';
 import { setupDKGFlow } from '../v2/all-combinations.test';
-import { varuint } from 'bitcoinjs-lib/src/bufferutils';
+import { varuint, BufferWriter } from 'bitcoinjs-lib/src/bufferutils';
 
 function varSliceSize(someScript: Uint8Array): number {
 	const length = someScript.length;
