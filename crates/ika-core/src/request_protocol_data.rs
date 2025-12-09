@@ -128,6 +128,7 @@ pub enum ProtocolData {
 
     Presign {
         data: PresignData,
+        dwallet_id: Option<ObjectID>,
         presign_id: Option<ObjectID>,
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
         dwallet_network_encryption_key_id: ObjectID,
@@ -259,6 +260,7 @@ pub fn internal_presign_protocol_data(
             curve,
             signature_algorithm,
         },
+        dwallet_id: None,
         presign_id: None,
         dwallet_public_output: None,
         dwallet_network_encryption_key_id,
@@ -276,6 +278,7 @@ pub fn presign_protocol_data(
                 request_event_data.signature_algorithm,
             )?,
         },
+        dwallet_id: request_event_data.dwallet_id,
         presign_id: Some(request_event_data.presign_id),
         dwallet_public_output: request_event_data.dwallet_public_output,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,

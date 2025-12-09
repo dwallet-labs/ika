@@ -897,12 +897,17 @@ impl DWalletMPCService {
                 };
                 vec![tx]
             }
-            ProtocolData::Presign { presign_id, .. } => {
+            ProtocolData::Presign {
+                dwallet_id,
+                presign_id,
+                ..
+            } => {
+                // TODO: maybe instead, we should just add a new protocol for internal sessions, so we can handle it differently here.
+                // and honestly we don't need this even for the new protocols
                 if let Some(presign_id) = presign_id {
                     let tx = DWalletCheckpointMessageKind::RespondDWalletPresign(PresignOutput {
                         presign: output,
-                        // TODO: revert this, we still have it for imported wallet
-                        dwallet_id: None,
+                        dwallet_id: dwallet_id.map(|id| id.to_vec()),
                         presign_id: presign_id.to_vec(),
                         rejected,
                         session_sequence_number: session_request.session_sequence_number,
