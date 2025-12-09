@@ -282,6 +282,9 @@ describe('DWallet Signing', () => {
 			bitcoin.Transaction.SIGHASH_ALL,
 		);
 		console.log('Raw transaction bytes to sign (hex):', bytesToSign.toString('hex'));
+		const hashToSign = sha256(bytesToSign);
+		const signature = keyPair.sign(hashToSign);
+		console.log('Signature (hex):', Buffer.from(signature).toString('hex'));
 	});
 
 	it('should create a testnet dWallet and print its address', async () => {
