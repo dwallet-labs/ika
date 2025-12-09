@@ -192,7 +192,7 @@ describe('DWallet Signing', () => {
 	it("should generate a bitcoin pubkey and address from a fixed privkey", () => {
 		// 32-byte fixed private key (test-only). Choose any constant you like.
 		const privKeyHex =
-			"0000000000000000000000000000000000000000000000000000000000000001";
+			"da889368578dc91e6cb152f1dfb46808ab0f8cde6124b8c4de21975d5342f0c8";
 		const privKey = Buffer.from(privKeyHex, "hex");
 
 		const keyPair = ECPair.fromPrivateKey(privKey, { network: networks.testnet });
