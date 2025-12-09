@@ -323,7 +323,7 @@ describe('DWallet Signing', () => {
 		tx.setWitness(0, witness);
 
 		try {
-			const response = await axios.post(broadcastUrl, txHex);
+			const response = await axios.post(broadcastUrl, tx.toHex());
 			console.log('Transaction Broadcast:', response.data);
 		} catch (error) {
 			console.error('Error broadcasting transaction:', error);
