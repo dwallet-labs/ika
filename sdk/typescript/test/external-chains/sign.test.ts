@@ -157,6 +157,10 @@ function fromBase64<T>(encoded: string): T {
 	return JSON.parse(json) as T;
 }
 
+import ECPairFactory from "ecpair";
+import * as ecc from "tiny-secp256k1";
+const ECPair = ECPairFactory(ecc);
+
 describe('DWallet Signing', () => {
 	it('should create a DWallet and print its address', async () => {
 		const testName = 'dwallet-sign-test';
@@ -183,6 +187,25 @@ describe('DWallet Signing', () => {
 		});
 
 		return;
+	});
+
+	it("should generate a bitcoin pubkey and address from a fixed privkey", () => {
+		// 32-byte fixed private key (test-only). Choose any constant you like.
+		const privKeyHex =
+			"0000000000000000000000000000000000000000000000000000000000000001";
+		const privKey = Buffer.from(privKeyHex, "hex");
+
+		const keyPair = ECPair.fromPrivateKey(privKey, { network: networks.testnet });
+
+		const { address } = bitcoin.payments.p2wpkh({
+			pubkey: keyPair.publicKey,
+			network: networks.testnet,
+		});
+
+		expect(address).toBeDefined();
+
+		console.log("pubkey:", keyPair.publicKey.toString());
+		console.log("address:", address);
 	});
 
 	it('should create a raw tx to send bitcoin from given address A to given address B, output the raw tx', async () => {

@@ -81,6 +81,8 @@
 		"@types/bitcoinjs-lib": "^5.0.4",
 		"axios": "^1.13.2",
 		"bitcoinjs-lib": "^7.0.0",
-		"js-yaml": "^4.1.0"
+		"ecpair": "^3.0.0",
+		"js-yaml": "^4.1.0",
+		"tiny-secp256k1": "^2.2.4"
 	}
 }
