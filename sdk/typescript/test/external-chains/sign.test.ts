@@ -1,7 +1,6 @@
+;
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
-import * as bscript from 'bitcoinjs-lib/src/script'
-
 import { bitcoin_address_from_dwallet_output } from '@ika.xyz/ika-wasm';
 import { toHex } from '@mysten/bcs';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
@@ -12,23 +11,18 @@ import axios from 'axios';
 import * as bitcoin from 'bitcoinjs-lib';
 import { Transaction as BtcTransaction, networks } from 'bitcoinjs-lib';
 import { BufferWriter, varuint } from 'bitcoinjs-lib/src/bufferutils';
+import * as bscript from 'bitcoinjs-lib/src/script';
 import ECPairFactory from 'ecpair';
 import * as ecc from 'tiny-secp256k1';
 import { describe, expect, it } from 'vitest';
 
-import {
-	CoordinatorInnerModule,
-	createRandomSessionIdentifier,
-	getNetworkConfig,
-	IkaClient,
-	IkaTransaction,
-	prepareDKGAsync,
-	SessionsManagerModule,
-	UserShareEncryptionKeys,
-} from '../../src';
+
+
+import { CoordinatorInnerModule, createRandomSessionIdentifier, getNetworkConfig, IkaClient, IkaTransaction, prepareDKGAsync, SessionsManagerModule, UserShareEncryptionKeys } from '../../src';
 import { Curve } from '../../src/client/types';
 import { createEmptyTestIkaToken, executeTestTransactionWithKeypair } from '../helpers/test-utils';
 import { setupDKGFlow } from '../v2/all-combinations.test';
+
 
 function varSliceSize(someScript: Uint8Array): number {
 	const length = someScript.length;
@@ -163,6 +157,13 @@ function fromBase64<T>(encoded: string): T {
 
 const ECPair = ECPairFactory(ecc);
 
+function createDeterministicBTCKeypair() {
+	const privKeyHex = 'da889368578dc91e6cb152f1dfb46808ab0f8cde6124b8c4de21975d5342f0c8';
+	const privKey = Buffer.from(privKeyHex, 'hex');
+	const keyPair = ECPair.fromPrivateKey(privKey, { network: networks.testnet });
+	return keyPair;
+}
+
 describe('DWallet Signing', () => {
 	it('should create a DWallet and print its address', async () => {
 		const testName = 'dwallet-sign-test';
@@ -210,18 +211,12 @@ describe('DWallet Signing', () => {
 	});
 
 	it('should create a raw tx to send bitcoin from given address A to given address B, output the raw tx', async () => {
-		const privKeyHex = 'da889368578dc91e6cb152f1dfb46808ab0f8cde6124b8c4de21975d5342f0c8';
-		const privKey = Buffer.from(privKeyHex, 'hex');
-
-		const keyPair = ECPair.fromPrivateKey(privKey, { network: networks.testnet });
+		const keyPair = createDeterministicBTCKeypair();
 
 		const { address } = bitcoin.payments.p2wpkh({
 			pubkey: keyPair.publicKey,
 			network: networks.testnet,
 		});
-
-		console.log('pubkey:', keyPair.publicKey.toString());
-		console.log('address:', address);
 		const recipientAddress = 'tb1q0snqvzf2wr3290wq5elgmzfq8jektkrgl3ang0';
 
 		// Put any number you want to send in Satoshi.
@@ -242,7 +237,7 @@ describe('DWallet Signing', () => {
 			hash: txid,
 			index: vout,
 			witnessUtxo: {
-				script: Uint8Array.from(Object.values(output) as number[]),
+				script: output,
 				value: BigInt(satoshis),
 			},
 		});
@@ -268,7 +263,10 @@ describe('DWallet Signing', () => {
 			});
 		}
 
-		console.log('Transaction buffer (hex):', Buffer.from(psbt.data.getTransaction()).toString('hex'));
+		console.log(
+			'Transaction buffer (hex):',
+			Buffer.from(psbt.data.getTransaction()).toString('hex'),
+		);
 
 		const tx = bitcoin.Transaction.fromBuffer(psbt.data.getTransaction());
 		const signingScript = bitcoin.payments.p2pkh({
@@ -293,7 +291,8 @@ describe('DWallet Signing', () => {
 	});
 
 	it('should sign a raw hash and submit it to the bitcoin chain', async () => {
-		const txHex = '0200000001001d1ceeeaf170eb960ac13451d0974a6ab39e8fb905e5c19278be45aeae7be20100000000ffffffff02f4010000000000001600147c2606092a70e2a2bdc0a67e8d89203cb365d868880a020000000000160014ca951aace9377759dea4a8c9b8e6cecd6740a54900000000';
+		const txHex =
+			'0200000001001d1ceeeaf170eb960ac13451d0974a6ab39e8fb905e5c19278be45aeae7be20100000000ffffffff02f4010000000000001600147c2606092a70e2a2bdc0a67e8d89203cb365d868880a020000000000160014ca951aace9377759dea4a8c9b8e6cecd6740a54900000000';
 		const tx = bitcoin.Transaction.fromHex(txHex);
 		let bytesToSignHex = '6d837e5e6c3a7ea9827e7a47a699890bd258dab8512657e9804499d02e3e441c';
 		const bytesToSign = Buffer.from(bytesToSignHex, 'hex');
@@ -310,7 +309,6 @@ describe('DWallet Signing', () => {
 			pubkey: keyPair.publicKey,
 			network: networks.testnet,
 		}).output!;
-
 
 		// To put the signature in the transaction, we get the calculated witness and set it as the input witness.
 		const witness = bitcoin.payments.p2wpkh({
