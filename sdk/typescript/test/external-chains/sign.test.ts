@@ -293,7 +293,7 @@ describe('DWallet Signing', () => {
 	});
 
 	it('should sign a raw hash and submit it to the bitcoin chain', async () => {
-		const txHex = '';
+		const txHex = '0200000001001d1ceeeaf170eb960ac13451d0974a6ab39e8fb905e5c19278be45aeae7be20100000000ffffffff02f4010000000000001600147c2606092a70e2a2bdc0a67e8d89203cb365d868880a020000000000160014ca951aace9377759dea4a8c9b8e6cecd6740a54900000000';
 		const tx = bitcoin.Transaction.fromHex(txHex);
 		let bytesToSignHex = '6d837e5e6c3a7ea9827e7a47a699890bd258dab8512657e9804499d02e3e441c';
 		const bytesToSign = Buffer.from(bytesToSignHex, 'hex');
