@@ -242,9 +242,8 @@ describe('DWallet Signing', () => {
 			hash: txid,
 			index: vout,
 			witnessUtxo: {
-				script: output,
-				// @ts-ignore
-				value: satoshis,
+				script: Uint8Array.from(Object.values(output) as number[]),
+				value: BigInt(satoshis),
 			},
 		});
 
