@@ -317,6 +317,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
             } else {
                 instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
                     epoch,
+                    key_data.dkg_at_epoch,
                     &access_structure,
                     &key_data.network_dkg_public_output,
                 )
@@ -324,6 +325,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
         } else {
             instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output(
                 epoch,
+                key_data.dkg_at_epoch,
                 &access_structure,
                 &key_data.current_reconfiguration_public_output,
                 &key_data.network_dkg_public_output,
@@ -342,6 +344,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
 
 fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
     epoch: u64,
+    dkg_at_epoch: u64,
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
@@ -389,6 +392,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
 
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,
+                dkg_at_epoch,
                 state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
                 latest_network_reconfiguration_public_output: None,
                 network_dkg_output,

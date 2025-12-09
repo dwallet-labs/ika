@@ -377,7 +377,6 @@ impl DWalletMPCService {
             panic!("failed to get last consensus round from DB");
         };
 
-        // TODO: why is this while? last_consensus_round is never re-assigned
         while Some(last_consensus_round) > self.last_read_consensus_round {
             let mpc_messages = self
                 .epoch_store
@@ -480,14 +479,9 @@ impl DWalletMPCService {
                 panic!("consensus round must be in a ascending order");
             }
 
-            // TODO: like this? also, this would cause crashing nodes to do this multiple times, how to fix?
-            let last_read_consensus_round = self.last_read_consensus_round.unwrap_or(0);
-            // TODO: it's kinda wierd not to do last_consensus_round now tbh, but special case for 0 too
-            for consensus_round in last_read_consensus_round..last_consensus_round {
-                // TODO: check protocol version here
-                self.dwallet_mpc_manager
-                    .instantiate_internal_presign_sessions(consensus_round);
-            }
+            // TODO: check protocol version here
+            self.dwallet_mpc_manager
+                .instantiate_internal_presign_sessions(consensus_round);
 
             // Let's start processing the MPC messages for the current round.
             self.dwallet_mpc_manager
@@ -516,6 +510,8 @@ impl DWalletMPCService {
                         "End of publish reached, no more dwallet checkpoints will be processed for this epoch"
                     );
                 }
+
+                // TODO: here is for old protocol version, new one needs sign here
                 if !checkpoint_messages.is_empty() {
                     let pending_checkpoint =
                         PendingDWalletCheckpoint::V1(PendingDWalletCheckpointV1 {
@@ -675,6 +671,7 @@ impl DWalletMPCService {
                         vec![]
                     };
 
+                    // TODO: move this match to where the checkpoint is created
                     match request.session_type {
                         // TODO: InternalSign
                         SessionType::InternalPresign => {
@@ -904,6 +901,7 @@ impl DWalletMPCService {
                 if let Some(presign_id) = presign_id {
                     let tx = DWalletCheckpointMessageKind::RespondDWalletPresign(PresignOutput {
                         presign: output,
+                        // TODO: revert this, we still have it for imported wallet
                         dwallet_id: None,
                         presign_id: presign_id.to_vec(),
                         rejected,

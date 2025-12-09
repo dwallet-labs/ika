@@ -255,6 +255,7 @@ fn extract_encryption_keys_from_committee(
 
 pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output(
     epoch: u64,
+    dkg_at_epoch: u64,
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_dkg_public_output: &SerializedWrappedMPCPublicOutput,
@@ -300,6 +301,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
 
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,
+                dkg_at_epoch,
                 state: NetworkDecryptionKeyPublicOutputType::Reconfiguration,
                 latest_network_reconfiguration_public_output: Some(mpc_public_output),
                 secp256k1_decryption_key_share_public_parameters,

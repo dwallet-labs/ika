@@ -354,19 +354,16 @@ impl DWalletMPCManager {
     /// synced with the consensus and thus with the other validators.
     pub(super) fn instantiate_internal_presign_sessions(&mut self, consensus_round: u64) {
         // TODO: do we want numbers here as consts in the code, or configrables?
+        // TODO: don't use consensus round for this, instead count the consensus round seen or something, as they might not be sequential
         if consensus_round.is_multiple_of(40) {
             // TODO: check amount of presigns in the pool
 
-            // TODO: put this in a func and call it for differnt session types & counts
+            // TODO: put this in a func and call it for different session types & counts
 
-            // TODO: decide how to get latest key
-            if let [dwallet_network_encryption_key_id] = &self
-                .network_keys
-                .network_encryption_keys
-                .keys()
-                .copied()
-                .collect_vec()[..]
-            {
+            // TODO: decide how to get first key - but that's outside? we want the checkpoint separately for the first
+            // TODO: make sure this is correct still
+
+            if let Some((dwallet_network_encryption_key_id, _)) = self.network_keys.network_encryption_keys.iter().min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch)) {
                 let request = DWalletSessionRequest::new_internal_presign(
                     self.epoch_id,
                     consensus_round,
@@ -393,6 +390,7 @@ impl DWalletMPCManager {
 
                 self.new_session(&session_identifier, status, session_computation_type);
 
+                // TODO: if we don't want to create the sessions here, than we need to update this value other way
                 self.next_internal_presign_sequence_number += 1;
             }
         }

@@ -63,6 +63,22 @@ pub struct DWalletMPCOutput {
     pub malicious_authorities: Vec<AuthorityName>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DWalletMPCOutputV2 {
+    /// The authority that sent the output.
+    pub authority: AuthorityName,
+    pub session_identifier: SessionIdentifier,
+    /// The final value of the MPC session.
+    pub output: DWalletMPCOutputOptions,
+    pub malicious_authorities: Vec<AuthorityName>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+enum DWalletMPCOutputOptions {
+    Checkpoint(Vec<DWalletCheckpointMessageKind>),
+    InternalPresign()//todo
+}
+
 impl DWalletMPCOutput {
     pub fn rejected(&self) -> Option<bool> {
         if let [output] = &self.output[..] {
@@ -735,6 +751,7 @@ pub struct DWalletNetworkEncryptionKey {
 pub struct DWalletNetworkEncryptionKeyData {
     pub id: ObjectID,
     pub current_epoch: u64,
+    pub dkg_at_epoch: u64,
     pub current_reconfiguration_public_output: Vec<u8>,
     pub network_dkg_public_output: Vec<u8>,
     pub state: DWalletNetworkEncryptionKeyState,

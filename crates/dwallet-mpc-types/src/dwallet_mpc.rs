@@ -99,6 +99,7 @@ pub type DKGDecentralizedPartyVersionedOutputSecp256r1 = DKGDecentralizedPartyVe
 pub struct NetworkEncryptionKeyPublicData {
     /// The epoch of the last version update.
     pub epoch: u64,
+    pub dkg_at_epoch: u64,
 
     pub state: NetworkDecryptionKeyPublicOutputType,
     /// The public output of the `latest` decryption key update (Reconfiguration).
