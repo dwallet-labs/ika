@@ -19,9 +19,7 @@ use crate::request_protocol_data::{
 };
 use class_groups::SecretKeyShareSizedInteger;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
-use dwallet_mpc_types::dwallet_mpc::{
-    ReconfigurationParty, ReconfigurationPartyBackwardCompatible,
-};
+use dwallet_mpc_types::dwallet_mpc::ReconfigurationParty;
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
@@ -70,13 +68,6 @@ pub(crate) enum ProtocolCryptographicData {
         advance_request:
             AdvanceRequest<<twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::Message>,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
-    },
-    NetworkEncryptionKeyReconfigurationBackwardCompatible {
-        data: NetworkEncryptionKeyReconfigurationData,
-        public_input: <ReconfigurationPartyBackwardCompatible as mpc::Party>::PublicInput,
-        advance_request:
-            AdvanceRequest<<ReconfigurationPartyBackwardCompatible as mpc::Party>::Message>,
-        decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
     NetworkEncryptionKeyReconfiguration {
         data: NetworkEncryptionKeyReconfigurationData,
@@ -184,10 +175,6 @@ impl ProtocolCryptographicData {
                     req.attempt_number
                 }
             },
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBackwardCompatible {
-                advance_request,
-                ..
-            } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                 advance_request,
                 ..
@@ -325,10 +312,6 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::EncryptedShareVerification { .. }
             | ProtocolCryptographicData::PartialSignatureVerification { .. }
             | ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => None,
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBackwardCompatible {
-                advance_request,
-                ..
-            } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                 advance_request,
                 ..

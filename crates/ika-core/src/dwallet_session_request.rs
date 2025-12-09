@@ -229,15 +229,6 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                     signature_algorithm: None,
                 }
             }
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBackwardCompatible {
-                data,
-                ..
-            } => DWalletSessionRequestMetricData {
-                name: data.to_string(),
-                curve: None,
-                hash_scheme: None,
-                signature_algorithm: None,
-            },
             ProtocolCryptographicData::NetworkEncryptionKeyDkg { .. } => {
                 DWalletSessionRequestMetricData {
                     name: "NetworkEncryptionKeyDkg".to_string(),
