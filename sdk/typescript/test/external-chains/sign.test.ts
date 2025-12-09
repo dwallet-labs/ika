@@ -281,7 +281,7 @@ describe('DWallet Signing', () => {
 			satoshis,
 			bitcoin.Transaction.SIGHASH_ALL,
 		);
-		const hashToSign = sha256(bytesToSign);
+		const hashToSign = sha256(sha256(bytesToSign));
 		console.log(
 			'Raw transaction hash bytes to sign (hex):',
 			Buffer.from(hashToSign).toString('hex'),
@@ -294,7 +294,7 @@ describe('DWallet Signing', () => {
 		const txHex =
 			'0200000001001d1ceeeaf170eb960ac13451d0974a6ab39e8fb905e5c19278be45aeae7be20100000000ffffffff02f4010000000000001600147c2606092a70e2a2bdc0a67e8d89203cb365d868880a020000000000160014ca951aace9377759dea4a8c9b8e6cecd6740a54900000000';
 		const tx = bitcoin.Transaction.fromHex(txHex);
-		let bytesToSignHex = '6d837e5e6c3a7ea9827e7a47a699890bd258dab8512657e9804499d02e3e441c';
+		let bytesToSignHex = 'f8e59198170f7a0559d54cd15e1a38ceb4fbe85dda66c82f5d31e22721360bbd';
 		const bytesToSign = Buffer.from(bytesToSignHex, 'hex');
 
 		const privKeyHex = 'da889368578dc91e6cb152f1dfb46808ab0f8cde6124b8c4de21975d5342f0c8';
