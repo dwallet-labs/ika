@@ -209,7 +209,19 @@ describe('DWallet Signing', () => {
 	});
 
 	it('should create a raw tx to send bitcoin from given address A to given address B, output the raw tx', async () => {
-		const address = 'tb1pjlwh6hymv4ljfstu84nv27aq6f3dfpkev4qjyqrqq8xqv49exneq7d82z0';
+		const privKeyHex =
+			"da889368578dc91e6cb152f1dfb46808ab0f8cde6124b8c4de21975d5342f0c8";
+		const privKey = Buffer.from(privKeyHex, "hex");
+
+		const keyPair = ECPair.fromPrivateKey(privKey, { network: networks.testnet });
+
+		const { address } = bitcoin.payments.p2wpkh({
+			pubkey: keyPair.publicKey,
+			network: networks.testnet,
+		});
+
+		console.log("pubkey:", keyPair.publicKey.toString());
+		console.log("address:", address);
 		const recipientAddress = 'tb1q0snqvzf2wr3290wq5elgmzfq8jektkrgl3ang0';
 
 		// Put any number you want to send in Satoshi.
@@ -220,7 +232,10 @@ describe('DWallet Signing', () => {
 
 		const psbt = new bitcoin.Psbt({ network: networks.testnet });
 
-		let output;
+		const output = bitcoin.payments.p2wpkh({
+			pubkey: keyPair.publicKey,
+			network: networks.testnet,
+		}).output!
 
 		// Add the input UTXO.
 		psbt.addInput({
