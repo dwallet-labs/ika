@@ -6,12 +6,9 @@ sidebar_position: 2
 sidebar_label: Setup Ika Localnet
 ---
 
-import { Construction } from '../../src/components/InfoBox';
 import Prerequisites from '../../src/components/Prerequisites';
 
 # Setup Ika Localnet
-
-<Construction />
 
 ## Prerequisites
 
