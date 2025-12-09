@@ -264,7 +264,7 @@ describe('DWallet Signing', () => {
 			psbt.addOutput({
 				address,
 				// @ts-ignore
-				value: change,
+				value: BigInt(change),
 			});
 		}
 
