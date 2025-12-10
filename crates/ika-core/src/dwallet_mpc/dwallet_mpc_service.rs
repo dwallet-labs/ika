@@ -815,7 +815,7 @@ impl DWalletMPCService {
             SessionType::InternalPresign => ConsensusTransaction::new_dwallet_internal_mpc_output(
                 self.name,
                 session_identifier,
-                DWalletInternalMPCOutputKind::InternalPresign(output),
+                DWalletInternalMPCOutputKind::InternalPresign{output, rejected},
                 malicious_authorities,
             ),
             SessionType::User | SessionType::System => {

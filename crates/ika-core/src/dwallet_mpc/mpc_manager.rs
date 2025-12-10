@@ -29,10 +29,7 @@ use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, SessionIdentifier,
-    SessionType,
-};
+use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, ReportableDWalletMPCOutput, DWalletNetworkEncryptionKeyData, SessionIdentifier, SessionType};
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
@@ -208,29 +205,33 @@ impl DWalletMPCManager {
     }
 
     /// Handle the outputs of a given consensus round.
-    pub fn handle_consensus_round_outputs(
+    pub fn handle_consensus_round_outputs<T: ReportableDWalletMPCOutput>(
         &mut self,
         consensus_round: u64,
-        outputs: Vec<DWalletMPCOutput>,
-    ) -> (Vec<DWalletCheckpointMessageKind>, Vec<SessionIdentifier>) {
+        outputs: Vec<T>,
+    ) -> (Vec<T::Output>, Vec<SessionIdentifier>) {
         // Not let's move to process MPC outputs for the current round.
-        let mut checkpoint_messages = vec![];
+        let mut agreed_outputs = vec![];
         let mut completed_sessions = vec![];
         for output in &outputs {
-            let session_identifier = output.session_identifier;
+            let session_identifier = output.session_identifier();
+            let is_internal = output.is_internal();
 
             let output_result = self.handle_output(consensus_round, output.clone());
             match output_result {
                 Some((malicious_authorities, output_result)) => {
                     self.complete_mpc_session(&session_identifier);
-                    let output_digest = output_result.iter().map(|m| m.digest()).collect_vec();
-                    checkpoint_messages.extend(output_result);
+                    // let output_digest_sha256 = fastcrypto::hash::Sha256::digest(&output_result);
+                    // TODO
+                    let output_digest_sha256: Vec<u8> = todo!();
+                    agreed_outputs.push(output_result);
                     completed_sessions.push(session_identifier);
                     info!(
-                        ?output_digest,
+                        ?output_digest_sha256,
                         consensus_round,
                         ?session_identifier,
                         ?malicious_authorities,
+                        ?is_internal,
                         rejected = output.rejected(),
                         "MPC output reached quorum"
                     );
@@ -240,6 +241,7 @@ impl DWalletMPCManager {
                         consensus_round,
                         ?session_identifier,
                         ?output,
+                        ?is_internal,
                         rejected = output.rejected(),
                         "MPC output yet to reach quorum"
                     );
@@ -247,7 +249,7 @@ impl DWalletMPCManager {
             };
         }
 
-        (checkpoint_messages, completed_sessions)
+        (agreed_outputs, completed_sessions)
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.
@@ -678,13 +680,14 @@ impl DWalletMPCManager {
             .collect()
     }
 
-    pub(crate) fn handle_output(
+    pub(crate) fn handle_output<T: ReportableDWalletMPCOutput>(
         &mut self,
         consensus_round: u64,
-        output: DWalletMPCOutput,
-    ) -> Option<(HashSet<AuthorityName>, Vec<DWalletCheckpointMessageKind>)> {
-        let session_identifier = output.session_identifier;
-        let sender_authority = output.authority;
+        output: T,
+    ) -> Option<(HashSet<AuthorityName>, T::Output)> {
+        let session_identifier = output.session_identifier();
+        let sender_authority = output.authority();
+        let is_internal = output.is_internal();
 
         let Ok(sender_party_id) =
             authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
@@ -693,6 +696,7 @@ impl DWalletMPCManager {
                 session_identifier=?session_identifier,
                 sender_authority=?sender_authority,
                 receiver_authority=?self.validator_name,
+                ?is_internal,
                 "got a output for an authority without party ID",
             );
 
@@ -706,25 +710,33 @@ impl DWalletMPCManager {
                     ?session_identifier,
                     sender_authority=?sender_authority,
                     receiver_authority=?self.validator_name,
-                    "received a output for an MPC session before receiving an event requesting it"
+                    ?is_internal,
+                    "received an output for an MPC session before receiving an event requesting it"
                 );
 
-                // All output kinds are constructed from the same type, so we can safely use the first one.
-                let Ok(session_computation_type) = SessionComputationType::try_from(
-                    output.output.first().expect("output must have a kind"),
-                ) else {
-                    error!(
-                        session_identifier=?session_identifier,
-                        sender_authority=?sender_authority,
-                        receiver_authority=?self.validator_name,
-                        "got a output for an invalid computation type",
-                    );
+                let session_computation_type = match output.is_native() {
+                    Ok(true) => {
+                        SessionComputationType::Native
+                    },
+                    Ok(false) => {
+                        SessionComputationType::MPC { messages_by_consensus_round: HashMap::new() }
+                    },
+                    Err(e) => {
+                        error!(
+                            session_identifier=?session_identifier,
+                            sender_authority=?sender_authority,
+                            receiver_authority=?self.validator_name,
+                            error=?e,
+                            ?is_internal,
+                            "got an output for an invalid computation type",
+                        );
 
-                    return None;
+                        return None;
+                    }
                 };
 
                 // This can happen if the session is not in the active sessions,
-                // but we still want to store the message.
+                // but we still want to store the output.
                 // We will create a new session for it.
                 self.new_session(
                     &session_identifier,
@@ -736,6 +748,7 @@ impl DWalletMPCManager {
             }
         };
 
+        // TODO: huh? all this work for the trait and now I need an explicit type?
         session.add_output(consensus_round, sender_party_id, output);
 
         let outputs_by_consensus_round = session.outputs_by_consensus_round().clone();

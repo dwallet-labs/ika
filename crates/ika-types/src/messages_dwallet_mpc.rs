@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Debug;
+use std::hash::Hash;
+use anyhow::anyhow;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::collection_types::{Table, TableVec};
 
@@ -53,18 +55,17 @@ pub struct DBSuiEvent {
     pub pulled: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct DWalletMPCOutput {
     /// The authority that sent the output.
     pub authority: AuthorityName,
     pub session_identifier: SessionIdentifier,
     /// The final value of the MPC session.
-    // TODO: why is this a vec, and why not have a vec in `DWalletMPCInternalOutput`?
     pub output: Vec<DWalletCheckpointMessageKind>,
     pub malicious_authorities: Vec<AuthorityName>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct DWalletInternalMPCOutput {
     /// The authority that sent the output.
     pub authority: AuthorityName,
@@ -76,16 +77,126 @@ pub struct DWalletInternalMPCOutput {
 
 #[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Debug, Serialize, Deserialize)]
 pub enum DWalletInternalMPCOutputKind {
-    InternalPresign(Vec<u8>),
-    InternalSign(Vec<u8>),
+    InternalPresign{ output: Vec<u8>, rejected: bool},
+    InternalSign{ output: Vec<u8>, rejected: bool},
 }
 
-impl DWalletMPCOutput {
-    pub fn rejected(&self) -> Option<bool> {
+pub trait ReportableDWalletMPCOutput: PartialEq + Eq + Clone + Debug {
+    /// The output of the MPC session.
+    type Output: PartialEq + Eq + Clone + Debug + Hash;
+
+    /// Returns the authority that reported this output.
+    fn authority(&self) -> AuthorityName;
+
+    /// Returns session id of the MPC session.
+    fn session_identifier(&self) -> SessionIdentifier;
+
+    /// Returns the output of the MPC session.
+    fn output(&self) -> anyhow::Result<Self::Output>;
+
+    /// Returns the authorities that behaved maliciously in this MPC session.
+    fn malicious_authorities(&self) -> Vec<AuthorityName>;
+
+    /// Returns true if this is an internal MPC session.
+    fn is_internal(&self) -> bool;
+
+    /// Returns true if this is a native computation session.
+    /// Otherwise, this is an MPC session.
+    fn is_native(&self) -> anyhow::Result<bool>;
+
+    /// Returns true if this output was rejected.
+    fn rejected(&self) -> bool;
+}
+
+impl ReportableDWalletMPCOutput for DWalletMPCOutput {
+    type Output = DWalletCheckpointMessageKind;
+
+    fn authority(&self) -> AuthorityName {
+        self.authority
+    }
+
+    fn session_identifier(&self) -> SessionIdentifier {
+        self.session_identifier
+    }
+
+    fn output(&self) -> anyhow::Result<Self::Output> {
         if let [output] = &self.output[..] {
-            output.rejected()
+            Ok(output.clone())
         } else {
-            None
+            Err(anyhow!("Only one output allowed per MPC session"))
+        }
+    }
+
+    fn malicious_authorities(&self) -> Vec<AuthorityName> {
+        self.malicious_authorities.clone()
+    }
+
+    fn is_internal(&self) -> bool {
+        false
+    }
+
+    fn is_native(&self) -> anyhow::Result<bool> {
+        match self.output()? {
+            DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(_)
+            | DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(_) => {
+                Ok(true)
+            }
+
+            DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(_)
+            | DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletPresign(_)
+            | DWalletCheckpointMessageKind::RespondDWalletSign(_)
+            | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletDKGOutput(_)
+            | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(_) => {
+                Ok(false)
+            },
+
+            DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(_)
+            | DWalletCheckpointMessageKind::SetGasFeeReimbursementSuiSystemCallValue(_)
+            | DWalletCheckpointMessageKind::EndOfPublish => Err(anyhow!("MPC output is not a cryptographic computation")),
+        }
+    }
+
+    fn rejected(&self) -> bool {
+        self.output().ok().and_then(|output| output.rejected()).unwrap_or(false)
+    }
+}
+
+impl ReportableDWalletMPCOutput for DWalletInternalMPCOutput {
+    type Output = DWalletInternalMPCOutputKind;
+
+    fn authority(&self) -> AuthorityName {
+        self.authority
+    }
+
+    fn session_identifier(&self) -> SessionIdentifier {
+        self.session_identifier
+    }
+
+    fn output(&self) -> anyhow::Result<Self::Output> {
+        Ok(self.output.clone())
+    }
+
+    fn malicious_authorities(&self) -> Vec<AuthorityName> {
+        self.malicious_authorities.clone()
+    }
+
+    fn is_internal(&self) -> bool {
+        true
+    }
+
+    fn is_native(&self) -> anyhow::Result<bool> {
+        // All internal MPC sessions are MPC sessions, no native ones.
+        Ok(false)
+    }
+
+    fn rejected(&self) -> bool {
+        match &self.output {
+            DWalletInternalMPCOutputKind::InternalPresign {rejected, ..} => *rejected,
+            DWalletInternalMPCOutputKind::InternalSign {rejected, ..} => *rejected,
         }
     }
 }
