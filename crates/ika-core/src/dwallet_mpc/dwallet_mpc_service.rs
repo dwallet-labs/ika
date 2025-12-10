@@ -43,7 +43,8 @@ use ika_types::message::{
 };
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
-    DWalletInternalMPCOutputKind, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
+    DWalletInternalMPCOutputKind, DWalletMPCOutputKind, DWalletMPCOutputReport, SessionIdentifier,
+    SessionType, UserSecretKeyShareEventType,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -404,7 +405,8 @@ impl DWalletMPCService {
             let mpc_outputs = self
                 .epoch_store
                 .next_dwallet_mpc_output(self.last_read_consensus_round);
-            let (mpc_outputs_consensus_round, mpc_outputs) = match mpc_outputs {
+            // TODO: have the same for internal
+            let (external_mpc_outputs_consensus_round, external_mpc_outputs) = match mpc_outputs {
                 Ok(mpc_outputs) => {
                     if let Some(mpc_outputs) = mpc_outputs {
                         mpc_outputs
@@ -450,13 +452,13 @@ impl DWalletMPCService {
                 }
             };
 
-            if mpc_messages_consensus_round != mpc_outputs_consensus_round
+            if mpc_messages_consensus_round != external_mpc_outputs_consensus_round
                 || mpc_messages_consensus_round
                     != verified_dwallet_checkpoint_messages_consensus_round
             {
                 error!(
                     ?mpc_messages_consensus_round,
-                    ?mpc_outputs_consensus_round,
+                    ?external_mpc_outputs_consensus_round,
                     ?verified_dwallet_checkpoint_messages_consensus_round,
                     "the consensus rounds of MPC messages, MPC outputs and checkpoint messages do not match"
                 );
@@ -487,10 +489,24 @@ impl DWalletMPCService {
             self.dwallet_mpc_manager
                 .handle_consensus_round_messages(consensus_round, mpc_messages);
 
+            // TODO: have the same for internal
+            let external_mpc_outputs = external_mpc_outputs
+                .into_iter()
+                .map(DWalletMPCOutputReport::External)
+                .collect();
             // Process the MPC outputs for the current round.
-            let (mut checkpoint_messages, completed_sessions) = self
+            let (agreed_external_mpc_outputs, completed_sessions) = self
                 .dwallet_mpc_manager
-                .handle_consensus_round_outputs(consensus_round, mpc_outputs);
+                .handle_consensus_round_outputs(consensus_round, external_mpc_outputs);
+
+            // Take back the external outputs' internal checkpoint messages
+            let mut checkpoint_messages: Vec<_> = agreed_external_mpc_outputs
+                .into_iter()
+                .flat_map(|output| match output {
+                    DWalletMPCOutputKind::External { output } => output,
+                    _ => vec![],
+                })
+                .collect();
 
             // Add messages from the consensus output such as EndOfPublish.
             checkpoint_messages.extend(verified_dwallet_checkpoint_messages);
@@ -815,7 +831,7 @@ impl DWalletMPCService {
             SessionType::InternalPresign => ConsensusTransaction::new_dwallet_internal_mpc_output(
                 self.name,
                 session_identifier,
-                DWalletInternalMPCOutputKind::InternalPresign{output, rejected},
+                DWalletInternalMPCOutputKind::InternalPresign { output, rejected },
                 malicious_authorities,
             ),
             SessionType::User | SessionType::System => {

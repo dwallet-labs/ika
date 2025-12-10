@@ -7,7 +7,9 @@ use dwallet_mpc_types::dwallet_mpc::{MPCMessage, MPCPrivateInput};
 use group::PartyID;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{
+    DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, SessionIdentifier,
+};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
 use tracing::{debug, error, info, warn};
@@ -24,7 +26,7 @@ use tokio::sync::broadcast;
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) struct DWalletMPCSessionOutput {
-    pub(crate) output: Vec<DWalletCheckpointMessageKind>,
+    pub(crate) output: DWalletMPCOutputKind,
     pub(crate) malicious_authorities: Vec<AuthorityName>,
 }
 
@@ -211,13 +213,13 @@ impl DWalletSession {
         &mut self,
         consensus_round: u64,
         sender_party_id: PartyID,
-        output: DWalletMPCOutput,
+        output: DWalletMPCOutputReport,
     ) {
         debug!(
-            session_identifier=?output.session_identifier,
-            from_authority=?output.authority,
+            session_identifier=?output.session_identifier(),
+            from_authority=?output.authority(),
             receiving_authority=?self.validator_name,
-            output_messages=?output.output,
+            output=?output,
             consensus_round,
             status =? self.status,
             rejected=output.rejected(),
@@ -240,11 +242,24 @@ impl DWalletSession {
             .entry(consensus_round)
             .or_default();
 
-        if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
-            e.insert(DWalletMPCSessionOutput {
-                output: output.output,
-                malicious_authorities: output.malicious_authorities,
-            });
+        let malicious_authorities = output.malicious_authorities();
+        if let Ok(output) = output.output() {
+            if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
+                e.insert(DWalletMPCSessionOutput {
+                    output,
+                    malicious_authorities,
+                });
+            }
+        } else {
+            warn!(
+                session_identifier=?output.session_identifier(),
+                from_authority=?output.authority(),
+                receiving_authority=?self.validator_name,
+                consensus_round,
+                status =? self.status,
+                rejected=output.rejected(),
+                "Received an invalid dWallet MPC output",
+            );
         }
     }
 

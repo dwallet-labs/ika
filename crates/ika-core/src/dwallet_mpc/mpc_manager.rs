@@ -28,9 +28,10 @@ use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
-use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, ReportableDWalletMPCOutput, DWalletNetworkEncryptionKeyData, SessionIdentifier, SessionType};
-use itertools::Itertools;
+use ika_types::messages_dwallet_mpc::{
+    DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport,
+    DWalletNetworkEncryptionKeyData, SessionIdentifier, SessionType,
+};
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -205,11 +206,11 @@ impl DWalletMPCManager {
     }
 
     /// Handle the outputs of a given consensus round.
-    pub fn handle_consensus_round_outputs<T: ReportableDWalletMPCOutput>(
+    pub fn handle_consensus_round_outputs(
         &mut self,
         consensus_round: u64,
-        outputs: Vec<T>,
-    ) -> (Vec<T::Output>, Vec<SessionIdentifier>) {
+        outputs: Vec<DWalletMPCOutputReport>,
+    ) -> (Vec<DWalletMPCOutputKind>, Vec<SessionIdentifier>) {
         // Not let's move to process MPC outputs for the current round.
         let mut agreed_outputs = vec![];
         let mut completed_sessions = vec![];
@@ -221,13 +222,9 @@ impl DWalletMPCManager {
             match output_result {
                 Some((malicious_authorities, output_result)) => {
                     self.complete_mpc_session(&session_identifier);
-                    // let output_digest_sha256 = fastcrypto::hash::Sha256::digest(&output_result);
-                    // TODO
-                    let output_digest_sha256: Vec<u8> = todo!();
                     agreed_outputs.push(output_result);
                     completed_sessions.push(session_identifier);
                     info!(
-                        ?output_digest_sha256,
                         consensus_round,
                         ?session_identifier,
                         ?malicious_authorities,
@@ -680,11 +677,11 @@ impl DWalletMPCManager {
             .collect()
     }
 
-    pub(crate) fn handle_output<T: ReportableDWalletMPCOutput>(
+    pub(crate) fn handle_output(
         &mut self,
         consensus_round: u64,
-        output: T,
-    ) -> Option<(HashSet<AuthorityName>, T::Output)> {
+        output: DWalletMPCOutputReport,
+    ) -> Option<(HashSet<AuthorityName>, DWalletMPCOutputKind)> {
         let session_identifier = output.session_identifier();
         let sender_authority = output.authority();
         let is_internal = output.is_internal();
@@ -715,11 +712,9 @@ impl DWalletMPCManager {
                 );
 
                 let session_computation_type = match output.is_native() {
-                    Ok(true) => {
-                        SessionComputationType::Native
-                    },
-                    Ok(false) => {
-                        SessionComputationType::MPC { messages_by_consensus_round: HashMap::new() }
+                    Ok(true) => SessionComputationType::Native,
+                    Ok(false) => SessionComputationType::MPC {
+                        messages_by_consensus_round: HashMap::new(),
                     },
                     Err(e) => {
                         error!(
@@ -748,7 +743,6 @@ impl DWalletMPCManager {
             }
         };
 
-        // TODO: huh? all this work for the trait and now I need an explicit type?
         session.add_output(consensus_round, sender_party_id, output);
 
         let outputs_by_consensus_round = session.outputs_by_consensus_round().clone();
@@ -796,7 +790,7 @@ impl DWalletMPCManager {
         &self,
         session_identifier: &SessionIdentifier,
         outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
-    ) -> Option<(HashSet<AuthorityName>, Vec<DWalletCheckpointMessageKind>)> {
+    ) -> Option<(HashSet<AuthorityName>, DWalletMPCOutputKind)> {
         let mut outputs_to_finalize: HashMap<PartyID, DWalletMPCSessionOutput> = HashMap::new();
 
         for (_, outputs) in outputs_by_consensus_round {

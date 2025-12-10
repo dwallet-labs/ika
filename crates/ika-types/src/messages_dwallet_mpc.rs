@@ -1,5 +1,6 @@
 use crate::crypto::{AuthorityName, keccak256_digest};
 use crate::message::DWalletCheckpointMessageKind;
+use anyhow::anyhow;
 use move_core_types::account_address::AccountAddress;
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
@@ -10,7 +11,6 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Debug;
 use std::hash::Hash;
-use anyhow::anyhow;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::collection_types::{Table, TableVec};
 
@@ -60,7 +60,7 @@ pub struct DWalletMPCOutput {
     /// The authority that sent the output.
     pub authority: AuthorityName,
     pub session_identifier: SessionIdentifier,
-    /// The final value of the MPC session.
+    /// The output of the MPC session, potentially split into chunks if large.
     pub output: Vec<DWalletCheckpointMessageKind>,
     pub malicious_authorities: Vec<AuthorityName>,
 }
@@ -77,126 +77,162 @@ pub struct DWalletInternalMPCOutput {
 
 #[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Debug, Serialize, Deserialize)]
 pub enum DWalletInternalMPCOutputKind {
-    InternalPresign{ output: Vec<u8>, rejected: bool},
-    InternalSign{ output: Vec<u8>, rejected: bool},
+    InternalPresign { output: Vec<u8>, rejected: bool },
+    InternalSign { output: Vec<u8>, rejected: bool },
 }
 
-pub trait ReportableDWalletMPCOutput: PartialEq + Eq + Clone + Debug {
-    /// The output of the MPC session.
-    type Output: PartialEq + Eq + Clone + Debug + Hash;
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum DWalletMPCOutputReport {
+    Internal(DWalletInternalMPCOutput),
+    External(DWalletMPCOutput),
+}
 
+#[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Debug, Serialize, Deserialize)]
+pub enum DWalletMPCOutputKind {
+    Internal {
+        output: DWalletInternalMPCOutputKind,
+    },
+    External {
+        output: Vec<DWalletCheckpointMessageKind>,
+    },
+}
+
+impl DWalletMPCOutputKind {
+    /// Instantiates a new internal MPC output.
+    pub fn new_internal(output: DWalletInternalMPCOutputKind) -> Self {
+        Self::Internal { output }
+    }
+
+    /// Attempts to instantiate a new internal MPC output.
+    /// Performs sanity checks on the output, and fails on any error.
+    pub fn new_external(output: Vec<DWalletCheckpointMessageKind>) -> anyhow::Result<Self> {
+        if output.is_empty() {
+            return Err(anyhow!("MPC output is empty"));
+        }
+
+        // Assure split output of an MPC session have same metadata.
+        let first_output = &output[0];
+        let rejected = first_output.rejected();
+        let kind = std::mem::discriminant(first_output);
+
+        if output.iter().any(|output| output.rejected() != rejected) {
+            return Err(anyhow!(
+                "Split MPC output is inconsistent regards rejection"
+            ));
+        }
+
+        if output
+            .iter()
+            .any(|output| std::mem::discriminant(output) != kind)
+        {
+            return Err(anyhow!("Split MPC output is inconsistent in kind"));
+        }
+
+        Ok(Self::External { output })
+    }
+}
+
+impl DWalletMPCOutputReport {
     /// Returns the authority that reported this output.
-    fn authority(&self) -> AuthorityName;
+    pub fn authority(&self) -> AuthorityName {
+        match self {
+            DWalletMPCOutputReport::Internal(output) => output.authority,
+            DWalletMPCOutputReport::External(output) => output.authority,
+        }
+    }
 
     /// Returns session id of the MPC session.
-    fn session_identifier(&self) -> SessionIdentifier;
+    pub fn session_identifier(&self) -> SessionIdentifier {
+        match self {
+            DWalletMPCOutputReport::Internal(output) => output.session_identifier,
+            DWalletMPCOutputReport::External(output) => output.session_identifier,
+        }
+    }
 
     /// Returns the output of the MPC session.
-    fn output(&self) -> anyhow::Result<Self::Output>;
+    /// Performs sanity checks on the output, and fails on any error.
+    pub fn output(&self) -> anyhow::Result<DWalletMPCOutputKind> {
+        match self {
+            DWalletMPCOutputReport::Internal(output) => {
+                Ok(DWalletMPCOutputKind::new_internal(output.output.clone()))
+            }
+            DWalletMPCOutputReport::External(output) => {
+                let output = output.output.clone();
+
+                DWalletMPCOutputKind::new_external(output)
+            }
+        }
+    }
 
     /// Returns the authorities that behaved maliciously in this MPC session.
-    fn malicious_authorities(&self) -> Vec<AuthorityName>;
+    pub fn malicious_authorities(&self) -> Vec<AuthorityName> {
+        match self {
+            DWalletMPCOutputReport::Internal(output) => output.malicious_authorities.clone(),
+            DWalletMPCOutputReport::External(output) => output.malicious_authorities.clone(),
+        }
+    }
 
     /// Returns true if this is an internal MPC session.
-    fn is_internal(&self) -> bool;
+    pub fn is_internal(&self) -> bool {
+        match self {
+            DWalletMPCOutputReport::Internal(_) => true,
+            DWalletMPCOutputReport::External(_) => false,
+        }
+    }
 
     /// Returns true if this is a native computation session.
     /// Otherwise, this is an MPC session.
-    fn is_native(&self) -> anyhow::Result<bool>;
+    pub fn is_native(&self) -> anyhow::Result<bool> {
+        match self.output()? {
+            DWalletMPCOutputKind::Internal { .. } => {
+                // All internal MPC sessions are MPC sessions, no native ones.
+                Ok(false)
+            }
+            DWalletMPCOutputKind::External { output } => {
+                // All outputs of a MPC session must be of the same kind
+                // We validated the output is non-empty.
+                let first_output = &output[0];
+                match first_output {
+                        DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(_)
+                        | DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(_) => {
+                            Ok(true)
+                        }
+
+                        DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(_)
+                        | DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(_)
+                        | DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(_)
+                        | DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(_)
+                        | DWalletCheckpointMessageKind::RespondDWalletPresign(_)
+                        | DWalletCheckpointMessageKind::RespondDWalletSign(_)
+                        | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(_)
+                        | DWalletCheckpointMessageKind::RespondDWalletDKGOutput(_)
+                        | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(_) => {
+                            Ok(false)
+                        },
+
+                        DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(_)
+                        | DWalletCheckpointMessageKind::SetGasFeeReimbursementSuiSystemCallValue(_)
+                        | DWalletCheckpointMessageKind::EndOfPublish => Err(anyhow!("MPC output is not a cryptographic computation")),
+                    }
+            }
+        }
+    }
 
     /// Returns true if this output was rejected.
-    fn rejected(&self) -> bool;
-}
-
-impl ReportableDWalletMPCOutput for DWalletMPCOutput {
-    type Output = DWalletCheckpointMessageKind;
-
-    fn authority(&self) -> AuthorityName {
-        self.authority
-    }
-
-    fn session_identifier(&self) -> SessionIdentifier {
-        self.session_identifier
-    }
-
-    fn output(&self) -> anyhow::Result<Self::Output> {
-        if let [output] = &self.output[..] {
-            Ok(output.clone())
-        } else {
-            Err(anyhow!("Only one output allowed per MPC session"))
-        }
-    }
-
-    fn malicious_authorities(&self) -> Vec<AuthorityName> {
-        self.malicious_authorities.clone()
-    }
-
-    fn is_internal(&self) -> bool {
-        false
-    }
-
-    fn is_native(&self) -> anyhow::Result<bool> {
-        match self.output()? {
-            DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(_)
-            | DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(_) => {
-                Ok(true)
+    pub fn rejected(&self) -> bool {
+        if let Ok(output) = self.output() {
+            match output {
+                DWalletMPCOutputKind::Internal { output } => match output {
+                    DWalletInternalMPCOutputKind::InternalPresign { rejected, .. } => rejected,
+                    DWalletInternalMPCOutputKind::InternalSign { rejected, .. } => rejected,
+                },
+                DWalletMPCOutputKind::External { output } => {
+                    // Safe to dereference, validated non-empty.
+                    output[0].rejected().unwrap_or(false)
+                }
             }
-
-            DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(_)
-            | DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(_)
-            | DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(_)
-            | DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(_)
-            | DWalletCheckpointMessageKind::RespondDWalletPresign(_)
-            | DWalletCheckpointMessageKind::RespondDWalletSign(_)
-            | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(_)
-            | DWalletCheckpointMessageKind::RespondDWalletDKGOutput(_)
-            | DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(_) => {
-                Ok(false)
-            },
-
-            DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(_)
-            | DWalletCheckpointMessageKind::SetGasFeeReimbursementSuiSystemCallValue(_)
-            | DWalletCheckpointMessageKind::EndOfPublish => Err(anyhow!("MPC output is not a cryptographic computation")),
-        }
-    }
-
-    fn rejected(&self) -> bool {
-        self.output().ok().and_then(|output| output.rejected()).unwrap_or(false)
-    }
-}
-
-impl ReportableDWalletMPCOutput for DWalletInternalMPCOutput {
-    type Output = DWalletInternalMPCOutputKind;
-
-    fn authority(&self) -> AuthorityName {
-        self.authority
-    }
-
-    fn session_identifier(&self) -> SessionIdentifier {
-        self.session_identifier
-    }
-
-    fn output(&self) -> anyhow::Result<Self::Output> {
-        Ok(self.output.clone())
-    }
-
-    fn malicious_authorities(&self) -> Vec<AuthorityName> {
-        self.malicious_authorities.clone()
-    }
-
-    fn is_internal(&self) -> bool {
-        true
-    }
-
-    fn is_native(&self) -> anyhow::Result<bool> {
-        // All internal MPC sessions are MPC sessions, no native ones.
-        Ok(false)
-    }
-
-    fn rejected(&self) -> bool {
-        match &self.output {
-            DWalletInternalMPCOutputKind::InternalPresign {rejected, ..} => *rejected,
-            DWalletInternalMPCOutputKind::InternalSign {rejected, ..} => *rejected,
+        } else {
+            false
         }
     }
 }
