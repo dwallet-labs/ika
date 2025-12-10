@@ -132,9 +132,6 @@ importers:
       '@noble/hashes':
         specifier: ^1.8.0
         version: 1.8.0
-      '@types/bitcoinjs-lib':
-        specifier: ^5.0.4
-        version: 5.0.4(typescript@5.8.3)
       axios:
         specifier: ^1.13.2
         version: 1.13.2
@@ -160,6 +157,9 @@ importers:
       '@mysten/codegen':
         specifier: ^0.5.9
         version: 0.5.9
+      '@types/bitcoinjs-lib':
+        specifier: ^5.0.4
+        version: 5.0.4(typescript@5.8.3)
       '@types/node':
         specifier: ^22.15.21
         version: 22.15.21
