@@ -393,7 +393,7 @@ pub fn compute_presign<P: presign::Protocol>(
             ))?;
 
             info!(
-                session_id = ?hex::encode(session_id.to_be_bytes()),
+                session_id = %hex::encode(session_id.to_le_bytes()),
                 number_of_presigns = presigns.len(),
                 "generated multi-presigns",
             );

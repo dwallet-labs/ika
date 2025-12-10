@@ -77,6 +77,7 @@ pub struct DWalletInternalMPCOutput {
 
 #[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Debug, Serialize, Deserialize)]
 pub enum DWalletInternalMPCOutputKind {
+    // TODO: REMOVE rejected
     InternalPresign { output: Vec<u8>, rejected: bool },
     InternalSign { output: Vec<u8>, rejected: bool },
 }

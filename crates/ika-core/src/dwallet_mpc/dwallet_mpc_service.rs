@@ -405,7 +405,7 @@ impl DWalletMPCService {
             let mpc_outputs = self
                 .epoch_store
                 .next_dwallet_mpc_output(self.last_read_consensus_round);
-            // TODO: have the same for internal
+
             let (external_mpc_outputs_consensus_round, external_mpc_outputs) = match mpc_outputs {
                 Ok(mpc_outputs) => {
                     if let Some(mpc_outputs) = mpc_outputs {
@@ -413,6 +413,29 @@ impl DWalletMPCService {
                     } else {
                         error!("failed to get mpc outputs, None value");
                         panic!("failed to get mpc outputs, None value");
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        error=?e,
+                        last_read_consensus_round=self.last_read_consensus_round,
+                        "failed to load DWallet MPC outputs from the local DB"
+                    );
+                    panic!("failed to load DWallet MPC outputs from the local DB");
+                }
+            };
+
+            let mpc_outputs = self
+                .epoch_store
+                .next_dwallet_internal_mpc_output(self.last_read_consensus_round);
+
+            let (internal_mpc_outputs_consensus_round, internal_mpc_outputs) = match mpc_outputs {
+                Ok(mpc_outputs) => {
+                    if let Some(mpc_outputs) = mpc_outputs {
+                        mpc_outputs
+                    } else {
+                        error!("failed to get internal mpc outputs, None value");
+                        panic!("failed to get internal mpc outputs, None value");
                     }
                 }
                 Err(e) => {
@@ -455,10 +478,12 @@ impl DWalletMPCService {
             if mpc_messages_consensus_round != external_mpc_outputs_consensus_round
                 || mpc_messages_consensus_round
                     != verified_dwallet_checkpoint_messages_consensus_round
+                || mpc_messages_consensus_round != internal_mpc_outputs_consensus_round
             {
                 error!(
                     ?mpc_messages_consensus_round,
                     ?external_mpc_outputs_consensus_round,
+                    ?mpc_messages_consensus_round,
                     ?verified_dwallet_checkpoint_messages_consensus_round,
                     "the consensus rounds of MPC messages, MPC outputs and checkpoint messages do not match"
                 );
@@ -489,15 +514,30 @@ impl DWalletMPCService {
             self.dwallet_mpc_manager
                 .handle_consensus_round_messages(consensus_round, mpc_messages);
 
-            // TODO: have the same for internal
+            // TODO: have the same for internal - just don't checkpoint them?
             let external_mpc_outputs = external_mpc_outputs
                 .into_iter()
                 .map(DWalletMPCOutputReport::External)
                 .collect();
             // Process the MPC outputs for the current round.
-            let (agreed_external_mpc_outputs, completed_sessions) = self
+            let (agreed_external_mpc_outputs, completed_external_sessions) = self
                 .dwallet_mpc_manager
                 .handle_consensus_round_outputs(consensus_round, external_mpc_outputs);
+
+            let internal_mpc_outputs = internal_mpc_outputs
+                .into_iter()
+                .map(DWalletMPCOutputReport::Internal)
+                .collect();
+            let (agreed_internal_mpc_outputs, completed_internal_sessions) = self
+                .dwallet_mpc_manager
+                .handle_consensus_round_outputs(consensus_round, internal_mpc_outputs);
+
+            let completed_sessions: Vec<_> = completed_external_sessions
+                .into_iter()
+                .chain(completed_internal_sessions)
+                .collect();
+
+            // TODO: handle agreed_internal_mpc_outputs (?)
 
             // Take back the external outputs' internal checkpoint messages
             let mut checkpoint_messages: Vec<_> = agreed_external_mpc_outputs
@@ -527,7 +567,6 @@ impl DWalletMPCService {
                     );
                 }
 
-                // TODO: here is for old protocol version, new one needs sign here
                 if !checkpoint_messages.is_empty() {
                     let pending_checkpoint =
                         PendingDWalletCheckpoint::V1(PendingDWalletCheckpointV1 {
@@ -687,42 +726,33 @@ impl DWalletMPCService {
                         vec![]
                     };
 
-                    // TODO: move this match to where the checkpoint is created
-                    match request.session_type {
-                        // TODO: InternalSign
-                        SessionType::InternalPresign => {
-                            // TODO: create a message to be agreed on, including malicious parties, without the checkpoint.
-                            // TODO: take the output and place in the pool there, and account for malicious there.
-                        }
-                        _ => {
-                            let rejected = false;
+                    let rejected = false;
 
-                            let consensus_message = self.new_dwallet_mpc_output(
-                                session_identifier,
-                                &request,
-                                public_output_value,
-                                malicious_authorities,
-                                rejected,
-                            );
+                    let consensus_message = self.new_dwallet_mpc_output(
+                        session_identifier,
+                        &request,
+                        public_output_value,
+                        malicious_authorities,
+                        rejected,
+                    );
 
-                            if let Err(err) = consensus_adapter
-                                .submit_to_consensus(&[consensus_message])
-                                .await
-                            {
-                                error!(
-                                    ?session_identifier,
-                                    validator=?validator_name,
-                                    error=?err,
-                                    "failed to submit an MPC output message to consensus",
-                                );
-                            }
-                        }
+                    if let Err(err) = consensus_adapter
+                        .submit_to_consensus(&[consensus_message])
+                        .await
+                    {
+                        error!(
+                            ?session_identifier,
+                            validator=?validator_name,
+                            error=?err,
+                            "failed to submit an MPC output message to consensus",
+                        );
                     }
                 }
                 Err(err) => {
                     match request.session_type {
                         // TODO: InternalSign
                         SessionType::InternalPresign => {
+                            // TODO: nothing to do here actually right?
                             error!(
                                 should_never_happen =? true,
                                 session_identifier=?session.session_identifier,

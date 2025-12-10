@@ -58,7 +58,7 @@ use ika_types::messages_consensus::{
 use ika_types::messages_dwallet_checkpoint::{
     DWalletCheckpointMessage, DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
-use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+use ika_types::messages_dwallet_mpc::{DWalletInternalMPCOutput, IkaNetworkConfig};
 use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput};
 use ika_types::messages_system_checkpoints::{
     SystemCheckpointMessage, SystemCheckpointMessageKind, SystemCheckpointSequenceNumber,
@@ -235,6 +235,11 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>>;
 
+    fn next_dwallet_internal_mpc_output(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>>;
+
     fn next_verified_dwallet_checkpoint_message(
         &self,
         last_consensus_round: Option<Round>,
@@ -284,6 +289,21 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         let tables = self.tables()?;
         let mut iter = tables
             .dwallet_mpc_outputs
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
+    }
+
+    fn next_dwallet_internal_mpc_output(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .dwallet_internal_mpc_outputs
             .safe_iter_with_bounds(last_consensus_round, None);
         if last_consensus_round.is_none() {
             Ok(iter.next().transpose()?)
@@ -452,6 +472,9 @@ pub struct AuthorityEpochTables {
     /// Consensus round -> Output.
     #[default_options_override_fn = "dwallet_mpc_outputs_table_default_config"]
     dwallet_mpc_outputs: DBMap<Round, Vec<DWalletMPCOutput>>,
+    /// Consensus round -> Output.
+    #[default_options_override_fn = "dwallet_internal_mpc_outputs_table_default_config"]
+    dwallet_internal_mpc_outputs: DBMap<Round, Vec<DWalletInternalMPCOutput>>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -479,6 +502,12 @@ fn dwallet_mpc_messages_table_default_config() -> DBOptions {
 }
 
 fn dwallet_mpc_outputs_table_default_config() -> DBOptions {
+    default_db_options()
+        .optimize_for_write_throughput()
+        .optimize_for_large_values_no_scan(1 << 10)
+}
+
+fn dwallet_internal_mpc_outputs_table_default_config() -> DBOptions {
     default_db_options()
         .optimize_for_write_throughput()
         .optimize_for_large_values_no_scan(1 << 10)
@@ -1272,6 +1301,9 @@ impl AuthorityPerEpochStore {
         let new_dwallet_mpc_round_messages = Self::filter_dwallet_mpc_messages(transactions);
         output.set_dwallet_mpc_round_messages(new_dwallet_mpc_round_messages);
         output.set_dwallet_mpc_round_outputs(Self::filter_dwallet_mpc_outputs(transactions));
+        output.set_dwallet_internal_mpc_round_outputs(Self::filter_dwallet_internal_mpc_outputs(
+            transactions,
+        ));
 
         authority_metrics
             .consensus_handler_cancelled_transactions
@@ -1326,6 +1358,30 @@ impl AuthorityPerEpochStore {
                 match transaction {
                     SequencedConsensusTransactionKind::External(ConsensusTransaction {
                         kind: ConsensusTransactionKind::DWalletMPCOutput(output),
+                        ..
+                    }) => Some(output.clone()),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    /// Filter DWalletMPCMessages from the consensus output.
+    /// Those messages will get processed when the dWallet MPC service reads
+    /// them from the DB.
+    fn filter_dwallet_internal_mpc_outputs(
+        transactions: &[VerifiedSequencedConsensusTransaction],
+    ) -> Vec<DWalletInternalMPCOutput> {
+        transactions
+            .iter()
+            .filter_map(|transaction| {
+                let VerifiedSequencedConsensusTransaction(SequencedConsensusTransaction {
+                    transaction,
+                    ..
+                }) = transaction;
+                match transaction {
+                    SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                        kind: ConsensusTransactionKind::DWalletInternalMPCOutput(output),
                         ..
                     }) => Some(output.clone()),
                     _ => None,
@@ -1721,6 +1777,7 @@ pub(crate) struct ConsensusCommitOutput {
     /// All the dWallet-MPC related TXs that have been received in this round.
     dwallet_mpc_round_messages: Vec<DWalletMPCMessage>,
     dwallet_mpc_round_outputs: Vec<DWalletMPCOutput>,
+    dwallet_internal_mpc_round_outputs: Vec<DWalletInternalMPCOutput>,
 
     verified_dwallet_checkpoint_messages: Vec<DWalletCheckpointMessageKind>,
 }
@@ -1739,6 +1796,13 @@ impl ConsensusCommitOutput {
 
     pub(crate) fn set_dwallet_mpc_round_outputs(&mut self, new_value: Vec<DWalletMPCOutput>) {
         self.dwallet_mpc_round_outputs = new_value;
+    }
+
+    pub(crate) fn set_dwallet_internal_mpc_round_outputs(
+        &mut self,
+        new_value: Vec<DWalletInternalMPCOutput>,
+    ) {
+        self.dwallet_internal_mpc_round_outputs = new_value;
     }
 
     fn record_verified_dwallet_checkpoint_messages(
@@ -1780,6 +1844,13 @@ impl ConsensusCommitOutput {
         batch.insert_batch(
             &tables.dwallet_mpc_outputs,
             [(self.consensus_round, self.dwallet_mpc_round_outputs)],
+        )?;
+        batch.insert_batch(
+            &tables.dwallet_internal_mpc_outputs,
+            [(
+                self.consensus_round,
+                self.dwallet_internal_mpc_round_outputs,
+            )],
         )?;
         batch.insert_batch(
             &tables.verified_dwallet_checkpoint_messages,
