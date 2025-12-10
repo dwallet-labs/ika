@@ -528,7 +528,7 @@ impl DWalletMPCService {
                 .into_iter()
                 .map(DWalletMPCOutputReport::Internal)
                 .collect();
-            let (agreed_internal_mpc_outputs, completed_internal_sessions) = self
+            let (_, completed_internal_sessions) = self
                 .dwallet_mpc_manager
                 .handle_consensus_round_outputs(consensus_round, internal_mpc_outputs);
 
@@ -536,8 +536,6 @@ impl DWalletMPCService {
                 .into_iter()
                 .chain(completed_internal_sessions)
                 .collect();
-
-            // TODO: handle agreed_internal_mpc_outputs (?)
 
             // Take back the external outputs' internal checkpoint messages
             let mut checkpoint_messages: Vec<_> = agreed_external_mpc_outputs

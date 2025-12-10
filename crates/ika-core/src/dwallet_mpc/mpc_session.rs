@@ -153,6 +153,7 @@ impl DWalletSession {
     ) {
         let mpc_protocol = match &self.status {
             SessionStatus::Active { request, .. } => {
+                // TODO: fix this, I don't want it displayed this way
                 DWalletSessionRequestMetricData::from(&request.protocol_data).to_string()
             }
             SessionStatus::WaitingForSessionRequest => {

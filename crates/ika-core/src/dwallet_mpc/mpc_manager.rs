@@ -15,7 +15,7 @@ use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
 };
-use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::{SuiDataReceivers, debug_variable_chunks};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
@@ -28,16 +28,14 @@ use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
-use ika_types::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport,
-    DWalletNetworkEncryptionKeyData, SessionIdentifier, SessionType,
-};
+use ika_types::messages_dwallet_mpc::{Curve25519EdDSAProtocol, DWalletInternalMPCOutput, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType};
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tracing::{debug, error, info};
+use crate::request_protocol_data::ProtocolData;
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -680,11 +678,11 @@ impl DWalletMPCManager {
     pub(crate) fn handle_output(
         &mut self,
         consensus_round: u64,
-        output: DWalletMPCOutputReport,
+        output_report: DWalletMPCOutputReport,
     ) -> Option<(HashSet<AuthorityName>, DWalletMPCOutputKind)> {
-        let session_identifier = output.session_identifier();
-        let sender_authority = output.authority();
-        let is_internal = output.is_internal();
+        let session_identifier = output_report.session_identifier();
+        let sender_authority = output_report.authority();
+        let is_internal = output_report.is_internal();
 
         let Ok(sender_party_id) =
             authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
@@ -711,7 +709,7 @@ impl DWalletMPCManager {
                     "received an output for an MPC session before receiving an event requesting it"
                 );
 
-                let session_computation_type = match output.is_native() {
+                let session_computation_type = match output_report.is_native() {
                     Ok(true) => SessionComputationType::Native,
                     Ok(false) => SessionComputationType::MPC {
                         messages_by_consensus_round: HashMap::new(),
@@ -743,7 +741,7 @@ impl DWalletMPCManager {
             }
         };
 
-        session.add_output(consensus_round, sender_party_id, output);
+        session.add_output(consensus_round, sender_party_id, output_report);
 
         let outputs_by_consensus_round = session.outputs_by_consensus_round().clone();
 
@@ -751,10 +749,73 @@ impl DWalletMPCManager {
             Some((malicious_authorities, majority_vote)) => {
                 self.record_malicious_actors(&malicious_authorities);
 
+                match majority_vote {
+                    DWalletMPCOutputKind::Internal { output} => {
+                        self.handle_mpc_internal_output(session.status.clone(), output);
+                    }
+                    DWalletMPCOutputKind::External {..} => {}
+                }
+
                 Some((malicious_authorities, majority_vote))
             }
             None => None,
         }
+    }
+
+    fn handle_mpc_internal_output(&mut self, session_status: SessionStatus, output: DWalletInternalMPCOutputKind) {
+        match output {
+            DWalletInternalMPCOutputKind::InternalPresign { output, .. } => {
+                match session_status {
+                    SessionStatus::Active {
+                        request,
+                        ..
+                    } => {
+                        match request.protocol_data {
+                            // TODO: unique internal presign data?
+                            ProtocolData::Presign {
+                                data, ..
+                            } => {
+                                match data.signature_algorithm {
+                                    DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                                        self.record_internal_presign_output::<Secp256k1ECDSAProtocol>(output);
+                                    }
+                                    DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                                        self.record_internal_presign_output::<Secp256r1ECDSAProtocol>(output);
+                                    }
+                                    DWalletSignatureAlgorithm::EdDSA => {
+                                        self.record_internal_presign_output::<Curve25519EdDSAProtocol>(output);
+                                    }
+                                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                                        self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateProtocol>(output);
+                                    }
+                                    DWalletSignatureAlgorithm::Taproot => {
+                                        self.record_internal_presign_output::<Secp256k1TaprootProtocol>(output);
+                                    }
+                                }
+                            },
+                            _ => {
+                                // TODO: fix this, I don't want it displayed this way
+                                let mpc_protocol = DWalletSessionRequestMetricData::from(&request.protocol_data).to_string();
+                                error!(should_never_happen =? true, ?mpc_protocol, "Got agreement on an internal MPC output for a mismatching protocol data, expected internal presign");
+                            }
+                        }
+                    },
+                    _ => {
+                        error!(should_never_happen =? true, "Got agreement on an internal MPC output for an inactive session");
+                    }
+                }
+            },
+            DWalletInternalMPCOutputKind::InternalSign { output, .. } => {
+                todo!()
+            },
+        }
+    }
+
+    fn record_internal_presign_output<P: twopc_mpc::presign::Protocol>(&mut self, public_output: Vec<u8>, ) {
+        if let Ok(presigns) = bcs::from_bytes::<public_output>(&public_output) {
+
+        }
+
     }
 
     pub(crate) fn is_malicious_actor(&self, authority: &AuthorityName) -> bool {

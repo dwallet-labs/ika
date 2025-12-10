@@ -387,6 +387,7 @@ pub fn compute_presign<P: presign::Protocol>(
             malicious_parties,
             private_output,
         } => {
+            // TODO: for internal presign don't do that
             let presigns: Vec<P::Presign> = bcs::from_bytes(&public_output_value)?;
             let presign = presigns.first().ok_or(DwalletMPCError::InternalError(
                 "at least one presign must be generated".to_string(),
