@@ -1,6 +1,7 @@
 use crate::crypto::{AuthorityName, keccak256_digest};
 use crate::message::DWalletCheckpointMessageKind;
 use anyhow::anyhow;
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use move_core_types::account_address::AccountAddress;
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
@@ -77,9 +78,16 @@ pub struct DWalletInternalMPCOutput {
 
 #[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Debug, Serialize, Deserialize)]
 pub enum DWalletInternalMPCOutputKind {
-    // TODO: REMOVE rejected
-    InternalPresign { output: Vec<u8>, rejected: bool },
-    InternalSign { output: Vec<u8>, rejected: bool },
+    InternalPresign {
+        output: Vec<u8>,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    },
+    InternalSign {
+        output: Vec<u8>,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    }, // todo: needs hash, hash_scheme: HashScheme },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -223,10 +231,7 @@ impl DWalletMPCOutputReport {
     pub fn rejected(&self) -> bool {
         if let Ok(output) = self.output() {
             match output {
-                DWalletMPCOutputKind::Internal { output } => match output {
-                    DWalletInternalMPCOutputKind::InternalPresign { rejected, .. } => rejected,
-                    DWalletInternalMPCOutputKind::InternalSign { rejected, .. } => rejected,
-                },
+                DWalletMPCOutputKind::Internal { .. } => false,
                 DWalletMPCOutputKind::External { output } => {
                     // Safe to dereference, validated non-empty.
                     output[0].rejected().unwrap_or(false)

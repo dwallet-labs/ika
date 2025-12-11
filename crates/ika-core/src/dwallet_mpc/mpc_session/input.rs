@@ -13,7 +13,7 @@ use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerato
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
-    EncryptedShareVerificationData, MakeDWalletUserSecretKeySharesPublicData,
+    EncryptedShareVerificationData, InternalPresignData, MakeDWalletUserSecretKeySharesPublicData,
     PartialSignatureVerificationData, PresignData, ProtocolData,
 };
 use commitment::CommitmentSizedNumber;
@@ -190,6 +190,27 @@ pub(crate) fn session_input_from_request(
                     )?),
                 ))
         }
+        ProtocolData::InternalPresign {
+            data:
+                InternalPresignData {
+                    signature_algorithm,
+                    ..
+                },
+            dwallet_network_encryption_key_id,
+            ..
+        } => {
+            let encryption_key_public_data = network_keys
+                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
+
+            Ok((
+                PublicInput::Presign(PresignPublicInputByProtocol::try_new(
+                    *signature_algorithm,
+                    encryption_key_public_data,
+                    None,
+                )?),
+                None,
+            ))
+        }
         ProtocolData::Presign {
             data:
                 PresignData {
@@ -235,6 +256,34 @@ pub(crate) fn session_input_from_request(
             )?),
             None,
         )),
+        ProtocolData::InternalSign {
+            data,
+            dwallet_network_encryption_key_id,
+            message,
+            presign,
+            ..
+        } => {
+            // TODO: compute here - or actually that's not inside the cryptographic computation, not good, better take option and later compute it in the sign protocol? idk how to do it
+            let dwallet_decentralized_public_output = todo!();
+            let message_centralized_signature = todo!();
+
+            Ok((
+                PublicInput::Sign(SignPublicInputByProtocol::try_new(
+                    request.session_identifier,
+                    dwallet_decentralized_public_output,
+                    message.clone(),
+                    presign,
+                    message_centralized_signature,
+                    data.hash_scheme,
+                    access_structure,
+                    network_keys.get_network_encryption_key_public_data(
+                        dwallet_network_encryption_key_id,
+                    )?,
+                    data.signature_algorithm,
+                )?),
+                None,
+            ))
+        }
         ProtocolData::EncryptedShareVerification {
             data: EncryptedShareVerificationData { curve, .. },
             dwallet_network_encryption_key_id,

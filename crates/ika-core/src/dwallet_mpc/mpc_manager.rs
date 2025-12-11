@@ -16,6 +16,7 @@ use crate::dwallet_mpc::{
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
 };
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
+use crate::request_protocol_data::ProtocolData;
 use crate::{SuiDataReceivers, debug_variable_chunks};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
@@ -28,14 +29,18 @@ use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
-use ika_types::messages_dwallet_mpc::{Curve25519EdDSAProtocol, DWalletInternalMPCOutput, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType};
+use ika_types::messages_dwallet_mpc::{
+    Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
+    DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, RistrettoSchnorrkelSubstrateProtocol,
+    Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier,
+    SessionType,
+};
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tracing::{debug, error, info};
-use crate::request_protocol_data::ProtocolData;
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -90,6 +95,12 @@ pub(crate) struct DWalletMPCManager {
     // but that is safe as they are synced within an epoch and
     // the session identifier is derived from the epoch as well.
     next_internal_presign_sequence_number: u64,
+
+    internal_presign_pool_ecdsa_secp256k1: Vec<Vec<u8>>,
+    internal_presign_pool_taproot: Vec<Vec<u8>>,
+    internal_presign_pool_eddsa: Vec<Vec<u8>>,
+    internal_presign_pool_schnorrkel_substrate: Vec<Vec<u8>>,
+    internal_presign_pool_ecdsa_secp256r1: Vec<Vec<u8>>,
 }
 
 impl DWalletMPCManager {
@@ -177,6 +188,11 @@ impl DWalletMPCManager {
             schnorr_presign_second_round_delay,
             protocol_config,
             next_internal_presign_sequence_number: 1,
+            internal_presign_pool_ecdsa_secp256k1: Vec::new(),
+            internal_presign_pool_taproot: Vec::new(),
+            internal_presign_pool_eddsa: Vec::new(),
+            internal_presign_pool_schnorrkel_substrate: Vec::new(),
+            internal_presign_pool_ecdsa_secp256r1: Vec::new(),
         })
     }
 
@@ -745,77 +761,147 @@ impl DWalletMPCManager {
 
         let outputs_by_consensus_round = session.outputs_by_consensus_round().clone();
 
-        match self.build_outputs_to_finalize(&session_identifier, outputs_by_consensus_round) {
-            Some((malicious_authorities, majority_vote)) => {
-                self.record_malicious_actors(&malicious_authorities);
+        if let Some((malicious_authorities, majority_vote)) =
+            self.build_outputs_to_finalize(&session_identifier, outputs_by_consensus_round)
+        {
+            self.record_malicious_actors(&malicious_authorities);
 
-                match majority_vote {
-                    DWalletMPCOutputKind::Internal { output} => {
-                        self.handle_mpc_internal_output(session.status.clone(), output);
-                    }
-                    DWalletMPCOutputKind::External {..} => {}
+            match majority_vote.clone() {
+                DWalletMPCOutputKind::Internal { output } => {
+                    self.handle_mpc_internal_output(output);
                 }
-
-                Some((malicious_authorities, majority_vote))
+                DWalletMPCOutputKind::External { .. } => {}
             }
-            None => None,
+
+            Some((malicious_authorities, majority_vote))
+        } else {
+            None
         }
     }
 
-    fn handle_mpc_internal_output(&mut self, session_status: SessionStatus, output: DWalletInternalMPCOutputKind) {
+    fn handle_mpc_internal_output(&mut self, output: DWalletInternalMPCOutputKind) {
         match output {
-            DWalletInternalMPCOutputKind::InternalPresign { output, .. } => {
-                match session_status {
-                    SessionStatus::Active {
-                        request,
-                        ..
-                    } => {
-                        match request.protocol_data {
-                            // TODO: unique internal presign data?
-                            ProtocolData::Presign {
-                                data, ..
-                            } => {
-                                match data.signature_algorithm {
-                                    DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                                        self.record_internal_presign_output::<Secp256k1ECDSAProtocol>(output);
-                                    }
-                                    DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                                        self.record_internal_presign_output::<Secp256r1ECDSAProtocol>(output);
-                                    }
-                                    DWalletSignatureAlgorithm::EdDSA => {
-                                        self.record_internal_presign_output::<Curve25519EdDSAProtocol>(output);
-                                    }
-                                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                                        self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateProtocol>(output);
-                                    }
-                                    DWalletSignatureAlgorithm::Taproot => {
-                                        self.record_internal_presign_output::<Secp256k1TaprootProtocol>(output);
-                                    }
-                                }
-                            },
-                            _ => {
-                                // TODO: fix this, I don't want it displayed this way
-                                let mpc_protocol = DWalletSessionRequestMetricData::from(&request.protocol_data).to_string();
-                                error!(should_never_happen =? true, ?mpc_protocol, "Got agreement on an internal MPC output for a mismatching protocol data, expected internal presign");
-                            }
-                        }
-                    },
-                    _ => {
-                        error!(should_never_happen =? true, "Got agreement on an internal MPC output for an inactive session");
+            DWalletInternalMPCOutputKind::InternalPresign {
+                output,
+                signature_algorithm,
+                ..
+            } => {
+                match signature_algorithm {
+                    DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                        self.record_internal_presign_output::<Secp256k1ECDSAProtocol>(
+                            signature_algorithm,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                        self.record_internal_presign_output::<Secp256r1ECDSAProtocol>(
+                            signature_algorithm,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::EdDSA => {
+                        self.record_internal_presign_output::<Curve25519EdDSAProtocol>(
+                            signature_algorithm,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                        self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateProtocol>(signature_algorithm, output);
+                    }
+                    DWalletSignatureAlgorithm::Taproot => {
+                        self.record_internal_presign_output::<Secp256k1TaprootProtocol>(
+                            signature_algorithm,
+                            output,
+                        );
                     }
                 }
-            },
+            }
             DWalletInternalMPCOutputKind::InternalSign { output, .. } => {
                 todo!()
-            },
+            }
         }
     }
 
-    fn record_internal_presign_output<P: twopc_mpc::presign::Protocol>(&mut self, public_output: Vec<u8>, ) {
-        if let Ok(presigns) = bcs::from_bytes::<public_output>(&public_output) {
-
+    fn record_internal_presign_output<P: twopc_mpc::presign::Protocol>(
+        &mut self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        public_output: Vec<u8>,
+    ) {
+        if let Ok(presigns) = bcs::from_bytes::<Vec<P::Presign>>(&public_output) {
+            if let Ok(serialized_presigns) = presigns
+                .into_iter()
+                .map(|public_output| bcs::to_bytes(&public_output))
+                .collect::<bcs::Result<Vec<_>>>()
+            {
+                let number_of_new_presigns = serialized_presigns.len();
+                match signature_algorithm {
+                    DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                        self.internal_presign_pool_ecdsa_secp256k1
+                            .extend(serialized_presigns);
+                        let pool_new_size = self.internal_presign_pool_ecdsa_secp256k1.len();
+                        info!(
+                            ?number_of_new_presigns,
+                            ?pool_new_size,
+                            ?signature_algorithm,
+                            "Added presigns to the internal presign pool"
+                        );
+                    }
+                    DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                        self.internal_presign_pool_ecdsa_secp256r1
+                            .extend(serialized_presigns);
+                        let pool_new_size = self.internal_presign_pool_ecdsa_secp256r1.len();
+                        info!(
+                            ?number_of_new_presigns,
+                            ?pool_new_size,
+                            ?signature_algorithm,
+                            "Added presigns to the internal presign pool"
+                        );
+                    }
+                    DWalletSignatureAlgorithm::EdDSA => {
+                        self.internal_presign_pool_eddsa.extend(serialized_presigns);
+                        let pool_new_size = self.internal_presign_pool_eddsa.len();
+                        info!(
+                            ?number_of_new_presigns,
+                            ?pool_new_size,
+                            ?signature_algorithm,
+                            "Added presigns to the internal presign pool"
+                        );
+                    }
+                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                        self.internal_presign_pool_schnorrkel_substrate
+                            .extend(serialized_presigns);
+                        let pool_new_size = self.internal_presign_pool_schnorrkel_substrate.len();
+                        info!(
+                            ?number_of_new_presigns,
+                            ?pool_new_size,
+                            ?signature_algorithm,
+                            "Added presigns to the internal presign pool"
+                        );
+                    }
+                    DWalletSignatureAlgorithm::Taproot => {
+                        self.internal_presign_pool_taproot
+                            .extend(serialized_presigns);
+                        let pool_new_size = self.internal_presign_pool_taproot.len();
+                        info!(
+                            ?number_of_new_presigns,
+                            ?pool_new_size,
+                            ?signature_algorithm,
+                            "Added presigns to the internal presign pool"
+                        );
+                    }
+                }
+            } else {
+                error!(
+                    should_never_happen =? true,
+                    "failed to serialize an internal presign output"
+                );
+            }
+        } else {
+            error!(
+                should_never_happen =? true,
+                "failed to deserialize an internal presign output"
+            );
         }
-
     }
 
     pub(crate) fn is_malicious_actor(&self, authority: &AuthorityName) -> bool {

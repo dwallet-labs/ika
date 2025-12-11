@@ -176,10 +176,22 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
                     signature_algorithm: None,
                 }
             }
+            ProtocolData::InternalPresign { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve),
+                hash_scheme: None,
+                signature_algorithm: Some(data.signature_algorithm),
+            },
             ProtocolData::Presign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve),
                 hash_scheme: None,
+                signature_algorithm: Some(data.signature_algorithm),
+            },
+            ProtocolData::InternalSign { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve),
+                hash_scheme: Some(data.hash_scheme),
                 signature_algorithm: Some(data.signature_algorithm),
             },
             ProtocolData::Sign { data, .. } => DWalletSessionRequestMetricData {
@@ -253,6 +265,14 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: None,
                 signature_algorithm: Some(data.signature_algorithm),
             },
+            ProtocolCryptographicData::InternalPresign { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve),
+                    hash_scheme: None,
+                    signature_algorithm: Some(data.signature_algorithm),
+                }
+            }
             ProtocolCryptographicData::Sign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve),

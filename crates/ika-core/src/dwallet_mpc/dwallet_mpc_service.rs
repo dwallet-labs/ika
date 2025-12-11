@@ -514,7 +514,6 @@ impl DWalletMPCService {
             self.dwallet_mpc_manager
                 .handle_consensus_round_messages(consensus_round, mpc_messages);
 
-            // TODO: have the same for internal - just don't checkpoint them?
             let external_mpc_outputs = external_mpc_outputs
                 .into_iter()
                 .map(DWalletMPCOutputReport::External)
@@ -726,24 +725,24 @@ impl DWalletMPCService {
 
                     let rejected = false;
 
-                    let consensus_message = self.new_dwallet_mpc_output(
+                    if let Some(consensus_message) = self.new_dwallet_mpc_output(
                         session_identifier,
                         &request,
                         public_output_value,
                         malicious_authorities,
                         rejected,
-                    );
-
-                    if let Err(err) = consensus_adapter
-                        .submit_to_consensus(&[consensus_message])
-                        .await
-                    {
-                        error!(
-                            ?session_identifier,
-                            validator=?validator_name,
-                            error=?err,
-                            "failed to submit an MPC output message to consensus",
-                        );
+                    ) {
+                        if let Err(err) = consensus_adapter
+                            .submit_to_consensus(&[consensus_message])
+                            .await
+                        {
+                            error!(
+                                ?session_identifier,
+                                validator=?validator_name,
+                                error=?err,
+                                "failed to submit an MPC output message to consensus",
+                            );
+                        }
                     }
                 }
                 Err(err) => {
@@ -818,19 +817,20 @@ impl DWalletMPCService {
         let consensus_adapter = self.dwallet_submit_to_consensus.clone();
         let rejected = true;
 
-        let consensus_message =
-            self.new_dwallet_mpc_output(session_identifier, request, vec![], vec![], rejected);
-
-        if let Err(err) = consensus_adapter
-            .submit_to_consensus(&[consensus_message])
-            .await
+        if let Some(consensus_message) =
+            self.new_dwallet_mpc_output(session_identifier, request, vec![], vec![], rejected)
         {
-            error!(
-                ?session_identifier,
-                validator=?validator_name,
-                error=?err,
-                "failed to submit an MPC SessionFailed message to consensus"
-            );
+            if let Err(err) = consensus_adapter
+                .submit_to_consensus(&[consensus_message])
+                .await
+            {
+                error!(
+                    ?session_identifier,
+                    validator=?validator_name,
+                    error=?err,
+                    "failed to submit an MPC SessionFailed message to consensus"
+                );
+            }
         }
     }
 
@@ -854,14 +854,31 @@ impl DWalletMPCService {
         output: Vec<u8>,
         malicious_authorities: Vec<AuthorityName>,
         rejected: bool,
-    ) -> ConsensusTransaction {
+    ) -> Option<ConsensusTransaction> {
         match session_request.session_type {
-            SessionType::InternalPresign => ConsensusTransaction::new_dwallet_internal_mpc_output(
-                self.name,
-                session_identifier,
-                DWalletInternalMPCOutputKind::InternalPresign { output, rejected },
-                malicious_authorities,
-            ),
+            SessionType::InternalPresign => match &session_request.protocol_data {
+                ProtocolData::InternalPresign { data, .. } => {
+                    Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
+                        self.name,
+                        session_identifier,
+                        DWalletInternalMPCOutputKind::InternalPresign {
+                            output,
+                            curve: data.curve,
+                            signature_algorithm: data.signature_algorithm,
+                        },
+                        malicious_authorities,
+                    ))
+                }
+                _ => {
+                    error!(
+                        should_never_happen =? true,
+                        session_identifier=?session_identifier,
+                        "mismatch between session type and protocol data during MPC output creation",
+                    );
+
+                    None
+                }
+            },
             SessionType::User | SessionType::System => {
                 let output = Self::build_dwallet_checkpoint_message_kinds_from_output(
                     &session_identifier,
@@ -869,12 +886,12 @@ impl DWalletMPCService {
                     output,
                     rejected,
                 );
-                ConsensusTransaction::new_dwallet_mpc_output(
+                Some(ConsensusTransaction::new_dwallet_mpc_output(
                     self.name,
                     session_identifier,
                     output,
                     malicious_authorities,
-                )
+                ))
             }
         }
     }
@@ -951,31 +968,34 @@ impl DWalletMPCService {
                 };
                 vec![tx]
             }
+            ProtocolData::InternalPresign { .. } => {
+                error!(
+                    should_never_happen =? true,
+                    "received an internal presign session for checkpointing"
+                );
+                vec![]
+            }
             ProtocolData::Presign {
                 dwallet_id,
                 presign_id,
                 ..
             } => {
-                // TODO: maybe instead, we should just add a new protocol for internal sessions, so we can handle it differently here.
-                // and honestly we don't need this even for the new protocols
-                if let Some(presign_id) = presign_id {
-                    let tx = DWalletCheckpointMessageKind::RespondDWalletPresign(PresignOutput {
-                        presign: output,
-                        dwallet_id: dwallet_id.map(|id| id.to_vec()),
-                        presign_id: presign_id.to_vec(),
-                        rejected,
-                        session_sequence_number: session_request.session_sequence_number,
-                    });
+                let tx = DWalletCheckpointMessageKind::RespondDWalletPresign(PresignOutput {
+                    presign: output,
+                    dwallet_id: dwallet_id.map(|id| id.to_vec()),
+                    presign_id: presign_id.to_vec(),
+                    rejected,
+                    session_sequence_number: session_request.session_sequence_number,
+                });
 
-                    vec![tx]
-                } else {
-                    error!(
-                        should_never_happen = true,
-                        "Presign ID is None in a Presign session needing a checkpoint"
-                    );
-
-                    vec![]
-                }
+                vec![tx]
+            }
+            ProtocolData::InternalSign { .. } => {
+                error!(
+                    should_never_happen =? true,
+                    "received an internal sign session for checkpointing"
+                );
+                vec![]
             }
             ProtocolData::Sign {
                 dwallet_id,
@@ -983,26 +1003,16 @@ impl DWalletMPCService {
                 is_future_sign,
                 ..
             } => {
-                if let Some(dwallet_id) = dwallet_id
-                    && let Some(sign_id) = sign_id
-                {
-                    let tx = DWalletCheckpointMessageKind::RespondDWalletSign(SignOutput {
-                        signature: output,
-                        dwallet_id: dwallet_id.to_vec(),
-                        is_future_sign: *is_future_sign,
-                        sign_id: sign_id.to_vec(),
-                        rejected,
-                        session_sequence_number: session_request.session_sequence_number,
-                    });
-                    vec![tx]
-                } else {
-                    error!(
-                        should_never_happen = true,
-                        "dWallet ID or Sign ID is None in a Sign session needing a checkpoint"
-                    );
+                let tx = DWalletCheckpointMessageKind::RespondDWalletSign(SignOutput {
+                    signature: output,
+                    dwallet_id: dwallet_id.to_vec(),
+                    is_future_sign: *is_future_sign,
+                    sign_id: sign_id.to_vec(),
+                    rejected,
+                    session_sequence_number: session_request.session_sequence_number,
+                });
 
-                    vec![]
-                }
+                vec![tx]
             }
             ProtocolData::EncryptedShareVerification {
                 dwallet_id,

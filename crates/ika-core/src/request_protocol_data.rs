@@ -63,8 +63,23 @@ pub struct PresignData {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
+#[display("InternalPresign")]
+pub struct InternalPresignData {
+    pub curve: DWalletCurve,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Sign")]
 pub struct SignData {
+    pub curve: DWalletCurve,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
+    pub hash_scheme: HashScheme,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
+#[display("InternalSign")]
+pub struct InternalSignData {
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_scheme: HashScheme,
@@ -129,21 +144,33 @@ pub enum ProtocolData {
     Presign {
         data: PresignData,
         dwallet_id: Option<ObjectID>,
-        presign_id: Option<ObjectID>,
+        presign_id: ObjectID,
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
+        dwallet_network_encryption_key_id: ObjectID,
+    },
+
+    InternalPresign {
+        data: InternalPresignData,
         dwallet_network_encryption_key_id: ObjectID,
     },
 
     Sign {
         data: SignData,
-        dwallet_id: Option<ObjectID>,
-        sign_id: Option<ObjectID>,
+        dwallet_id: ObjectID,
+        sign_id: ObjectID,
         is_future_sign: bool,
         dwallet_network_encryption_key_id: ObjectID,
         dwallet_decentralized_public_output: SerializedWrappedMPCPublicOutput,
         message: Vec<u8>,
         presign: SerializedWrappedMPCPublicOutput,
         message_centralized_signature: SerializedWrappedMPCPublicOutput,
+    },
+
+    InternalSign {
+        data: InternalSignData,
+        dwallet_network_encryption_key_id: ObjectID,
+        message: Vec<u8>,
+        presign: SerializedWrappedMPCPublicOutput,
     },
 
     NetworkEncryptionKeyDkg {
@@ -255,14 +282,11 @@ pub fn internal_presign_protocol_data(
     signature_algorithm: DWalletSignatureAlgorithm,
     dwallet_network_encryption_key_id: ObjectID,
 ) -> ProtocolData {
-    ProtocolData::Presign {
-        data: PresignData {
+    ProtocolData::InternalPresign {
+        data: InternalPresignData {
             curve,
             signature_algorithm,
         },
-        dwallet_id: None,
-        presign_id: None,
-        dwallet_public_output: None,
         dwallet_network_encryption_key_id,
     }
 }
@@ -279,7 +303,7 @@ pub fn presign_protocol_data(
             )?,
         },
         dwallet_id: request_event_data.dwallet_id,
-        presign_id: Some(request_event_data.presign_id),
+        presign_id: request_event_data.presign_id,
         dwallet_public_output: request_event_data.dwallet_public_output,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
     })
@@ -299,8 +323,8 @@ pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCRes
                 request_event_data.hash_scheme,
             )?,
         },
-        dwallet_id: Some(request_event_data.dwallet_id),
-        sign_id: Some(request_event_data.sign_id),
+        dwallet_id: request_event_data.dwallet_id,
+        sign_id: request_event_data.sign_id,
         is_future_sign: request_event_data.is_future_sign,
         dwallet_network_encryption_key_id: request_event_data.dwallet_network_encryption_key_id,
         dwallet_decentralized_public_output: request_event_data.dwallet_decentralized_public_output,
@@ -387,7 +411,15 @@ impl ProtocolData {
                 dwallet_network_encryption_key_id,
                 ..
             }
+            | ProtocolData::InternalPresign {
+                dwallet_network_encryption_key_id,
+                ..
+            }
             | ProtocolData::Sign {
+                dwallet_network_encryption_key_id,
+                ..
+            }
+            | ProtocolData::InternalSign {
                 dwallet_network_encryption_key_id,
                 ..
             }
