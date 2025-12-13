@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use clap::*;
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
     cell::RefCell,
-    collections::{BTreeSet, },
+    collections::BTreeSet,
     sync::atomic::{AtomicBool, Ordering},
 };
 use sui_protocol_config_macros::{
     ProtocolConfigAccessors, ProtocolConfigFeatureFlagsGetters, ProtocolConfigOverride,
 };
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
@@ -576,7 +576,11 @@ impl ProtocolConfig {
 
     /// Get the minimum size of the internal presign.
     /// We should continue instantiating internal presign sessions until reaching this size.
-    pub fn get_internal_presign_pool_minimum_size(&self, _curve: DWalletCurve, signature_algorithm: DWalletSignatureAlgorithm) -> u64 {
+    pub fn get_internal_presign_pool_minimum_size(
+        &self,
+        _curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
         match signature_algorithm {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 self.internal_secp256k1_ecdsa_presign_pool_minimum_size()
@@ -584,41 +588,43 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 self.internal_secp256r1_ecdsa_presign_pool_minimum_size()
             }
-            DWalletSignatureAlgorithm::EdDSA => {
-                self.internal_eddsa_presign_pool_minimum_size()
-            }
+            DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_pool_minimum_size(),
             DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 self.internal_schnorrkel_substrate_presign_pool_minimum_size()
             }
-            DWalletSignatureAlgorithm::Taproot => {
-                self.internal_taproot_presign_pool_minimum_size()
-            }
+            DWalletSignatureAlgorithm::Taproot => self.internal_taproot_presign_pool_minimum_size(),
         }
     }
 
     /// Get the number of consensus rounds to wait between instantiation of internal presign sessions.
-    pub fn get_internal_presign_consensus_round_delay(&self, _curve: DWalletCurve, signature_algorithm: DWalletSignatureAlgorithm) -> u64 {
-          match signature_algorithm {
-              DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                  self.internal_secp256k1_ecdsa_presign_consensus_round_delay()
-              }
-              DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                  self.internal_secp256r1_ecdsa_presign_consensus_round_delay()
-              }
-              DWalletSignatureAlgorithm::EdDSA => {
-                  self.internal_eddsa_presign_consensus_round_delay()
-              }
-              DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                  self.internal_schnorrkel_substrate_presign_consensus_round_delay()
-              }
-              DWalletSignatureAlgorithm::Taproot => {
-                  self.internal_taproot_presign_consensus_round_delay()
-              }
-          }
+    pub fn get_internal_presign_consensus_round_delay(
+        &self,
+        _curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.internal_secp256k1_ecdsa_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.internal_secp256r1_ecdsa_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_consensus_round_delay(),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.internal_schnorrkel_substrate_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                self.internal_taproot_presign_consensus_round_delay()
+            }
+        }
     }
 
     /// Get the number of internal presign sessions to instantiate every time.
-    pub fn get_internal_presign_sessions_to_instantiate(&self, _curve: DWalletCurve, signature_algorithm: DWalletSignatureAlgorithm) -> u64 {
+    pub fn get_internal_presign_sessions_to_instantiate(
+        &self,
+        _curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
         match signature_algorithm {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 self.internal_secp256k1_ecdsa_presign_sessions_to_instantiate()
