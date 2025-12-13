@@ -130,6 +130,7 @@ pub struct NetworkEncryptionKeyPublicData {
 
 #[derive(
     strum_macros::Display,
+    strum_macros::EnumString,
     Clone,
     Debug,
     PartialEq,
@@ -140,6 +141,7 @@ pub struct NetworkEncryptionKeyPublicData {
     Copy,
     Ord,
     PartialOrd,
+    schemars::JsonSchema,
 )]
 // useful to tell which protocol public parameters to use
 pub enum DWalletCurve {
@@ -155,6 +157,7 @@ pub enum DWalletCurve {
 
 #[derive(
     strum_macros::Display,
+    strum_macros::EnumString,
     Clone,
     Debug,
     PartialEq,
@@ -165,6 +168,7 @@ pub enum DWalletCurve {
     Copy,
     Ord,
     PartialOrd,
+    schemars::JsonSchema,
 )]
 pub enum DWalletSignatureAlgorithm {
     #[strum(to_string = "ECDSASecp256k1")]

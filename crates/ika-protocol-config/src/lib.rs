@@ -6,12 +6,13 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
     cell::RefCell,
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     sync::atomic::{AtomicBool, Ordering},
 };
 use sui_protocol_config_macros::{
     ProtocolConfigAccessors, ProtocolConfigFeatureFlagsGetters, ProtocolConfigOverride,
 };
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
@@ -264,6 +265,26 @@ pub struct ProtocolConfig {
     network_dkg_third_round_delay: Option<u64>,
     network_encryption_key_version: Option<u64>,
     reconfiguration_message_version: Option<u64>,
+
+    // The number of threshold underneath which a validator considers itself idle
+    idle_session_count_threshold: Option<u64>,
+    checkpoint_signing_curve: Option<DWalletCurve>,
+    checkpoint_signing_algorithm: Option<DWalletSignatureAlgorithm>,
+    internal_secp256k1_ecdsa_presign_pool_minimum_size: Option<u64>,
+    internal_secp256r1_ecdsa_presign_pool_minimum_size: Option<u64>,
+    internal_taproot_presign_pool_minimum_size: Option<u64>,
+    internal_eddsa_presign_pool_minimum_size: Option<u64>,
+    internal_schnorrkel_substrate_presign_pool_minimum_size: Option<u64>,
+    internal_secp256k1_ecdsa_presign_consensus_round_delay: Option<u64>,
+    internal_secp256r1_ecdsa_presign_consensus_round_delay: Option<u64>,
+    internal_taproot_presign_consensus_round_delay: Option<u64>,
+    internal_eddsa_presign_consensus_round_delay: Option<u64>,
+    internal_schnorrkel_substrate_presign_consensus_round_delay: Option<u64>,
+    internal_secp256k1_ecdsa_presign_sessions_to_instantiate: Option<u64>,
+    internal_secp256r1_ecdsa_presign_sessions_to_instantiate: Option<u64>,
+    internal_taproot_presign_sessions_to_instantiate: Option<u64>,
+    internal_eddsa_presign_sessions_to_instantiate: Option<u64>,
+    internal_schnorrkel_substrate_presign_sessions_to_instantiate: Option<u64>,
 }
 
 // feature flags
@@ -482,6 +503,29 @@ impl ProtocolConfig {
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
+            idle_session_count_threshold: Some(10),
+            checkpoint_signing_curve: Some(DWalletCurve::Curve25519),
+            checkpoint_signing_algorithm: Some(DWalletSignatureAlgorithm::EdDSA),
+
+            internal_secp256k1_ecdsa_presign_pool_minimum_size: Some(1000),
+            internal_secp256k1_ecdsa_presign_consensus_round_delay: Some(300),
+            internal_secp256k1_ecdsa_presign_sessions_to_instantiate: Some(1),
+
+            internal_secp256r1_ecdsa_presign_pool_minimum_size: Some(100),
+            internal_secp256r1_ecdsa_presign_consensus_round_delay: Some(600),
+            internal_secp256r1_ecdsa_presign_sessions_to_instantiate: Some(1),
+
+            internal_taproot_presign_pool_minimum_size: Some(5000),
+            internal_taproot_presign_consensus_round_delay: Some(100),
+            internal_taproot_presign_sessions_to_instantiate: Some(1),
+
+            internal_eddsa_presign_pool_minimum_size: Some(50000),
+            internal_eddsa_presign_consensus_round_delay: Some(40),
+            internal_eddsa_presign_sessions_to_instantiate: Some(4),
+
+            internal_schnorrkel_substrate_presign_pool_minimum_size: Some(100),
+            internal_schnorrkel_substrate_presign_consensus_round_delay: Some(300),
+            internal_schnorrkel_substrate_presign_sessions_to_instantiate: Some(1),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);
@@ -528,6 +572,100 @@ impl ProtocolConfig {
             *cur = Some(Box::new(override_fn));
             OverrideGuard
         })
+    }
+
+    /// Get a map between the curve, signature algorithm, and the minimum size of the internal presign.
+    /// We should continue instantiating internal presign sessions until reaching this size.
+    pub fn get_internal_presign_pool_minimum_size(&self) -> HashMap<DWalletCurve, HashMap<DWalletSignatureAlgorithm, u64>> {
+        HashMap::from([
+            (
+                DWalletCurve::Secp256k1,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::ECDSASecp256k1, self.internal_secp256k1_ecdsa_presign_pool_minimum_size()),
+                    (DWalletSignatureAlgorithm::Taproot, self.internal_taproot_presign_pool_minimum_size()),
+                ])
+            ),
+            (
+                DWalletCurve::Secp256r1,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::ECDSASecp256r1, self.internal_secp256r1_ecdsa_presign_pool_minimum_size())
+                ])
+            ),
+            (
+                DWalletCurve::Curve25519,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::EdDSA, self.internal_eddsa_presign_pool_minimum_size())
+                ])
+            ),
+            (
+                DWalletCurve::Ristretto,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::SchnorrkelSubstrate, self.internal_schnorrkel_substrate_presign_pool_minimum_size())
+                ])
+            ),
+        ])
+    }
+
+    /// Get a map between the curve, signature algorithm, and the number of consensus rounds to wait between instantiation of internal presign sessions.
+    pub fn get_internal_presign_consensus_round_delay(&self) -> HashMap<DWalletCurve, HashMap<DWalletSignatureAlgorithm, u64>> {
+        HashMap::from([
+            (
+                DWalletCurve::Secp256k1,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::ECDSASecp256k1, self.internal_secp256k1_ecdsa_presign_consensus_round_delay()),
+                    (DWalletSignatureAlgorithm::Taproot, self.internal_taproot_presign_consensus_round_delay()),
+                ])
+            ),
+            (
+                DWalletCurve::Secp256r1,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::ECDSASecp256r1, self.internal_secp256r1_ecdsa_presign_consensus_round_delay())
+                ])
+            ),
+            (
+                DWalletCurve::Curve25519,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::EdDSA, self.internal_eddsa_presign_consensus_round_delay())
+                ])
+            ),
+            (
+                DWalletCurve::Ristretto,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::SchnorrkelSubstrate, self.internal_schnorrkel_substrate_presign_consensus_round_delay())
+                ])
+            ),
+        ])
+    }
+
+    /// Get a map between the curve, signature algorithm, and the number of internal presign sessions to instantiate every time.
+    pub fn get_internal_presign_sessions_to_instantiate(&self) -> HashMap<DWalletCurve, HashMap<DWalletSignatureAlgorithm, u64>> {
+        HashMap::from([
+            (
+                DWalletCurve::Secp256k1,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::ECDSASecp256k1, self.internal_secp256k1_ecdsa_presign_sessions_to_instantiate()),
+                    (DWalletSignatureAlgorithm::Taproot, self.internal_taproot_presign_sessions_to_instantiate()),
+                ])
+            ),
+            (
+                DWalletCurve::Secp256r1,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::ECDSASecp256r1, self.internal_secp256r1_ecdsa_presign_sessions_to_instantiate())
+                ])
+            ),
+            (
+                DWalletCurve::Curve25519,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::EdDSA, self.internal_eddsa_presign_sessions_to_instantiate())
+                ])
+            ),
+            (
+                DWalletCurve::Ristretto,
+                HashMap::from([
+                    (DWalletSignatureAlgorithm::SchnorrkelSubstrate, self.internal_schnorrkel_substrate_presign_sessions_to_instantiate())
+                ])
+            ),
+        ])
     }
 }
 

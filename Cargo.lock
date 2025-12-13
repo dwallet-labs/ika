@@ -3682,6 +3682,7 @@ dependencies = [
  "p256 0.14.0-pre.11",
  "schemars",
  "serde",
+ "strum 0.27.1",
  "strum_macros 0.27.1",
  "thiserror 2.0.12",
  "twopc_mpc",
@@ -5983,6 +5984,7 @@ name = "ika-protocol-config"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "dwallet-mpc-types",
  "insta",
  "schemars",
  "serde",
