@@ -13,7 +13,7 @@ use crate::dwallet_mpc::sign::{
 };
 use crate::request_protocol_data::{
     DWalletDKGAndSignData, DWalletDKGData, EncryptedShareVerificationData,
-    ImportedKeyVerificationData, InternalPresignData, InternalSignData,
+    ImportedKeyVerificationData, InternalPresignData,
     MakeDWalletUserSecretKeySharesPublicData, NetworkEncryptionKeyReconfigurationData,
     PartialSignatureVerificationData, PresignData, ProtocolData, SignData,
 };

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
     cell::RefCell,
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, },
     sync::atomic::{AtomicBool, Ordering},
 };
 use sui_protocol_config_macros::{
@@ -574,98 +574,68 @@ impl ProtocolConfig {
         })
     }
 
-    /// Get a map between the curve, signature algorithm, and the minimum size of the internal presign.
+    /// Get the minimum size of the internal presign.
     /// We should continue instantiating internal presign sessions until reaching this size.
-    pub fn get_internal_presign_pool_minimum_size(&self) -> HashMap<DWalletCurve, HashMap<DWalletSignatureAlgorithm, u64>> {
-        HashMap::from([
-            (
-                DWalletCurve::Secp256k1,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::ECDSASecp256k1, self.internal_secp256k1_ecdsa_presign_pool_minimum_size()),
-                    (DWalletSignatureAlgorithm::Taproot, self.internal_taproot_presign_pool_minimum_size()),
-                ])
-            ),
-            (
-                DWalletCurve::Secp256r1,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::ECDSASecp256r1, self.internal_secp256r1_ecdsa_presign_pool_minimum_size())
-                ])
-            ),
-            (
-                DWalletCurve::Curve25519,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::EdDSA, self.internal_eddsa_presign_pool_minimum_size())
-                ])
-            ),
-            (
-                DWalletCurve::Ristretto,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::SchnorrkelSubstrate, self.internal_schnorrkel_substrate_presign_pool_minimum_size())
-                ])
-            ),
-        ])
+    pub fn get_internal_presign_pool_minimum_size(&self, _curve: DWalletCurve, signature_algorithm: DWalletSignatureAlgorithm) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.internal_secp256k1_ecdsa_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.internal_secp256r1_ecdsa_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSA => {
+                self.internal_eddsa_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.internal_schnorrkel_substrate_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                self.internal_taproot_presign_pool_minimum_size()
+            }
+        }
     }
 
-    /// Get a map between the curve, signature algorithm, and the number of consensus rounds to wait between instantiation of internal presign sessions.
-    pub fn get_internal_presign_consensus_round_delay(&self) -> HashMap<DWalletCurve, HashMap<DWalletSignatureAlgorithm, u64>> {
-        HashMap::from([
-            (
-                DWalletCurve::Secp256k1,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::ECDSASecp256k1, self.internal_secp256k1_ecdsa_presign_consensus_round_delay()),
-                    (DWalletSignatureAlgorithm::Taproot, self.internal_taproot_presign_consensus_round_delay()),
-                ])
-            ),
-            (
-                DWalletCurve::Secp256r1,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::ECDSASecp256r1, self.internal_secp256r1_ecdsa_presign_consensus_round_delay())
-                ])
-            ),
-            (
-                DWalletCurve::Curve25519,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::EdDSA, self.internal_eddsa_presign_consensus_round_delay())
-                ])
-            ),
-            (
-                DWalletCurve::Ristretto,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::SchnorrkelSubstrate, self.internal_schnorrkel_substrate_presign_consensus_round_delay())
-                ])
-            ),
-        ])
+    /// Get the number of consensus rounds to wait between instantiation of internal presign sessions.
+    pub fn get_internal_presign_consensus_round_delay(&self, _curve: DWalletCurve, signature_algorithm: DWalletSignatureAlgorithm) -> u64 {
+          match signature_algorithm {
+              DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                  self.internal_secp256k1_ecdsa_presign_consensus_round_delay()
+              }
+              DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                  self.internal_secp256r1_ecdsa_presign_consensus_round_delay()
+              }
+              DWalletSignatureAlgorithm::EdDSA => {
+                  self.internal_eddsa_presign_consensus_round_delay()
+              }
+              DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                  self.internal_schnorrkel_substrate_presign_consensus_round_delay()
+              }
+              DWalletSignatureAlgorithm::Taproot => {
+                  self.internal_taproot_presign_consensus_round_delay()
+              }
+          }
     }
 
-    /// Get a map between the curve, signature algorithm, and the number of internal presign sessions to instantiate every time.
-    pub fn get_internal_presign_sessions_to_instantiate(&self) -> HashMap<DWalletCurve, HashMap<DWalletSignatureAlgorithm, u64>> {
-        HashMap::from([
-            (
-                DWalletCurve::Secp256k1,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::ECDSASecp256k1, self.internal_secp256k1_ecdsa_presign_sessions_to_instantiate()),
-                    (DWalletSignatureAlgorithm::Taproot, self.internal_taproot_presign_sessions_to_instantiate()),
-                ])
-            ),
-            (
-                DWalletCurve::Secp256r1,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::ECDSASecp256r1, self.internal_secp256r1_ecdsa_presign_sessions_to_instantiate())
-                ])
-            ),
-            (
-                DWalletCurve::Curve25519,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::EdDSA, self.internal_eddsa_presign_sessions_to_instantiate())
-                ])
-            ),
-            (
-                DWalletCurve::Ristretto,
-                HashMap::from([
-                    (DWalletSignatureAlgorithm::SchnorrkelSubstrate, self.internal_schnorrkel_substrate_presign_sessions_to_instantiate())
-                ])
-            ),
-        ])
+    /// Get the number of internal presign sessions to instantiate every time.
+    pub fn get_internal_presign_sessions_to_instantiate(&self, _curve: DWalletCurve, signature_algorithm: DWalletSignatureAlgorithm) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.internal_secp256k1_ecdsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.internal_secp256r1_ecdsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::EdDSA => {
+                self.internal_eddsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.internal_schnorrkel_substrate_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                self.internal_taproot_presign_sessions_to_instantiate()
+            }
+        }
     }
 }
 
