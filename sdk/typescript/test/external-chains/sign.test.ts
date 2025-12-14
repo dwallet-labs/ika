@@ -1,5 +1,3 @@
-;
-
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 import { bitcoin_address_from_dwallet_output } from '@ika.xyz/ika-wasm';
@@ -17,38 +15,19 @@ import ECPairFactory from 'ecpair';
 import * as ecc from 'tiny-secp256k1';
 import { describe, expect, it } from 'vitest';
 
-
-
-import { CoordinatorInnerModule, createRandomSessionIdentifier, getNetworkConfig, IkaClient, IkaTransaction, prepareDKGAsync, SessionsManagerModule, UserShareEncryptionKeys } from '../../src';
+import {
+	CoordinatorInnerModule,
+	createRandomSessionIdentifier,
+	getNetworkConfig,
+	IkaClient,
+	IkaTransaction,
+	prepareDKGAsync,
+	SessionsManagerModule,
+	UserShareEncryptionKeys,
+} from '../../src';
 import { Curve } from '../../src/client/types';
 import { createEmptyTestIkaToken, executeTestTransactionWithKeypair } from '../helpers/test-utils';
 import { setupDKGFlow } from '../v2/all-combinations.test';
-
-
-;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 function varSliceSize(someScript: Uint8Array): number {
 	const length = someScript.length;
