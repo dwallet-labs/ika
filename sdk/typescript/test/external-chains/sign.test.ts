@@ -158,7 +158,7 @@ function createDeterministicBTCKeypair() {
 }
 
 describe('DWallet Signing', () => {
-	it('should create a DWallet and print its address', async () => {
+	it('should create a DWallet and print its bitcoin public key', async () => {
 		const testName = 'dwallet-sign-test';
 
 		const {
@@ -168,21 +168,10 @@ describe('DWallet Signing', () => {
 			userShareEncryptionKeys,
 			signerAddress,
 		} = await setupDKGFlow(testName, Curve.SECP256K1);
-		console.log('DWallet created successfully.');
-		const dwalletBitcoinAddress = bitcoin_pubkey_from_dwallet_output(
+		const dwalletBitcoinPubkey = bitcoin_pubkey_from_dwallet_output(
 			Uint8Array.from(activeDWallet.state.Active.public_output),
 		);
-		console.log("DWallet's Bitcoin address:", dwalletBitcoinAddress);
-
-		// log all the dwallet components as base 64
-		console.log('DWallet Components:', {
-			activeDWallet: toBase64(activeDWallet),
-			encryptedUserSecretKeyShare: toBase64(encryptedUserSecretKeyShareId),
-			userShareEncryptionKeys: toBase64(userShareEncryptionKeys),
-			signerAddress: toBase64(signerAddress),
-		});
-
-		return;
+		console.log("DWallet's Bitcoin public key:", dwalletBitcoinPubkey);
 	});
 
 	it('should generate a bitcoin pubkey and address from a fixed privkey', () => {
