@@ -82,6 +82,7 @@ pub enum DWalletInternalMPCOutputKind {
         output: Vec<u8>,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
+        session_sequence_number: u64,
     },
     InternalSign {
         output: Vec<u8>,

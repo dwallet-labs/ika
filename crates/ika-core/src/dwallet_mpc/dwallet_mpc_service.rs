@@ -124,6 +124,7 @@ impl DWalletMPCService {
             dwallet_mpc_metrics.clone(),
             sui_data_receivers.clone(),
             protocol_config.clone(),
+            epoch_store.clone(),
         );
 
         Self {
@@ -158,7 +159,7 @@ impl DWalletMPCService {
     ) -> Self {
         DWalletMPCService {
             last_read_consensus_round: Some(0),
-            epoch_store,
+            epoch_store: epoch_store.clone(),
             dwallet_submit_to_consensus,
             state: authority_state,
             dwallet_checkpoint_service: checkpoint_service,
@@ -173,6 +174,7 @@ impl DWalletMPCService {
                 DWalletMPCMetrics::new(&Registry::new()),
                 sui_data_receivers.clone(),
                 ProtocolConfig::get_for_min_version(),
+                epoch_store,
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
@@ -867,6 +869,7 @@ impl DWalletMPCService {
                             output,
                             curve: data.curve,
                             signature_algorithm: data.signature_algorithm,
+                            session_sequence_number: session_request.session_sequence_number,
                         },
                         malicious_authorities,
                     ))

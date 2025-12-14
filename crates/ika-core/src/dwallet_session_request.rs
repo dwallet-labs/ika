@@ -39,6 +39,11 @@ impl DWalletSessionRequest {
             b"session sequence number",
             &session_sequence_number.to_be_bytes(),
         );
+        transcript.append_message(b"curve", curve.to_string().as_bytes());
+        transcript.append_message(
+            b"signature algorithm",
+            signature_algorithm.to_string().as_bytes(),
+        );
 
         // Generate a session identifier preimage in a deterministic way
         // (internally, it uses a hash function to pseudo-randomly generate it).
