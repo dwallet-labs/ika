@@ -14,7 +14,8 @@ import {
 	Presign,
 	publicKeyFromDWalletOutput,
 	SessionsManagerModule,
-	SignatureAlgorithm, UserShareEncryptionKeys,
+	SignatureAlgorithm,
+	UserShareEncryptionKeys,
 	ZeroTrustDWallet,
 } from '../../src';
 import { testPresign } from '../helpers/dwallet-test-helpers';
