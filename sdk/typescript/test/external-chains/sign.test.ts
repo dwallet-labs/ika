@@ -50,16 +50,15 @@ describe('DWallet Signing', () => {
 	});
 
 	it('should create a raw tx to send bitcoin from given address A to given address B, output the raw tx', async () => {
-		const keyPair = createDeterministicBTCKeypair();
+		let dwalletBTCPubkey = Uint8Array.from([]);
+		const recipientAddress = 'tb1q0snqvzf2wr3290wq5elgmzfq8jektkrgl3ang0';
+		const amount = 500;
 
 		const { address } = bitcoin.payments.p2wpkh({
-			pubkey: keyPair.publicKey,
+			pubkey: dwalletBTCPubkey,
 			network: networks.testnet,
 		});
-		const recipientAddress = 'tb1q0snqvzf2wr3290wq5elgmzfq8jektkrgl3ang0';
 
-		// Put any number you want to send in Satoshi.
-		const amount = 500;
 
 		// Get the UTXO for the sender address.
 		const { utxo, txid, vout, satoshis } = await getUTXO(address);
@@ -67,7 +66,7 @@ describe('DWallet Signing', () => {
 		const psbt = new bitcoin.Psbt({ network: networks.testnet });
 
 		const output = bitcoin.payments.p2wpkh({
-			pubkey: keyPair.publicKey,
+			pubkey: dwalletBTCPubkey,
 			network: networks.testnet,
 		}).output!;
 
@@ -103,7 +102,7 @@ describe('DWallet Signing', () => {
 		}
 
 		console.log(
-			'Transaction buffer (hex):',
+			'txHex',
 			Buffer.from(psbt.data.getTransaction()).toString('hex'),
 		);
 
@@ -120,13 +119,10 @@ describe('DWallet Signing', () => {
 			satoshis,
 			bitcoin.Transaction.SIGHASH_ALL,
 		);
-		const hashToSign = sha256(sha256(bytesToSign));
 		console.log(
 			'Raw transaction hash bytes to sign (hex):',
-			Buffer.from(hashToSign).toString('hex'),
+			Buffer.from(bytesToSign).toString('hex'),
 		);
-		const signature = keyPair.sign(hashToSign);
-		console.log('Signature (hex):', Buffer.from(signature).toString('hex'));
 	});
 
 	it('should submit a signed transaction to the bitcoin blockchain', async () => {
