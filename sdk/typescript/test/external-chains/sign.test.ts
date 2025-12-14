@@ -1,10 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 import { bitcoin_pubkey_from_dwallet_output } from '@ika.xyz/ika-wasm';
-import { toHex } from '@mysten/bcs';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { Transaction } from '@mysten/sui/transactions';
 import { sha256 } from '@noble/hashes/sha256';
 import axios from 'axios';
 import * as bitcoin from 'bitcoinjs-lib';
@@ -15,147 +11,8 @@ import ECPairFactory from 'ecpair';
 import * as ecc from 'tiny-secp256k1';
 import { describe, expect, it } from 'vitest';
 
-import {
-	CoordinatorInnerModule,
-	createRandomSessionIdentifier,
-	getNetworkConfig,
-	IkaClient,
-	IkaTransaction,
-	prepareDKGAsync,
-	SessionsManagerModule,
-	UserShareEncryptionKeys,
-} from '../../src';
 import { Curve } from '../../src/client/types';
-import { createEmptyTestIkaToken, executeTestTransactionWithKeypair } from '../helpers/test-utils';
 import { setupDKGFlow } from '../v2/all-combinations.test';
-
-function varSliceSize(someScript: Uint8Array): number {
-	const length = someScript.length;
-
-	return varuint.encodingLength(length) + length;
-}
-
-function txBytesToSign(
-	tx: BtcTransaction,
-	inIndex: number,
-	prevOutScript: Uint8Array,
-	value: number,
-	hashType: number,
-): Buffer {
-	const ZERO: Buffer = Buffer.from(
-		'0000000000000000000000000000000000000000000000000000000000000000',
-		'hex',
-	);
-
-	let tbuffer: Buffer = Buffer.from([]);
-	let bufferWriter: BufferWriter;
-
-	let hashOutputs = ZERO;
-	let hashPrevious = ZERO;
-	let hashSequence = ZERO;
-
-	if (!(hashType & bitcoin.Transaction.SIGHASH_ANYONECANPAY)) {
-		tbuffer = Buffer.allocUnsafe(36 * tx.ins.length);
-		bufferWriter = new BufferWriter(tbuffer, 0);
-
-		tx.ins.forEach((txIn) => {
-			bufferWriter.writeSlice(txIn.hash);
-			bufferWriter.writeUInt32(txIn.index);
-		});
-
-		hashPrevious = Buffer.from(sha256(sha256(tbuffer)));
-	}
-
-	if (
-		!(hashType & bitcoin.Transaction.SIGHASH_ANYONECANPAY) &&
-		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_SINGLE &&
-		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_NONE
-	) {
-		tbuffer = Buffer.allocUnsafe(4 * tx.ins.length);
-		bufferWriter = new BufferWriter(tbuffer, 0);
-
-		tx.ins.forEach((txIn) => {
-			bufferWriter.writeUInt32(txIn.sequence);
-		});
-
-		hashSequence = Buffer.from(sha256(sha256(tbuffer)));
-	}
-
-	if (
-		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_SINGLE &&
-		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_NONE
-	) {
-		const txOutsSize = tx.outs.reduce((sum, output) => {
-			return sum + 8 + varSliceSize(output.script);
-		}, 0);
-
-		tbuffer = Buffer.allocUnsafe(txOutsSize);
-		bufferWriter = new BufferWriter(tbuffer, 0);
-
-		tx.outs.forEach((out) => {
-			bufferWriter.writeUInt64(out.value);
-			bufferWriter.writeVarSlice(out.script);
-		});
-
-		hashOutputs = Buffer.from(sha256(sha256(tbuffer)));
-	} else if ((hashType & 0x1f) === bitcoin.Transaction.SIGHASH_SINGLE && inIndex < tx.outs.length) {
-		const output = tx.outs[inIndex];
-
-		tbuffer = Buffer.allocUnsafe(8 + varSliceSize(output.script));
-		bufferWriter = new BufferWriter(tbuffer, 0);
-		bufferWriter.writeUInt64(output.value);
-		bufferWriter.writeVarSlice(output.script);
-
-		hashOutputs = Buffer.from(sha256(sha256(tbuffer)));
-	}
-
-	tbuffer = Buffer.allocUnsafe(156 + varSliceSize(prevOutScript));
-	bufferWriter = new BufferWriter(tbuffer, 0);
-
-	const input = tx.ins[inIndex];
-	bufferWriter.writeInt32(tx.version);
-	bufferWriter.writeSlice(hashPrevious);
-	bufferWriter.writeSlice(hashSequence);
-	bufferWriter.writeSlice(input.hash);
-	bufferWriter.writeUInt32(input.index);
-	bufferWriter.writeVarSlice(prevOutScript);
-	bufferWriter.writeUInt64(value);
-	bufferWriter.writeUInt32(input.sequence);
-	bufferWriter.writeSlice(hashOutputs);
-	bufferWriter.writeUInt32(tx.locktime);
-	bufferWriter.writeUInt32(hashType);
-
-	return tbuffer;
-}
-
-async function getUTXO(
-	address: string,
-): Promise<{ utxo: any; txid: string; vout: number; satoshis: number }> {
-	const utxoUrl = `https://blockstream.info/testnet/api/address/${address}/utxo`;
-	const { data: utxos } = await axios.get(utxoUrl);
-
-	if (utxos.length === 0) {
-		throw new Error('No UTXOs found for this address');
-	}
-
-	// Taking the first unspent transaction.
-	// You can change and return them all and to choose or to use more than one input.
-	const utxo = utxos[0];
-	const txid = utxo.txid;
-	const vout = utxo.vout;
-	const satoshis = utxo.value;
-
-	return { utxo: utxo, txid: txid, vout: vout, satoshis: satoshis };
-}
-
-const ECPair = ECPairFactory(ecc);
-
-function createDeterministicBTCKeypair() {
-	const privKeyHex = 'da889368578dc91e6cb152f1dfb46808ab0f8cde6124b8c4de21975d5342f0c8';
-	const privKey = Buffer.from(privKeyHex, 'hex');
-	const keyPair = ECPair.fromPrivateKey(privKey, { network: networks.testnet });
-	return keyPair;
-}
 
 describe('DWallet Signing', () => {
 	it('should create a DWallet and print its bitcoin public key', async () => {
@@ -305,87 +162,132 @@ describe('DWallet Signing', () => {
 			console.error('Error broadcasting transaction:', error);
 		}
 	});
-
-	it('should create a testnet dWallet and print its address', async () => {
-		const client = new SuiClient({ url: getFullnodeUrl('testnet') }); // mainnet / testnet
-
-		const ikaClient = new IkaClient({
-			suiClient: client,
-			config: getNetworkConfig('testnet'), // mainnet / testnet
-		});
-
-		await ikaClient.initialize();
-
-		const curve = Curve.SECP256R1; // or Curve.SECP256K1, Curve.ED25519, Curve.RISTRETTO
-
-		// Note: You still need UserShareEncryptionKeys for the DKG protocol itself,
-		// but not for the encrypted user share storage
-		let seed = new TextEncoder().encode('seed');
-		const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
-		const signerAddress = userKeypair.toSuiAddress();
-		console.log({ signerAddress });
-		return;
-
-		const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve);
-
-		const transaction = new Transaction();
-		const ikaTransaction = new IkaTransaction({
-			ikaClient,
-			transaction,
-			userShareEncryptionKeys, // <-- Needed for DKG protocol, not for storage
-		});
-
-		const identifier = createRandomSessionIdentifier();
-
-		// Prepare DKG - this generates the necessary cryptographic materials
-		const dkgRequestInput = await prepareDKGAsync(
-			ikaClient,
-			curve,
-			userShareEncryptionKeys,
-			identifier,
-			signerAddress,
-		);
-
-		const dWalletEncryptionKey = await ikaClient.getLatestNetworkEncryptionKey();
-
-		const ikaCoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
-
-		// Create a shared dWallet using requestDWalletDKGWithPublicUserShare
-		// The key difference: we pass publicUserSecretKeyShare instead of encrypted share
-		const [dWalletCap] = await ikaTransaction.requestDWalletDKGWithPublicUserShare({
-			publicKeyShareAndProof: dkgRequestInput.userDKGMessage,
-			publicUserSecretKeyShare: dkgRequestInput.userSecretKeyShare, // <-- Public, not encrypted
-			userPublicOutput: dkgRequestInput.userPublicOutput,
-			curve,
-			dwalletNetworkEncryptionKeyId: dWalletEncryptionKey.id,
-			ikaCoin,
-			suiCoin: transaction.gas,
-			sessionIdentifier: ikaTransaction.registerSessionIdentifier(identifier),
-		});
-
-		transaction.transferObjects([dWalletCap], signerAddress);
-
-		const result = await executeTestTransactionWithKeypair(client, transaction, userKeypair);
-
-		const dkgEvent = result.events?.find((event) => {
-			return (
-				event.type.includes('DWalletDKGRequestEvent') && event.type.includes('DWalletSessionEvent')
-			);
-		});
-
-		const parsedDkgEvent = SessionsManagerModule.DWalletSessionEvent(
-			CoordinatorInnerModule.DWalletDKGRequestEvent,
-		).fromBase64(dkgEvent?.bcs as string);
-
-		const dWalletID = parsedDkgEvent.event_data.dwallet_id;
-
-		// Wait for the dWallet to become active (no user confirmation needed)
-		const activeDWallet = await ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
-			timeout: 30000,
-			interval: 1000,
-		});
-
-		// Verify it's a shared dWallet
-		expect(activeDWallet.public_user_secret_key_share).toBeDefined();
-	});
 });
+
+function varSliceSize(someScript: Uint8Array): number {
+	const length = someScript.length;
+
+	return varuint.encodingLength(length) + length;
+}
+
+function txBytesToSign(
+	tx: BtcTransaction,
+	inIndex: number,
+	prevOutScript: Uint8Array,
+	value: number,
+	hashType: number,
+): Buffer {
+	const ZERO: Buffer = Buffer.from(
+		'0000000000000000000000000000000000000000000000000000000000000000',
+		'hex',
+	);
+
+	let tbuffer: Buffer = Buffer.from([]);
+	let bufferWriter: BufferWriter;
+
+	let hashOutputs = ZERO;
+	let hashPrevious = ZERO;
+	let hashSequence = ZERO;
+
+	if (!(hashType & bitcoin.Transaction.SIGHASH_ANYONECANPAY)) {
+		tbuffer = Buffer.allocUnsafe(36 * tx.ins.length);
+		bufferWriter = new BufferWriter(tbuffer, 0);
+
+		tx.ins.forEach((txIn) => {
+			bufferWriter.writeSlice(txIn.hash);
+			bufferWriter.writeUInt32(txIn.index);
+		});
+
+		hashPrevious = Buffer.from(sha256(sha256(tbuffer)));
+	}
+
+	if (
+		!(hashType & bitcoin.Transaction.SIGHASH_ANYONECANPAY) &&
+		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_SINGLE &&
+		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_NONE
+	) {
+		tbuffer = Buffer.allocUnsafe(4 * tx.ins.length);
+		bufferWriter = new BufferWriter(tbuffer, 0);
+
+		tx.ins.forEach((txIn) => {
+			bufferWriter.writeUInt32(txIn.sequence);
+		});
+
+		hashSequence = Buffer.from(sha256(sha256(tbuffer)));
+	}
+
+	if (
+		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_SINGLE &&
+		(hashType & 0x1f) !== bitcoin.Transaction.SIGHASH_NONE
+	) {
+		const txOutsSize = tx.outs.reduce((sum, output) => {
+			return sum + 8 + varSliceSize(output.script);
+		}, 0);
+
+		tbuffer = Buffer.allocUnsafe(txOutsSize);
+		bufferWriter = new BufferWriter(tbuffer, 0);
+
+		tx.outs.forEach((out) => {
+			bufferWriter.writeUInt64(out.value);
+			bufferWriter.writeVarSlice(out.script);
+		});
+
+		hashOutputs = Buffer.from(sha256(sha256(tbuffer)));
+	} else if ((hashType & 0x1f) === bitcoin.Transaction.SIGHASH_SINGLE && inIndex < tx.outs.length) {
+		const output = tx.outs[inIndex];
+
+		tbuffer = Buffer.allocUnsafe(8 + varSliceSize(output.script));
+		bufferWriter = new BufferWriter(tbuffer, 0);
+		bufferWriter.writeUInt64(output.value);
+		bufferWriter.writeVarSlice(output.script);
+
+		hashOutputs = Buffer.from(sha256(sha256(tbuffer)));
+	}
+
+	tbuffer = Buffer.allocUnsafe(156 + varSliceSize(prevOutScript));
+	bufferWriter = new BufferWriter(tbuffer, 0);
+
+	const input = tx.ins[inIndex];
+	bufferWriter.writeInt32(tx.version);
+	bufferWriter.writeSlice(hashPrevious);
+	bufferWriter.writeSlice(hashSequence);
+	bufferWriter.writeSlice(input.hash);
+	bufferWriter.writeUInt32(input.index);
+	bufferWriter.writeVarSlice(prevOutScript);
+	bufferWriter.writeUInt64(value);
+	bufferWriter.writeUInt32(input.sequence);
+	bufferWriter.writeSlice(hashOutputs);
+	bufferWriter.writeUInt32(tx.locktime);
+	bufferWriter.writeUInt32(hashType);
+
+	return tbuffer;
+}
+
+async function getUTXO(
+	address: string,
+): Promise<{ utxo: any; txid: string; vout: number; satoshis: number }> {
+	const utxoUrl = `https://blockstream.info/testnet/api/address/${address}/utxo`;
+	const { data: utxos } = await axios.get(utxoUrl);
+
+	if (utxos.length === 0) {
+		throw new Error('No UTXOs found for this address');
+	}
+
+	// Taking the first unspent transaction.
+	// You can change and return them all and to choose or to use more than one input.
+	const utxo = utxos[0];
+	const txid = utxo.txid;
+	const vout = utxo.vout;
+	const satoshis = utxo.value;
+
+	return { utxo: utxo, txid: txid, vout: vout, satoshis: satoshis };
+}
+
+const ECPair = ECPairFactory(ecc);
+
+function createDeterministicBTCKeypair() {
+	const privKeyHex = 'da889368578dc91e6cb152f1dfb46808ab0f8cde6124b8c4de21975d5342f0c8';
+	const privKey = Buffer.from(privKeyHex, 'hex');
+	const keyPair = ECPair.fromPrivateKey(privKey, { network: networks.testnet });
+	return keyPair;
+}
