@@ -4,7 +4,7 @@
 use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party,
     advance_centralized_sign_party_with_centralized_party_dkg_output,
-    bitcoin_address_from_dwallet_output_inner,
+    bitcoin_pubkey_from_dwallet_output_inner,
     centralized_and_decentralized_parties_dkg_output_match_inner, create_dkg_output_by_curve_v2,
     create_dkg_output_v1, create_imported_dwallet_centralized_step_inner_v2, decrypt_user_share_v2,
     dwallet_version_inner, encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
@@ -34,8 +34,8 @@ pub fn create_dkg_centralized_output_v1(
 }
 
 #[wasm_bindgen]
-pub fn bitcoin_address_from_dwallet_output(dwallet_output: Vec<u8>) -> Result<JsValue, JsError> {
-    let public_key = &bitcoin_address_from_dwallet_output_inner(dwallet_output)
+pub fn bitcoin_pubkey_from_dwallet_output(dwallet_output: Vec<u8>) -> Result<JsValue, JsError> {
+    let public_key = &bitcoin_pubkey_from_dwallet_output_inner(dwallet_output)
         .map_err(|e| JsError::new(&e.to_string()))?;
     serde_wasm_bindgen::to_value(&public_key).map_err(|e| JsError::new(&e.to_string()))
 }

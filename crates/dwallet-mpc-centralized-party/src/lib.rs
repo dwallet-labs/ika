@@ -290,9 +290,9 @@ type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 pub type DKGDecentralizedOutput =
     <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
 
-pub fn bitcoin_address_from_dwallet_output_inner(
+pub fn bitcoin_pubkey_from_dwallet_output_inner(
     dwallet_output: Vec<u8>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Vec<u8>> {
     let dkg_output: VersionedDwalletDKGPublicOutput = bcs::from_bytes(&dwallet_output)?;
 
     let public_key = match dkg_output {
@@ -302,17 +302,17 @@ pub fn bitcoin_address_from_dwallet_output_inner(
                 &AffinePoint::from(output.public_key).to_bytes(),
             )
             .expect("creation of public key from affine failed");
-            Ok(pk.to_string())
+            Ok(pk.serialize_uncompressed())
         }
         VersionedDwalletDKGPublicOutput::V2 {
             public_key_bytes, ..
         } => {
             let pk = bitcoin::secp256k1::PublicKey::from_slice(&public_key_bytes)
                 .expect("creation of public key from affine failed");
-            Ok(pk.to_string())
+            Ok(pk.serialize_uncompressed())
         }
     };
-    public_key
+    public_key.and_then(|pk| Ok(pk.to_vec()))
 }
 
 /// Check whether the centralized party (user)'s DKG output matches the decentralized party (network)'s DKG output.
