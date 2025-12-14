@@ -49,7 +49,7 @@ describe('DWallet Signing', () => {
 		console.log('address:', address);
 	});
 
-	it('should create a raw tx to send bitcoin from given address A to given address B, output the raw tx', async () => {
+	it('should create a raw tx to send bitcoin from given address A to given address B, output the raw tx & the TX bytes that needed to be signed', async () => {
 		let dwalletBTCPubkey = Uint8Array.from([]);
 		const recipientAddress = 'tb1q0snqvzf2wr3290wq5elgmzfq8jektkrgl3ang0';
 		const amount = 500;
@@ -58,7 +58,6 @@ describe('DWallet Signing', () => {
 			pubkey: dwalletBTCPubkey,
 			network: networks.testnet,
 		});
-
 
 		// Get the UTXO for the sender address.
 		const { utxo, txid, vout, satoshis } = await getUTXO(address);
@@ -101,10 +100,7 @@ describe('DWallet Signing', () => {
 			});
 		}
 
-		console.log(
-			'txHex',
-			Buffer.from(psbt.data.getTransaction()).toString('hex'),
-		);
+		console.log('txHex', Buffer.from(psbt.data.getTransaction()).toString('hex'));
 
 		const tx = bitcoin.Transaction.fromBuffer(psbt.data.getTransaction());
 		const signingScript = bitcoin.payments.p2pkh({
