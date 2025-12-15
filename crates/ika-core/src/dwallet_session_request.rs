@@ -45,6 +45,9 @@ impl DWalletSessionRequest {
             signature_algorithm.to_string().as_bytes(),
         );
 
+        // TODO: key id or other network identifier
+        // TODO: take random suggestions from validators?
+
         // Generate a session identifier preimage in a deterministic way
         // (internally, it uses a hash function to pseudo-randomly generate it).
         let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =

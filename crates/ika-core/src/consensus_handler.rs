@@ -420,6 +420,9 @@ pub(crate) fn classify(transaction: &ConsensusTransaction) -> &'static str {
         ConsensusTransactionKind::CapabilityNotificationV1(_) => "capability_notification_v1",
         ConsensusTransactionKind::SystemCheckpointSignature(_) => "system_checkpoint_signature",
         ConsensusTransactionKind::EndOfPublish(_) => "end_of_publish",
+        ConsensusTransactionKind::InternalSessionsStatusUpdate(_) => {
+            "internal_sessions_status_update"
+        }
     }
 }
 

@@ -8,7 +8,8 @@ use group::PartyID;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, SessionIdentifier,
+    DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, GlobalPresignRequest,
+    SessionIdentifier,
 };
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
@@ -513,6 +514,24 @@ impl DWalletMPCManager {
             && !matches!(session.status, SessionStatus::WaitingForSessionRequest)
         {
             // The corresponding session already has its data set, nothing to do.
+            return None;
+        }
+
+        if let Some((curve, signature_algorithm)) = request.protocol_data.is_global_presign() {
+            let global_presign_request = GlobalPresignRequest {
+                session_identifier: request.session_identifier,
+                curve,
+                signature_algorithm,
+            };
+
+            if !self
+                .global_presign_requests
+                .contains(&global_presign_request)
+            {
+                self.global_presign_requests.push(global_presign_request);
+            }
+
+            // Don't create a session for global presign, we will take it from the internal pools.
             return None;
         }
 

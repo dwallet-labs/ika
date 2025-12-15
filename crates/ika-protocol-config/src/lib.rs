@@ -503,28 +503,28 @@ impl ProtocolConfig {
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
-            idle_session_count_threshold: Some(10),
+            idle_session_count_threshold: Some(8),
             checkpoint_signing_curve: Some(DWalletCurve::Curve25519),
             checkpoint_signing_algorithm: Some(DWalletSignatureAlgorithm::EdDSA),
 
             internal_secp256k1_ecdsa_presign_pool_minimum_size: Some(1000),
-            internal_secp256k1_ecdsa_presign_consensus_round_delay: Some(300),
+            internal_secp256k1_ecdsa_presign_consensus_round_delay: Some(500),
             internal_secp256k1_ecdsa_presign_sessions_to_instantiate: Some(1),
 
             internal_secp256r1_ecdsa_presign_pool_minimum_size: Some(100),
-            internal_secp256r1_ecdsa_presign_consensus_round_delay: Some(600),
+            internal_secp256r1_ecdsa_presign_consensus_round_delay: Some(1000),
             internal_secp256r1_ecdsa_presign_sessions_to_instantiate: Some(1),
 
             internal_taproot_presign_pool_minimum_size: Some(5000),
-            internal_taproot_presign_consensus_round_delay: Some(100),
+            internal_taproot_presign_consensus_round_delay: Some(200),
             internal_taproot_presign_sessions_to_instantiate: Some(1),
 
-            internal_eddsa_presign_pool_minimum_size: Some(50000),
-            internal_eddsa_presign_consensus_round_delay: Some(40),
-            internal_eddsa_presign_sessions_to_instantiate: Some(4),
+            internal_eddsa_presign_pool_minimum_size: Some(20000),
+            internal_eddsa_presign_consensus_round_delay: Some(30),
+            internal_eddsa_presign_sessions_to_instantiate: Some(2),
 
             internal_schnorrkel_substrate_presign_pool_minimum_size: Some(100),
-            internal_schnorrkel_substrate_presign_consensus_round_delay: Some(300),
+            internal_schnorrkel_substrate_presign_consensus_round_delay: Some(2000),
             internal_schnorrkel_substrate_presign_sessions_to_instantiate: Some(1),
         };
 

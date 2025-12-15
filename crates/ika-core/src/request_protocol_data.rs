@@ -197,6 +197,36 @@ pub enum ProtocolData {
         dwallet_network_encryption_key_id: ObjectID,
     },
 }
+
+impl ProtocolData {
+    /// Returns `None` if this request is not a global presign one (either not a presign, or a targeted presign),
+    /// and `Some((curve,signature_algorithm))` if it is.
+    pub fn is_global_presign(&self) -> Option<(DWalletCurve, DWalletSignatureAlgorithm)> {
+        match self {
+            ProtocolData::Presign {
+                data,
+                dwallet_public_output,
+                ..
+            } => {
+                let is_global_presign = match data.signature_algorithm {
+                    DWalletSignatureAlgorithm::ECDSASecp256k1 => dwallet_public_output.is_none(),
+                    DWalletSignatureAlgorithm::ECDSASecp256r1 => dwallet_public_output.is_none(),
+                    DWalletSignatureAlgorithm::EdDSA => true,
+                    DWalletSignatureAlgorithm::Taproot => true,
+                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => true,
+                };
+
+                if is_global_presign {
+                    Some((data.curve, data.signature_algorithm))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
 pub fn make_dwallet_user_secret_key_shares_public_protocol_data(
     request_event_data: MakeDWalletUserSecretKeySharesPublicRequestEvent,
 ) -> DwalletMPCResult<ProtocolData> {

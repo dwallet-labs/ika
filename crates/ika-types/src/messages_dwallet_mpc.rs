@@ -6,6 +6,7 @@ use move_core_types::account_address::AccountAddress;
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
 use move_core_types::language_storage::StructTag;
+use move_core_types::u256::U256;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -95,6 +96,30 @@ pub enum DWalletInternalMPCOutputKind {
 pub enum DWalletMPCOutputReport {
     Internal(DWalletInternalMPCOutput),
     External(DWalletMPCOutput),
+}
+
+/// A request for a global presign, to be fetched from the corresponding internal pool when available.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Copy)]
+pub struct GlobalPresignRequest {
+    pub session_identifier: SessionIdentifier,
+    pub curve: DWalletCurve,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
+}
+
+/// Status update sent by each validator on each consensus round.
+/// Contains information about whether the validator is idle and
+/// which presign sessions it wants to request.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct InternalSessionsStatusUpdate {
+    /// The authority that sent this status update.
+    pub authority: AuthorityName,
+    /// The consensus round this update is for.
+    pub consensus_round: u64,
+    /// Whether this validator is idle (has fewer sessions ready to execute
+    /// than the idle session count threshold).
+    pub is_idle: bool,
+    /// The global presign requests this validator received.
+    pub global_presign_requests: Vec<GlobalPresignRequest>,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Debug, Serialize, Deserialize)]
@@ -329,6 +354,10 @@ impl SessionIdentifier {
 
     pub fn into_bytes(self) -> [u8; Self::LENGTH] {
         self.session_identifier
+    }
+
+    pub fn into_uint(self) -> U256 {
+        U256::from_le_bytes(&self.session_identifier)
     }
 }
 

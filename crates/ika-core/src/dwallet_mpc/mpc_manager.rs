@@ -31,9 +31,9 @@ use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
-    DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, RistrettoSchnorrkelSubstrateProtocol,
-    Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier,
-    SessionType,
+    DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
+    InternalSessionsStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
+    Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
 };
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
@@ -41,6 +41,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tracing::{debug, error, info};
+
+/// Result of majority voting on status updates.
+#[derive(Debug, Clone)]
+pub struct AgreedStatusUpdate {
+    /// Whether the majority of validators are idle.
+    pub is_idle: bool,
+    /// The presign session requests that reached quorum agreement.
+    pub global_presign_requests: Vec<GlobalPresignRequest>,
+}
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -98,6 +107,12 @@ pub(crate) struct DWalletMPCManager {
 
     /// The epoch store for persisting presign pools to disk.
     epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+
+    /// Status updates received from validators, indexed by consensus round.
+    /// For each round, we track updates by party ID.
+    status_updates_by_round: HashMap<u64, HashMap<PartyID, InternalSessionsStatusUpdate>>,
+
+    pub(crate) global_presign_requests: Vec<GlobalPresignRequest>,
 }
 
 impl DWalletMPCManager {
@@ -189,6 +204,8 @@ impl DWalletMPCManager {
             protocol_config,
             next_internal_presign_sequence_number: 1,
             epoch_store,
+            status_updates_by_round: HashMap::new(),
+            global_presign_requests: Vec::new(),
         })
     }
 
@@ -257,6 +274,121 @@ impl DWalletMPCManager {
         }
 
         (agreed_outputs, completed_sessions)
+    }
+
+    /// Handle status updates for a consensus round.
+    /// Collects updates from all validators and performs majority voting to determine
+    /// the agreed-upon idle status and presign session requests.
+    pub fn handle_status_updates(
+        &mut self,
+        consensus_round: u64,
+        status_updates: Vec<InternalSessionsStatusUpdate>,
+    ) -> Option<AgreedStatusUpdate> {
+        for status_update in status_updates {
+            let sender_authority = status_update.authority;
+
+            let Ok(sender_party_id) =
+                authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
+            else {
+                error!(
+                    sender_authority=?sender_authority,
+                    consensus_round,
+                    should_never_happen =? true,
+                    "got a status update for an authority without party ID",
+                );
+                continue;
+            };
+
+            let round_updates = self
+                .status_updates_by_round
+                .entry(consensus_round)
+                .or_default();
+
+            if let Entry::Vacant(e) = round_updates.entry(sender_party_id) {
+                e.insert(status_update);
+            }
+        }
+
+        // Try to build majority vote from collected updates
+        self.build_status_update_majority_vote(consensus_round)
+    }
+
+    /// Build majority vote for status updates at a given consensus round.
+    fn build_status_update_majority_vote(
+        &mut self,
+        consensus_round: u64,
+    ) -> Option<AgreedStatusUpdate> {
+        let mut status_updates: HashMap<PartyID, InternalSessionsStatusUpdate> = HashMap::new();
+
+        for (round, updates) in self.status_updates_by_round.clone() {
+            // TODO: why isn't this if in the output building process too?
+            if round <= consensus_round {
+                for (sender_party_id, update) in updates {
+                    // take the last update from each sender party ID
+                    // TODO: what is the advantage of doing this way vs. just keeping a HashMap<PartyId, InternalSessionsStatusUpdate> as  status_updates_by_round?
+                    // The problem is memory usage that never gets cleaned
+                    status_updates.insert(sender_party_id, update);
+                }
+            }
+        }
+
+        if status_updates.is_empty() {
+            return None;
+        }
+
+        let idle_votes: HashMap<_, _> = status_updates
+            .iter()
+            .map(|(&party_id, update)| (party_id, update.is_idle))
+            .collect();
+
+        let network_is_idle = match idle_votes.weighted_majority_vote(&self.access_structure) {
+            Ok((_, majority_vote)) => majority_vote,
+            Err(mpc::Error::ThresholdNotReached) => false,
+            Err(e) => {
+                error!(
+                    consensus_round,
+                    error = %e,
+                    "Failed to build idle status to finalize"
+                );
+
+                false
+            }
+        };
+
+        let presign_requests_votes: HashMap<_, _> = status_updates
+            .into_iter()
+            .map(|(party_id, update)| (party_id, update.global_presign_requests))
+            .collect();
+        let requests: HashSet<_> = presign_requests_votes.values().flatten().cloned().collect();
+
+        let agreed_global_presign_requests: Vec<_> = requests
+            .into_iter()
+            .filter(|request| {
+                let current_request_votes: HashMap<_, _> = presign_requests_votes
+                    .iter()
+                    .map(|(&party_id, requests)| (party_id, requests.contains(request)))
+                    .collect();
+
+                match current_request_votes.weighted_majority_vote(&self.access_structure) {
+                    Ok((_, majority_vote)) => majority_vote,
+                    Err(mpc::Error::ThresholdNotReached) => false,
+                    Err(e) => {
+                        error!(
+                            session_id = ?request.session_identifier,
+                            error = %e,
+                            "Failed to build global presign request to finalize"
+                        );
+
+                        false
+                    }
+                }
+            })
+            .collect();
+
+        Some(AgreedStatusUpdate {
+            is_idle: network_is_idle,
+            global_presign_requests: agreed_global_presign_requests,
+        })
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.
@@ -387,7 +519,12 @@ impl DWalletMPCManager {
 
     /// Instantiates internal presign sessions based on predefined logic that is
     /// synced with the consensus and thus with the other validators.
-    pub(super) fn instantiate_internal_presign_sessions(&mut self, consensus_round: u64) {
+    pub(super) fn instantiate_internal_presign_sessions(
+        &mut self,
+        consensus_round: u64,
+        number_of_consensus_rounds: u64,
+        network_is_idle: bool,
+    ) {
         if let Some((dwallet_network_encryption_key_id, _)) = self
             .network_keys
             .network_encryption_keys
@@ -413,9 +550,9 @@ impl DWalletMPCManager {
                         .protocol_config
                         .get_internal_presign_sessions_to_instantiate(curve, signature_algorithm);
 
-                    // TODO: or idle
-                    if consensus_round.is_multiple_of(consensus_round_delay)
-                        && current_pool_size < minimal_pool_size
+                    if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
+                        && current_pool_size < minimal_pool_size)
+                        || network_is_idle
                     {
                         for _ in 1..=sessions_to_instantiate {
                             self.instantiate_internal_presign_session(
@@ -535,11 +672,14 @@ impl DWalletMPCManager {
     /// The messages to advance with are built on the spot, assuming they satisfy required conditions.
     /// They are put on a `ComputationRequest` and forwarded to the `orchestrator` for execution.
     ///
-    /// Returns the completed computation results.
+    /// Returns the completed computation results, idle status, and presign session requests.
     pub(crate) async fn perform_cryptographic_computation(
         &mut self,
         last_read_consensus_round: u64,
-    ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
+    ) -> (
+        HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>>,
+        bool,
+    ) {
         let mut ready_to_advance_sessions: Vec<_> = self
             .sessions
             .iter()
@@ -569,6 +709,8 @@ impl DWalletMPCManager {
 
         ready_to_advance_sessions
             .sort_by(|(_, request), (_, other_request)| request.cmp(other_request));
+
+        let number_of_ready_to_advance_sessions = ready_to_advance_sessions.len();
 
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
@@ -623,6 +765,9 @@ impl DWalletMPCManager {
         let completed_computation_results = self
             .cryptographic_computations_orchestrator
             .receive_completed_computations(self.dwallet_mpc_metrics.clone());
+
+        let is_idle = self.compute_is_idle(number_of_ready_to_advance_sessions);
+
         for (computation_id, computation_request) in computation_requests {
             let spawned_computation = self
                 .cryptographic_computations_orchestrator
@@ -634,11 +779,11 @@ impl DWalletMPCManager {
                 .await;
 
             if !spawned_computation {
-                return completed_computation_results;
+                return (completed_computation_results, is_idle);
             }
         }
 
-        completed_computation_results
+        (completed_computation_results, is_idle)
     }
 
     pub(crate) fn try_receiving_next_active_committee(&mut self) -> bool {
@@ -1063,5 +1208,22 @@ impl DWalletMPCManager {
                 );
             }
         };
+    }
+
+    /// Returns the number of cryptographic computations currently running.
+    pub fn running_computation_count(&self) -> usize {
+        self.cryptographic_computations_orchestrator
+            .currently_running_cryptographic_computations
+            .len()
+    }
+
+    /// Computes whether this validator is idle based on the number of ready-to-run
+    /// sessions plus currently running computations, compared to the threshold.
+    pub fn compute_is_idle(&self, number_of_ready_to_advance_sessions: usize) -> bool {
+        let number_of_executing_sessions = self.running_computation_count();
+        let total_session_count =
+            number_of_ready_to_advance_sessions + number_of_executing_sessions;
+        let threshold = self.protocol_config.idle_session_count_threshold();
+        total_session_count < threshold as usize
     }
 }

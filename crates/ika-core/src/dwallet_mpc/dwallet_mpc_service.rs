@@ -43,8 +43,9 @@ use ika_types::message::{
 };
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
-    DWalletInternalMPCOutputKind, DWalletMPCOutputKind, DWalletMPCOutputReport, SessionIdentifier,
-    SessionType, UserSecretKeyShareEventType,
+    DWalletInternalMPCOutputKind, DWalletMPCOutputKind, DWalletMPCOutputReport,
+    GlobalPresignRequest, InternalSessionsStatusUpdate, SessionIdentifier, SessionType,
+    UserSecretKeyShareEventType,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -52,7 +53,7 @@ use itertools::Itertools;
 use mpc::GuaranteedOutputDeliveryRoundResult;
 #[cfg(feature = "test-utils")]
 use prometheus::Registry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::messages_consensus::Round;
@@ -80,6 +81,16 @@ pub struct DWalletMPCService {
     pub epoch: EpochId,
     pub protocol_config: ProtocolConfig,
     pub committee: Arc<Committee>,
+    /// The last status update sent to consensus, used to avoid sending duplicate updates.
+    last_sent_status: Option<(bool, Vec<GlobalPresignRequest>)>,
+    /// The number of consensus rounds since epoch started.
+    /// Needed because the consensus rounds themselves might not be consecutive.
+    number_of_consensus_rounds: u64,
+    /// Is the network considered in an idle state?
+    /// if so, we can process more internal presign sessions to make use of resources.
+    network_is_idle: bool,
+    agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
+    processed_global_presign_requests_session_identifiers: HashSet<SessionIdentifier>,
 }
 
 impl DWalletMPCService {
@@ -142,6 +153,11 @@ impl DWalletMPCService {
             epoch: epoch_id,
             protocol_config,
             committee,
+            last_sent_status: None,
+            number_of_consensus_rounds: 0,
+            network_is_idle: false,
+            agreed_global_presign_requests_queue: Vec::new(),
+            processed_global_presign_requests_session_identifiers: HashSet::new(),
         }
     }
 
@@ -184,6 +200,10 @@ impl DWalletMPCService {
             epoch: 1,
             protocol_config: ProtocolConfig::get_for_min_version(),
             committee: Arc::new(committee),
+            last_sent_status: None,
+            number_of_consensus_rounds: 0,
+            network_is_idle: false,
+            processed_global_presign_requests_session_identifiers: HashSet::new(),
         }
     }
 
@@ -282,8 +302,47 @@ impl DWalletMPCService {
         self.process_cryptographic_computations().await;
         self.handle_failed_requests_and_submit_reject_to_consensus(rejected_sessions)
             .await;
+    }
 
-        // TODO: idle voting (get if idle from process_cryptographic_computations())
+    /// Sends a status update to consensus with the given computation result.
+    /// Only sends if the status has changed since the last update.
+    async fn send_status_update_to_consensus(&mut self, is_idle: bool) {
+        // TODO: check protocol version
+        let Some(consensus_round) = self.last_read_consensus_round else {
+            return;
+        };
+
+        let global_presign_requests = self.dwallet_mpc_manager.global_presign_requests.clone();
+
+        // Check if status has changed since last update
+        let current_status = (is_idle, global_presign_requests.clone());
+        if self.last_sent_status.as_ref() == Some(&current_status) {
+            return;
+        }
+
+        let status_update = InternalSessionsStatusUpdate {
+            authority: self.name,
+            consensus_round,
+            is_idle,
+            global_presign_requests,
+        };
+
+        let consensus_tx = ConsensusTransaction::new_internal_sessions_status_update(status_update);
+
+        if let Err(e) = self
+            .dwallet_submit_to_consensus
+            .submit_to_consensus(&[consensus_tx])
+            .await
+        {
+            error!(
+                error = ?e,
+                consensus_round,
+                "Failed to submit status update to consensus"
+            );
+        } else {
+            // Update last sent status on successful submission
+            self.last_sent_status = Some(current_status);
+        }
     }
 
     async fn process_cryptographic_computations(&mut self) {
@@ -292,13 +351,46 @@ impl DWalletMPCService {
             return;
         };
 
-        let completed_computation_results = self
+        let (computation_results, is_idle) = self
             .dwallet_mpc_manager
             .perform_cryptographic_computation(last_read_consensus_round)
             .await;
 
-        self.handle_computation_results_and_submit_to_consensus(completed_computation_results)
+        self.handle_computation_results_and_submit_to_consensus(computation_results)
             .await;
+
+        if !self.agreed_global_presign_requests_queue.is_empty() {
+            let mut unprocessed_requests = Vec::new();
+            for request in self.agreed_global_presign_requests_queue.clone() {
+                match self.epoch_store.pop_presign(request.signature_algorithm) {
+                    Ok(Some(presign)) => {
+                        self.processed_global_presign_requests_session_identifiers
+                            .insert(request.session_identifier);
+
+                        // todo: output presign  - we don't want it to go through the MPC flow?
+                        // if not we should add the version to the output, and broadcast
+                    }
+                    Ok(None) => {
+                        unprocessed_requests.push(request);
+                    }
+                    Err(e) => {
+                        error!(
+                            error=?e,
+                            last_read_consensus_round=self.last_read_consensus_round,
+                            "failed to pop presign from DB"
+                        );
+
+                        unprocessed_requests.push(request);
+                    }
+                }
+            }
+
+            self.agreed_global_presign_requests_queue = unprocessed_requests;
+        }
+
+        // TODO: do this only if the status changed.
+        // Send status update to consensus using the result from cryptographic computations
+        self.send_status_update_to_consensus(is_idle).await;
     }
 
     async fn handle_new_requests(&mut self) -> DwalletMPCResult<Vec<DWalletSessionRequest>> {
@@ -383,6 +475,8 @@ impl DWalletMPCService {
         };
 
         while Some(last_consensus_round) > self.last_read_consensus_round {
+            self.number_of_consensus_rounds += 1;
+
             let mpc_messages = self
                 .epoch_store
                 .next_dwallet_mpc_message(self.last_read_consensus_round);
@@ -479,10 +573,34 @@ impl DWalletMPCService {
                 }
             };
 
+            let status_updates = self
+                .epoch_store
+                .next_internal_sessions_status_update(self.last_read_consensus_round);
+
+            let (status_round, status_updates) = match status_updates {
+                Ok(status_updates) => {
+                    if let Some((status_round, status_updates)) = status_updates {
+                        (status_round, status_updates)
+                    } else {
+                        error!("failed to get status updates, None value");
+                        panic!("failed to get status updates, None value");
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        error=?e,
+                        last_read_consensus_round=self.last_read_consensus_round,
+                        "failed to load status updates from the local DB"
+                    );
+                    panic!("failed to load status updates from the local DB");
+                }
+            };
+
             if mpc_messages_consensus_round != external_mpc_outputs_consensus_round
                 || mpc_messages_consensus_round
                     != verified_dwallet_checkpoint_messages_consensus_round
                 || mpc_messages_consensus_round != internal_mpc_outputs_consensus_round
+                || mpc_messages_consensus_round != status_round
             {
                 error!(
                     ?mpc_messages_consensus_round,
@@ -512,7 +630,11 @@ impl DWalletMPCService {
 
             // TODO: check protocol version here
             self.dwallet_mpc_manager
-                .instantiate_internal_presign_sessions(consensus_round);
+                .instantiate_internal_presign_sessions(
+                    consensus_round,
+                    self.number_of_consensus_rounds,
+                    self.network_is_idle,
+                );
 
             // Let's start processing the MPC messages for the current round.
             self.dwallet_mpc_manager
@@ -534,6 +656,46 @@ impl DWalletMPCService {
             let (_, completed_internal_sessions) = self
                 .dwallet_mpc_manager
                 .handle_consensus_round_outputs(consensus_round, internal_mpc_outputs);
+
+            // TODO: think what happens if we crash, and we saved presigsn already to the db, but also going through the consensus rounds maybe saving them again?
+
+            // TODO: cannot skip a round right?
+            if let Some(agreed_status) = self
+                .dwallet_mpc_manager
+                .handle_status_updates(consensus_round, status_updates)
+            {
+                // Take only the requests we haven't agreed on yet, and haven't processed.
+                let new_global_presign_requests: Vec<_> = agreed_status
+                    .global_presign_requests
+                    .into_iter()
+                    .filter(|request| !self.agreed_global_presign_requests_queue.contains(request))
+                    .filter(|request| {
+                        !self
+                            .processed_global_presign_requests_session_identifiers
+                            .contains(&request.session_identifier)
+                    })
+                    .sorted_by(|a, b| {
+                        a.session_identifier
+                            .into_uint()
+                            .cmp(&b.session_identifier.into_uint())
+                    })
+                    .collect();
+
+                if self.network_is_idle != agreed_status.is_idle
+                    || !new_global_presign_requests.is_empty()
+                {
+                    info!(
+                        consensus_round,
+                        is_idle = agreed_status.is_idle,
+                        number_of_new_global_presign_requests = new_global_presign_requests.len(),
+                        "Agreed status changed"
+                    );
+
+                    self.network_is_idle = agreed_status.is_idle;
+                    self.agreed_global_presign_requests_queue
+                        .extend(new_global_presign_requests);
+                }
+            }
 
             let completed_sessions: Vec<_> = completed_external_sessions
                 .into_iter()

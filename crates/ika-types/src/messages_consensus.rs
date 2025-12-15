@@ -8,7 +8,7 @@ use crate::messages_dwallet_checkpoint::{
 };
 use crate::messages_dwallet_mpc::{
     DWalletInternalMPCOutput, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutput,
-    SessionIdentifier,
+    InternalSessionsStatusUpdate, SessionIdentifier,
 };
 use crate::messages_system_checkpoints::{
     SystemCheckpointSequenceNumber, SystemCheckpointSignatureMessage,
@@ -58,13 +58,15 @@ pub enum ConsensusTransactionKey {
         Vec<DWalletCheckpointMessageKind>,
         Vec<AuthorityName>, // malicious authorities
     ),
+    SystemCheckpointSignature(AuthorityName, SystemCheckpointSequenceNumber),
     DWalletInternalMPCOutput(
         AuthorityName,
         SessionIdentifier,
         DWalletInternalMPCOutputKind,
         Vec<AuthorityName>, // malicious authorities
     ),
-    SystemCheckpointSignature(AuthorityName, SystemCheckpointSequenceNumber),
+    /// Internal sessions status update from a validator for a given consensus round.
+    InternalSessionsStatusUpdate(AuthorityName, u64 /* consensus_round */),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -122,6 +124,14 @@ impl Debug for ConsensusTransactionKey {
             }
             ConsensusTransactionKey::EndOfPublish(authority) => {
                 write!(f, "EndOfPublish({:?})", authority.concise())
+            }
+            ConsensusTransactionKey::InternalSessionsStatusUpdate(authority, consensus_round) => {
+                write!(
+                    f,
+                    "InternalSessionsStatusUpdate({:?}, {:?})",
+                    authority.concise(),
+                    consensus_round
+                )
             }
         }
     }
@@ -197,6 +207,7 @@ pub enum ConsensusTransactionKind {
     DWalletMPCMessage(DWalletMPCMessage),
     DWalletMPCOutput(DWalletMPCOutput),
     DWalletInternalMPCOutput(DWalletInternalMPCOutput),
+    InternalSessionsStatusUpdate(InternalSessionsStatusUpdate),
 }
 
 impl ConsensusTransaction {
@@ -317,6 +328,22 @@ impl ConsensusTransaction {
         }
     }
 
+    /// Create a new consensus transaction with the internal sessions status update.
+    pub fn new_internal_sessions_status_update(
+        status_update: InternalSessionsStatusUpdate,
+    ) -> Self {
+        let mut hasher = DefaultHasher::new();
+        status_update.authority.hash(&mut hasher);
+        status_update.consensus_round.hash(&mut hasher);
+        status_update.is_idle.hash(&mut hasher);
+        status_update.global_presign_requests.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update),
+        }
+    }
+
     pub fn get_tracking_id(&self) -> u64 {
         (&self.tracking_id[..])
             .read_u64::<BigEndian>()
@@ -365,6 +392,12 @@ impl ConsensusTransaction {
             }
             ConsensusTransactionKind::EndOfPublish(origin_authority) => {
                 ConsensusTransactionKey::EndOfPublish(*origin_authority)
+            }
+            ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update) => {
+                ConsensusTransactionKey::InternalSessionsStatusUpdate(
+                    status_update.authority,
+                    status_update.consensus_round,
+                )
             }
         }
     }

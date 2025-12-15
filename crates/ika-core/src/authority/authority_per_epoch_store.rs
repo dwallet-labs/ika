@@ -59,8 +59,10 @@ use ika_types::messages_consensus::{
 use ika_types::messages_dwallet_checkpoint::{
     DWalletCheckpointMessage, DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
-use ika_types::messages_dwallet_mpc::{DWalletInternalMPCOutput, IkaNetworkConfig};
-use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput};
+use ika_types::messages_dwallet_mpc::{
+    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, IkaNetworkConfig,
+    InternalSessionsStatusUpdate,
+};
 use ika_types::messages_system_checkpoints::{
     SystemCheckpointMessage, SystemCheckpointMessageKind, SystemCheckpointSequenceNumber,
     SystemCheckpointSignatureMessage,
@@ -262,6 +264,12 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
     ) -> IkaResult<Option<Vec<u8>>>;
+
+    /// Returns the next internal sessions status update after the given consensus round.
+    fn next_internal_sessions_status_update(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>>;
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
@@ -366,6 +374,21 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     ) -> IkaResult<Option<Vec<u8>>> {
         let tables = self.tables()?;
         tables.pop_presign(signature_algorithm)
+    }
+
+    fn next_internal_sessions_status_update(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .internal_sessions_status_updates
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
     }
 }
 
@@ -534,6 +557,10 @@ pub struct AuthorityEpochTables {
     /// Tracks the total count of presigns in each pool by signature algorithm.
     /// Key is the algorithm discriminant, value is the count.
     internal_presign_pool_sizes: DBMap<DWalletSignatureAlgorithm, u64>,
+
+    /// Internal sessions status updates by consensus round.
+    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
+    internal_sessions_status_updates: DBMap<Round, Vec<InternalSessionsStatusUpdate>>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -573,6 +600,12 @@ fn dwallet_internal_mpc_outputs_table_default_config() -> DBOptions {
 }
 
 fn internal_presign_pool_table_default_config() -> DBOptions {
+    default_db_options()
+        .optimize_for_write_throughput()
+        .optimize_for_large_values_no_scan(1 << 10)
+}
+
+fn internal_sessions_status_updates_table_default_config() -> DBOptions {
     default_db_options()
         .optimize_for_write_throughput()
         .optimize_for_large_values_no_scan(1 << 10)
@@ -1168,6 +1201,18 @@ impl AuthorityPerEpochStore {
                 }
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update),
+                ..
+            }) => {
+                if transaction.sender_authority() != status_update.authority {
+                    warn!(
+                        "InternalSessionsStatusUpdate authority {} does not match its author from consensus {}",
+                        status_update.authority, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::DWalletCheckpointSignature(data),
                 ..
             }) => {
@@ -1469,6 +1514,9 @@ impl AuthorityPerEpochStore {
         output.set_dwallet_internal_mpc_round_outputs(Self::filter_dwallet_internal_mpc_outputs(
             transactions,
         ));
+        output.set_internal_sessions_status_updates(Self::filter_internal_sessions_status_updates(
+            transactions,
+        ));
 
         authority_metrics
             .consensus_handler_cancelled_transactions
@@ -1555,6 +1603,27 @@ impl AuthorityPerEpochStore {
             .collect()
     }
 
+    fn filter_internal_sessions_status_updates(
+        transactions: &[VerifiedSequencedConsensusTransaction],
+    ) -> Vec<InternalSessionsStatusUpdate> {
+        transactions
+            .iter()
+            .filter_map(|transaction| {
+                let VerifiedSequencedConsensusTransaction(SequencedConsensusTransaction {
+                    transaction,
+                    ..
+                }) = transaction;
+                match transaction {
+                    SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                        kind: ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update),
+                        ..
+                    }) => Some(status_update.clone()),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
     #[instrument(level = "trace", skip_all)]
     async fn process_consensus_transaction<C: DWalletCheckpointServiceNotify>(
         &self,
@@ -1586,6 +1655,10 @@ impl AuthorityPerEpochStore {
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::DWalletMPCMessage(..),
+                ..
+            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::InternalSessionsStatusUpdate(..),
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
@@ -1943,6 +2016,7 @@ pub(crate) struct ConsensusCommitOutput {
     dwallet_mpc_round_messages: Vec<DWalletMPCMessage>,
     dwallet_mpc_round_outputs: Vec<DWalletMPCOutput>,
     dwallet_internal_mpc_round_outputs: Vec<DWalletInternalMPCOutput>,
+    internal_sessions_status_updates: Vec<InternalSessionsStatusUpdate>,
 
     verified_dwallet_checkpoint_messages: Vec<DWalletCheckpointMessageKind>,
 }
@@ -1968,6 +2042,13 @@ impl ConsensusCommitOutput {
         new_value: Vec<DWalletInternalMPCOutput>,
     ) {
         self.dwallet_internal_mpc_round_outputs = new_value;
+    }
+
+    pub(crate) fn set_internal_sessions_status_updates(
+        &mut self,
+        new_value: Vec<InternalSessionsStatusUpdate>,
+    ) {
+        self.internal_sessions_status_updates = new_value;
     }
 
     fn record_verified_dwallet_checkpoint_messages(
@@ -2016,6 +2097,10 @@ impl ConsensusCommitOutput {
                 self.consensus_round,
                 self.dwallet_internal_mpc_round_outputs,
             )],
+        )?;
+        batch.insert_batch(
+            &tables.internal_sessions_status_updates,
+            [(self.consensus_round, self.internal_sessions_status_updates)],
         )?;
         batch.insert_batch(
             &tables.verified_dwallet_checkpoint_messages,
