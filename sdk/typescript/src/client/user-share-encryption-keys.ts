@@ -24,7 +24,7 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
 	V1: bcs.struct('UserShareEncryptionKeysV1', {
 		encryptionKey: bcs.vector(bcs.u8()),
 		decryptionKey: bcs.vector(bcs.u8()),
-		secretShareSigningSecretKey: bcs.vector(bcs.u8()),
+		secretShareSigningSecretKey: bcs.string(),
 		curve: bcs.u64(),
 	}),
 });
@@ -284,9 +284,7 @@ export class UserShareEncryptionKeys {
 			V1: {
 				encryptionKey: this.encryptionKey,
 				decryptionKey: this.decryptionKey,
-				secretShareSigningSecretKey: Uint8Array.from(
-					this.#encryptedSecretShareSigningKeypair.getSecretKey(),
-				),
+				secretShareSigningSecretKey: this.#encryptedSecretShareSigningKeypair.getSecretKey(),
 				curve: fromCurveToNumber(this.curve),
 			},
 		}).toBytes();
@@ -300,7 +298,7 @@ export class UserShareEncryptionKeys {
 		return {
 			encryptionKey: new Uint8Array(encryptionKey),
 			decryptionKey: new Uint8Array(decryptionKey),
-			secretShareSigningSecretKey: new Uint8Array(secretShareSigningSecretKey),
+			secretShareSigningSecretKey,
 			curve: fromNumberToCurve(Number(curve)),
 		};
 	}
