@@ -103,9 +103,7 @@ export class UserShareEncryptionKeys {
 		const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve } =
 			this.#parseShareEncryptionKeys(shareEncryptionKeysBytes);
 
-		const secretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
-			toHex(secretShareSigningSecretKey),
-		);
+		const secretShareSigningKeypair = Ed25519Keypair.fromSecretKey(secretShareSigningSecretKey);
 
 		return new UserShareEncryptionKeys(
 			encryptionKey,
