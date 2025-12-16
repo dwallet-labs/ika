@@ -6,11 +6,9 @@ sidebar_position: 2
 sidebar_label: API Reference
 ---
 
-import { Info, Warning, Construction } from '../../../src/components/InfoBox';
+import { Info, Warning } from '../../../src/components/InfoBox';
 
 # IkaTransaction API Reference
-
-<Construction />
 
 `IkaTransaction` is the client for building transactions that involve dWallet operations. It wraps Sui transactions and provides high-level methods for Distributed Key Generation (DKG), presigning, signing, and key management operations.
 
