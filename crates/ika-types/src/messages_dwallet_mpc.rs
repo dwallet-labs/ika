@@ -102,6 +102,8 @@ pub enum DWalletMPCOutputReport {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Copy)]
 pub struct GlobalPresignRequest {
     pub session_identifier: SessionIdentifier,
+    pub session_sequence_number: u64,
+    pub presign_id: ObjectID,
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
 }

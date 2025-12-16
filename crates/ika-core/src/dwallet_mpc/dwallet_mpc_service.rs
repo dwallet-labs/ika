@@ -25,8 +25,8 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
+use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedPresignOutput};
 #[cfg(feature = "test-utils")]
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
@@ -204,6 +204,7 @@ impl DWalletMPCService {
             number_of_consensus_rounds: 0,
             network_is_idle: false,
             processed_global_presign_requests_session_identifiers: HashSet::new(),
+            agreed_global_presign_requests_queue: Vec::new(),
         }
     }
 
@@ -358,35 +359,6 @@ impl DWalletMPCService {
 
         self.handle_computation_results_and_submit_to_consensus(computation_results)
             .await;
-
-        if !self.agreed_global_presign_requests_queue.is_empty() {
-            let mut unprocessed_requests = Vec::new();
-            for request in self.agreed_global_presign_requests_queue.clone() {
-                match self.epoch_store.pop_presign(request.signature_algorithm) {
-                    Ok(Some(presign)) => {
-                        self.processed_global_presign_requests_session_identifiers
-                            .insert(request.session_identifier);
-
-                        // todo: output presign  - we don't want it to go through the MPC flow?
-                        // if not we should add the version to the output, and broadcast
-                    }
-                    Ok(None) => {
-                        unprocessed_requests.push(request);
-                    }
-                    Err(e) => {
-                        error!(
-                            error=?e,
-                            last_read_consensus_round=self.last_read_consensus_round,
-                            "failed to pop presign from DB"
-                        );
-
-                        unprocessed_requests.push(request);
-                    }
-                }
-            }
-
-            self.agreed_global_presign_requests_queue = unprocessed_requests;
-        }
 
         // TODO: do this only if the status changed.
         // Send status update to consensus using the result from cryptographic computations
@@ -702,6 +674,66 @@ impl DWalletMPCService {
                 .chain(completed_internal_sessions)
                 .collect();
 
+            let global_presign_checkpoint_messages =
+                if !self.agreed_global_presign_requests_queue.is_empty() {
+                    let mut unprocessed_requests = Vec::new();
+                    let mut global_presign_checkpoint_messages = Vec::new();
+                    for request in self.agreed_global_presign_requests_queue.clone() {
+                        match self.epoch_store.pop_presign(request.signature_algorithm) {
+                            Ok(Some(presign)) => {
+                                self.processed_global_presign_requests_session_identifiers
+                                    .insert(request.session_identifier);
+
+                                match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
+                                    Ok(presign) => {
+                                        info!(presign_session_id =? request.session_identifier, presign_id =? request.presign_id, session_sequence_number =? request
+                                                        .session_sequence_number, "using presign from internal presign pool for global presign request");
+
+                                        let checkpoint_message =
+                                            DWalletCheckpointMessageKind::RespondDWalletPresign(
+                                                PresignOutput {
+                                                    presign,
+                                                    dwallet_id: None,
+                                                    presign_id: request.presign_id.to_vec(),
+                                                    rejected: false,
+                                                    session_sequence_number: request
+                                                        .session_sequence_number,
+                                                },
+                                            );
+
+                                        global_presign_checkpoint_messages.push(checkpoint_message);
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            error=?e,
+                                            should_never_happen =? true,
+                                            "failed to serialize presign output"
+                                        );
+                                    }
+                                }
+                            }
+                            Ok(None) => {
+                                unprocessed_requests.push(request);
+                            }
+                            Err(e) => {
+                                error!(
+                                    error=?e,
+                                    last_read_consensus_round=self.last_read_consensus_round,
+                                    "failed to pop presign from DB"
+                                );
+
+                                unprocessed_requests.push(request);
+                            }
+                        }
+                    }
+
+                    self.agreed_global_presign_requests_queue = unprocessed_requests;
+
+                    global_presign_checkpoint_messages
+                } else {
+                    Vec::new()
+                };
+
             // Take back the external outputs' internal checkpoint messages
             let mut checkpoint_messages: Vec<_> = agreed_external_mpc_outputs
                 .into_iter()
@@ -709,6 +741,7 @@ impl DWalletMPCService {
                     DWalletMPCOutputKind::External { output } => output,
                     _ => vec![],
                 })
+                .chain(global_presign_checkpoint_messages)
                 .collect();
 
             // Add messages from the consensus output such as EndOfPublish.

@@ -16,9 +16,10 @@ use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier, SessionType,
-    UserSecretKeyShareEventType,
+    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
+    InternalSessionsStatusUpdate, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
+use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -32,8 +33,15 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
     pub(crate) round_to_messages: Arc<Mutex<HashMap<Round, Vec<DWalletMPCMessage>>>>,
     pub(crate) round_to_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletMPCOutput>>>>,
+    pub(crate) round_to_internal_outputs:
+        Arc<Mutex<HashMap<Round, Vec<DWalletInternalMPCOutput>>>>,
     pub(crate) round_to_verified_checkpoint:
         Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
+    pub(crate) round_to_status_updates:
+        Arc<Mutex<HashMap<Round, Vec<InternalSessionsStatusUpdate>>>>,
+    /// Presign pool keyed by signature algorithm
+    pub(crate) presign_pools:
+        Arc<Mutex<HashMap<DWalletSignatureAlgorithm, Vec<Vec<u8>>>>>,
 }
 
 pub(crate) struct IntegrationTestState {
@@ -80,7 +88,10 @@ impl TestingAuthorityPerEpochStore {
             // The DWalletMPCService expects at least on round of messages to be present before start functioning.
             round_to_messages: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_outputs: Arc::new(Mutex::new(Default::default())),
+            round_to_internal_outputs: Arc::new(Mutex::new(Default::default())),
             round_to_verified_checkpoint: Arc::new(Mutex::new(Default::default())),
+            round_to_status_updates: Arc::new(Mutex::new(Default::default())),
+            presign_pools: Arc::new(Mutex::new(Default::default())),
         }
     }
 }
@@ -141,6 +152,68 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(round_to_verified_checkpoint
             .get(&(last_consensus_round.unwrap() + 1))
             .map(|messages| (last_consensus_round.unwrap() + 1, messages.clone())))
+    }
+
+    fn next_dwallet_internal_mpc_output(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>> {
+        let round_to_internal_outputs = self.round_to_internal_outputs.lock().unwrap();
+        if last_consensus_round.is_none() {
+            return Ok(round_to_internal_outputs
+                .get(&0)
+                .map(|outputs| (0, outputs.clone())));
+        }
+        Ok(round_to_internal_outputs
+            .get(&(last_consensus_round.unwrap() + 1))
+            .map(|outputs| (last_consensus_round.unwrap() + 1, outputs.clone())))
+    }
+
+    fn insert_presigns(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        _session_sequence_number: u64,
+        presigns: Vec<Vec<u8>>,
+    ) -> IkaResult<()> {
+        let mut pools = self.presign_pools.lock().unwrap();
+        pools
+            .entry(signature_algorithm)
+            .or_default()
+            .extend(presigns);
+        Ok(())
+    }
+
+    fn presign_pool_size(&self, signature_algorithm: DWalletSignatureAlgorithm) -> IkaResult<u64> {
+        let pools = self.presign_pools.lock().unwrap();
+        Ok(pools.get(&signature_algorithm).map_or(0, |v| v.len()) as u64)
+    }
+
+    fn pop_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> IkaResult<Option<Vec<u8>>> {
+        let mut pools = self.presign_pools.lock().unwrap();
+        if let Some(pool) = pools.get_mut(&signature_algorithm) {
+            if !pool.is_empty() {
+                return Ok(Some(pool.remove(0)));
+            }
+        }
+        Ok(None)
+    }
+
+    fn next_internal_sessions_status_update(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>> {
+        let round_to_status_updates = self.round_to_status_updates.lock().unwrap();
+        if last_consensus_round.is_none() {
+            return Ok(round_to_status_updates
+                .get(&0)
+                .map(|updates| (0, updates.clone())));
+        }
+        Ok(round_to_status_updates
+            .get(&(last_consensus_round.unwrap() + 1))
+            .map(|updates| (last_consensus_round.unwrap() + 1, updates.clone())))
     }
 }
 

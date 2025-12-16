@@ -162,6 +162,7 @@ pub(crate) async fn create_network_key_test(
                     DWalletNetworkEncryptionKeyData {
                         id: key_id.unwrap(),
                         current_epoch: 1,
+                        dkg_at_epoch: 1,
                         current_reconfiguration_public_output: vec![],
                         network_dkg_public_output: network_key_bytes.clone(),
                         state: DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration,

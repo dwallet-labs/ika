@@ -517,9 +517,13 @@ impl DWalletMPCManager {
             return None;
         }
 
-        if let Some((curve, signature_algorithm)) = request.protocol_data.is_global_presign() {
+        if let Some((presign_id, curve, signature_algorithm)) =
+            request.protocol_data.is_global_presign()
+        {
             let global_presign_request = GlobalPresignRequest {
                 session_identifier: request.session_identifier,
+                session_sequence_number: request.session_sequence_number,
+                presign_id,
                 curve,
                 signature_algorithm,
             };
