@@ -6002,7 +6002,7 @@ dependencies = [
 
 [[package]]
 name = "ika-proxy"
-version = "0.0.2"
+version = "1.1.8"
 dependencies = [
  "anyhow",
  "axum 0.8.4",

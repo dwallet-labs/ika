@@ -1,10 +1,10 @@
 [package]
 name = "ika-proxy"
-version = "0.0.2"
-authors = ["Mysten Labs <build@mystenlabs.com>"]
+version.workspace = true
+authors = ["dWallet Labs, Ltd. <dev@dwalletlabs.com>"]
 license = "BSD-3-Clause-Clear"
 publish = false
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 axum.workspace = true
