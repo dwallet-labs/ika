@@ -78,6 +78,6 @@
 		"@mysten/sui": "^1.44.0",
 		"@noble/curves": "^2.0.1",
 		"@noble/hashes": "^1.8.0",
-		"js-yaml": "^4.1.0"
+		"js-yaml": "^4.1.1"
 	}
 }
