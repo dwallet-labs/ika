@@ -8,6 +8,8 @@ mpc.workspace = true
 twopc_mpc.workspace = true
 commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "abd7f010" }
 web-sys = "0.3.77"
+bitcoin = "0.32.7"
+k256.workspace = true
 class_groups.workspace = true
 group.workspace = true
 homomorphic_encryption.workspace = true

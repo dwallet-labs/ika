@@ -7,6 +7,7 @@
 #![allow(unused_qualifications)]
 
 use anyhow::{Context, anyhow};
+use bitcoin::{Address, CompressedPublicKey, Network};
 use class_groups::dkg::Secp256k1Party;
 use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
@@ -33,9 +34,12 @@ use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_hash_scheme, try_into_signature_algorithm,
 };
+use k256::AffinePoint;
+use k256::elliptic_curve::group::GroupEncoding;
 use twopc_mpc::class_groups::DKGCentralizedPartyVersionedOutput;
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
+use twopc_mpc::dkg::decentralized_party::VersionedOutput;
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature, VerifyingKey};
 use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
 use twopc_mpc::secp256k1::class_groups::{ProtocolPublicParameters, TaprootProtocol};
@@ -279,6 +283,36 @@ pub fn create_dkg_output_v1(
             })
         }
     }
+}
+
+type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
+
+pub type DKGDecentralizedOutput =
+    <AsyncProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
+
+pub fn bitcoin_pubkey_from_dwallet_output_inner(
+    dwallet_output: Vec<u8>,
+) -> anyhow::Result<Vec<u8>> {
+    let dkg_output: VersionedDwalletDKGPublicOutput = bcs::from_bytes(&dwallet_output)?;
+
+    let public_key = match dkg_output {
+        VersionedDwalletDKGPublicOutput::V1(dkg_output) => {
+            let output: DKGDecentralizedPartyOutputSecp256k1 = bcs::from_bytes(&dkg_output)?;
+            let pk = bitcoin::secp256k1::PublicKey::from_slice(
+                &AffinePoint::from(output.public_key).to_bytes(),
+            )
+            .expect("creation of public key from affine failed");
+            Ok(pk.serialize_uncompressed())
+        }
+        VersionedDwalletDKGPublicOutput::V2 {
+            public_key_bytes, ..
+        } => {
+            let pk = bitcoin::secp256k1::PublicKey::from_slice(&public_key_bytes)
+                .expect("creation of public key from affine failed");
+            Ok(pk.serialize_uncompressed())
+        }
+    };
+    public_key.and_then(|pk| Ok(pk.to_vec()))
 }
 
 /// Check whether the centralized party (user)'s DKG output matches the decentralized party (network)'s DKG output.
