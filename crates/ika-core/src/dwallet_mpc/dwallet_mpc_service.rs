@@ -220,6 +220,17 @@ impl DWalletMPCService {
         &mut self.dwallet_mpc_manager
     }
 
+    /// Test helper: receive and process completed cryptographic computations
+    /// without running the full service loop. This is useful for cleaning up
+    /// the `currently_running_cryptographic_computations` set after tests.
+    #[cfg(feature = "test-utils")]
+    pub(crate) fn receive_completed_computations(&mut self) {
+        let _ = self
+            .dwallet_mpc_manager
+            .cryptographic_computations_orchestrator
+            .receive_completed_computations(self.dwallet_mpc_metrics.clone());
+    }
+
     async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
         let (ika_current_epoch_on_sui, last_session_to_complete_in_current_epoch) = *self
             .sui_data_requests

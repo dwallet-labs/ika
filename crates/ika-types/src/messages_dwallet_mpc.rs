@@ -361,6 +361,11 @@ impl SessionIdentifier {
     pub fn into_uint(self) -> U256 {
         U256::from_le_bytes(&self.session_identifier)
     }
+
+    /// Returns the session type for this identifier.
+    pub fn session_type(&self) -> SessionType {
+        self.session_type
+    }
 }
 
 impl AsRef<[u8]> for SessionIdentifier {

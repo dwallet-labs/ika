@@ -477,8 +477,12 @@ async fn global_presign_request_uses_correct_metadata_test() {
     }
 
     // First, create a network key
-    let (_consensus_round, _network_key_bytes, network_key_id) =
+    let (consensus_round, _network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
+    // Update test_state.consensus_round to continue from where network key creation left off.
+    // consensus_round (5) is the round at which the checkpoint was found, but send_advance_results
+    // was only called up to round 4. So we start from round 5 to ensure consecutive rounds.
+    test_state.consensus_round = consensus_round as usize;
 
     // Pre-populate the presign pool with a mock presign for all epoch stores
     let mock_presign_data = vec![1, 2, 3, 4, 5];
@@ -520,11 +524,10 @@ async fn global_presign_request_uses_correct_metadata_test() {
     );
 
     // Run a few service iterations to process the request and send status updates
+    // Call send_advance_results_between_parties FIRST to set up the next round's data,
+    // then run the services which will read that round.
     for _ in 0..5 {
-        for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
-        }
-        // Advance consensus to help process status updates
+        // Set up the next consensus round's data (distributes messages/outputs/status_updates)
         utils::send_advance_results_between_parties(
             &test_state.committee,
             &mut test_state.sent_consensus_messages_collectors,
@@ -532,6 +535,10 @@ async fn global_presign_request_uses_correct_metadata_test() {
             test_state.consensus_round as u64,
         );
         test_state.consensus_round += 1;
+        // Now services can read from the round we just set up
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration().await;
+        }
     }
 
     // Check the pending checkpoints for the presign output

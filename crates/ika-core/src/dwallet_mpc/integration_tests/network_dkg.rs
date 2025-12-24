@@ -137,8 +137,8 @@ pub(crate) async fn create_network_key_test(
         utils::advance_mpc_flow_until_completion(test_state, 1).await;
     info!(?network_key_checkpoint, "Network key checkpoint received");
     assert_eq!(
-        consensus_round, 5,
-        "Network DKG should complete in 5 rounds"
+        consensus_round, 7,
+        "Network DKG should complete at round 5, returns 7 (rounds distributed before and after service loops)"
     );
     let mut network_key_bytes = vec![];
     let mut key_id = None;
