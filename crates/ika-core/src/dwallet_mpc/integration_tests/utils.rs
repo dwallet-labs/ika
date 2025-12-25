@@ -526,6 +526,36 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 continue;
             }
             let dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
+            let consensus_messages_store = sent_consensus_messages_collectors[i]
+                .submitted_messages
+                .clone();
+            let pending_checkpoints_store = testing_epoch_stores[i].pending_checkpoints.clone();
+            let notify_service = notify_services[i].clone();
+
+            // Helper to check for MPC activity (excluding InternalPresign sessions)
+            let check_mpc_activity = |store: &Arc<Mutex<Vec<ConsensusTransaction>>>| {
+                store.lock().unwrap().iter().any(|msg| match &msg.kind {
+                    ConsensusTransactionKind::DWalletMPCMessage(mpc_msg) => {
+                        mpc_msg.session_identifier.session_type() != SessionType::InternalPresign
+                    }
+                    ConsensusTransactionKind::DWalletMPCOutput(mpc_output) => {
+                        mpc_output.session_identifier.session_type() != SessionType::InternalPresign
+                    }
+                    _ => false,
+                })
+            };
+
+            // Check for MPC activity BEFORE clearing - this handles messages produced
+            // during setup phases (e.g., rejected sessions when network key is already available)
+            if check_mpc_activity(&consensus_messages_store) {
+                info!(
+                    party_id=?i+1,
+                    "Received MPC messages/outputs for party (from previous phase)",
+                );
+                completed_parties.push(i);
+                continue;
+            }
+
             // Clear messages BEFORE running the service loop so we only track
             // messages produced by THIS iteration
             sent_consensus_messages_collectors[i]
@@ -534,11 +564,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 .unwrap()
                 .clear();
             let _ = dwallet_mpc_service.run_service_loop_iteration().await;
-            let consensus_messages_store = sent_consensus_messages_collectors[i]
-                .submitted_messages
-                .clone();
-            let pending_checkpoints_store = testing_epoch_stores[i].pending_checkpoints.clone();
-            let notify_service = notify_services[i].clone();
+
             // Check if the party has produced MPC messages or outputs in THIS iteration.
             // We filter for DWalletMPCMessage and DWalletMPCOutput because InternalSessionsStatusUpdate
             // can be produced when processing old sessions, not new ones.
@@ -546,22 +572,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
             // background tasks that run asynchronously and should not count as "completion" for
             // the test harness. Otherwise, one party starting internal presigns before others
             // would cause the test to progress before all parties have processed the same events.
-            let has_mpc_activity = consensus_messages_store
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|msg| match &msg.kind {
-                    ConsensusTransactionKind::DWalletMPCMessage(mpc_msg) => {
-                        // Exclude InternalPresign messages from completion detection
-                        mpc_msg.session_identifier.session_type() != SessionType::InternalPresign
-                    }
-                    ConsensusTransactionKind::DWalletMPCOutput(mpc_output) => {
-                        // Exclude InternalPresign outputs from completion detection
-                        mpc_output.session_identifier.session_type() != SessionType::InternalPresign
-                    }
-                    _ => false,
-                });
-            if has_mpc_activity {
+            if check_mpc_activity(&consensus_messages_store) {
                 info!(
                     party_id=?i+1,
                     "Received MPC messages/outputs for party",
