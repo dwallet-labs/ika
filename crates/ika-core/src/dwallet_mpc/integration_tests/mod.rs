@@ -11,3 +11,4 @@ mod session;
 mod sign;
 mod threshold_not_reached;
 mod utils;
+mod validator_restart;
