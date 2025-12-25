@@ -126,6 +126,27 @@ pub struct NetworkEncryptionKeyPublicData {
         Arc<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters>,
     pub curve25519_decryption_key_share_public_parameters:
         Arc<class_groups::Curve25519DecryptionKeySharePublicParameters>,
+
+    /// The DKG output for internal checkpoint signing.
+    ///
+    /// This field holds the decentralized party DKG output created using a deterministic
+    /// zero-returning RNG (`ZeroRng`) to emulate the centralized party. This enables
+    /// the network to perform internal signing operations (e.g., checkpoint signing)
+    /// without requiring an actual user.
+    ///
+    /// # Security Model
+    ///
+    /// The "user" (centralized party) key share is effectively zero/deterministic, meaning
+    /// there is no user secret to protect. Security for internal signing comes entirely
+    /// from the network's threshold signature scheme, not from randomness.
+    ///
+    /// # Structure
+    ///
+    /// The output is stored as `(curve, signature_algorithm, serialized_dkg_output)`.
+    /// - `curve`: The curve used for signing (e.g., Curve25519)
+    /// - `signature_algorithm`: The signature algorithm (e.g., EdDSA)
+    /// - `serialized_dkg_output`: BCS-serialized `VersionedDwalletDKGPublicOutput`
+    pub internal_checkpoint_dkg_output: Option<(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)>,
 }
 
 #[derive(

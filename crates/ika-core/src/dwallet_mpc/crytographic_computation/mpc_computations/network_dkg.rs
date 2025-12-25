@@ -404,6 +404,9 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 ristretto_decryption_key_share_public_parameters,
                 curve25519_protocol_public_parameters,
                 curve25519_decryption_key_share_public_parameters,
+                // Internal checkpoint DKG output is computed separately after the network key
+                // is fully initialized, since it requires the protocol public parameters.
+                internal_checkpoint_dkg_output: None,
             })
         }
     }
