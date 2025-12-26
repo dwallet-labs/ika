@@ -11,6 +11,16 @@ use std::vec::Vec;
 use sui_types::base_types::EpochId;
 use tracing::error;
 
+/// Request to trigger an internal MPC signing session for a checkpoint.
+/// Sent from the checkpoint service to the MPC service when a new checkpoint is created.
+#[derive(Debug, Clone)]
+pub struct InternalCheckpointSignRequest {
+    /// The sequence number of the checkpoint to sign.
+    pub checkpoint_sequence_number: u64,
+    /// The serialized checkpoint digest to sign.
+    pub message: Vec<u8>,
+}
+
 pub mod dwallet_mpc_service;
 pub mod mpc_manager;
 pub mod mpc_session;

@@ -165,8 +165,10 @@ mod simulator {
 use ika_core::SuiDataReceivers;
 use ika_core::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use ika_core::consensus_handler::ConsensusHandlerInitializer;
+use ika_core::dwallet_mpc::InternalCheckpointSignRequest;
 use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use ika_core::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
+use tokio::sync::mpsc::UnboundedSender;
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
@@ -938,6 +940,10 @@ impl IkaNode {
         previous_epoch_last_system_checkpoint_sequence_number: u64,
         sui_data_receivers: SuiDataReceivers,
     ) -> Result<ValidatorComponents> {
+        // Create channel for internal checkpoint signing requests from checkpoint service to MPC service
+        let (internal_checkpoint_sign_sender, internal_checkpoint_sign_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<InternalCheckpointSignRequest>();
+
         let (checkpoint_service, checkpoint_service_tasks) = Self::start_dwallet_checkpoint_service(
             config,
             consensus_adapter.clone(),
@@ -947,6 +953,7 @@ impl IkaNode {
             state_sync_handle.clone(),
             dwallet_checkpoint_metrics.clone(),
             previous_epoch_last_dwallet_checkpoint_sequence_number,
+            internal_checkpoint_sign_sender,
         );
 
         let (system_checkpoint_service, system_checkpoint_service_tasks) =
@@ -983,6 +990,7 @@ impl IkaNode {
             epoch_store.epoch(),
             epoch_store.committee().clone(),
             epoch_store.protocol_config().clone(),
+            internal_checkpoint_sign_receiver,
         );
 
         // create a new map that gets injected into both the consensus handler and the consensus adapter
@@ -1070,6 +1078,7 @@ impl IkaNode {
         state_sync_handle: state_sync::Handle,
         checkpoint_metrics: Arc<DWalletCheckpointMetrics>,
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
+        internal_checkpoint_sign_sender: UnboundedSender<InternalCheckpointSignRequest>,
     ) -> (Arc<DWalletCheckpointService>, JoinSet<()>) {
         let epoch_start_timestamp_ms = epoch_store.epoch_start_state().epoch_start_timestamp_ms();
         let epoch_duration_ms = epoch_store.epoch_start_state().epoch_duration_ms();
@@ -1085,6 +1094,7 @@ impl IkaNode {
             signer: state.secret.clone(),
             authority: config.protocol_public_key(),
             metrics: checkpoint_metrics.clone(),
+            internal_checkpoint_sign_sender,
         });
 
         let certified_checkpoint_output = SendDWalletCheckpointToStateSync::new(state_sync_handle);

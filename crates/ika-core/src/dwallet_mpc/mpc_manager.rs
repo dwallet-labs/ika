@@ -616,15 +616,35 @@ impl DWalletMPCManager {
     /// # Arguments
     /// * `checkpoint_sequence_number` - The sequence number of the checkpoint to sign
     /// * `checkpoint_message` - The serialized checkpoint message to sign
-    /// * `dwallet_network_encryption_key_id` - The network encryption key to use
-    /// * `signature_algorithm` - The signature algorithm to use (e.g., EdDSA)
+    ///
+    /// The network encryption key ID and signature algorithm are determined internally,
+    /// using the same approach as internal presign sessions.
     pub(super) fn instantiate_internal_sign_session_for_checkpoint(
         &mut self,
         checkpoint_sequence_number: u64,
         checkpoint_message: Vec<u8>,
-        dwallet_network_encryption_key_id: ObjectID,
-        signature_algorithm: DWalletSignatureAlgorithm,
     ) -> bool {
+        // Get the network encryption key ID (same as internal presign sessions)
+        let dwallet_network_encryption_key_id = match self
+            .network_keys
+            .network_encryption_keys
+            .iter()
+            .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
+        {
+            Some((key_id, _)) => *key_id,
+            None => {
+                warn!(
+                    checkpoint_sequence_number,
+                    "No network encryption key available for internal checkpoint signing"
+                );
+                return false;
+            }
+        };
+
+        // For checkpoint signing, we use ECDSASecp256k1 as the default algorithm.
+        // This can be made configurable later if needed.
+        let signature_algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+
         // Get the curve and hash scheme for the signature algorithm
         let (curve, hash_scheme) = match signature_algorithm {
             DWalletSignatureAlgorithm::EdDSA => (DWalletCurve::Curve25519, HashScheme::Keccak256),

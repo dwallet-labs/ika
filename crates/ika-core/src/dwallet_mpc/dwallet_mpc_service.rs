@@ -14,6 +14,7 @@ use crate::dwallet_checkpoints::{
     DWalletCheckpointServiceNotify, PendingDWalletCheckpoint, PendingDWalletCheckpointInfo,
     PendingDWalletCheckpointV1,
 };
+use crate::dwallet_mpc::InternalCheckpointSignRequest;
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
@@ -59,6 +60,7 @@ use std::time::Duration;
 use sui_types::messages_consensus::Round;
 #[cfg(feature = "test-utils")]
 use tokio::sync::watch;
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
 
@@ -91,6 +93,8 @@ pub struct DWalletMPCService {
     network_is_idle: bool,
     agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
     processed_global_presign_requests_session_identifiers: HashSet<SessionIdentifier>,
+    /// Receiver for internal checkpoint signing requests from the checkpoint service.
+    internal_checkpoint_sign_receiver: UnboundedReceiver<InternalCheckpointSignRequest>,
 }
 
 impl DWalletMPCService {
@@ -107,6 +111,7 @@ impl DWalletMPCService {
         epoch_id: sui_types::base_types::EpochId,
         committee: Arc<Committee>,
         protocol_config: ProtocolConfig,
+        internal_checkpoint_sign_receiver: UnboundedReceiver<InternalCheckpointSignRequest>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -158,6 +163,7 @@ impl DWalletMPCService {
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_requests_session_identifiers: HashSet::new(),
+            internal_checkpoint_sign_receiver,
         }
     }
 
@@ -173,6 +179,10 @@ impl DWalletMPCService {
         committee: Committee,
         sui_data_receivers: SuiDataReceivers,
     ) -> Self {
+        // Create a dummy channel for testing - the sender is immediately dropped
+        let (_, internal_checkpoint_sign_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<InternalCheckpointSignRequest>();
+
         DWalletMPCService {
             last_read_consensus_round: Some(0),
             epoch_store: epoch_store.clone(),
@@ -205,6 +215,7 @@ impl DWalletMPCService {
             network_is_idle: false,
             processed_global_presign_requests_session_identifiers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
+            internal_checkpoint_sign_receiver,
         }
     }
 
@@ -303,6 +314,9 @@ impl DWalletMPCService {
         debug!("Running DWalletMPCService loop");
         self.sync_last_session_to_complete_in_current_epoch().await;
 
+        // Process any pending internal checkpoint sign requests.
+        self.process_internal_checkpoint_sign_requests();
+
         // Receive **new** dWallet MPC events and save them in the local DB.
         let rejected_sessions = self.handle_new_requests().await.unwrap_or_else(|e| {
             error!(error=?e, "failed to handle new events from DWallet MPC service");
@@ -314,6 +328,35 @@ impl DWalletMPCService {
         self.process_cryptographic_computations().await;
         self.handle_failed_requests_and_submit_reject_to_consensus(rejected_sessions)
             .await;
+    }
+
+    /// Process internal checkpoint sign requests received from the checkpoint service.
+    /// Each request triggers an internal MPC signing session for a checkpoint.
+    fn process_internal_checkpoint_sign_requests(&mut self) {
+        // Use try_recv to non-blocking drain all pending requests
+        while let Ok(request) = self.internal_checkpoint_sign_receiver.try_recv() {
+            info!(
+                checkpoint_seq = request.checkpoint_sequence_number,
+                message_len = request.message.len(),
+                "Received internal checkpoint sign request from checkpoint service"
+            );
+
+            let instantiated = self
+                .dwallet_mpc_manager
+                .instantiate_internal_sign_session_for_checkpoint(request.checkpoint_sequence_number, request.message);
+
+            if instantiated {
+                debug!(
+                    checkpoint_seq = request.checkpoint_sequence_number,
+                    "Internal checkpoint sign session instantiated"
+                );
+            } else {
+                warn!(
+                    checkpoint_seq = request.checkpoint_sequence_number,
+                    "Failed to instantiate internal checkpoint sign session"
+                );
+            }
+        }
     }
 
     /// Sends a status update to consensus with the given computation result.
