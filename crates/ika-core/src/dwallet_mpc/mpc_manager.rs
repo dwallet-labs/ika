@@ -22,7 +22,7 @@ use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
-use group::PartyID;
+use group::{HashScheme, PartyID};
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
@@ -40,7 +40,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Result of majority voting on status updates.
 #[derive(Debug, Clone)]
@@ -608,6 +608,93 @@ impl DWalletMPCManager {
         self.next_internal_presign_sequence_number += 1;
     }
 
+    /// Instantiates an internal sign session for signing a checkpoint message.
+    ///
+    /// This is called when a checkpoint is created and needs to be signed using
+    /// the internal checkpoint dWallet (with emulated centralized party).
+    ///
+    /// # Arguments
+    /// * `checkpoint_sequence_number` - The sequence number of the checkpoint to sign
+    /// * `checkpoint_message` - The serialized checkpoint message to sign
+    /// * `dwallet_network_encryption_key_id` - The network encryption key to use
+    /// * `signature_algorithm` - The signature algorithm to use (e.g., EdDSA)
+    pub(super) fn instantiate_internal_sign_session_for_checkpoint(
+        &mut self,
+        checkpoint_sequence_number: u64,
+        checkpoint_message: Vec<u8>,
+        dwallet_network_encryption_key_id: ObjectID,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> bool {
+        // Get the curve and hash scheme for the signature algorithm
+        let (curve, hash_scheme) = match signature_algorithm {
+            DWalletSignatureAlgorithm::EdDSA => (DWalletCurve::Curve25519, HashScheme::Keccak256),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                (DWalletCurve::Ristretto, HashScheme::Keccak256)
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                (DWalletCurve::Secp256k1, HashScheme::Keccak256)
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                (DWalletCurve::Secp256r1, HashScheme::Keccak256)
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                (DWalletCurve::Secp256k1, HashScheme::Keccak256)
+            }
+        };
+
+        // Try to get a presign from the internal presign pool
+        let presign = match self.epoch_store.pop_presign(signature_algorithm) {
+            Ok(Some(presign)) => presign,
+            Ok(None) => {
+                warn!(
+                    checkpoint_sequence_number,
+                    ?signature_algorithm,
+                    "No presign available in internal pool for checkpoint signing"
+                );
+                return false;
+            }
+            Err(e) => {
+                error!(
+                    checkpoint_sequence_number,
+                    ?signature_algorithm,
+                    error = ?e,
+                    "Failed to get presign from internal pool for checkpoint signing"
+                );
+                return false;
+            }
+        };
+
+        let request = DWalletSessionRequest::new_internal_sign(
+            self.epoch_id,
+            checkpoint_sequence_number,
+            curve,
+            signature_algorithm,
+            hash_scheme,
+            dwallet_network_encryption_key_id,
+            checkpoint_message.clone(),
+            presign,
+        );
+
+        let session_identifier = request.session_identifier;
+        let status = self.session_status_from_request(request, true);
+
+        let session_computation_type = SessionComputationType::MPC {
+            messages_by_consensus_round: HashMap::new(),
+        };
+
+        info!(
+            checkpoint_sequence_number,
+            ?curve,
+            ?signature_algorithm,
+            ?session_identifier,
+            message_length = checkpoint_message.len(),
+            "instantiating internal sign session for checkpoint",
+        );
+
+        self.new_session(&session_identifier, status, session_computation_type);
+        true
+    }
+
     fn internal_presign_pool_size(
         &self,
         _dwallet_network_encryption_key_id: ObjectID,
@@ -697,6 +784,7 @@ impl DWalletMPCManager {
                     }
                     SessionType::System => true,
                     SessionType::InternalPresign => true,
+                    SessionType::InternalSign => true,
                 };
 
                 if should_advance {
@@ -1040,8 +1128,20 @@ impl DWalletMPCManager {
                     );
                 }
             },
-            DWalletInternalMPCOutputKind::InternalSign { output, .. } => {
-                todo!()
+            DWalletInternalMPCOutputKind::InternalSign {
+                output,
+                curve,
+                signature_algorithm,
+            } => {
+                // Log the internal sign output for checkpoint signing.
+                // This signature will eventually replace BLS checkpoint signatures.
+                info!(
+                    curve = ?curve,
+                    signature_algorithm = ?signature_algorithm,
+                    signature_length = output.len(),
+                    signature_hex = %hex::encode(&output),
+                    "Internal checkpoint sign completed - MPC signature ready"
+                );
             }
         }
     }

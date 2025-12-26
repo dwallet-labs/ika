@@ -1090,6 +1090,29 @@ impl DWalletMPCService {
                     None
                 }
             },
+            SessionType::InternalSign => match &session_request.protocol_data {
+                ProtocolData::InternalSign { data, .. } => {
+                    Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
+                        self.name,
+                        session_identifier,
+                        DWalletInternalMPCOutputKind::InternalSign {
+                            output,
+                            curve: data.curve,
+                            signature_algorithm: data.signature_algorithm,
+                        },
+                        malicious_authorities,
+                    ))
+                }
+                _ => {
+                    error!(
+                        should_never_happen =? true,
+                        session_identifier=?session_identifier,
+                        "mismatch between session type and protocol data during MPC output creation",
+                    );
+
+                    None
+                }
+            },
             SessionType::User | SessionType::System => {
                 let output = Self::build_dwallet_checkpoint_message_kinds_from_output(
                     &session_identifier,

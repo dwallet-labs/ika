@@ -297,6 +297,7 @@ pub enum SessionType {
     User,
     System,
     InternalPresign,
+    InternalSign,
 }
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -332,7 +333,13 @@ impl SessionIdentifier {
             .concat(),
             SessionType::InternalPresign => [
                 version.to_be_bytes().as_slice(),
-                b"INTERNAL",
+                b"INTERNAL_PRESIGN",
+                &session_identifier_preimage,
+            ]
+            .concat(),
+            SessionType::InternalSign => [
+                version.to_be_bytes().as_slice(),
+                b"INTERNAL_SIGN",
                 &session_identifier_preimage,
             ]
             .concat(),

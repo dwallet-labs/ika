@@ -322,6 +322,26 @@ pub fn internal_presign_protocol_data(
     }
 }
 
+pub fn internal_sign_protocol_data(
+    curve: DWalletCurve,
+    signature_algorithm: DWalletSignatureAlgorithm,
+    hash_scheme: HashScheme,
+    dwallet_network_encryption_key_id: ObjectID,
+    message: Vec<u8>,
+    presign: SerializedWrappedMPCPublicOutput,
+) -> ProtocolData {
+    ProtocolData::InternalSign {
+        data: InternalSignData {
+            curve,
+            signature_algorithm,
+            hash_scheme,
+        },
+        dwallet_network_encryption_key_id,
+        message,
+        presign,
+    }
+}
+
 pub fn presign_protocol_data(
     request_event_data: PresignRequestEvent,
 ) -> DwalletMPCResult<ProtocolData> {

@@ -79,6 +79,12 @@ impl<T: SubmitToConsensus> DWalletCheckpointOutput for SubmitDWalletCheckpointTo
                 "Sending dwallet checkpoint signature to consensus."
             );
 
+            // TODO(internal-checkpoint-sign): Trigger MPC internal sign session here.
+            // The infrastructure is ready in mpc_manager::instantiate_internal_sign_session_for_checkpoint.
+            // Integration requires passing a channel/callback to the MPC service.
+            // The message to sign is: bcs::to_bytes(&checkpoint_message.digest()).unwrap()
+            // Once integrated, the MPC signature will replace the BLS quorum signature below.
+
             let summary = SignedDWalletCheckpointMessage::new(
                 epoch_store.epoch(),
                 checkpoint_message.clone(),

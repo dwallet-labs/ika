@@ -1,6 +1,10 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
-use crate::request_protocol_data::{ProtocolData, internal_presign_protocol_data};
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use crate::request_protocol_data::{
+    ProtocolData, internal_presign_protocol_data, internal_sign_protocol_data,
+};
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, DWalletSignatureAlgorithm, SerializedWrappedMPCPublicOutput,
+};
 use group::HashScheme;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use merlin::Transcript;
@@ -78,6 +82,64 @@ impl DWalletSessionRequest {
         }
     }
 
+    /// Creates a new internal sign session request for signing checkpoint data.
+    ///
+    /// The session identifier is derived deterministically from the epoch and
+    /// checkpoint sequence number, ensuring all validators create the same session.
+    pub fn new_internal_sign(
+        epoch: u64,
+        checkpoint_sequence_number: u64,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        hash_scheme: HashScheme,
+        dwallet_network_encryption_key_id: ObjectID,
+        message: Vec<u8>,
+        presign: SerializedWrappedMPCPublicOutput,
+    ) -> Self {
+        let mut transcript = Transcript::new(b"Internal Sign session identifier preimage");
+        transcript.append_message(b"epoch", &epoch.to_be_bytes());
+        transcript.append_message(
+            b"checkpoint sequence number",
+            &checkpoint_sequence_number.to_be_bytes(),
+        );
+        transcript.append_message(b"curve", curve.to_string().as_bytes());
+        transcript.append_message(
+            b"signature algorithm",
+            signature_algorithm.to_string().as_bytes(),
+        );
+
+        // Generate a session identifier preimage in a deterministic way
+        let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =
+            [0; SessionIdentifier::LENGTH];
+        transcript.challenge_bytes(
+            b"session identifier preimage",
+            &mut session_identifier_preimage,
+        );
+
+        let session_type = SessionType::InternalSign;
+        let session_identifier = SessionIdentifier::new(session_type, session_identifier_preimage);
+
+        let protocol_data = internal_sign_protocol_data(
+            curve,
+            signature_algorithm,
+            hash_scheme,
+            dwallet_network_encryption_key_id,
+            message,
+            presign,
+        );
+
+        Self {
+            session_type,
+            session_identifier,
+            session_sequence_number: checkpoint_sequence_number,
+            protocol_data,
+            epoch,
+            requires_network_key_data: true,
+            requires_next_active_committee: false,
+            pulled: false,
+        }
+    }
+
     /// Checking this request belongs to the current epoch.
     /// We only pull uncompleted events, so we skip the check for those,
     /// but pushed events might be completed.
@@ -110,6 +172,7 @@ impl Ord for DWalletSessionRequest {
     fn cmp(&self, other: &Self) -> Ordering {
         // System sessions have a higher priority than user session and therefore come first (are smaller).
         // Both system and user sessions are sorted by their sequence number between themselves.
+        // Internal sessions (presign and sign) have lowest priority.
         match (self.session_type, other.session_type) {
             (SessionType::User, SessionType::User) => self
                 .session_sequence_number
@@ -122,8 +185,12 @@ impl Ord for DWalletSessionRequest {
             (SessionType::InternalPresign, SessionType::InternalPresign) => self
                 .session_sequence_number
                 .cmp(&other.session_sequence_number),
-            (SessionType::InternalPresign, _) => Ordering::Greater,
-            (_, SessionType::InternalPresign) => Ordering::Less,
+            (SessionType::InternalSign, SessionType::InternalSign) => self
+                .session_sequence_number
+                .cmp(&other.session_sequence_number),
+            // Internal sessions have lowest priority (come last)
+            (SessionType::InternalPresign | SessionType::InternalSign, _) => Ordering::Greater,
+            (_, SessionType::InternalPresign | SessionType::InternalSign) => Ordering::Less,
         }
     }
 }
