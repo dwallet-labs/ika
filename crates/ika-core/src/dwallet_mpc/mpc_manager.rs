@@ -641,25 +641,17 @@ impl DWalletMPCManager {
             }
         };
 
-        // For checkpoint signing, we use ECDSASecp256k1 as the default algorithm.
-        // This can be made configurable later if needed.
-        let signature_algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+        // Get the checkpoint signing algorithm and curve from protocol config
+        let signature_algorithm = self.protocol_config.checkpoint_signing_algorithm();
+        let curve = self.protocol_config.checkpoint_signing_curve();
 
-        // Get the curve and hash scheme for the signature algorithm
-        let (curve, hash_scheme) = match signature_algorithm {
-            DWalletSignatureAlgorithm::EdDSA => (DWalletCurve::Curve25519, HashScheme::Keccak256),
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                (DWalletCurve::Ristretto, HashScheme::Keccak256)
-            }
-            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                (DWalletCurve::Secp256k1, HashScheme::Keccak256)
-            }
-            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                (DWalletCurve::Secp256r1, HashScheme::Keccak256)
-            }
-            DWalletSignatureAlgorithm::Taproot => {
-                (DWalletCurve::Secp256k1, HashScheme::Keccak256)
-            }
+        // Get the hash scheme for the signature algorithm
+        let hash_scheme = match signature_algorithm {
+            DWalletSignatureAlgorithm::EdDSA
+            | DWalletSignatureAlgorithm::SchnorrkelSubstrate
+            | DWalletSignatureAlgorithm::ECDSASecp256k1
+            | DWalletSignatureAlgorithm::ECDSASecp256r1
+            | DWalletSignatureAlgorithm::Taproot => HashScheme::Keccak256,
         };
 
         // Try to get a presign from the internal presign pool
