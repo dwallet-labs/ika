@@ -6,6 +6,10 @@ use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationPublicInputByCurve,
 };
+use crate::dwallet_mpc::internal_checkpoint_dkg::{
+    emulate_centralized_dkg_for_internal_signing, emulate_centralized_party_partial_signature,
+    internal_checkpoint_dkg_session_id,
+};
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 
@@ -17,7 +21,9 @@ use crate::request_protocol_data::{
     PartialSignatureVerificationData, PresignData, ProtocolData,
 };
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, ReconfigurationParty};
+use dwallet_mpc_types::dwallet_mpc::{
+    MPCPrivateInput, ReconfigurationParty, VersionedPresignOutput,
+};
 use group::PartyID;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -263,22 +269,80 @@ pub(crate) fn session_input_from_request(
             presign,
             ..
         } => {
-            // TODO: compute here - or actually that's not inside the cryptographic computation, not good, better take option and later compute it in the sign protocol? idk how to do it
-            let dwallet_decentralized_public_output = todo!();
-            let message_centralized_signature = todo!();
+            let encryption_key_public_data = network_keys
+                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
+
+            // Get the internal checkpoint DKG output from the network key.
+            // This contains the decentralized party's DKG output for internal signing.
+            let (stored_curve, stored_algorithm, dwallet_decentralized_public_output) =
+                encryption_key_public_data
+                    .internal_checkpoint_dkg_output()
+                    .ok_or_else(|| {
+                        DwalletMPCError::InternalError(
+                            "Internal checkpoint DKG output not available for this network key"
+                                .to_string(),
+                        )
+                    })?
+                    .clone();
+
+            // Verify the stored curve and algorithm match the requested ones
+            if stored_curve != data.curve || stored_algorithm != data.signature_algorithm {
+                return Err(DwalletMPCError::InternalError(format!(
+                    "Internal checkpoint DKG was created for {:?}/{:?}, but signing requested {:?}/{:?}",
+                    stored_curve, stored_algorithm, data.curve, data.signature_algorithm
+                )));
+            }
+
+            // Get the serialized protocol public parameters for the curve
+            let protocol_pp_bytes = encryption_key_public_data
+                .serialized_protocol_public_parameters_for_curve(data.curve)
+                .map_err(DwalletMPCError::BcsError)?;
+
+            // Compute a deterministic session ID for the emulated centralized DKG.
+            // This ensures all validators produce the same emulated DKG output.
+            let session_id = internal_checkpoint_dkg_session_id(
+                dwallet_network_encryption_key_id.as_ref(),
+                encryption_key_public_data.epoch(),
+                data.curve,
+                data.signature_algorithm,
+            );
+
+            // Emulate the centralized party DKG using ZeroRng.
+            // All validators will produce identical output since ZeroRng is deterministic.
+            let emulated_dkg_result = emulate_centralized_dkg_for_internal_signing(
+                data.curve,
+                &protocol_pp_bytes,
+                &session_id,
+            )?;
+
+            // Extract the presign bytes from the versioned presign output
+            let presign_bytes = match bcs::from_bytes::<VersionedPresignOutput>(presign)
+                .map_err(DwalletMPCError::BcsError)?
+            {
+                VersionedPresignOutput::V1(bytes) | VersionedPresignOutput::V2(bytes) => bytes,
+            };
+
+            // Emulate the centralized party's partial signature using ZeroRng.
+            // All validators will produce identical output.
+            let message_centralized_signature = emulate_centralized_party_partial_signature(
+                data.signature_algorithm,
+                &emulated_dkg_result,
+                message.clone(),
+                data.hash_scheme,
+                &presign_bytes,
+                &protocol_pp_bytes,
+            )?;
 
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
-                    dwallet_decentralized_public_output,
+                    &dwallet_decentralized_public_output,
                     message.clone(),
                     presign,
-                    message_centralized_signature,
+                    &message_centralized_signature,
                     data.hash_scheme,
                     access_structure,
-                    network_keys.get_network_encryption_key_public_data(
-                        dwallet_network_encryption_key_id,
-                    )?,
+                    encryption_key_public_data,
                     data.signature_algorithm,
                 )?),
                 None,

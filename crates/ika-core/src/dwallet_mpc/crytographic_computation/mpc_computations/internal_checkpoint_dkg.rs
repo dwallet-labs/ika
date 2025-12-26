@@ -171,6 +171,147 @@ fn emulate_centralized_dkg_v2<P: Protocol>(
     })
 }
 
+/// Emulates the centralized party's partial signature for internal signing.
+///
+/// This function creates a deterministic partial signature using ZeroRng to emulate
+/// the centralized party. All validators calling this function with the same inputs
+/// will produce identical outputs.
+///
+/// # Arguments
+///
+/// * `signature_algorithm` - The signature algorithm (e.g., EdDSA)
+/// * `emulated_dkg_result` - The emulated DKG result from `emulate_centralized_dkg_for_internal_signing`
+/// * `message` - The message to sign
+/// * `hash_scheme` - The hash scheme to use
+/// * `presign` - The presign data (from internal presign pool)
+/// * `protocol_public_parameters` - The protocol public parameters
+///
+/// # Returns
+///
+/// The serialized partial signature from the emulated centralized party.
+///
+/// # Security Warning
+///
+/// This function uses ZeroRng which provides NO randomness. The output is
+/// deterministic. This is intentional for internal signing operations.
+pub fn emulate_centralized_party_partial_signature(
+    signature_algorithm: DWalletSignatureAlgorithm,
+    emulated_dkg_result: &EmulatedCentralizedDKGResult,
+    message: Vec<u8>,
+    hash_scheme: group::HashScheme,
+    presign: &[u8],
+    protocol_public_parameters: &[u8],
+) -> DwalletMPCResult<Vec<u8>> {
+    match signature_algorithm {
+        DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+            emulate_sign_centralized::<twopc_mpc::secp256k1::class_groups::ECDSAProtocol>(
+                emulated_dkg_result,
+                message,
+                hash_scheme,
+                presign,
+                protocol_public_parameters,
+            )
+        }
+        DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+            emulate_sign_centralized::<twopc_mpc::secp256r1::class_groups::ECDSAProtocol>(
+                emulated_dkg_result,
+                message,
+                hash_scheme,
+                presign,
+                protocol_public_parameters,
+            )
+        }
+        DWalletSignatureAlgorithm::EdDSA => {
+            emulate_sign_centralized::<twopc_mpc::curve25519::class_groups::EdDSAProtocol>(
+                emulated_dkg_result,
+                message,
+                hash_scheme,
+                presign,
+                protocol_public_parameters,
+            )
+        }
+        DWalletSignatureAlgorithm::Taproot => {
+            emulate_sign_centralized::<twopc_mpc::secp256k1::class_groups::TaprootProtocol>(
+                emulated_dkg_result,
+                message,
+                hash_scheme,
+                presign,
+                protocol_public_parameters,
+            )
+        }
+        DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            emulate_sign_centralized::<twopc_mpc::ristretto::class_groups::SchnorrkelSubstrateProtocol>(
+                emulated_dkg_result,
+                message,
+                hash_scheme,
+                presign,
+                protocol_public_parameters,
+            )
+        }
+    }
+}
+
+/// Internal implementation of emulated centralized party signing for a specific protocol.
+fn emulate_sign_centralized<P: twopc_mpc::sign::Protocol>(
+    emulated_dkg_result: &EmulatedCentralizedDKGResult,
+    message: Vec<u8>,
+    hash_scheme: group::HashScheme,
+    presign_bytes: &[u8],
+    protocol_pp_bytes: &[u8],
+) -> DwalletMPCResult<Vec<u8>> {
+    use dwallet_mpc_types::dwallet_mpc::VersionedUserSignedMessage;
+
+    // Deserialize the emulated secret key share
+    let versioned_secret: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(&emulated_dkg_result.centralized_secret_output)
+            .map_err(DwalletMPCError::BcsError)?;
+    let VersionedDwalletUserSecretShare::V1(secret_bytes) = versioned_secret;
+
+    let centralized_party_secret_key_share: P::CentralizedPartySecretKeyShare =
+        bcs::from_bytes(&secret_bytes).map_err(DwalletMPCError::BcsError)?;
+
+    // Deserialize the centralized party DKG public output
+    let centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput =
+        bcs::from_bytes(&emulated_dkg_result.public_output).map_err(DwalletMPCError::BcsError)?;
+
+    // Deserialize presign and protocol public parameters
+    let presign: <P as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign_bytes).map_err(DwalletMPCError::BcsError)?;
+    let protocol_public_parameters: P::ProtocolPublicParameters =
+        bcs::from_bytes(protocol_pp_bytes).map_err(DwalletMPCError::BcsError)?;
+
+    // Build the public input for the sign centralized party
+    let centralized_party_public_input =
+        <P as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+            message,
+            hash_scheme,
+            centralized_party_dkg_public_output,
+            presign,
+            protocol_public_parameters,
+        ));
+
+    // CRITICAL: Using ZeroRng for deterministic output.
+    // This is intentional - all validators must produce identical partial signatures.
+    let mut rng = ZeroRng::new();
+
+    type SignCentralizedParty<P> = <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
+
+    let round_result = SignCentralizedParty::<P>::advance(
+        (),
+        &centralized_party_secret_key_share,
+        &centralized_party_public_input,
+        &mut rng,
+    )
+    .map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
+
+    // Serialize the partial signature
+    let signed_message =
+        VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)
+            .map_err(DwalletMPCError::BcsError)?);
+
+    bcs::to_bytes(&signed_message).map_err(DwalletMPCError::BcsError)
+}
+
 /// Gets the session identifier for internal checkpoint DKG.
 ///
 /// This creates a deterministic session ID based on the network key ID and epoch,

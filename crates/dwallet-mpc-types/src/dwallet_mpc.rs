@@ -396,6 +396,34 @@ impl NetworkEncryptionKeyPublicData {
         self.curve25519_decryption_key_share_public_parameters
             .clone()
     }
+
+    /// Returns the internal checkpoint DKG output if available.
+    ///
+    /// The output contains:
+    /// - The curve used for signing
+    /// - The signature algorithm
+    /// - The serialized `VersionedDwalletDKGPublicOutput`
+    pub fn internal_checkpoint_dkg_output(
+        &self,
+    ) -> Option<&(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)> {
+        self.internal_checkpoint_dkg_output.as_ref()
+    }
+
+    /// Returns the serialized protocol public parameters for the given curve.
+    ///
+    /// This is useful for internal signing operations where the protocol public
+    /// parameters need to be passed to emulation functions.
+    pub fn serialized_protocol_public_parameters_for_curve(
+        &self,
+        curve: DWalletCurve,
+    ) -> Result<Vec<u8>, bcs::Error> {
+        match curve {
+            DWalletCurve::Secp256k1 => bcs::to_bytes(&*self.secp256k1_protocol_public_parameters),
+            DWalletCurve::Secp256r1 => bcs::to_bytes(&*self.secp256r1_protocol_public_parameters),
+            DWalletCurve::Curve25519 => bcs::to_bytes(&*self.curve25519_protocol_public_parameters),
+            DWalletCurve::Ristretto => bcs::to_bytes(&*self.ristretto_protocol_public_parameters),
+        }
+    }
 }
 
 pub type ReconfigurationParty = twopc_mpc::decentralized_party::reconfiguration::Party;
