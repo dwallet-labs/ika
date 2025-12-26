@@ -941,6 +941,8 @@ impl DWalletMPCManager {
                             key_data.current_epoch,
                             self.access_structure.clone(),
                             key_data,
+                            self.protocol_config.checkpoint_signing_curve(),
+                            self.protocol_config.checkpoint_signing_algorithm(),
                         ).await;
 
                         results.push((key_id, res))
