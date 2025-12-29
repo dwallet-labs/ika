@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WASM Cryptography Benchmark</title>
+    <style>
+        body { font-family: monospace; padding: 20px; max-width: 800px; margin: 0 auto; }
+        .result { margin: 10px 0; padding: 10px; background: #f0f0f0; }
+        .success { background: #d4edda; }
+        .error { background: #f8d7da; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        #log { white-space: pre-wrap; background: #1e1e1e; color: #fff; padding: 15px; margin-top: 20px; max-height: 400px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>WASM Cryptography Benchmark</h1>
+    <p>Compare single-threaded vs parallel (multi-threaded) WASM performance.</p>
+
+    <div>
+        <button onclick="runSingleThreaded()">Run Single-Threaded Benchmark</button>
+        <button onclick="runParallel()">Run Parallel Benchmark</button>
+        <button onclick="runComparison()">Run Full Comparison</button>
+    </div>
+
+    <div id="results"></div>
+    <div id="log"></div>
+
+    <script type="module">
+        const resultsDiv = document.getElementById('results');
+        const logDiv = document.getElementById('log');
+
+        function log(msg) {
+            logDiv.textContent += msg + '\n';
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(msg);
+        }
+
+        function showResult(title, time, extra = '') {
+            const div = document.createElement('div');
+            div.className = 'result success';
+            div.innerHTML = `<strong>${title}</strong>: ${time.toFixed(2)}ms ${extra}`;
+            resultsDiv.appendChild(div);
+        }
+
+        function showError(title, error) {
+            const div = document.createElement('div');
+            div.className = 'result error';
+            div.innerHTML = `<strong>${title}</strong>: Error - ${error}`;
+            resultsDiv.appendChild(div);
+        }
+
+        const ITERATIONS = 3;
+        const WARMUP = 1;
+
+        async function benchmark(name, wasmModule, numThreads = 0) {
+            log(`\n=== ${name} ===`);
+
+            // Generate a random seed
+            const seed = new Uint8Array(32);
+            crypto.getRandomValues(seed);
+
+            // Warmup
+            log(`Warmup (${WARMUP} iterations)...`);
+            for (let i = 0; i < WARMUP; i++) {
+                await wasmModule.generate_secp_cg_keypair_from_seed(0, seed); // 0 = SECP256K1
+            }
+
+            // Benchmark
+            log(`Running ${ITERATIONS} iterations...`);
+            const times = [];
+            for (let i = 0; i < ITERATIONS; i++) {
+                const start = performance.now();
+                await wasmModule.generate_secp_cg_keypair_from_seed(0, seed);
+                const end = performance.now();
+                times.push(end - start);
+                log(`  Iteration ${i + 1}: ${(end - start).toFixed(2)}ms`);
+            }
+
+            const avg = times.reduce((a, b) => a + b, 0) / times.length;
+            const min = Math.min(...times);
+            const max = Math.max(...times);
+
+            log(`Results: avg=${avg.toFixed(2)}ms, min=${min.toFixed(2)}ms, max=${max.toFixed(2)}ms`);
+            return { avg, min, max, times };
+        }
+
+        // Single-threaded benchmark
+        window.runSingleThreaded = async function() {
+            resultsDiv.innerHTML = '';
+            logDiv.textContent = '';
+
+            try {
+                log('Loading single-threaded WASM...');
+                const wasm = await import('./dist/web/dwallet_mpc_wasm.js');
+                await wasm.default();
+                log('WASM loaded successfully');
+
+                const result = await benchmark('Single-Threaded', wasm);
+                showResult('Single-Threaded (SECP256K1)', result.avg);
+            } catch (e) {
+                log(`Error: ${e.message}`);
+                showError('Single-Threaded', e.message);
+            }
+        };
+
+        // Parallel benchmark
+        window.runParallel = async function() {
+            resultsDiv.innerHTML = '';
+            logDiv.textContent = '';
+
+            try {
+                log('Loading parallel WASM...');
+                const wasm = await import('./dist/web-parallel/dwallet_mpc_wasm.js');
+                await wasm.default();
+                log('WASM loaded successfully');
+
+                // Initialize thread pool with navigator.hardwareConcurrency threads
+                const numThreads = navigator.hardwareConcurrency || 4;
+                log(`Initializing thread pool with ${numThreads} threads...`);
+                await wasm.initThreadPool(numThreads);
+                log('Thread pool initialized');
+
+                const result = await benchmark('Parallel', wasm, numThreads);
+                showResult(`Parallel (${numThreads} threads, SECP256K1)`, result.avg);
+            } catch (e) {
+                log(`Error: ${e.message}`);
+                console.error(e);
+                showError('Parallel', e.message);
+            }
+        };
+
+        // Run comparison
+        window.runComparison = async function() {
+            resultsDiv.innerHTML = '';
+            logDiv.textContent = '';
+
+            let singleResult, parallelResult;
+
+            // Single-threaded
+            try {
+                log('=== SINGLE-THREADED TEST ===');
+                const wasm = await import('./dist/web/dwallet_mpc_wasm.js');
+                await wasm.default();
+                singleResult = await benchmark('Single-Threaded', wasm);
+                showResult('Single-Threaded (SECP256K1)', singleResult.avg);
+            } catch (e) {
+                log(`Single-threaded error: ${e.message}`);
+                showError('Single-Threaded', e.message);
+            }
+
+            // Parallel
+            try {
+                log('\n=== PARALLEL TEST ===');
+                const wasm = await import('./dist/web-parallel/dwallet_mpc_wasm.js');
+                await wasm.default();
+
+                const numThreads = navigator.hardwareConcurrency || 4;
+                log(`Initializing thread pool with ${numThreads} threads...`);
+                await wasm.initThreadPool(numThreads);
+
+                parallelResult = await benchmark('Parallel', wasm, numThreads);
+                showResult(`Parallel (${numThreads} threads, SECP256K1)`, parallelResult.avg);
+            } catch (e) {
+                log(`Parallel error: ${e.message}`);
+                console.error(e);
+                showError('Parallel', e.message);
+            }
+
+            // Comparison
+            if (singleResult && parallelResult) {
+                const speedup = singleResult.avg / parallelResult.avg;
+                const improvement = ((singleResult.avg - parallelResult.avg) / singleResult.avg * 100).toFixed(1);
+                log(`\n=== COMPARISON ===`);
+                log(`Single-threaded avg: ${singleResult.avg.toFixed(2)}ms`);
+                log(`Parallel avg: ${parallelResult.avg.toFixed(2)}ms`);
+                log(`Speedup: ${speedup.toFixed(2)}x`);
+                log(`Improvement: ${improvement}%`);
+
+                const compDiv = document.createElement('div');
+                compDiv.className = 'result ' + (speedup > 1 ? 'success' : 'error');
+                compDiv.innerHTML = `<strong>Speedup</strong>: ${speedup.toFixed(2)}x (${improvement}% faster)`;
+                resultsDiv.appendChild(compDiv);
+            }
+        };
+    </script>
+
+    <p style="margin-top: 30px; color: #666;">
+        <strong>Note:</strong> Parallel WASM requires:
+        <ul>
+            <li>Browser with SharedArrayBuffer support</li>
+            <li>COOP/COEP headers (Cross-Origin-Opener-Policy: same-origin, Cross-Origin-Embedder-Policy: require-corp)</li>
+            <li>Served over HTTPS or localhost</li>
+        </ul>
+    </p>
+</body>
+</html>

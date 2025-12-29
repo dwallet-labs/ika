@@ -16,6 +16,10 @@ use dwallet_mpc_centralized_party::{
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
 
+// Re-export the thread pool initialization when parallel feature is enabled
+#[cfg(feature = "parallel")]
+pub use wasm_bindgen_rayon::init_thread_pool;
+
 #[wasm_bindgen]
 pub fn create_dkg_centralized_output_v1(
     protocol_pp: Vec<u8>,

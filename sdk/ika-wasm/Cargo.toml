@@ -16,11 +16,20 @@ codegen-units = 1
 # wasm-opt provides additional optimizations beyond LLVM
 # Using -O4 for aggressive optimizations and -tnh for no-trapping float-to-int
 wasm-opt = ["-O4", "-tnh"]
+
+[features]
+default = []
+# Enable parallel processing with WASM threads (requires nightly + special build flags)
+parallel = ["dwallet-mpc-centralized-party/parallel", "wasm-bindgen-rayon", "rayon"]
+
 [dependencies]
 dwallet-mpc-centralized-party = { path = "../../crates/dwallet-mpc-centralized-party", features = ["wasm_js"] }
 anyhow = "1.0.100"
 wasm-bindgen = "=0.2.100"
 serde-wasm-bindgen = "0.6.5"
+# Optional: WASM threading support
+wasm-bindgen-rayon = { version = "1.2", optional = true }
+rayon = { version = "1.10", optional = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

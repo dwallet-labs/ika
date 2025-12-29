@@ -1,0 +1,13 @@
+# Configuration for building WASM with threading support (parallel feature)
+# This file is only used when building with the parallel feature
+
+[target.wasm32-unknown-unknown]
+# Enable atomics, bulk-memory, and mutable-globals for SharedArrayBuffer support
+rustflags = [
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+    "--cfg", "getrandom_backend=\"wasm_js\""
+]
+
+[unstable]
+# Required for rebuilding std with atomics support
+build-std = ["panic_abort", "std"]

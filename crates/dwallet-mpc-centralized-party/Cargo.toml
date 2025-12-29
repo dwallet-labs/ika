@@ -27,6 +27,8 @@ crypto-bigint.workspace = true
 
 [features]
 wasm_js = ["group/wasm_js", "dep:getrandom"]
+# Enable parallel processing (requires rayon-compatible environment)
+parallel = ["class_groups/parallel", "mpc/parallel", "twopc_mpc/parallel"]
 
 [lints]
 workspace = true

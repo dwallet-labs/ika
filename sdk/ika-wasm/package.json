@@ -12,6 +12,8 @@
 		"build:bundler": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target bundler --out-dir dist/bundler --${PROFILE} && rm dist/bundler/.gitignore",
 		"build:node": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target nodejs --out-dir dist/node --${PROFILE} && rm dist/node/.gitignore",
 		"build:web": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target web --out-dir dist/web --${PROFILE} && rm dist/web/.gitignore",
+		"build:parallel": "npm run build:parallel:web",
+		"build:parallel:web": "RUSTFLAGS='-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg getrandom_backend=\"wasm_js\"' rustup run nightly cargo build --release --target wasm32-unknown-unknown --features parallel -Z build-std=panic_abort,std && mkdir -p dist/web-parallel && wasm-bindgen --target web --out-dir dist/web-parallel target/wasm32-unknown-unknown/release/dwallet_mpc_wasm.wasm && wasm-opt -O4 -o dist/web-parallel/dwallet_mpc_wasm_bg.wasm dist/web-parallel/dwallet_mpc_wasm_bg.wasm",
 		"prepare": "npm run build"
 	},
 	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
