@@ -53,40 +53,28 @@ pub fn create_dkg_centralized_output_v2(
 pub fn public_key_from_dwallet_output(
     curve: u32,
     dwallet_output: Vec<u8>,
-) -> Result<JsValue, JsError> {
-    serde_wasm_bindgen::to_value(
-        &public_key_from_dwallet_output_by_curve(try_into_curve(curve)?, &dwallet_output)
-            .map_err(|e| JsError::new(&e.to_string()))?,
-    )
-    .map_err(|e| JsError::new(&e.to_string()))
+) -> Result<Vec<u8>, JsError> {
+    public_key_from_dwallet_output_by_curve(try_into_curve(curve)?, &dwallet_output)
+        .map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
 pub fn public_key_from_centralized_dkg_output(
     curve: u32,
     centralized_dkg_output: Vec<u8>,
-) -> Result<JsValue, JsError> {
-    serde_wasm_bindgen::to_value(
-        &public_key_from_centralized_dkg_output_by_curve(curve, &centralized_dkg_output)
-            .map_err(|e| JsError::new(&e.to_string()))?,
-    )
-    .map_err(|e| JsError::new(&e.to_string()))
+) -> Result<Vec<u8>, JsError> {
+    public_key_from_centralized_dkg_output_by_curve(curve, &centralized_dkg_output)
+        .map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
-pub fn network_key_version(network_key_bytes: Vec<u8>) -> Result<JsValue, JsError> {
-    serde_wasm_bindgen::to_value(
-        &network_key_version_inner(network_key_bytes).map_err(|e| JsError::new(&e.to_string()))?,
-    )
-    .map_err(|e| JsError::new(&e.to_string()))
+pub fn network_key_version(network_key_bytes: Vec<u8>) -> Result<u32, JsError> {
+    network_key_version_inner(network_key_bytes).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
-pub fn dwallet_version(dwallet_output_bytes: Vec<u8>) -> Result<JsValue, JsError> {
-    serde_wasm_bindgen::to_value(
-        &dwallet_version_inner(dwallet_output_bytes).map_err(|e| JsError::new(&e.to_string()))?,
-    )
-    .map_err(|e| JsError::new(&e.to_string()))
+pub fn dwallet_version(dwallet_output_bytes: Vec<u8>) -> Result<u32, JsError> {
+    dwallet_version_inner(dwallet_output_bytes).map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Derives a class groups keypair from a given seed.
@@ -111,11 +99,9 @@ pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsV
 pub fn network_dkg_public_output_to_protocol_pp(
     curve: u32,
     network_dkg_public_output: Vec<u8>,
-) -> Result<JsValue, JsError> {
-    let protocol_pp =
-        network_dkg_public_output_to_protocol_pp_inner(curve, network_dkg_public_output)
-            .map_err(to_js_err)?;
-    Ok(serde_wasm_bindgen::to_value(&protocol_pp)?)
+) -> Result<Vec<u8>, JsError> {
+    network_dkg_public_output_to_protocol_pp_inner(curve, network_dkg_public_output)
+        .map_err(to_js_err)
 }
 
 #[wasm_bindgen]
@@ -123,14 +109,13 @@ pub fn reconfiguration_public_output_to_protocol_pp(
     curve: u32,
     reconfig_public_output: Vec<u8>,
     network_dkg_public_output: Vec<u8>,
-) -> Result<JsValue, JsError> {
-    let protocol_pp = reconfiguration_public_output_to_protocol_pp_inner(
+) -> Result<Vec<u8>, JsError> {
+    reconfiguration_public_output_to_protocol_pp_inner(
         curve,
         reconfig_public_output,
         network_dkg_public_output,
     )
-    .map_err(to_js_err)?;
-    Ok(serde_wasm_bindgen::to_value(&protocol_pp)?)
+    .map_err(to_js_err)
 }
 
 #[wasm_bindgen]
@@ -138,29 +123,26 @@ pub fn centralized_and_decentralized_parties_dkg_output_match(
     curve: u32,
     centralized_dkg_output: Vec<u8>,
     decentralized_dkg_output: Vec<u8>,
-) -> Result<JsValue, JsError> {
-    let result = centralized_and_decentralized_parties_dkg_output_match_inner(
+) -> Result<bool, JsError> {
+    centralized_and_decentralized_parties_dkg_output_match_inner(
         curve,
         &centralized_dkg_output,
         &decentralized_dkg_output,
     )
-    .map_err(to_js_err)?;
-    Ok(serde_wasm_bindgen::to_value(&result)?)
+    .map_err(to_js_err)
 }
 
 /// Encrypts the given secret share to the given encryption key.
-/// Returns a tuple of the encryption key and proof of encryption.
+/// Returns the encrypted share with proof of correct encryption.
 #[wasm_bindgen]
 pub fn encrypt_secret_share(
     curve: u32,
     secret_key_share: Vec<u8>,
     encryption_key: Vec<u8>,
     protocol_pp: Vec<u8>,
-) -> Result<JsValue, JsError> {
-    let encryption_and_proof =
-        encrypt_secret_key_share_and_prove_v2(curve, secret_key_share, encryption_key, protocol_pp)
-            .map_err(to_js_err)?;
-    Ok(serde_wasm_bindgen::to_value(&encryption_and_proof)?)
+) -> Result<Vec<u8>, JsError> {
+    encrypt_secret_key_share_and_prove_v2(curve, secret_key_share, encryption_key, protocol_pp)
+        .map_err(to_js_err)
 }
 
 /// Decrypts the given encrypted user share using the given decryption key.
@@ -171,16 +153,15 @@ pub fn decrypt_user_share(
     dwallet_dkg_output: Vec<u8>,
     encrypted_user_share_and_proof: Vec<u8>,
     protocol_pp: Vec<u8>,
-) -> Result<JsValue, JsError> {
-    let decrypted_secret_share = decrypt_user_share_v2(
+) -> Result<Vec<u8>, JsError> {
+    decrypt_user_share_v2(
         curve,
         decryption_key,
         dwallet_dkg_output,
         encrypted_user_share_and_proof,
         protocol_pp,
     )
-    .map_err(to_js_err)?;
-    Ok(serde_wasm_bindgen::to_value(&decrypted_secret_share)?)
+    .map_err(to_js_err)
 }
 
 /// Verifies that the given secret key share matches the given dWallet public key share.
@@ -191,11 +172,9 @@ pub fn verify_user_share(
     secret_share: Vec<u8>,
     dkg_output: Vec<u8>,
     network_dkg_public_output: Vec<u8>,
-) -> Result<JsValue, JsError> {
-    Ok(JsValue::from(
-        verify_secret_share_v2(curve, secret_share, dkg_output, &network_dkg_public_output)
-            .map_err(to_js_err)?,
-    ))
+) -> Result<bool, JsError> {
+    verify_secret_share_v2(curve, secret_share, dkg_output, &network_dkg_public_output)
+        .map_err(to_js_err)
 }
 
 #[wasm_bindgen]
@@ -214,19 +193,17 @@ pub fn verify_secp_signature(
     curve: u32,
     signature_algorithm: u32,
     hash_scheme: u32,
-) -> Result<JsValue, JsError> {
-    Ok(serde_wasm_bindgen::to_value(
-        &verify_secp_signature_inner(
-            public_key,
-            signature,
-            message,
-            network_dkg_public_output,
-            curve,
-            signature_algorithm,
-            hash_scheme,
-        )
-        .map_err(to_js_err)?,
-    )?)
+) -> Result<bool, JsError> {
+    verify_secp_signature_inner(
+        public_key,
+        signature,
+        message,
+        network_dkg_public_output,
+        curve,
+        signature_algorithm,
+        hash_scheme,
+    )
+    .map_err(to_js_err)
 }
 
 #[wasm_bindgen]
@@ -257,8 +234,8 @@ pub fn create_sign_centralized_party_message(
     curve: u32,
     signature_algorithm: u32,
     hash_scheme: u32,
-) -> Result<JsValue, JsError> {
-    let signed_message = advance_centralized_sign_party(
+) -> Result<Vec<u8>, JsError> {
+    advance_centralized_sign_party(
         protocol_pp,
         decentralized_party_dkg_public_output,
         centralized_party_dkg_secret_output,
@@ -268,9 +245,7 @@ pub fn create_sign_centralized_party_message(
         signature_algorithm,
         hash_scheme,
     )
-    .map_err(|e| JsError::new(&e.to_string()))?;
-
-    serde_wasm_bindgen::to_value(&signed_message).map_err(|e| JsError::new(&e.to_string()))
+    .map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
@@ -283,8 +258,8 @@ pub fn create_sign_centralized_party_message_with_centralized_party_dkg_output(
     hash_scheme: u32,
     signature_algorithm: u32,
     curve: u32,
-) -> Result<JsValue, JsError> {
-    let signed_message = advance_centralized_sign_party_with_centralized_party_dkg_output(
+) -> Result<Vec<u8>, JsError> {
+    advance_centralized_sign_party_with_centralized_party_dkg_output(
         protocol_pp,
         centralized_party_dkg_public_output,
         centralized_party_dkg_secret_output,
@@ -294,9 +269,7 @@ pub fn create_sign_centralized_party_message_with_centralized_party_dkg_output(
         signature_algorithm,
         curve,
     )
-    .map_err(|e| JsError::new(&e.to_string()))?;
-
-    serde_wasm_bindgen::to_value(&signed_message).map_err(|e| JsError::new(&e.to_string()))
+    .map_err(|e| JsError::new(&e.to_string()))
 }
 
 // There is no way to implement From<anyhow::Error> for JsErr
@@ -310,9 +283,7 @@ pub fn parse_signature_from_sign_output(
     curve: u32,
     signature_algorithm: u32,
     signature_output: Vec<u8>,
-) -> Result<JsValue, JsError> {
-    let signature =
-        parse_signature_from_sign_output_inner(curve, signature_algorithm, signature_output)
-            .map_err(to_js_err)?;
-    Ok(serde_wasm_bindgen::to_value(&signature)?)
+) -> Result<Vec<u8>, JsError> {
+    parse_signature_from_sign_output_inner(curve, signature_algorithm, signature_output)
+        .map_err(to_js_err)
 }

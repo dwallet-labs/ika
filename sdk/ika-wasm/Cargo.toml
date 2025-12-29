@@ -6,51 +6,16 @@ version = "0.2.0"
 edition = "2024"
 license = "BSD-3-Clause-Clear"
 publish = false
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
 
-#[profile.dev]
-#wasm-opt = true
-#
-#[package.metadata.wasm-pack.profile.dev]
-## Should `wasm-opt` be used to further optimize the wasm binary generated after
-## the Rust compiler has finished? Using `wasm-opt` can often further decrease
-## binary size or do clever tricks that haven't made their way into LLVM yet.
-##
-## Configuration is set to `false` by default for the dev profile, but it can
-## be set to an array of strings which are explicit arguments to pass to
-## `wasm-opt`. For example `['-Os']` would optimize for size while `['-O4']`
-## would execute very expensive optimizations passes
-##
-## In most cases, the `-O[X]` flag is enough. However, if you require extreme
-## optimizations, see the full list of `wasm-opt` optimization flags
-## https://github.com/WebAssembly/binaryen/blob/version_117/test/lit/help/wasm-opt.test
-#wasm-opt = ['-O4']
-#
-#[profile.release]
-#opt-level = 3
-#lto = true
-#
-#[package.metadata.wasm-pack.profile.release]
-## Should `wasm-opt` be used to further optimize the wasm binary generated after
-## the Rust compiler has finished? Using `wasm-opt` can often further decrease
-## binary size or do clever tricks that haven't made their way into LLVM yet.
-##
-## Configuration is set to `false` by default for the dev profile, but it can
-## be set to an array of strings which are explicit arguments to pass to
-## `wasm-opt`. For example `['-Os']` would optimize for size while `['-O4']`
-## would execute very expensive optimizations passes
-#wasm-opt = [
-#    "--generate-global-effects",
-#    "--enable-memory64",
-#    "-O4",
-#    "-tnh",
-#    "--monomorphize",
-#    "--pass-arg=monomorphize-min-benefit@15",
-#    "-O4",
-#    "--flexible-inline-max-function-size",
-#    "4294967295",
-#]
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[package.metadata.wasm-pack.profile.release]
+# wasm-opt provides additional optimizations beyond LLVM
+# Using -O4 for aggressive optimizations and -tnh for no-trapping float-to-int
+wasm-opt = ["-O4", "-tnh"]
 [dependencies]
 dwallet-mpc-centralized-party = { path = "../../crates/dwallet-mpc-centralized-party", features = ["wasm_js"] }
 anyhow = "1.0.100"
