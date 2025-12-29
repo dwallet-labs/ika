@@ -2295,7 +2295,6 @@ checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 [[package]]
 name = "class_groups"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=abd7f010#abd7f010840eae9a26c211f2b12e8e4c4f103872"
 dependencies = [
  "commitment",
  "criterion",
@@ -2470,7 +2469,6 @@ dependencies = [
 [[package]]
 name = "commitment"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=abd7f010#abd7f010840eae9a26c211f2b12e8e4c4f103872"
 dependencies = [
  "crypto-bigint 0.7.0-rc.9",
  "group 0.2.0",
@@ -5034,7 +5032,6 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=abd7f010#abd7f010840eae9a26c211f2b12e8e4c4f103872"
 dependencies = [
  "crypto-bigint 0.7.0-rc.9",
  "curve25519-dalek 5.0.0-pre.1",
@@ -5333,7 +5330,6 @@ dependencies = [
 [[package]]
 name = "homomorphic_encryption"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=abd7f010#abd7f010840eae9a26c211f2b12e8e4c4f103872"
 dependencies = [
  "criterion",
  "crypto-bigint 0.7.0-rc.9",
@@ -7415,7 +7411,6 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 [[package]]
 name = "maurer"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=abd7f010#abd7f010840eae9a26c211f2b12e8e4c4f103872"
 dependencies = [
  "commitment",
  "crypto-bigint 0.7.0-rc.9",
@@ -8482,7 +8477,6 @@ dependencies = [
 [[package]]
 name = "mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=abd7f010#abd7f010840eae9a26c211f2b12e8e4c4f103872"
 dependencies = [
  "bcs",
  "commitment",
@@ -10141,7 +10135,6 @@ dependencies = [
 [[package]]
 name = "proof"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=abd7f010#abd7f010840eae9a26c211f2b12e8e4c4f103872"
 dependencies = [
  "commitment",
  "crypto-bigint 0.7.0-rc.9",
@@ -15718,7 +15711,6 @@ dependencies = [
 [[package]]
 name = "twopc_mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/inkrypto?rev=abd7f010#abd7f010840eae9a26c211f2b12e8e4c4f103872"
 dependencies = [
  "class_groups",
  "commitment",
