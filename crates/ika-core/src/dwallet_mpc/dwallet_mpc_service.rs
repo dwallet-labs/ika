@@ -654,6 +654,7 @@ impl DWalletMPCService {
                 panic!("consensus round must be in a ascending order");
             }
 
+            // TODO: add to db internal presign session ids that was used, never use again.
             // TODO: check protocol version here
             self.dwallet_mpc_manager
                 .instantiate_internal_presign_sessions(
@@ -683,9 +684,6 @@ impl DWalletMPCService {
                 .dwallet_mpc_manager
                 .handle_consensus_round_outputs(consensus_round, internal_mpc_outputs);
 
-            // TODO: think what happens if we crash, and we saved presigsn already to the db, but also going through the consensus rounds maybe saving them again?
-
-            // TODO: cannot skip a round right?
             if let Some(agreed_status) = self
                 .dwallet_mpc_manager
                 .handle_status_updates(consensus_round, status_updates)

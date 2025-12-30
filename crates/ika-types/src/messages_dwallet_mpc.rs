@@ -115,6 +115,7 @@ pub struct GlobalPresignRequest {
 pub struct InternalSessionsStatusUpdate {
     /// The authority that sent this status update.
     pub authority: AuthorityName,
+    // TODO: delete
     /// The consensus round this update is for.
     pub consensus_round: u64,
     /// Whether this validator is idle (has fewer sessions ready to execute
