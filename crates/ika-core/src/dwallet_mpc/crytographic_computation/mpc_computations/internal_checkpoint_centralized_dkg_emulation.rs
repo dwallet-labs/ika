@@ -184,7 +184,38 @@ where
 /// # Returns
 ///
 /// The serialized zero scalar (wrapped in `VersionedDwalletUserSecretShare`).
-pub fn get_zero_centralized_secret<const SCALAR_LIMBS: usize, ScalarValue>()
+pub fn get_zero_centralized_secret(curve: DWalletCurve)
+    -> DwalletMPCResult<Vec<u8>>
+{
+    match curve {
+        DWalletCurve::Secp256k1 => {
+            get_zero_centralized_secret_internal::<
+                { twopc_mpc::secp256k1::SCALAR_LIMBS },
+                twopc_mpc::secp256k1::Scalar,
+            >()
+        }
+        DWalletCurve::Secp256r1 => {
+            get_zero_centralized_secret_internal::<
+                { twopc_mpc::secp256r1::SCALAR_LIMBS },
+                twopc_mpc::secp256r1::Scalar,
+            >()
+        }
+        DWalletCurve::Curve25519 => {
+            get_zero_centralized_secret_internal::<
+                { twopc_mpc::curve25519::SCALAR_LIMBS },
+                twopc_mpc::curve25519::Scalar,
+            >()
+        }
+        DWalletCurve::Ristretto => {
+            get_zero_centralized_secret_internal::<
+                { twopc_mpc::ristretto::SCALAR_LIMBS },
+                twopc_mpc::ristretto::Scalar,
+            >()
+        }
+    }
+}
+
+pub fn get_zero_centralized_secret_internal<const SCALAR_LIMBS: usize, ScalarValue>()
 -> DwalletMPCResult<Vec<u8>>
 where
     ScalarValue: From<Uint<SCALAR_LIMBS>> + serde::Serialize,
@@ -312,7 +343,7 @@ where
     ScalarValue: From<Uint<SCALAR_LIMBS>> + serde::Serialize,
 {
     // Get the zero secret key share (the centralized party's secret is always zero for internal signing)
-    let zero_secret_key_share = get_zero_centralized_secret::<SCALAR_LIMBS, ScalarValue>()?;
+    let zero_secret_key_share = get_zero_centralized_secret_internal::<SCALAR_LIMBS, ScalarValue>()?;
 
     // Deserialize the centralized party DKG public output
     let centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput =

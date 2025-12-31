@@ -327,32 +327,7 @@ pub(crate) fn session_input_from_request(
             // For internal signing, the centralized party's secret is "public"
             // (derived from ZeroRng), so we use BytesCentralizedPartyKeyShareVerification::Public.
             // Get the zero scalar (the secret is always zero for internal signing).
-            let centralized_secret = match data.curve {
-                dwallet_mpc_types::dwallet_mpc::DWalletCurve::Secp256k1 => {
-                    get_zero_centralized_secret::<
-                        { twopc_mpc::secp256k1::SCALAR_LIMBS },
-                        twopc_mpc::secp256k1::Scalar,
-                    >()
-                }
-                dwallet_mpc_types::dwallet_mpc::DWalletCurve::Secp256r1 => {
-                    get_zero_centralized_secret::<
-                        { twopc_mpc::secp256r1::SCALAR_LIMBS },
-                        twopc_mpc::secp256r1::Scalar,
-                    >()
-                }
-                dwallet_mpc_types::dwallet_mpc::DWalletCurve::Curve25519 => {
-                    get_zero_centralized_secret::<
-                        { twopc_mpc::curve25519::SCALAR_LIMBS },
-                        twopc_mpc::curve25519::Scalar,
-                    >()
-                }
-                dwallet_mpc_types::dwallet_mpc::DWalletCurve::Ristretto => {
-                    get_zero_centralized_secret::<
-                        { twopc_mpc::ristretto::SCALAR_LIMBS },
-                        twopc_mpc::ristretto::Scalar,
-                    >()
-                }
-            }?;
+            let centralized_secret = get_zero_centralized_secret(data.curve)?;
 
             // Create the DKG public input using the pre-computed centralized party output.
             let dwallet_dkg_public_input = DWalletDKGPublicInputByCurve::try_new(
