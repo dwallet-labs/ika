@@ -215,7 +215,7 @@ pub fn get_zero_centralized_secret(curve: DWalletCurve)
     }
 }
 
-pub fn get_zero_centralized_secret_internal<const SCALAR_LIMBS: usize, ScalarValue>()
+fn get_zero_centralized_secret_internal<const SCALAR_LIMBS: usize, ScalarValue>()
 -> DwalletMPCResult<Vec<u8>>
 where
     ScalarValue: From<Uint<SCALAR_LIMBS>> + serde::Serialize,

@@ -221,6 +221,14 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                     signature_algorithm: Some(data.signature_algorithm),
                 }
             }
+            ProtocolCryptographicData::InternalSign { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve),
+                    hash_scheme: Some(data.hash_scheme),
+                    signature_algorithm: Some(data.signature_algorithm),
+                }
+            }
             ProtocolCryptographicData::Sign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve),

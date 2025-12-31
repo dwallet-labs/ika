@@ -22,7 +22,7 @@ use crate::dwallet_mpc::sign::{
 };
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
-    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData, ProtocolData, SignData,
+    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData, ProtocolData,
 };
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
@@ -204,11 +204,11 @@ impl ProtocolCryptographicData {
                 dwallet_network_encryption_key_id,
                 ..
             } => {
-                let PublicInput::Sign(public_input) = public_input else {
+                let PublicInput::DWalletDKGAndSign(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result = SignAdvanceRequestByProtocol::try_new(
+                let advance_request_result = DWalletDKGAndSignAdvanceRequestByProtocol::try_new(
                     &data.signature_algorithm,
                     party_id,
                     access_structure,
@@ -223,13 +223,8 @@ impl ProtocolCryptographicData {
                 let decryption_key_shares = decryption_key_shares
                     .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                ProtocolCryptographicData::Sign {
-                    // TODO: maybe better also create for internal differently
-                    data: SignData {
-                        curve: data.curve,
-                        signature_algorithm: data.signature_algorithm,
-                        hash_scheme: data.hash_scheme,
-                    },
+                ProtocolCryptographicData::InternalSign {
+                    data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
                     decryption_key_shares: decryption_key_shares.clone(),
@@ -804,7 +799,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &data.signature_algorithm,
                     &mut rng,
                 )
             }
@@ -834,7 +829,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &data.signature_algorithm,
                     &mut rng,
                 )
             }
@@ -864,7 +859,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &data.signature_algorithm,
                     &mut rng,
                 )
             }
@@ -894,7 +889,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &data.signature_algorithm,
                     &mut rng,
                 )
             }
@@ -924,11 +919,169 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &data.signature_algorithm,
                     &mut rng,
                 )
             }
             ProtocolCryptographicData::DWalletDKGAndSign {
+                public_input,
+                advance_request,
+                ..
+            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                public_input.to_string(),
+                advance_request.to_string(),
+            )),
+            ProtocolCryptographicData::InternalSign {
+                public_input: DKGAndSignPublicInputByProtocol::Secp256k1ECDSA(public_input),
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    let decrypters = advance_request.senders_for_round(1)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
+                }
+
+                compute_dwallet_dkg_and_sign::<Secp256k1ECDSAProtocol>(
+                    data.curve,
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &data.signature_algorithm,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::InternalSign {
+                public_input: DKGAndSignPublicInputByProtocol::Secp256k1Taproot(public_input),
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    let decrypters = advance_request.senders_for_round(1)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
+                }
+
+                compute_dwallet_dkg_and_sign::<Secp256k1TaprootProtocol>(
+                    data.curve,
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &data.signature_algorithm,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::InternalSign {
+                public_input: DKGAndSignPublicInputByProtocol::Secp256r1(public_input),
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    let decrypters = advance_request.senders_for_round(1)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
+                }
+
+                compute_dwallet_dkg_and_sign::<Secp256r1ECDSAProtocol>(
+                    data.curve,
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &data.signature_algorithm,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::InternalSign {
+                public_input: DKGAndSignPublicInputByProtocol::Curve25519(public_input),
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    let decrypters = advance_request.senders_for_round(1)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
+                }
+
+                compute_dwallet_dkg_and_sign::<Curve25519EdDSAProtocol>(
+                    data.curve,
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &data.signature_algorithm,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::InternalSign {
+                public_input: DKGAndSignPublicInputByProtocol::Ristretto(public_input),
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    let decrypters = advance_request.senders_for_round(1)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
+                }
+
+                compute_dwallet_dkg_and_sign::<RistrettoSchnorrkelSubstrateProtocol>(
+                    data.curve,
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &data.signature_algorithm,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::InternalSign {
                 public_input,
                 advance_request,
                 ..
