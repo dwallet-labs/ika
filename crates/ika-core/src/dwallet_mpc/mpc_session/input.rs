@@ -281,7 +281,6 @@ pub(crate) fn session_input_from_request(
             // This ensures all validators produce the same emulated DKG output.
             let emulated_session_id = internal_checkpoint_dkg_session_id(
                 dwallet_network_encryption_key_id.as_ref(),
-                encryption_key_public_data.epoch(),
                 data.curve,
                 data.signature_algorithm,
             );

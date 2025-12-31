@@ -407,7 +407,6 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
             // Compute the internal checkpoint DKG output for checkpoint signing
             // We need to serialize the protocol public parameters for the emulated DKG
             let internal_checkpoint_dkg_output = compute_internal_checkpoint_dkg_output(
-                epoch,
                 &network_key_id,
                 checkpoint_signing_curve,
                 checkpoint_signing_algorithm,
@@ -443,7 +442,6 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
 /// deterministic output that all validators will agree on. The output is used
 /// for internal signing operations where the network signs without user participation.
 fn compute_internal_checkpoint_dkg_output(
-    epoch: u64,
     network_key_id: &[u8; 32],
     curve: DWalletCurve,
     algorithm: DWalletSignatureAlgorithm,
@@ -461,7 +459,7 @@ fn compute_internal_checkpoint_dkg_output(
     };
 
     // Compute the session ID for deterministic DKG
-    let session_id = internal_checkpoint_dkg_session_id(network_key_id, epoch, curve, algorithm);
+    let session_id = internal_checkpoint_dkg_session_id(network_key_id, curve, algorithm);
 
     // Emulate the centralized party DKG
     match emulate_centralized_dkg_for_internal_signing(curve, protocol_pp, session_id.as_ref()) {

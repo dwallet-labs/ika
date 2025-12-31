@@ -153,8 +153,7 @@ where
 
     if centralized_secret_output != expected_zero_secret {
         return Err(DwalletMPCError::InternalError(
-            "Emulated centralized DKG private_output is not zero despite using ZeroRng. \
-             This indicates a bug in the DKG implementation."
+            "Emulated centralized DKG private_output is not zero despite using ZeroRng. This indicates a bug in the DKG implementation."
                 .to_string(),
         ));
     }
@@ -339,7 +338,7 @@ where
 
 /// Gets the session identifier for internal checkpoint DKG.
 ///
-/// This creates a deterministic session ID based on the network key ID, epoch,
+/// This creates a deterministic session ID based on the network key ID,
 /// curve, and signature algorithm, ensuring all validators agree on the same
 /// session identifier.
 ///
@@ -350,7 +349,6 @@ where
 /// # Arguments
 ///
 /// * `network_key_id` - The object ID of the network encryption key
-/// * `epoch` - The epoch when the internal DKG is being computed
 /// * `curve` - The curve being used
 /// * `signature_algorithm` - The signature algorithm being used
 ///
@@ -359,7 +357,6 @@ where
 /// A `SessionIdentifier` for the internal checkpoint DKG.
 pub fn internal_checkpoint_dkg_session_id(
     network_key_id: &[u8],
-    epoch: u64,
     curve: DWalletCurve,
     signature_algorithm: DWalletSignatureAlgorithm,
 ) -> ika_types::messages_dwallet_mpc::SessionIdentifier {
@@ -369,7 +366,6 @@ pub fn internal_checkpoint_dkg_session_id(
     // Compute a deterministic preimage using Merlin transcript
     let mut transcript = Transcript::new(b"Internal Checkpoint DKG Session ID");
     transcript.append_message(b"network_key_id", network_key_id);
-    transcript.append_message(b"epoch", &epoch.to_le_bytes());
     transcript.append_message(b"curve", curve.to_string().as_bytes());
     transcript.append_message(
         b"signature_algorithm",
@@ -391,14 +387,11 @@ mod tests {
     #[test]
     fn test_internal_checkpoint_dkg_session_id_is_deterministic() {
         let network_key_id = [1u8; 32];
-        let epoch = 42;
         let curve = DWalletCurve::Curve25519;
         let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-        let session_id_1 =
-            internal_checkpoint_dkg_session_id(&network_key_id, epoch, curve, algorithm);
-        let session_id_2 =
-            internal_checkpoint_dkg_session_id(&network_key_id, epoch, curve, algorithm);
+        let session_id_1 = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
+        let session_id_2 = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
 
         assert_eq!(session_id_1, session_id_2);
     }
@@ -406,21 +399,18 @@ mod tests {
     #[test]
     fn test_internal_checkpoint_dkg_session_id_varies_with_inputs() {
         let network_key_id = [1u8; 32];
-        let epoch = 42;
         let curve = DWalletCurve::Curve25519;
         let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-        let session_id_1 =
-            internal_checkpoint_dkg_session_id(&network_key_id, epoch, curve, algorithm);
-
-        // Different epoch
-        let session_id_2 =
-            internal_checkpoint_dkg_session_id(&network_key_id, epoch + 1, curve, algorithm);
+        let session_id_1 = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
 
         // Different network key
         let different_key = [2u8; 32];
+        let session_id_2 = internal_checkpoint_dkg_session_id(&different_key, curve, algorithm);
+
+        // Different curve
         let session_id_3 =
-            internal_checkpoint_dkg_session_id(&different_key, epoch, curve, algorithm);
+            internal_checkpoint_dkg_session_id(&network_key_id, DWalletCurve::Secp256k1, algorithm);
 
         assert_ne!(session_id_1, session_id_2);
         assert_ne!(session_id_1, session_id_3);
