@@ -7,8 +7,8 @@ use crate::dwallet_mpc::dwallet_dkg::{
     DWalletImportedKeyVerificationPublicInputByCurve,
 };
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_centralized_dkg_emulation::{
-    emulate_centralized_dkg_for_internal_signing, emulate_centralized_party_partial_signature,
-    get_zero_centralized_secret, internal_checkpoint_dkg_session_id,
+    EmulatedCentralizedDKGResult, emulate_centralized_party_partial_signature,
+    get_zero_centralized_secret,
 };
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
@@ -272,26 +272,39 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
+            // Get the stored centralized party DKG emulation output.
+            // This is pre-computed during network key construction.
+            let (stored_curve, stored_algorithm, stored_centralized_dkg_output) =
+                encryption_key_public_data
+                    .internal_checkpoint_centralized_dkg_output()
+                    .ok_or_else(|| {
+                        DwalletMPCError::InternalError(
+                            "Internal checkpoint centralized DKG output not found in network key public data during internal sign".to_string(),
+                        )
+                    })?;
+
+            // Verify the stored curve and algorithm match the requested ones
+            if *stored_curve != data.curve || *stored_algorithm != data.signature_algorithm {
+                return Err(DwalletMPCError::InternalError(format!(
+                    "Internal checkpoint DKG was created for {:?}/{:?}, but signing requested {:?}/{:?}",
+                    stored_curve, stored_algorithm, data.curve, data.signature_algorithm
+                )));
+            }
+
+            // Deserialize the stored centralized DKG output.
+            // The stored format is (public_key_share_and_proof, public_output).
+            let (public_key_share_and_proof, public_output): (Vec<u8>, Vec<u8>) =
+                bcs::from_bytes(stored_centralized_dkg_output).map_err(DwalletMPCError::BcsError)?;
+
+            let emulated_dkg_result = EmulatedCentralizedDKGResult {
+                public_key_share_and_proof,
+                public_output,
+            };
+
             // Get the serialized protocol public parameters for the curve
             let protocol_pp_bytes = encryption_key_public_data
                 .serialized_protocol_public_parameters_for_curve(data.curve)
                 .map_err(DwalletMPCError::BcsError)?;
-
-            // Compute a deterministic session ID for the emulated centralized DKG.
-            // This ensures all validators produce the same emulated DKG output.
-            let emulated_session_id = internal_checkpoint_dkg_session_id(
-                dwallet_network_encryption_key_id.as_ref(),
-                data.curve,
-                data.signature_algorithm,
-            );
-
-            // Emulate the centralized party DKG using ZeroRng.
-            // All validators will produce identical output since ZeroRng is deterministic.
-            let emulated_dkg_result = emulate_centralized_dkg_for_internal_signing(
-                data.curve,
-                &protocol_pp_bytes,
-                emulated_session_id.as_ref(),
-            )?;
 
             // Extract the presign bytes from the versioned presign output
             let presign_bytes = match bcs::from_bytes::<VersionedPresignOutput>(presign)
@@ -311,93 +324,62 @@ pub(crate) fn session_input_from_request(
                 &protocol_pp_bytes,
             )?;
 
-            // Check if we have the internal checkpoint DKG output.
-            // If not, use DKGAndSign to create the dWallet and sign in one session.
-            match encryption_key_public_data.internal_checkpoint_centralized_dkg_output() {
-                Some((stored_curve, stored_algorithm, dwallet_decentralized_public_output)) => {
-                    // Verify the stored curve and algorithm match the requested ones
-                    if *stored_curve != data.curve || *stored_algorithm != data.signature_algorithm
-                    {
-                        return Err(DwalletMPCError::InternalError(format!(
-                            "Internal checkpoint DKG was created for {:?}/{:?}, but signing requested {:?}/{:?}",
-                            stored_curve, stored_algorithm, data.curve, data.signature_algorithm
-                        )));
-                    }
-
-                    // Use regular Sign with existing DKG output
-                    Ok((
-                        PublicInput::Sign(SignPublicInputByProtocol::try_new(
-                            request.session_identifier,
-                            dwallet_decentralized_public_output,
-                            message.clone(),
-                            presign,
-                            &message_centralized_signature,
-                            data.hash_scheme,
-                            access_structure,
-                            encryption_key_public_data,
-                            data.signature_algorithm,
-                        )?),
-                        None,
-                    ))
+            // For internal signing, the centralized party's secret is "public"
+            // (derived from ZeroRng), so we use BytesCentralizedPartyKeyShareVerification::Public.
+            // Get the zero scalar (the secret is always zero for internal signing).
+            let centralized_secret = match data.curve {
+                dwallet_mpc_types::dwallet_mpc::DWalletCurve::Secp256k1 => {
+                    get_zero_centralized_secret::<
+                        { twopc_mpc::secp256k1::SCALAR_LIMBS },
+                        twopc_mpc::secp256k1::Scalar,
+                    >()
                 }
-                None => {
-                    // No DKG output yet - use DKGAndSign to create the internal checkpoint
-                    // wallet and sign in one session.
-                    //
-                    // For internal signing, the centralized party's secret is "public"
-                    // (derived from ZeroRng), so we use BytesCentralizedPartyKeyShareVerification::Public.
-                    // Get the zero scalar (the secret is always zero for internal signing).
-                    let centralized_secret = match data.curve {
-                        dwallet_mpc_types::dwallet_mpc::DWalletCurve::Secp256k1 => {
-                            get_zero_centralized_secret::<
-                                { twopc_mpc::secp256k1::SCALAR_LIMBS },
-                                twopc_mpc::secp256k1::Scalar,
-                            >()
-                        }
-                        dwallet_mpc_types::dwallet_mpc::DWalletCurve::Secp256r1 => {
-                            get_zero_centralized_secret::<
-                                { twopc_mpc::secp256r1::SCALAR_LIMBS },
-                                twopc_mpc::secp256r1::Scalar,
-                            >()
-                        }
-                        dwallet_mpc_types::dwallet_mpc::DWalletCurve::Curve25519 => {
-                            get_zero_centralized_secret::<
-                                { twopc_mpc::curve25519::SCALAR_LIMBS },
-                                twopc_mpc::curve25519::Scalar,
-                            >()
-                        }
-                        dwallet_mpc_types::dwallet_mpc::DWalletCurve::Ristretto => {
-                            get_zero_centralized_secret::<
-                                { twopc_mpc::ristretto::SCALAR_LIMBS },
-                                twopc_mpc::ristretto::Scalar,
-                            >()
-                        }
-                    }?;
-                    let dwallet_dkg_public_input = DWalletDKGPublicInputByCurve::try_new(
-                        &data.curve,
-                        encryption_key_public_data,
-                        &emulated_dkg_result.public_key_share_and_proof,
-                        BytesCentralizedPartyKeyShareVerification::Public {
-                            centralized_party_secret_key_share: centralized_secret,
-                        },
-                    )?;
-
-                    Ok((
-                        PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
-                            request.session_identifier,
-                            dwallet_dkg_public_input,
-                            message.clone(),
-                            presign,
-                            &message_centralized_signature,
-                            data.hash_scheme,
-                            access_structure,
-                            encryption_key_public_data,
-                            data.signature_algorithm,
-                        )?),
-                        None,
-                    ))
+                dwallet_mpc_types::dwallet_mpc::DWalletCurve::Secp256r1 => {
+                    get_zero_centralized_secret::<
+                        { twopc_mpc::secp256r1::SCALAR_LIMBS },
+                        twopc_mpc::secp256r1::Scalar,
+                    >()
                 }
-            }
+                dwallet_mpc_types::dwallet_mpc::DWalletCurve::Curve25519 => {
+                    get_zero_centralized_secret::<
+                        { twopc_mpc::curve25519::SCALAR_LIMBS },
+                        twopc_mpc::curve25519::Scalar,
+                    >()
+                }
+                dwallet_mpc_types::dwallet_mpc::DWalletCurve::Ristretto => {
+                    get_zero_centralized_secret::<
+                        { twopc_mpc::ristretto::SCALAR_LIMBS },
+                        twopc_mpc::ristretto::Scalar,
+                    >()
+                }
+            }?;
+
+            // Create the DKG public input using the pre-computed centralized party output.
+            let dwallet_dkg_public_input = DWalletDKGPublicInputByCurve::try_new(
+                &data.curve,
+                encryption_key_public_data,
+                &emulated_dkg_result.public_key_share_and_proof,
+                BytesCentralizedPartyKeyShareVerification::Public {
+                    centralized_party_secret_key_share: centralized_secret,
+                },
+            )?;
+
+            // Use DKGAndSign to create the internal dWallet and sign in one session.
+            // The decentralized party DKG runs as part of this combined protocol.
+            Ok((
+                PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
+                    request.session_identifier,
+                    dwallet_dkg_public_input,
+                    message.clone(),
+                    presign,
+                    &message_centralized_signature,
+                    data.hash_scheme,
+                    access_structure,
+                    encryption_key_public_data,
+                    data.signature_algorithm,
+                )?),
+                None,
+            ))
         }
         ProtocolData::EncryptedShareVerification {
             data: EncryptedShareVerificationData { curve, .. },
