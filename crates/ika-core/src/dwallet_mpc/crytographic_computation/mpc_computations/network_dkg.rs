@@ -6,9 +6,7 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_centralized_dkg_emulation::{
-    emulate_centralized_dkg_for_internal_signing, internal_checkpoint_dkg_session_id,
-};
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_centralized_dkg_emulation::compute_internal_checkpoint_dkg_output;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
@@ -405,16 +403,29 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
             );
 
             // Compute the internal checkpoint DKG output for checkpoint signing
-            // We need to serialize the protocol public parameters for the emulated DKG
-            let internal_checkpoint_dkg_output = compute_internal_checkpoint_dkg_output(
-                &network_key_id,
-                checkpoint_signing_curve,
-                checkpoint_signing_algorithm,
-                &bcs::to_bytes(&*secp256k1_protocol_public_parameters).ok(),
-                &bcs::to_bytes(&*secp256r1_protocol_public_parameters).ok(),
-                &bcs::to_bytes(&*ristretto_protocol_public_parameters).ok(),
-                &bcs::to_bytes(&*curve25519_protocol_public_parameters).ok(),
-            );
+            // Select the protocol PP for the checkpoint signing curve
+            let internal_checkpoint_dkg_output = match checkpoint_signing_curve {
+                DWalletCurve::Secp256k1 => {
+                    bcs::to_bytes(&*secp256k1_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Secp256r1 => {
+                    bcs::to_bytes(&*secp256r1_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Ristretto => {
+                    bcs::to_bytes(&*ristretto_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Curve25519 => {
+                    bcs::to_bytes(&*curve25519_protocol_public_parameters).ok()
+                }
+            }
+            .and_then(|protocol_pp| {
+                compute_internal_checkpoint_dkg_output(
+                    &network_key_id,
+                    checkpoint_signing_curve,
+                    checkpoint_signing_algorithm,
+                    &protocol_pp,
+                )
+            });
 
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,
@@ -436,50 +447,3 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     }
 }
 
-/// Computes the internal checkpoint DKG output for checkpoint signing.
-///
-/// This function emulates the centralized party DKG using ZeroRng to produce
-/// deterministic output that all validators will agree on. The output is used
-/// for internal signing operations where the network signs without user participation.
-fn compute_internal_checkpoint_dkg_output(
-    network_key_id: &[u8; 32],
-    curve: DWalletCurve,
-    algorithm: DWalletSignatureAlgorithm,
-    secp256k1_pp: &Option<Vec<u8>>,
-    secp256r1_pp: &Option<Vec<u8>>,
-    ristretto_pp: &Option<Vec<u8>>,
-    curve25519_pp: &Option<Vec<u8>>,
-) -> Option<(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)> {
-    // Get the protocol public parameters for the checkpoint signing curve
-    let protocol_pp = match curve {
-        DWalletCurve::Secp256k1 => secp256k1_pp.as_ref()?,
-        DWalletCurve::Secp256r1 => secp256r1_pp.as_ref()?,
-        DWalletCurve::Ristretto => ristretto_pp.as_ref()?,
-        DWalletCurve::Curve25519 => curve25519_pp.as_ref()?,
-    };
-
-    // Compute the session ID for deterministic DKG
-    let session_id = internal_checkpoint_dkg_session_id(network_key_id, curve, algorithm);
-
-    // Emulate the centralized party DKG
-    match emulate_centralized_dkg_for_internal_signing(curve, protocol_pp, session_id.as_ref()) {
-        Ok(result) => {
-            // The output contains the public key share and proof and public output.
-            // The "secret" key share is not stored because it's deterministic (derived from ZeroRng)
-            // and can be recomputed when needed.
-            let serialized_output =
-                bcs::to_bytes(&(result.public_key_share_and_proof, result.public_output)).ok()?;
-
-            Some((curve, algorithm, serialized_output))
-        }
-        Err(e) => {
-            error!(
-                error = %e,
-                ?curve,
-                ?algorithm,
-                "Failed to compute internal checkpoint DKG output"
-            );
-            None
-        }
-    }
-}

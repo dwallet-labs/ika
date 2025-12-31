@@ -380,6 +380,55 @@ pub fn internal_checkpoint_dkg_session_id(
     SessionIdentifier::new(SessionType::System, session_id_preimage)
 }
 
+/// Computes the internal checkpoint DKG output for checkpoint signing.
+///
+/// This function emulates the centralized party DKG using ZeroRng to produce
+/// deterministic output that all validators will agree on. The output is used
+/// for internal signing operations where the network signs without user participation.
+///
+/// # Arguments
+///
+/// * `network_key_id` - The 32-byte network key identifier
+/// * `curve` - The curve to use for the DKG
+/// * `algorithm` - The signature algorithm
+/// * `protocol_pp` - The serialized protocol public parameters for the curve
+///
+/// # Returns
+///
+/// A tuple of (curve, algorithm, serialized_output) if successful, or None if the
+/// emulation fails.
+pub fn compute_internal_checkpoint_dkg_output(
+    network_key_id: &[u8; 32],
+    curve: DWalletCurve,
+    algorithm: DWalletSignatureAlgorithm,
+    protocol_pp: &[u8],
+) -> Option<(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)> {
+    // Compute the session ID for deterministic DKG
+    let session_id = internal_checkpoint_dkg_session_id(network_key_id, curve, algorithm);
+
+    // Emulate the centralized party DKG
+    match emulate_centralized_dkg_for_internal_signing(curve, protocol_pp, session_id.as_ref()) {
+        Ok(result) => {
+            // The output contains the public key share and proof and public output.
+            // The "secret" key share is not stored because it's deterministic (derived from ZeroRng)
+            // and can be recomputed when needed.
+            let serialized_output =
+                bcs::to_bytes(&(result.public_key_share_and_proof, result.public_output)).ok()?;
+
+            Some((curve, algorithm, serialized_output))
+        }
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                ?curve,
+                ?algorithm,
+                "Failed to compute internal checkpoint DKG output"
+            );
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
