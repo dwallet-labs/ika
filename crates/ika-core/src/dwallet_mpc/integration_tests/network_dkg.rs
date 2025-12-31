@@ -137,8 +137,8 @@ pub(crate) async fn create_network_key_test(
         utils::advance_mpc_flow_until_completion(test_state, 1).await;
     info!(?network_key_checkpoint, "Network key checkpoint received");
     assert_eq!(
-        consensus_round, 7,
-        "Network DKG should complete at round 5, returns 7 (rounds distributed before and after service loops)"
+        consensus_round, 5,
+        "Network DKG should complete in 5 rounds"
     );
     let mut network_key_bytes = vec![];
     let mut key_id = None;
@@ -162,7 +162,6 @@ pub(crate) async fn create_network_key_test(
                     DWalletNetworkEncryptionKeyData {
                         id: key_id.unwrap(),
                         current_epoch: 1,
-                        dkg_at_epoch: 1,
                         current_reconfiguration_public_output: vec![],
                         network_dkg_public_output: network_key_bytes.clone(),
                         state: DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration,

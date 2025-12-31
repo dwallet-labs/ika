@@ -166,7 +166,6 @@ pub(crate) fn send_network_key_to_parties(
                     DWalletNetworkEncryptionKeyData {
                         id: key_id.unwrap(),
                         current_epoch: 1,
-                        dkg_at_epoch: 1,
                         current_reconfiguration_public_output: vec![],
                         network_dkg_public_output: network_key_bytes.clone(),
                         state: DWalletNetworkEncryptionKeyState::NetworkDKGCompleted,
