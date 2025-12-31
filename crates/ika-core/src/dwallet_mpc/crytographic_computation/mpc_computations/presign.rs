@@ -25,7 +25,6 @@ use mpc::{
     GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
-use tracing::info;
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
@@ -364,6 +363,7 @@ pub fn compute_presign<P: presign::Protocol>(
     session_id: CommitmentSizedNumber,
     advance_request: AdvanceRequest<<P::PresignParty as mpc::Party>::Message>,
     public_input: <P::PresignParty as mpc::Party>::PublicInput,
+    is_internal: bool,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let result =
@@ -387,19 +387,17 @@ pub fn compute_presign<P: presign::Protocol>(
             malicious_parties,
             private_output,
         } => {
-            let presigns: Vec<P::Presign> = bcs::from_bytes(&public_output_value)?;
-            let presign = presigns.first().ok_or(DwalletMPCError::InternalError(
-                "at least one presign must be generated".to_string(),
-            ))?;
+            let public_output_value = if is_internal {
+                // No need to wrap with version as it is only used internally.
+                public_output_value
+            } else {
+                let presigns: Vec<P::Presign> = bcs::from_bytes(&public_output_value)?;
+                let presign = presigns.first().ok_or(DwalletMPCError::InternalError(
+                    "at least one presign must be generated".to_string(),
+                ))?;
 
-            info!(
-                session_id = ?hex::encode(session_id.to_be_bytes()),
-                number_of_presigns = presigns.len(),
-                "generated multi-presigns",
-            );
-
-            let public_output_value =
-                bcs::to_bytes(&VersionedPresignOutput::V2(bcs::to_bytes(&presign)?))?;
+                bcs::to_bytes(&VersionedPresignOutput::V2(bcs::to_bytes(&presign)?))?
+            };
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
