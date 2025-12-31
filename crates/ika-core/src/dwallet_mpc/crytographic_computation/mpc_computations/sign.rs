@@ -9,7 +9,7 @@ use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::parse_signature_from_sign_output;
 use crate::dwallet_mpc::dwallet_dkg::DWalletDKGPublicInputByCurve;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
-use crate::request_protocol_data::{DWalletDKGAndSignData, SignData};
+use crate::request_protocol_data::SignData;
 use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -1002,7 +1002,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
     advance_request: AdvanceRequest<<DKGAndSignParty<P> as mpc::Party>::Message>,
     public_input: <DKGAndSignParty<P> as mpc::Party>::PublicInput,
     decryption_key_shares: Option<<DKGAndSignParty<P> as AsynchronouslyAdvanceable>::PrivateInput>,
-    sign_data: &DWalletDKGAndSignData,
+    signature_algorithm: &DWalletSignatureAlgorithm,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let result =
@@ -1029,7 +1029,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
             let (dwallet_dkg_output, signature_output): <P::DKGSignDecentralizedParty as mpc::Party>::PublicOutput = bcs::from_bytes(&public_output_value)?;
 
             let signature = match parse_signature_from_sign_output(
-                &sign_data.signature_algorithm,
+                signature_algorithm,
                 bcs::to_bytes(&signature_output)?,
             ) {
                 Ok(signature) => Ok(signature),
@@ -1038,7 +1038,7 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
                         session_identifier=?session_id,
                         ?e,
                         ?malicious_parties,
-                        signature_algorithm=?sign_data.signature_algorithm,
+                        ?signature_algorithm,
                         should_never_happen = true,
                         "failed to deserialize sign session result "
                     );

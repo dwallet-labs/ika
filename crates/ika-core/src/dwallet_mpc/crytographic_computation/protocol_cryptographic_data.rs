@@ -13,9 +13,9 @@ use crate::dwallet_mpc::sign::{
 };
 use crate::request_protocol_data::{
     DWalletDKGAndSignData, DWalletDKGData, EncryptedShareVerificationData,
-    ImportedKeyVerificationData, MakeDWalletUserSecretKeySharesPublicData,
-    NetworkEncryptionKeyReconfigurationData, PartialSignatureVerificationData, PresignData,
-    ProtocolData, SignData,
+    ImportedKeyVerificationData, InternalPresignData, InternalSignData,
+    MakeDWalletUserSecretKeySharesPublicData, NetworkEncryptionKeyReconfigurationData,
+    PartialSignatureVerificationData, PresignData, ProtocolData, SignData,
 };
 use class_groups::SecretKeyShareSizedInteger;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
@@ -51,12 +51,26 @@ pub(crate) enum ProtocolCryptographicData {
         advance_request: PresignAdvanceRequestByProtocol,
     },
 
+    InternalPresign {
+        data: InternalPresignData,
+        public_input: PresignPublicInputByProtocol,
+        advance_request: PresignAdvanceRequestByProtocol,
+    },
+
+    InternalSign {
+        data: InternalSignData,
+        public_input: DKGAndSignPublicInputByProtocol,
+        advance_request: DWalletDKGAndSignAdvanceRequestByProtocol,
+        decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
+    },
+
     Sign {
         data: SignData,
         public_input: SignPublicInputByProtocol,
         advance_request: SignAdvanceRequestByProtocol,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
+
     DWalletDKGAndSign {
         data: DWalletDKGAndSignData,
         public_input: DKGAndSignPublicInputByProtocol,
@@ -111,6 +125,27 @@ impl ProtocolCryptographicData {
                     PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
                 ..
             } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::EdDSA(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalPresign {
+                advance_request:
+                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                ..
+            } => advance_request.attempt_number,
             ProtocolCryptographicData::Sign {
                 advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
@@ -152,6 +187,31 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalSign {
                 advance_request:
                     DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
@@ -248,6 +308,27 @@ impl ProtocolCryptographicData {
                     PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::EdDSA(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalPresign {
+                advance_request:
+                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Sign {
                 advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
@@ -289,6 +370,31 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::DWalletDKGAndSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalSign {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalSign {
                 advance_request:
                     DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..

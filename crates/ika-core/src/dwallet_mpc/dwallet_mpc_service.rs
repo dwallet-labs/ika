@@ -865,6 +865,13 @@ impl DWalletMPCService {
                 };
                 vec![tx]
             }
+            ProtocolData::InternalPresign { .. } => {
+                error!(
+                    should_never_happen =? true,
+                    "received an internal presign session for checkpointing"
+                );
+                vec![]
+            }
             ProtocolData::Presign {
                 dwallet_id,
                 presign_id,
@@ -878,6 +885,13 @@ impl DWalletMPCService {
                     session_sequence_number: session_request.session_sequence_number,
                 });
                 vec![tx]
+            }
+            ProtocolData::InternalSign { .. } => {
+                error!(
+                    should_never_happen =? true,
+                    "received an internal sign session for checkpointing"
+                );
+                vec![]
             }
             ProtocolData::Sign {
                 dwallet_id,

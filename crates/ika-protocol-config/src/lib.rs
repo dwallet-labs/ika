@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use clap::*;
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
@@ -264,6 +265,9 @@ pub struct ProtocolConfig {
     network_dkg_third_round_delay: Option<u64>,
     network_encryption_key_version: Option<u64>,
     reconfiguration_message_version: Option<u64>,
+
+    checkpoint_signing_curve: Option<DWalletCurve>,
+    checkpoint_signing_algorithm: Option<DWalletSignatureAlgorithm>,
 }
 
 // feature flags
@@ -482,6 +486,9 @@ impl ProtocolConfig {
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
+
+            checkpoint_signing_curve: Some(DWalletCurve::Curve25519),
+            checkpoint_signing_algorithm: Some(DWalletSignatureAlgorithm::EdDSA),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);

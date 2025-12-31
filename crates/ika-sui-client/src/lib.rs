@@ -1139,6 +1139,7 @@ impl SuiClientInner for SuiSdkClient {
         Ok(DWalletNetworkEncryptionKeyData {
             id: key.id,
             current_epoch: epoch,
+            dkg_at_epoch: key.dkg_at_epoch,
             current_reconfiguration_public_output,
             network_dkg_public_output,
             state: key.state.clone(),
