@@ -65,8 +65,8 @@ pub enum ConsensusTransactionKey {
         DWalletInternalMPCOutputKind,
         Vec<AuthorityName>, // malicious authorities
     ),
-    /// Internal sessions status update from a validator for a given consensus round.
-    InternalSessionsStatusUpdate(AuthorityName, u64 /* consensus_round */),
+    /// Internal sessions status update from a validator.
+    InternalSessionsStatusUpdate(AuthorityName),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -125,12 +125,11 @@ impl Debug for ConsensusTransactionKey {
             ConsensusTransactionKey::EndOfPublish(authority) => {
                 write!(f, "EndOfPublish({:?})", authority.concise())
             }
-            ConsensusTransactionKey::InternalSessionsStatusUpdate(authority, consensus_round) => {
+            ConsensusTransactionKey::InternalSessionsStatusUpdate(authority) => {
                 write!(
                     f,
-                    "InternalSessionsStatusUpdate({:?}, {:?})",
-                    authority.concise(),
-                    consensus_round
+                    "InternalSessionsStatusUpdate({:?})",
+                    authority.concise()
                 )
             }
         }
@@ -334,7 +333,6 @@ impl ConsensusTransaction {
     ) -> Self {
         let mut hasher = DefaultHasher::new();
         status_update.authority.hash(&mut hasher);
-        status_update.consensus_round.hash(&mut hasher);
         status_update.is_idle.hash(&mut hasher);
         status_update.global_presign_requests.hash(&mut hasher);
         let tracking_id = hasher.finish().to_le_bytes();
@@ -394,10 +392,7 @@ impl ConsensusTransaction {
                 ConsensusTransactionKey::EndOfPublish(*origin_authority)
             }
             ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update) => {
-                ConsensusTransactionKey::InternalSessionsStatusUpdate(
-                    status_update.authority,
-                    status_update.consensus_round,
-                )
+                ConsensusTransactionKey::InternalSessionsStatusUpdate(status_update.authority)
             }
         }
     }
