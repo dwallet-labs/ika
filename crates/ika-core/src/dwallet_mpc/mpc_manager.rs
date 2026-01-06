@@ -169,46 +169,6 @@ impl DWalletMPCManager {
         })
     }
 
-    /// Log memory statistics for debugging memory issues.
-    /// Call this periodically to track memory usage patterns.
-    pub(crate) fn log_memory_stats(&self) {
-        let total_sessions = self.sessions.len();
-        let active_sessions = self
-            .sessions
-            .values()
-            .filter(|s| matches!(&s.status, SessionStatus::Active { .. }))
-            .count();
-        let completed_sessions = self
-            .sessions
-            .values()
-            .filter(|s| matches!(&s.status, SessionStatus::Completed))
-            .count();
-        let computation_completed_sessions = self
-            .sessions
-            .values()
-            .filter(|s| matches!(&s.status, SessionStatus::ComputationCompleted))
-            .count();
-
-        let network_keys_count = self.network_keys.network_encryption_keys.len();
-        let pending_for_network_key_count: usize = self
-            .requests_pending_for_network_key
-            .values()
-            .map(|v| v.len())
-            .sum();
-        let pending_for_committee_count = self.requests_pending_for_next_active_committee.len();
-
-        info!(
-            total_sessions,
-            active_sessions,
-            completed_sessions,
-            computation_completed_sessions,
-            network_keys_count,
-            pending_for_network_key_count,
-            pending_for_committee_count,
-            "MPC Manager Memory Stats"
-        );
-    }
-
     pub(crate) fn sync_last_session_to_complete_in_current_epoch(
         &mut self,
         previous_value_for_last_session_to_complete_in_current_epoch: u64,

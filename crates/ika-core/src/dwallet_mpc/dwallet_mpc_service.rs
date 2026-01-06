@@ -259,8 +259,6 @@ impl DWalletMPCService {
 
     pub(crate) async fn run_service_loop_iteration(&mut self) {
         debug!("Running DWalletMPCService loop");
-        // Log memory stats for debugging
-        self.dwallet_mpc_manager.log_memory_stats();
         self.sync_last_session_to_complete_in_current_epoch().await;
 
         // Receive **new** dWallet MPC events and save them in the local DB.

@@ -335,13 +335,3 @@ ika-archival = { path = "crates/ika-archival" }
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }
 rfc6979 = { git = "https://github.com/RustCrypto/signatures", tag = "rfc6979/v0.5.0-rc.1" }
-
-# Patch inkrypto to use local version with Arc-wrapped SetupParameters (memory fix)
-[patch."https://github.com/dwallet-labs/inkrypto"]
-mpc = { path = "/mnt/nvme0n1p1/inkrypto/mpc" }
-proof = { path = "/mnt/nvme0n1p1/inkrypto/proof" }
-class_groups = { path = "/mnt/nvme0n1p1/inkrypto/class-groups" }
-commitment = { path = "/mnt/nvme0n1p1/inkrypto/commitment" }
-twopc_mpc = { path = "/mnt/nvme0n1p1/inkrypto/2pc-mpc" }
-group = { path = "/mnt/nvme0n1p1/inkrypto/group" }
-homomorphic_encryption = { path = "/mnt/nvme0n1p1/inkrypto/homomorphic-encryption" }
