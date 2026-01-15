@@ -2836,7 +2836,7 @@ public fun request_dwallet_dkg_impl(
         id: object::new(ctx),
         dwallet_id,
     };
-    let dwallet_cap_id = dwallet_cap.id.to_inner();
+    let dwallet_cap_id = object::id(&dwallet_cap);
 
     // Create a new `DWallet` object,
     let mut dwallet = DWallet {
@@ -5305,8 +5305,8 @@ public(package) fun sessions_manager(self: &DWalletCoordinatorInner): &SessionsM
 }
 
 #[test_only]
-public fun create_dwalletcap_for_testing(dwallet_id: ID, ctx: &mut TxContext): DWalletCap {
-    DWalletCap {
+public fun dwallet_cap_for_testing(dwallet_id: ID, ctx: &mut TxContext): DWalletCap {
+    let dwallet_cap = DWalletCap {
         id: object::new(ctx),
         dwallet_id,
     };
