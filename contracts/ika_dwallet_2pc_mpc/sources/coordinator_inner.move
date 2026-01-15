@@ -5306,7 +5306,7 @@ public(package) fun sessions_manager(self: &DWalletCoordinatorInner): &SessionsM
 
 #[test_only]
 public fun create_dwalletcap_for_testing(dwallet_id: ID, ctx: &mut TxContext): DWalletCap {
-    let dwallet_cap = DWalletCap {
+    DWalletCap {
         id: object::new(ctx),
         dwallet_id,
     };
