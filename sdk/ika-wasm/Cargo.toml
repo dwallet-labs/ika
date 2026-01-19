@@ -61,6 +61,6 @@ serde-wasm-bindgen = "0.6.5"
 crate-type = ["cdylib", "rlib"]
 
 [patch.crates-io]
-crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "7ba139806eea9944bce6bc7f606d07ec0848ee01" }
 rfc6979 = { git = "https://github.com/RustCrypto/signatures", tag = "rfc6979/v0.5.0-rc.1" }
 der = { git = "https://github.com/RustCrypto/formats", tag = "der/v0.8.0-rc.8" }

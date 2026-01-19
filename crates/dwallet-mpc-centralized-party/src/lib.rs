@@ -50,13 +50,16 @@ type Secp256k1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
 type Secp256k1DKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
 type Secp256r1DKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
+type Secp256r1ECDSAProtocol = twopc_mpc::secp256r1::class_groups::ECDSAProtocol;
 type Curve25519DKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
+type Curve25519EdDSAProtocol = twopc_mpc::curve25519::class_groups::EdDSAProtocol;
 type RistrettoDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
+type SchnorrkelSubstrateProtocol = twopc_mpc::ristretto::class_groups::SchnorrkelSubstrateProtocol;
 
 type DKGCentralizedParty =
     <Secp256k1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
 type SignCentralizedPartyV1 =
-    <Secp256k1DKGProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
+    <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedParty;
 
 type SignedMessage = Vec<u8>;
 
@@ -379,14 +382,14 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
 
             let centralized_dkg_output = match versioned_centralized_dkg_output {
                 VersionedCentralizedDKGPublicOutput::V1(output) => {
-                    let versioned_output: <Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput =
-                        bcs::from_bytes::<<Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyTargetedDKGOutput>(output.as_slice())?
+                    let versioned_output: <Secp256k1DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput =
+                        bcs::from_bytes::<<Secp256k1DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyTargetedDKGOutput>(output.as_slice())?
                             .into();
 
                     versioned_output
                 }
                 VersionedCentralizedDKGPublicOutput::V2(output) => bcs::from_bytes::<
-                    <Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput,
+                    <Secp256k1DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput,
                 >(
                     output.as_slice()
                 )?,
@@ -426,52 +429,40 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
             let signature_scheme_enum = try_into_signature_algorithm(curve, signature_algorithm)?;
             let hash_scheme = try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?;
             match signature_scheme_enum {
-                DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                    advance_sign_by_protocol_with_centralized_party_dkg_output::<
-                        Secp256k1ECDSAProtocol,
-                    >(
-                        &centralized_party_secret_key_share,
-                        &presign,
-                        message,
-                        hash_scheme,
-                        &centralized_party_dkg_public_output,
-                        &protocol_pp,
-                    )
-                }
-                DWalletSignatureAlgorithm::Taproot => {
-                    advance_sign_by_protocol_with_centralized_party_dkg_output::<TaprootProtocol>(
-                        &centralized_party_secret_key_share,
-                        &presign,
-                        message,
-                        hash_scheme,
-                        &centralized_party_dkg_public_output,
-                        &protocol_pp,
-                    )
-                }
-                DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                    advance_sign_by_protocol_with_centralized_party_dkg_output::<Secp256r1DKGProtocol>(
-                        &centralized_party_secret_key_share,
-                        &presign,
-                        message,
-                        hash_scheme,
-                        &centralized_party_dkg_public_output,
-                        &protocol_pp,
-                    )
-                }
-                DWalletSignatureAlgorithm::EdDSA => {
-                    advance_sign_by_protocol_with_centralized_party_dkg_output::<
-                        Curve25519DKGProtocol,
-                    >(
-                        &centralized_party_secret_key_share,
-                        &presign,
-                        message,
-                        hash_scheme,
-                        &centralized_party_dkg_public_output,
-                        &protocol_pp,
-                    )
-                }
+                DWalletSignatureAlgorithm::ECDSASecp256k1 => sign_with_ecdsa_secp256k1_centralized(
+                    &centralized_party_secret_key_share,
+                    &presign,
+                    message,
+                    hash_scheme,
+                    &centralized_party_dkg_public_output,
+                    &protocol_pp,
+                ),
+                DWalletSignatureAlgorithm::Taproot => sign_with_taproot_centralized(
+                    &centralized_party_secret_key_share,
+                    &presign,
+                    message,
+                    hash_scheme,
+                    &centralized_party_dkg_public_output,
+                    &protocol_pp,
+                ),
+                DWalletSignatureAlgorithm::ECDSASecp256r1 => sign_with_ecdsa_secp256r1_centralized(
+                    &centralized_party_secret_key_share,
+                    &presign,
+                    message,
+                    hash_scheme,
+                    &centralized_party_dkg_public_output,
+                    &protocol_pp,
+                ),
+                DWalletSignatureAlgorithm::EdDSA => sign_with_eddsa_centralized(
+                    &centralized_party_secret_key_share,
+                    &presign,
+                    message,
+                    hash_scheme,
+                    &centralized_party_dkg_public_output,
+                    &protocol_pp,
+                ),
                 DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                    advance_sign_by_protocol_with_centralized_party_dkg_output::<RistrettoDKGProtocol>(
+                    sign_with_schnorrkel_substrate_centralized(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
@@ -552,9 +543,7 @@ pub fn advance_centralized_sign_party(
             let signature_algorithm = try_into_signature_algorithm(curve, signature_algorithm)?;
             match signature_algorithm {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                    advance_sign_by_protocol_with_decentralized_party_dkg_output::<
-                        Secp256k1ECDSAProtocol,
-                    >(
+                    sign_with_ecdsa_secp256k1_decentralized(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
@@ -563,20 +552,16 @@ pub fn advance_centralized_sign_party(
                         &protocol_pp,
                     )
                 }
-                DWalletSignatureAlgorithm::Taproot => {
-                    advance_sign_by_protocol_with_decentralized_party_dkg_output::<TaprootProtocol>(
-                        &centralized_party_secret_key_share,
-                        &presign,
-                        message,
-                        hash_scheme,
-                        &decentralized_party_dkg_public_output,
-                        &protocol_pp,
-                    )
-                }
+                DWalletSignatureAlgorithm::Taproot => sign_with_taproot_decentralized(
+                    &centralized_party_secret_key_share,
+                    &presign,
+                    message,
+                    hash_scheme,
+                    &decentralized_party_dkg_public_output,
+                    &protocol_pp,
+                ),
                 DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                    advance_sign_by_protocol_with_decentralized_party_dkg_output::<
-                        Secp256r1DKGProtocol,
-                    >(
+                    sign_with_ecdsa_secp256r1_decentralized(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
@@ -585,22 +570,16 @@ pub fn advance_centralized_sign_party(
                         &protocol_pp,
                     )
                 }
-                DWalletSignatureAlgorithm::EdDSA => {
-                    advance_sign_by_protocol_with_decentralized_party_dkg_output::<
-                        Curve25519DKGProtocol,
-                    >(
-                        &centralized_party_secret_key_share,
-                        &presign,
-                        message,
-                        hash_scheme,
-                        &decentralized_party_dkg_public_output,
-                        &protocol_pp,
-                    )
-                }
+                DWalletSignatureAlgorithm::EdDSA => sign_with_eddsa_decentralized(
+                    &centralized_party_secret_key_share,
+                    &presign,
+                    message,
+                    hash_scheme,
+                    &decentralized_party_dkg_public_output,
+                    &protocol_pp,
+                ),
                 DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                    advance_sign_by_protocol_with_decentralized_party_dkg_output::<
-                        RistrettoDKGProtocol,
-                    >(
+                    sign_with_schnorrkel_substrate_decentralized(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
@@ -614,40 +593,41 @@ pub fn advance_centralized_sign_party(
     }
 }
 
-fn advance_sign_by_protocol_with_decentralized_party_dkg_output<P: twopc_mpc::sign::Protocol>(
-    centralized_party_secret_key_share: &[u8],
-    presign: &[u8],
-    message: Vec<u8>,
-    hash_scheme: HashScheme,
-    decentralized_party_dkg_public_output: &[u8],
-    protocol_pp: &[u8],
-) -> anyhow::Result<Vec<u8>> {
-    let versioned_decentralized_dkg_output: VersionedDwalletDKGPublicOutput =
-        bcs::from_bytes(decentralized_party_dkg_public_output)?;
+// Generic functions removed - each protocol must implement its own version
 
-    let centralized_party_dkg_public_output = match versioned_decentralized_dkg_output {
-        VersionedDwalletDKGPublicOutput::V1(output) => {
-            let versioned_output: P::DecentralizedPartyDKGOutput =
-                bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?
-                    .into();
-            versioned_output.into()
-        }
-        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
-            bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?.into()
-        }
-    };
+// Note: Generic sign functions removed - each protocol must implement its own version
+// because the generic Protocol trait doesn't provide a From implementation for
+// SignCentralizedPartyPublicInput. Each specific protocol (ECDSA, Schnorr, etc.)
+// has its own From implementation that constructs the public input appropriately.
 
-    advance_sign_by_protocol::<P>(
-        centralized_party_secret_key_share,
-        presign,
-        message,
-        hash_scheme,
-        centralized_party_dkg_public_output,
-        protocol_pp,
-    )
+// Generic sign functions for ECDSA and Schnorr protocol families
+// Note: These are placeholder implementations demonstrating the intended structure.
+// Full implementation would require proper trait bounds for the specific protocol types.
+
+// Generic function for ECDSA-based protocols (Secp256k1, Secp256r1, Taproot)
+// This function would handle the common logic for all ECDSA-based signing operations
+fn advance_ecdsa_sign() -> anyhow::Result<Vec<u8>> {
+    // TODO: Implement generic ECDSA signing logic
+    // This would extract the common pattern from:
+    // - sign_with_ecdsa_secp256k1_centralized/decentralized
+    // - sign_with_ecdsa_secp256r1_centralized/decentralized
+    // - sign_with_taproot_centralized/decentralized
+    todo!("Generic ECDSA sign implementation")
 }
 
-fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign::Protocol>(
+// Generic function for Schnorr-based protocols (EdDSA, SchnorrkelSubstrate)
+// This function would handle the common logic for all Schnorr-based signing operations
+fn advance_schnorr_sign() -> anyhow::Result<Vec<u8>> {
+    // TODO: Implement generic Schnorr signing logic
+    // This would extract the common pattern from:
+    // - sign_with_eddsa_centralized/decentralized
+    // - sign_with_schnorrkel_substrate_centralized/decentralized
+    todo!("Generic Schnorr sign implementation")
+}
+
+// Protocol-specific sign implementations with centralized party DKG output
+
+fn sign_with_ecdsa_secp256k1_centralized(
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],
     message: Vec<u8>,
@@ -660,58 +640,41 @@ fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign
 
     let centralized_party_dkg_public_output = match versioned_centralized_dkg_output {
         VersionedCentralizedDKGPublicOutput::V1(output) => {
-            let versioned_output: P::CentralizedPartyDKGOutput =
-                bcs::from_bytes::<P::CentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
-
+            let versioned_output: <<Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput =
+                bcs::from_bytes::<<<Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
             versioned_output
         }
         VersionedCentralizedDKGPublicOutput::V2(output) => {
-            bcs::from_bytes::<P::CentralizedPartyDKGOutput>(output.as_slice())?
+            bcs::from_bytes::<<<Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput>(output.as_slice())?
         }
     };
 
-    advance_sign_by_protocol::<P>(
-        centralized_party_secret_key_share,
-        presign,
+    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share_bytes) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share = bcs::from_bytes::<<<Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share_bytes)?;
+
+    let presign_parsed: <Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign)?;
+
+    let centralized_party_public_input = <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
         message,
         hash_scheme,
         centralized_party_dkg_public_output,
-        protocol_pp,
-    )
-}
+        presign_parsed,
+        bcs::from_bytes(protocol_pp)?,
+    ));
 
-fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
-    centralized_party_secret_key_share: &[u8],
-    presign: &[u8],
-    message: Vec<u8>,
-    hash_scheme: HashScheme,
-    centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput,
-    protocol_pp: &[u8],
-) -> anyhow::Result<Vec<u8>> {
-    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
-        bcs::from_bytes(centralized_party_secret_key_share)?;
-    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
-        versioned_centralized_party_secret_key_share;
+    let round_result =
+        <Secp256k1ECDSAProtocol as twopc_mpc::Protocol>::SignCentralizedParty::advance(
+            (),
+            &centralized_party_secret_key_share,
+            &centralized_party_public_input,
+            &mut OsCsRng,
+        );
 
-    let centralized_party_secret_key_share =
-        bcs::from_bytes::<P::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share)?;
-
-    let presign: <P as twopc_mpc::presign::Protocol>::Presign = bcs::from_bytes(presign)?;
-    let centralized_party_public_input =
-        <P as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
-            message,
-            hash_scheme,
-            centralized_party_dkg_public_output,
-            presign,
-            bcs::from_bytes(protocol_pp)?,
-        ));
-
-    let round_result = SignCentralizedParty::<P>::advance(
-        (),
-        &centralized_party_secret_key_share,
-        &centralized_party_public_input,
-        &mut OsCsRng,
-    );
     match round_result {
         Ok(round_result) => {
             let signed_message =
@@ -726,7 +689,565 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     }
 }
 
-pub(crate) type SignCentralizedParty<P> = <P as twopc_mpc::sign::Protocol>::SignCentralizedParty;
+fn sign_with_taproot_centralized(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_scheme: HashScheme,
+    centralized_party_dkg_public_output: &[u8],
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_centralized_dkg_output: VersionedCentralizedDKGPublicOutput =
+        bcs::from_bytes(centralized_party_dkg_public_output)?;
+
+    let centralized_party_dkg_public_output = match versioned_centralized_dkg_output {
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let versioned_output: <<TaprootProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput =
+                bcs::from_bytes::<<<TaprootProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
+            versioned_output
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => {
+            bcs::from_bytes::<<<TaprootProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput>(output.as_slice())?
+        }
+    };
+
+    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share_bytes) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share = bcs::from_bytes::<<<TaprootProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share_bytes)?;
+
+    let presign_parsed: <TaprootProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign)?;
+
+    let centralized_party_public_input =
+        <TaprootProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+            message,
+            hash_scheme,
+            centralized_party_dkg_public_output,
+            presign_parsed,
+            bcs::from_bytes(protocol_pp)?,
+        ));
+
+    let round_result = <TaprootProtocol as twopc_mpc::Protocol>::SignCentralizedParty::advance(
+        (),
+        &centralized_party_secret_key_share,
+        &centralized_party_public_input,
+        &mut OsCsRng,
+    );
+
+    match round_result {
+        Ok(round_result) => {
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
+            Err(anyhow!(err_str.clone()).context(err_str))
+        }
+    }
+}
+
+fn sign_with_ecdsa_secp256r1_centralized(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_scheme: HashScheme,
+    centralized_party_dkg_public_output: &[u8],
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_centralized_dkg_output: VersionedCentralizedDKGPublicOutput =
+        bcs::from_bytes(centralized_party_dkg_public_output)?;
+
+    let centralized_party_dkg_public_output = match versioned_centralized_dkg_output {
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let versioned_output: <<Secp256r1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput =
+                bcs::from_bytes::<<<Secp256r1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
+            versioned_output
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => {
+            bcs::from_bytes::<<<Secp256r1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput>(output.as_slice())?
+        }
+    };
+
+    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share_bytes) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share = bcs::from_bytes::<<<Secp256r1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share_bytes)?;
+
+    let presign_parsed: <Secp256r1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign)?;
+
+    let centralized_party_public_input = <Secp256r1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+        message,
+        hash_scheme,
+        centralized_party_dkg_public_output,
+        presign_parsed,
+        bcs::from_bytes(protocol_pp)?,
+    ));
+
+    let round_result =
+        <Secp256r1ECDSAProtocol as twopc_mpc::Protocol>::SignCentralizedParty::advance(
+            (),
+            &centralized_party_secret_key_share,
+            &centralized_party_public_input,
+            &mut OsCsRng,
+        );
+
+    match round_result {
+        Ok(round_result) => {
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
+            Err(anyhow!(err_str.clone()).context(err_str))
+        }
+    }
+}
+
+fn sign_with_eddsa_centralized(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_scheme: HashScheme,
+    centralized_party_dkg_public_output: &[u8],
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_centralized_dkg_output: VersionedCentralizedDKGPublicOutput =
+        bcs::from_bytes(centralized_party_dkg_public_output)?;
+
+    let centralized_party_dkg_public_output = match versioned_centralized_dkg_output {
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let versioned_output: <<Curve25519EdDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput =
+                bcs::from_bytes::<<<Curve25519EdDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
+            versioned_output
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => {
+            bcs::from_bytes::<<<Curve25519EdDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput>(output.as_slice())?
+        }
+    };
+
+    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share_bytes) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share = bcs::from_bytes::<<<Curve25519EdDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share_bytes)?;
+
+    let presign_parsed: <Curve25519EdDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign)?;
+
+    let centralized_party_public_input = <Curve25519EdDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+        message,
+        hash_scheme,
+        centralized_party_dkg_public_output,
+        presign_parsed,
+        bcs::from_bytes(protocol_pp)?,
+    ));
+
+    let round_result =
+        <Curve25519EdDSAProtocol as twopc_mpc::Protocol>::SignCentralizedParty::advance(
+            (),
+            &centralized_party_secret_key_share,
+            &centralized_party_public_input,
+            &mut OsCsRng,
+        );
+
+    match round_result {
+        Ok(round_result) => {
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
+            Err(anyhow!(err_str.clone()).context(err_str))
+        }
+    }
+}
+
+fn sign_with_schnorrkel_substrate_centralized(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_scheme: HashScheme,
+    centralized_party_dkg_public_output: &[u8],
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_centralized_dkg_output: VersionedCentralizedDKGPublicOutput =
+        bcs::from_bytes(centralized_party_dkg_public_output)?;
+
+    let centralized_party_dkg_public_output = match versioned_centralized_dkg_output {
+        VersionedCentralizedDKGPublicOutput::V1(output) => {
+            let versioned_output: <<SchnorrkelSubstrateProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput =
+                bcs::from_bytes::<<<SchnorrkelSubstrateProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
+            versioned_output
+        }
+        VersionedCentralizedDKGPublicOutput::V2(output) => {
+            bcs::from_bytes::<<<SchnorrkelSubstrateProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartyDKGOutput>(output.as_slice())?
+        }
+    };
+
+    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share_bytes) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share = bcs::from_bytes::<<<SchnorrkelSubstrateProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share_bytes)?;
+
+    let presign_parsed: <SchnorrkelSubstrateProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign)?;
+
+    let centralized_party_public_input = <SchnorrkelSubstrateProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+        message,
+        hash_scheme,
+        centralized_party_dkg_public_output,
+        presign_parsed,
+        bcs::from_bytes(protocol_pp)?,
+    ));
+
+    let round_result =
+        <SchnorrkelSubstrateProtocol as twopc_mpc::Protocol>::SignCentralizedParty::advance(
+            (),
+            &centralized_party_secret_key_share,
+            &centralized_party_public_input,
+            &mut OsCsRng,
+        );
+
+    match round_result {
+        Ok(round_result) => {
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
+            Err(anyhow!(err_str.clone()).context(err_str))
+        }
+    }
+}
+
+// Protocol-specific sign implementations with decentralized party DKG output
+
+fn sign_with_ecdsa_secp256k1_decentralized(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_scheme: HashScheme,
+    decentralized_party_dkg_public_output: &[u8],
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_decentralized_dkg_output: VersionedDwalletDKGPublicOutput =
+        bcs::from_bytes(decentralized_party_dkg_public_output)?;
+
+    let decentralized_party_dkg_public_output = match versioned_decentralized_dkg_output {
+        VersionedDwalletDKGPublicOutput::V1(output) => {
+            let versioned_output: <<Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput =
+                bcs::from_bytes::<<<Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
+            versioned_output.into()
+        }
+        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+            bcs::from_bytes::<<<Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?.into()
+        }
+    };
+
+    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share_bytes) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share = bcs::from_bytes::<<<Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share_bytes)?;
+
+    let presign_parsed: <Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign)?;
+
+    let centralized_party_public_input = <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+        message,
+        hash_scheme,
+        decentralized_party_dkg_public_output,
+        presign_parsed,
+        bcs::from_bytes(protocol_pp)?,
+    ));
+
+    let round_result =
+        <Secp256k1ECDSAProtocol as twopc_mpc::Protocol>::SignCentralizedParty::advance(
+            (),
+            &centralized_party_secret_key_share,
+            &centralized_party_public_input,
+            &mut OsCsRng,
+        );
+
+    match round_result {
+        Ok(round_result) => {
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
+            Err(anyhow!(err_str.clone()).context(err_str))
+        }
+    }
+}
+
+fn sign_with_taproot_decentralized(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_scheme: HashScheme,
+    decentralized_party_dkg_public_output: &[u8],
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_decentralized_dkg_output: VersionedDwalletDKGPublicOutput =
+        bcs::from_bytes(decentralized_party_dkg_public_output)?;
+
+    let decentralized_party_dkg_public_output = match versioned_decentralized_dkg_output {
+        VersionedDwalletDKGPublicOutput::V1(output) => {
+            let versioned_output: <<TaprootProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput =
+                bcs::from_bytes::<<<TaprootProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
+            versioned_output.into()
+        }
+        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+            bcs::from_bytes::<<<TaprootProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?.into()
+        }
+    };
+
+    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share_bytes) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share = bcs::from_bytes::<<<TaprootProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share_bytes)?;
+
+    let presign_parsed: <TaprootProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign)?;
+
+    let centralized_party_public_input =
+        <TaprootProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+            message,
+            hash_scheme,
+            decentralized_party_dkg_public_output,
+            presign_parsed,
+            bcs::from_bytes(protocol_pp)?,
+        ));
+
+    let round_result = <TaprootProtocol as twopc_mpc::Protocol>::SignCentralizedParty::advance(
+        (),
+        &centralized_party_secret_key_share,
+        &centralized_party_public_input,
+        &mut OsCsRng,
+    );
+
+    match round_result {
+        Ok(round_result) => {
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
+            Err(anyhow!(err_str.clone()).context(err_str))
+        }
+    }
+}
+
+fn sign_with_ecdsa_secp256r1_decentralized(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_scheme: HashScheme,
+    decentralized_party_dkg_public_output: &[u8],
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_decentralized_dkg_output: VersionedDwalletDKGPublicOutput =
+        bcs::from_bytes(decentralized_party_dkg_public_output)?;
+
+    let decentralized_party_dkg_public_output = match versioned_decentralized_dkg_output {
+        VersionedDwalletDKGPublicOutput::V1(output) => {
+            let versioned_output: <<Secp256r1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput =
+                bcs::from_bytes::<<<Secp256r1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
+            versioned_output.into()
+        }
+        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+            bcs::from_bytes::<<<Secp256r1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?.into()
+        }
+    };
+
+    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share_bytes) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share = bcs::from_bytes::<<<Secp256r1ECDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share_bytes)?;
+
+    let presign_parsed: <Secp256r1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign)?;
+
+    let centralized_party_public_input = <Secp256r1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+        message,
+        hash_scheme,
+        decentralized_party_dkg_public_output,
+        presign_parsed,
+        bcs::from_bytes(protocol_pp)?,
+    ));
+
+    let round_result =
+        <Secp256r1ECDSAProtocol as twopc_mpc::Protocol>::SignCentralizedParty::advance(
+            (),
+            &centralized_party_secret_key_share,
+            &centralized_party_public_input,
+            &mut OsCsRng,
+        );
+
+    match round_result {
+        Ok(round_result) => {
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
+            Err(anyhow!(err_str.clone()).context(err_str))
+        }
+    }
+}
+
+fn sign_with_eddsa_decentralized(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_scheme: HashScheme,
+    decentralized_party_dkg_public_output: &[u8],
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_decentralized_dkg_output: VersionedDwalletDKGPublicOutput =
+        bcs::from_bytes(decentralized_party_dkg_public_output)?;
+
+    let decentralized_party_dkg_public_output = match versioned_decentralized_dkg_output {
+        VersionedDwalletDKGPublicOutput::V1(output) => {
+            let versioned_output: <<Curve25519EdDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput =
+                bcs::from_bytes::<<<Curve25519EdDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
+            versioned_output.into()
+        }
+        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+            bcs::from_bytes::<<<Curve25519EdDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?.into()
+        }
+    };
+
+    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share_bytes) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share = bcs::from_bytes::<<<Curve25519EdDSAProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share_bytes)?;
+
+    let presign_parsed: <Curve25519EdDSAProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign)?;
+
+    let centralized_party_public_input = <Curve25519EdDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+        message,
+        hash_scheme,
+        decentralized_party_dkg_public_output,
+        presign_parsed,
+        bcs::from_bytes(protocol_pp)?,
+    ));
+
+    let round_result =
+        <Curve25519EdDSAProtocol as twopc_mpc::Protocol>::SignCentralizedParty::advance(
+            (),
+            &centralized_party_secret_key_share,
+            &centralized_party_public_input,
+            &mut OsCsRng,
+        );
+
+    match round_result {
+        Ok(round_result) => {
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
+            Err(anyhow!(err_str.clone()).context(err_str))
+        }
+    }
+}
+
+fn sign_with_schnorrkel_substrate_decentralized(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_scheme: HashScheme,
+    decentralized_party_dkg_public_output: &[u8],
+    protocol_pp: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let versioned_decentralized_dkg_output: VersionedDwalletDKGPublicOutput =
+        bcs::from_bytes(decentralized_party_dkg_public_output)?;
+
+    let decentralized_party_dkg_public_output = match versioned_decentralized_dkg_output {
+        VersionedDwalletDKGPublicOutput::V1(output) => {
+            let versioned_output: <<SchnorrkelSubstrateProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput =
+                bcs::from_bytes::<<<SchnorrkelSubstrateProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into();
+            versioned_output.into()
+        }
+        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+            bcs::from_bytes::<<<SchnorrkelSubstrateProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?.into()
+        }
+    };
+
+    let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
+        bcs::from_bytes(centralized_party_secret_key_share)?;
+    let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share_bytes) =
+        versioned_centralized_party_secret_key_share;
+
+    let centralized_party_secret_key_share = bcs::from_bytes::<<<SchnorrkelSubstrateProtocol as twopc_mpc::presign::Protocol>::DKGProtocol as twopc_mpc::dkg::Protocol>::CentralizedPartySecretKeyShare>(&centralized_party_secret_key_share_bytes)?;
+
+    let presign_parsed: <SchnorrkelSubstrateProtocol as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(presign)?;
+
+    let centralized_party_public_input = <SchnorrkelSubstrateProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
+        message,
+        hash_scheme,
+        decentralized_party_dkg_public_output,
+        presign_parsed,
+        bcs::from_bytes(protocol_pp)?,
+    ));
+
+    let round_result =
+        <SchnorrkelSubstrateProtocol as twopc_mpc::Protocol>::SignCentralizedParty::advance(
+            (),
+            &centralized_party_secret_key_share,
+            &centralized_party_public_input,
+            &mut OsCsRng,
+        );
+
+    match round_result {
+        Ok(round_result) => {
+            let signed_message =
+                VersionedUserSignedMessage::V1(bcs::to_bytes(&round_result.outgoing_message)?);
+            let signed_message = bcs::to_bytes(&signed_message)?;
+            Ok(signed_message)
+        }
+        Err(err) => {
+            let err_str = format!("advance() failed on the SignCentralizedPartyV2: {:?}", err);
+            Err(anyhow!(err_str.clone()).context(err_str))
+        }
+    }
+}
 
 pub fn network_key_version_inner(
     network_dkg_public_output: SerializedWrappedMPCPublicOutput,
