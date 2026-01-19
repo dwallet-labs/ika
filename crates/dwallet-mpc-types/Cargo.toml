@@ -24,4 +24,4 @@ curve25519-dalek.workspace = true
 workspace = true
 
 [patch.crates-io]
-crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "7ba139806eea9944bce6bc7f606d07ec0848ee01" }

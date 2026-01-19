@@ -2964,7 +2964,7 @@ dependencies = [
 [[package]]
 name = "crypto-bigint"
 version = "0.7.0-rc.9"
-source = "git+https://github.com/ycscaly/crypto-bigint.git?rev=8aabcee5#8aabcee553b25f9f619722391de33edbe2f7412c"
+source = "git+https://github.com/ycscaly/crypto-bigint.git?rev=7ba139806eea9944bce6bc7f606d07ec0848ee01#7ba139806eea9944bce6bc7f606d07ec0848ee01"
 dependencies = [
  "hybrid-array",
  "num-traits",
