@@ -102,7 +102,7 @@ axum = { version = "0.8", default-features = false, features = [
     "ws",
 ] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
-axum-server = { git = "https://github.com/bmwill/axum-server.git", rev = "f44323e271afdd1365fd0c8b0a4c0bbdf4956cb7", version = "0.6", default-features = false, features = [
+axum-server = { git = "https://github.com/bmwill/axum-server.git", rev = "c4cfbad3f9eae46c75346b9786e02d0c7af8bf1d", version = "0.6", default-features = false, features = [
     "tls-rustls",
 ] }
 backoff = { version = "0.4.0", features = [
