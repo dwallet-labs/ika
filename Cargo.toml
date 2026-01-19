@@ -73,13 +73,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.dependencies]
 crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = ["serde"] }
 
-mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "ff1ddc9e"}
-proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "ff1ddc9e"}
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "ff1ddc9e", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "ff1ddc9e" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "ff1ddc9e"}
-group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "ff1ddc9e"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "ff1ddc9e"}
+mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d2008c4c"}
+proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d2008c4c"}
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d2008c4c", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d2008c4c" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d2008c4c"}
+group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "d2008c4c"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d2008c4c"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }
@@ -333,5 +333,5 @@ ika-network = { path = "crates/ika-network" }
 ika-archival = { path = "crates/ika-archival" }
 
 [patch.crates-io]
-crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "7ba139806eea9944bce6bc7f606d07ec0848ee01" }
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }
 rfc6979 = { git = "https://github.com/RustCrypto/signatures", tag = "rfc6979/v0.5.0-rc.1" }

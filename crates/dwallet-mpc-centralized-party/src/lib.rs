@@ -50,8 +50,11 @@ type Secp256k1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
 type Secp256k1DKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
 type Secp256r1DKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
+type Secp256r1ECDSAProtocol = twopc_mpc::secp256r1::class_groups::ECDSAProtocol;
 type Curve25519DKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
+type Curve25519EdDSAProtocol = twopc_mpc::curve25519::class_groups::EdDSAProtocol;
 type RistrettoDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
+type RistrettoSchnorrProtocol = twopc_mpc::ristretto::class_groups::SchnorrkelSubstrateProtocol;
 
 type DKGCentralizedParty =
     <Secp256k1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
@@ -449,7 +452,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                     )
                 }
                 DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                    advance_sign_by_protocol_with_centralized_party_dkg_output::<Secp256r1DKGProtocol>(
+                    advance_sign_by_protocol_with_centralized_party_dkg_output::<Secp256r1ECDSAProtocol>(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
@@ -460,7 +463,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                 }
                 DWalletSignatureAlgorithm::EdDSA => {
                     advance_sign_by_protocol_with_centralized_party_dkg_output::<
-                        Curve25519DKGProtocol,
+                        Curve25519EdDSAProtocol,
                     >(
                         &centralized_party_secret_key_share,
                         &presign,
@@ -471,7 +474,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                     )
                 }
                 DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                    advance_sign_by_protocol_with_centralized_party_dkg_output::<RistrettoDKGProtocol>(
+                    advance_sign_by_protocol_with_centralized_party_dkg_output::<RistrettoSchnorrProtocol>(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
@@ -575,7 +578,7 @@ pub fn advance_centralized_sign_party(
                 }
                 DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                     advance_sign_by_protocol_with_decentralized_party_dkg_output::<
-                        Secp256r1DKGProtocol,
+                        Secp256r1ECDSAProtocol,
                     >(
                         &centralized_party_secret_key_share,
                         &presign,
@@ -587,7 +590,7 @@ pub fn advance_centralized_sign_party(
                 }
                 DWalletSignatureAlgorithm::EdDSA => {
                     advance_sign_by_protocol_with_decentralized_party_dkg_output::<
-                        Curve25519DKGProtocol,
+                        Curve25519EdDSAProtocol,
                     >(
                         &centralized_party_secret_key_share,
                         &presign,
@@ -599,7 +602,7 @@ pub fn advance_centralized_sign_party(
                 }
                 DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                     advance_sign_by_protocol_with_decentralized_party_dkg_output::<
-                        RistrettoDKGProtocol,
+                        RistrettoSchnorrProtocol,
                     >(
                         &centralized_party_secret_key_share,
                         &presign,
@@ -614,7 +617,7 @@ pub fn advance_centralized_sign_party(
     }
 }
 
-fn advance_sign_by_protocol_with_decentralized_party_dkg_output<P: twopc_mpc::sign::Protocol>(
+fn advance_sign_by_protocol_with_decentralized_party_dkg_output<P: twopc_mpc::sign::Protocol + twopc_mpc::dkg::Protocol>(
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],
     message: Vec<u8>,
@@ -647,7 +650,7 @@ fn advance_sign_by_protocol_with_decentralized_party_dkg_output<P: twopc_mpc::si
     )
 }
 
-fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign::Protocol>(
+fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign::Protocol + twopc_mpc::dkg::Protocol>(
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],
     message: Vec<u8>,
@@ -680,7 +683,7 @@ fn advance_sign_by_protocol_with_centralized_party_dkg_output<P: twopc_mpc::sign
     )
 }
 
-fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
+fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol + twopc_mpc::dkg::Protocol>(
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],
     message: Vec<u8>,
