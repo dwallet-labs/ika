@@ -85,6 +85,7 @@ impl<T: SubmitToConsensus> DWalletCheckpointOutput for SubmitDWalletCheckpointTo
                 "Sending dwallet checkpoint signature to consensus."
             );
 
+            // TODO: think if we can do this from mpc service
             // Trigger internal MPC signing session for this checkpoint.
             // The MPC signature will eventually replace the BLS quorum signature.
             // For now, both are submitted - the MPC signature is logged when complete.
