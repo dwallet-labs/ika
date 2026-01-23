@@ -61,9 +61,13 @@ impl Ord for DWalletSessionRequest {
             (SessionType::InternalSign, SessionType::InternalSign) => self
                 .session_sequence_number
                 .cmp(&other.session_sequence_number),
-            // Internal sessions have lowest priority (come last)
-            (SessionType::InternalPresign | SessionType::InternalSign, _) => Ordering::Greater,
-            (_, SessionType::InternalPresign | SessionType::InternalSign) => Ordering::Less,
+            // Internal presign sessions are of the lowest priority (handled last)
+            (SessionType::InternalPresign, _) => Ordering::Greater,
+            (_, SessionType::InternalPresign) => Ordering::Less,
+
+            // Internal sign sessions are of the highest priority (handled first)
+            (SessionType::InternalSign, _) => Ordering::Less,
+            (_, SessionType::InternalSign) => Ordering::Greater,
         }
     }
 }

@@ -66,7 +66,8 @@ pub enum ConsensusTransactionKey {
         Vec<AuthorityName>, // malicious authorities
     ),
     /// Internal sessions status update from a validator.
-    InternalSessionsStatusUpdate(AuthorityName),
+    /// The nonce ensures each update is unique.
+    InternalSessionsStatusUpdate(AuthorityName, [u8; 32]),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -125,11 +126,12 @@ impl Debug for ConsensusTransactionKey {
             ConsensusTransactionKey::EndOfPublish(authority) => {
                 write!(f, "EndOfPublish({:?})", authority.concise())
             }
-            ConsensusTransactionKey::InternalSessionsStatusUpdate(authority) => {
+            ConsensusTransactionKey::InternalSessionsStatusUpdate(authority, nonce) => {
                 write!(
                     f,
-                    "InternalSessionsStatusUpdate({:?})",
-                    authority.concise()
+                    "InternalSessionsStatusUpdate({:?}, 0x{})",
+                    authority.concise(),
+                    hex::encode(nonce)
                 )
             }
         }
@@ -333,8 +335,7 @@ impl ConsensusTransaction {
     ) -> Self {
         let mut hasher = DefaultHasher::new();
         status_update.authority.hash(&mut hasher);
-        status_update.is_idle.hash(&mut hasher);
-        status_update.global_presign_requests.hash(&mut hasher);
+        status_update.nonce.hash(&mut hasher);
         let tracking_id = hasher.finish().to_le_bytes();
         Self {
             tracking_id,
@@ -392,7 +393,10 @@ impl ConsensusTransaction {
                 ConsensusTransactionKey::EndOfPublish(*origin_authority)
             }
             ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update) => {
-                ConsensusTransactionKey::InternalSessionsStatusUpdate(status_update.authority)
+                ConsensusTransactionKey::InternalSessionsStatusUpdate(
+                    status_update.authority,
+                    status_update.nonce,
+                )
             }
         }
     }
