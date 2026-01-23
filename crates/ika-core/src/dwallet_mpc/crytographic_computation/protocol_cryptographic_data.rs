@@ -192,28 +192,23 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Secp256r1(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::Curve25519(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Curve25519(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::EncryptedShareVerification { .. } => 1,
@@ -375,28 +370,23 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Secp256r1(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::Curve25519(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Curve25519(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::ImportedKeyVerification {

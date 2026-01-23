@@ -350,4 +350,3 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
         }
     }
 }
-

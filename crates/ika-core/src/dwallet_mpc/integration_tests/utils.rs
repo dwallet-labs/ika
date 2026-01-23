@@ -8,6 +8,7 @@ use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
+use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use dwallet_rng::RootSeed;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
@@ -19,7 +20,6 @@ use ika_types::messages_dwallet_mpc::{
     DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, InternalSessionsStatusUpdate,
     SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
-use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

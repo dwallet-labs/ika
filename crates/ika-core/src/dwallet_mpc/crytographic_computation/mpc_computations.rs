@@ -933,8 +933,7 @@ impl ProtocolCryptographicData {
             )),
             ProtocolCryptographicData::InternalSign {
                 public_input: SignPublicInputByProtocol::Secp256k1ECDSA(public_input),
-                advance_request:
-                    SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -962,8 +961,7 @@ impl ProtocolCryptographicData {
             }
             ProtocolCryptographicData::InternalSign {
                 public_input: SignPublicInputByProtocol::Secp256k1Taproot(public_input),
-                advance_request:
-                    SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -991,8 +989,7 @@ impl ProtocolCryptographicData {
             }
             ProtocolCryptographicData::InternalSign {
                 public_input: SignPublicInputByProtocol::Secp256r1(public_input),
-                advance_request:
-                    SignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Secp256r1(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -1020,8 +1017,7 @@ impl ProtocolCryptographicData {
             }
             ProtocolCryptographicData::InternalSign {
                 public_input: SignPublicInputByProtocol::Curve25519(public_input),
-                advance_request:
-                    SignAdvanceRequestByProtocol::Curve25519(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Curve25519(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -1049,8 +1045,7 @@ impl ProtocolCryptographicData {
             }
             ProtocolCryptographicData::InternalSign {
                 public_input: SignPublicInputByProtocol::Ristretto(public_input),
-                advance_request:
-                    SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 decryption_key_shares,
                 data,
                 ..

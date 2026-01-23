@@ -9,6 +9,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_centralized_dkg_emulation::emulate_centralized_party_partial_signature;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_centralized_dkg_emulation::InternalCheckpointDKGOutput;
 
 use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerator;
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
@@ -266,9 +267,6 @@ pub(crate) fn session_input_from_request(
             presign,
             ..
         } => {
-            use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_centralized_dkg_emulation::InternalCheckpointDKGOutput;
-            use crate::dwallet_mpc::sign::SignPublicInputByProtocol;
-
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
