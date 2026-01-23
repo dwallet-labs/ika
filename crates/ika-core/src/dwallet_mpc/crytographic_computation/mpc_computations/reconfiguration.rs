@@ -325,7 +325,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                     checkpoint_signing_curve,
                     checkpoint_signing_algorithm,
                     &protocol_pp,
-                    &access_structure,
+                    access_structure,
                 )
             });
 

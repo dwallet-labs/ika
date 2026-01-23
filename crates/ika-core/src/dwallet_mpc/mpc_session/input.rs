@@ -6,10 +6,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationPublicInputByCurve,
 };
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_centralized_dkg_emulation::{
-    EmulatedCentralizedDKGResult, InternalCheckpointDKGOutput, emulate_centralized_party_partial_signature,
-    get_zero_centralized_secret,
-};
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_centralized_dkg_emulation::emulate_centralized_party_partial_signature;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 
@@ -269,17 +266,20 @@ pub(crate) fn session_input_from_request(
             presign,
             ..
         } => {
+            use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_centralized_dkg_emulation::InternalCheckpointDKGOutput;
+            use crate::dwallet_mpc::sign::SignPublicInputByProtocol;
+
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
-            // Get the stored centralized party DKG emulation output.
+            // Get the stored internal checkpoint DKG output (contains both centralized and decentralized DKG).
             // This is pre-computed during network key construction.
-            let (stored_curve, stored_algorithm, stored_centralized_dkg_output) =
+            let (stored_curve, stored_algorithm, stored_dkg_output_bytes) =
                 encryption_key_public_data
                     .internal_checkpoint_centralized_dkg_output()
                     .ok_or_else(|| {
                         DwalletMPCError::InternalError(
-                            "Internal checkpoint centralized DKG output not found in network key public data during internal sign".to_string(),
+                            "Internal checkpoint DKG output not found in network key public data during internal sign".to_string(),
                         )
                     })?;
 
@@ -292,12 +292,8 @@ pub(crate) fn session_input_from_request(
             }
 
             // Deserialize the stored internal checkpoint DKG output.
-            // The stored format contains both centralized and decentralized DKG outputs.
-            let internal_checkpoint_output: InternalCheckpointDKGOutput =
-                bcs::from_bytes(stored_centralized_dkg_output).map_err(DwalletMPCError::BcsError)?;
-
-            let emulated_dkg_result = internal_checkpoint_output.centralized_dkg_result;
-            let decentralized_dkg_output = internal_checkpoint_output.decentralized_dkg_output;
+            let internal_checkpoint_dkg_output: InternalCheckpointDKGOutput =
+                bcs::from_bytes(stored_dkg_output_bytes).map_err(DwalletMPCError::BcsError)?;
 
             // Get the serialized protocol public parameters for the curve
             let protocol_pp_bytes = encryption_key_public_data
@@ -318,7 +314,7 @@ pub(crate) fn session_input_from_request(
             // if in the future we should support other signature algorithms for internal sign, e.g. ECDSA, we would have to add an option to the Sign protocol to emulate the message internally, or compute it separately within a rayon context.
             let message_centralized_signature = emulate_centralized_party_partial_signature(
                 data.signature_algorithm,
-                &emulated_dkg_result,
+                &internal_checkpoint_dkg_output.centralized_dkg_result,
                 message.clone(),
                 data.hash_scheme,
                 &presign_bytes,
@@ -326,12 +322,11 @@ pub(crate) fn session_input_from_request(
             )?;
 
             // Use Sign protocol with the pre-computed decentralized DKG output.
-            // The DKG was already computed during network key instantiation,
-            // so we don't need to run it again.
+            // The DKG was computed during network key construction.
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
-                    &decentralized_dkg_output,  // Use the pre-computed decentralized DKG output
+                    &internal_checkpoint_dkg_output.decentralized_dkg_public_output,
                     message.clone(),
                     presign,
                     &message_centralized_signature,

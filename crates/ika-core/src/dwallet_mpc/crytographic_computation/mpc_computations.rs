@@ -22,7 +22,7 @@ use crate::dwallet_mpc::sign::{
 };
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
-    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData, ProtocolData,
+    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData, ProtocolData, SignData,
 };
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
@@ -213,7 +213,7 @@ impl ProtocolCryptographicData {
                     party_id,
                     access_structure,
                     consensus_round,
-                    serialized_messages_by_consensus_round,
+                    serialized_messages_by_consensus_round.clone(),
                 )?;
 
                 let Some(advance_request) = advance_request_result else {
@@ -956,7 +956,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &SignData::from(&data),
                     &mut rng,
                 )
             }
@@ -985,7 +985,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &SignData::from(&data),
                     &mut rng,
                 )
             }
@@ -1014,7 +1014,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &SignData::from(&data),
                     &mut rng,
                 )
             }
@@ -1043,7 +1043,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &SignData::from(&data),
                     &mut rng,
                 )
             }
@@ -1072,7 +1072,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &SignData::from(&data),
                     &mut rng,
                 )
             }
