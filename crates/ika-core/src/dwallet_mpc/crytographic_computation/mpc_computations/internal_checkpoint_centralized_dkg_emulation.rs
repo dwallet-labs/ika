@@ -668,10 +668,10 @@ mod tests {
         let curve = DWalletCurve::Curve25519;
         let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-        let session_id_1 = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
-        let session_id_2 = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
+        let first_call = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
+        let second_call = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
 
-        assert_eq!(session_id_1, session_id_2);
+        assert_eq!(first_call, second_call);
     }
 
     #[test]
@@ -680,18 +680,18 @@ mod tests {
         let curve = DWalletCurve::Curve25519;
         let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-        let session_id_1 = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
+        let original = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
 
         // Different network key
         let different_key = [2u8; 32];
-        let session_id_2 = internal_checkpoint_dkg_session_id(&different_key, curve, algorithm);
+        let with_different_key = internal_checkpoint_dkg_session_id(&different_key, curve, algorithm);
 
         // Different curve
-        let session_id_3 =
+        let with_different_curve =
             internal_checkpoint_dkg_session_id(&network_key_id, DWalletCurve::Secp256k1, algorithm);
 
-        assert_ne!(session_id_1, session_id_2);
-        assert_ne!(session_id_1, session_id_3);
-        assert_ne!(session_id_2, session_id_3);
+        assert_ne!(original, with_different_key);
+        assert_ne!(original, with_different_curve);
+        assert_ne!(with_different_key, with_different_curve);
     }
 }
