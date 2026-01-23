@@ -8,6 +8,7 @@ use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
+use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use dwallet_rng::RootSeed;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
@@ -16,8 +17,8 @@ use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier, SessionType,
-    UserSecretKeyShareEventType,
+    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, InternalSessionsStatusUpdate,
+    SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -142,6 +143,40 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             .get(&(last_consensus_round.unwrap() + 1))
             .map(|messages| (last_consensus_round.unwrap() + 1, messages.clone())))
     }
+
+    fn next_dwallet_internal_mpc_output(
+        &self,
+        _last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>> {
+        Ok(None)
+    }
+
+    fn insert_presigns(
+        &self,
+        _signature_algorithm: DWalletSignatureAlgorithm,
+        _session_sequence_number: u64,
+        _presigns: Vec<Vec<u8>>,
+    ) -> IkaResult<()> {
+        Ok(())
+    }
+
+    fn presign_pool_size(&self, _signature_algorithm: DWalletSignatureAlgorithm) -> IkaResult<u64> {
+        Ok(0)
+    }
+
+    fn pop_presign(
+        &self,
+        _signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> IkaResult<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
+    fn next_internal_sessions_status_update(
+        &self,
+        _last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>> {
+        Ok(None)
+    }
 }
 
 impl TestingSubmitToConsensus {
@@ -208,7 +243,7 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
         _epoch_store: &AuthorityPerEpochStore,
         _info: &DWalletCheckpointSignatureMessage,
     ) -> IkaResult {
-        todo!()
+        Ok(())
     }
 
     fn notify_checkpoint(&self) -> IkaResult {

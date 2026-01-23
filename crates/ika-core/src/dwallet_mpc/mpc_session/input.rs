@@ -6,18 +6,22 @@ use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationPublicInputByCurve,
 };
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg_emulation::emulate_centralized_party_partial_signature;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg_emulation::InternalCheckpointDKGOutput;
 
 use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerator;
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
-    EncryptedShareVerificationData, MakeDWalletUserSecretKeySharesPublicData,
+    EncryptedShareVerificationData, InternalPresignData, MakeDWalletUserSecretKeySharesPublicData,
     PartialSignatureVerificationData, PresignData, ProtocolData,
 };
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, ReconfigurationParty};
+use dwallet_mpc_types::dwallet_mpc::{
+    MPCPrivateInput, ReconfigurationParty, VersionedPresignOutput,
+};
 use group::PartyID;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -190,6 +194,27 @@ pub(crate) fn session_input_from_request(
                     )?),
                 ))
         }
+        ProtocolData::InternalPresign {
+            data:
+                InternalPresignData {
+                    signature_algorithm,
+                    ..
+                },
+            dwallet_network_encryption_key_id,
+            ..
+        } => {
+            let encryption_key_public_data = network_keys
+                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
+
+            Ok((
+                PublicInput::Presign(PresignPublicInputByProtocol::try_new(
+                    *signature_algorithm,
+                    encryption_key_public_data,
+                    None,
+                )?),
+                None,
+            ))
+        }
         ProtocolData::Presign {
             data:
                 PresignData {
@@ -235,6 +260,82 @@ pub(crate) fn session_input_from_request(
             )?),
             None,
         )),
+        ProtocolData::InternalSign {
+            data,
+            dwallet_network_encryption_key_id,
+            message,
+            presign,
+            ..
+        } => {
+            let encryption_key_public_data = network_keys
+                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
+
+            // Get the stored internal checkpoint DKG output (contains both centralized and decentralized DKG).
+            // This is pre-computed during network key construction.
+            let (stored_curve, stored_algorithm, stored_dkg_output_bytes) =
+                encryption_key_public_data
+                    .internal_checkpoint_centralized_dkg_output()
+                    .ok_or_else(|| {
+                        DwalletMPCError::InternalError(
+                            "Internal checkpoint DKG output not found in network key public data during internal sign".to_string(),
+                        )
+                    })?;
+
+            // Verify the stored curve and algorithm match the requested ones
+            if *stored_curve != data.curve || *stored_algorithm != data.signature_algorithm {
+                return Err(DwalletMPCError::InternalError(format!(
+                    "Internal checkpoint DKG was created for {:?}/{:?}, but signing requested {:?}/{:?}",
+                    stored_curve, stored_algorithm, data.curve, data.signature_algorithm
+                )));
+            }
+
+            // Deserialize the stored internal checkpoint DKG output.
+            let internal_checkpoint_dkg_output: InternalCheckpointDKGOutput =
+                bcs::from_bytes(stored_dkg_output_bytes).map_err(DwalletMPCError::BcsError)?;
+
+            // Get the serialized protocol public parameters for the curve
+            let protocol_pp_bytes = encryption_key_public_data
+                .serialized_protocol_public_parameters_for_curve(data.curve)
+                .map_err(DwalletMPCError::BcsError)?;
+
+            // Extract the presign bytes from the versioned presign output
+            let presign_bytes = match bcs::from_bytes::<VersionedPresignOutput>(presign)
+                .map_err(DwalletMPCError::BcsError)?
+            {
+                VersionedPresignOutput::V1(bytes) | VersionedPresignOutput::V2(bytes) => bytes,
+            };
+
+            // Emulate the centralized party's partial signature using ZeroRng.
+            // All validators will produce identical output.
+            // NOTE: this is a cryptographic computation done outside of a Rayon context; it could be expensive.
+            // Currently, we are using schnorr signatures for which it is cheap;
+            // if in the future we should support other signature algorithms for internal sign, e.g. ECDSA, we would have to add an option to the Sign protocol to emulate the message internally, or compute it separately within a rayon context.
+            let message_centralized_signature = emulate_centralized_party_partial_signature(
+                data.signature_algorithm,
+                &internal_checkpoint_dkg_output.centralized_dkg_result,
+                message.clone(),
+                data.hash_scheme,
+                &presign_bytes,
+                &protocol_pp_bytes,
+            )?;
+
+            // Use Sign protocol with the pre-computed decentralized DKG output.
+            // The DKG was computed during network key construction.
+            Ok((
+                PublicInput::Sign(SignPublicInputByProtocol::try_new(
+                    request.session_identifier,
+                    &internal_checkpoint_dkg_output.decentralized_dkg_public_output,
+                    message.clone(),
+                    presign,
+                    &message_centralized_signature,
+                    data.hash_scheme,
+                    access_structure,
+                    encryption_key_public_data,
+                    data.signature_algorithm,
+                )?),
+                None,
+            ))
+        }
         ProtocolData::EncryptedShareVerification {
             data: EncryptedShareVerificationData { curve, .. },
             dwallet_network_encryption_key_id,

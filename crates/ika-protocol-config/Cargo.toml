@@ -18,6 +18,7 @@ schemars.workspace = true
 insta.workspace = true
 clap.workspace = true
 serde-env.workspace = true
+dwallet-mpc-types.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

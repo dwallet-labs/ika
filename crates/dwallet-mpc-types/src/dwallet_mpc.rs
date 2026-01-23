@@ -99,6 +99,7 @@ pub type DKGDecentralizedPartyVersionedOutputSecp256r1 = DKGDecentralizedPartyVe
 pub struct NetworkEncryptionKeyPublicData {
     /// The epoch of the last version update.
     pub epoch: u64,
+    pub dkg_at_epoch: u64,
 
     pub state: NetworkDecryptionKeyPublicOutputType,
     /// The public output of the `latest` decryption key update (Reconfiguration).
@@ -125,10 +126,32 @@ pub struct NetworkEncryptionKeyPublicData {
         Arc<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters>,
     pub curve25519_decryption_key_share_public_parameters:
         Arc<class_groups::Curve25519DecryptionKeySharePublicParameters>,
+
+    /// The DKG output for internal checkpoint signing.
+    ///
+    /// This field holds the centralized party DKG output created using a deterministic
+    /// zero-returning RNG (`ZeroRng`) to emulate the centralized party. This enables
+    /// the network to perform internal signing operations (e.g., checkpoint signing)
+    /// without requiring an actual user.
+    ///
+    /// # Security Model
+    ///
+    /// The "user" (centralized party) key share is effectively zero/deterministic, meaning
+    /// there is no user secret to protect. Security for internal signing comes entirely
+    /// from the network's threshold signature scheme, not from randomness.
+    ///
+    /// # Structure
+    ///
+    /// The output is stored as `(curve, signature_algorithm, serialized_dkg_output)`.
+    /// - `curve`: The curve used for signing (e.g., Curve25519)
+    /// - `signature_algorithm`: The signature algorithm (e.g., EdDSA)
+    /// - `serialized_dkg_output`: BCS-serialized `VersionedDwalletDKGPublicOutput`
+    pub internal_checkpoint_dkg_output: Option<(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)>,
 }
 
 #[derive(
     strum_macros::Display,
+    strum_macros::EnumString,
     Clone,
     Debug,
     PartialEq,
@@ -139,6 +162,7 @@ pub struct NetworkEncryptionKeyPublicData {
     Copy,
     Ord,
     PartialOrd,
+    schemars::JsonSchema,
 )]
 // useful to tell which protocol public parameters to use
 pub enum DWalletCurve {
@@ -154,6 +178,7 @@ pub enum DWalletCurve {
 
 #[derive(
     strum_macros::Display,
+    strum_macros::EnumString,
     Clone,
     Debug,
     PartialEq,
@@ -164,6 +189,7 @@ pub enum DWalletCurve {
     Copy,
     Ord,
     PartialOrd,
+    schemars::JsonSchema,
 )]
 pub enum DWalletSignatureAlgorithm {
     #[strum(to_string = "ECDSASecp256k1")]
@@ -369,6 +395,34 @@ impl NetworkEncryptionKeyPublicData {
     ) -> Arc<class_groups::Curve25519DecryptionKeySharePublicParameters> {
         self.curve25519_decryption_key_share_public_parameters
             .clone()
+    }
+
+    /// Returns the internal checkpoint centralized DKG output if available.
+    ///
+    /// The output contains:
+    /// - The curve used for signing
+    /// - The signature algorithm
+    /// - The serialized `VersionedDwalletDKGPublicOutput`
+    pub fn internal_checkpoint_centralized_dkg_output(
+        &self,
+    ) -> Option<&(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)> {
+        self.internal_checkpoint_dkg_output.as_ref()
+    }
+
+    /// Returns the serialized protocol public parameters for the given curve.
+    ///
+    /// This is useful for internal signing operations where the protocol public
+    /// parameters need to be passed to emulation functions.
+    pub fn serialized_protocol_public_parameters_for_curve(
+        &self,
+        curve: DWalletCurve,
+    ) -> Result<Vec<u8>, bcs::Error> {
+        match curve {
+            DWalletCurve::Secp256k1 => bcs::to_bytes(&*self.secp256k1_protocol_public_parameters),
+            DWalletCurve::Secp256r1 => bcs::to_bytes(&*self.secp256r1_protocol_public_parameters),
+            DWalletCurve::Curve25519 => bcs::to_bytes(&*self.curve25519_protocol_public_parameters),
+            DWalletCurve::Ristretto => bcs::to_bytes(&*self.ristretto_protocol_public_parameters),
+        }
     }
 }
 

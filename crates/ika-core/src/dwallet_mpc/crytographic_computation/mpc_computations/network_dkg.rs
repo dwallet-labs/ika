@@ -6,15 +6,16 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg_emulation::compute_internal_checkpoint_dkg_output;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
-    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
-    VersionedNetworkDkgOutput,
+    DWalletCurve, DWalletSignatureAlgorithm, NetworkDecryptionKeyPublicOutputType,
+    NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
+    VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
 };
 use group::PartyID;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
@@ -307,6 +308,9 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
     epoch: u64,
     access_structure: WeightedThresholdAccessStructure,
     key_data: DWalletNetworkEncryptionKeyData,
+    checkpoint_signing_curve: DWalletCurve,
+    checkpoint_signing_algorithm: DWalletSignatureAlgorithm,
+    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
 
@@ -317,16 +321,26 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
             } else {
                 instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
                     epoch,
+                    key_data.dkg_at_epoch,
                     &access_structure,
                     &key_data.network_dkg_public_output,
+                    key_data.id.into_bytes(),
+                    checkpoint_signing_curve,
+                    checkpoint_signing_algorithm,
+                    party_id,
                 )
             }
         } else {
             instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output(
                 epoch,
+                key_data.dkg_at_epoch,
                 &access_structure,
                 &key_data.current_reconfiguration_public_output,
                 &key_data.network_dkg_public_output,
+                key_data.id.into_bytes(),
+                checkpoint_signing_curve,
+                checkpoint_signing_algorithm,
+                party_id,
             )
         };
 
@@ -342,8 +356,13 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
 
 fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
     epoch: u64,
+    dkg_at_epoch: u64,
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
+    network_key_id: [u8; 32],
+    checkpoint_signing_curve: DWalletCurve,
+    checkpoint_signing_algorithm: DWalletSignatureAlgorithm,
+    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -387,8 +406,36 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                     .curve25519_decryption_key_share_public_parameters(access_structure)?,
             );
 
+            // Compute the internal checkpoint DKG output for checkpoint signing
+            // Select the protocol PP for the checkpoint signing curve
+            let internal_checkpoint_dkg_output = match checkpoint_signing_curve {
+                DWalletCurve::Secp256k1 => {
+                    bcs::to_bytes(&*secp256k1_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Secp256r1 => {
+                    bcs::to_bytes(&*secp256r1_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Ristretto => {
+                    bcs::to_bytes(&*ristretto_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Curve25519 => {
+                    bcs::to_bytes(&*curve25519_protocol_public_parameters).ok()
+                }
+            }
+            .and_then(|protocol_pp| {
+                compute_internal_checkpoint_dkg_output(
+                    &network_key_id,
+                    checkpoint_signing_curve,
+                    checkpoint_signing_algorithm,
+                    &protocol_pp,
+                    access_structure,
+                    party_id,
+                )
+            });
+
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,
+                dkg_at_epoch,
                 state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
                 latest_network_reconfiguration_public_output: None,
                 network_dkg_output,
@@ -400,6 +447,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 ristretto_decryption_key_share_public_parameters,
                 curve25519_protocol_public_parameters,
                 curve25519_decryption_key_share_public_parameters,
+                internal_checkpoint_dkg_output,
             })
         }
     }

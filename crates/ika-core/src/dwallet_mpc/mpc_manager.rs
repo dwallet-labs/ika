@@ -373,7 +373,7 @@ impl DWalletMPCManager {
                     return None;
                 };
 
-                // Always advance system sessions, and only advance user session
+                // Always advance system and internal sessions, and only advance user session
                 // if they come before the last session to complete in the current epoch (at the current time).
                 let should_advance = match request.session_type {
                     SessionType::User => {
@@ -381,6 +381,8 @@ impl DWalletMPCManager {
                             <= self.last_session_to_complete_in_current_epoch
                     }
                     SessionType::System => true,
+                    SessionType::InternalPresign => true,
+                    SessionType::InternalSign => true,
                 };
 
                 if should_advance {
@@ -520,6 +522,9 @@ impl DWalletMPCManager {
                             key_data.current_epoch,
                             self.access_structure.clone(),
                             key_data,
+                            self.protocol_config.checkpoint_signing_curve(),
+                            self.protocol_config.checkpoint_signing_algorithm(),
+                            self.party_id,
                         ).await;
 
                         results.push((key_id, res))

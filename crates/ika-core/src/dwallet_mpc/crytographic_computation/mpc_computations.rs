@@ -22,7 +22,7 @@ use crate::dwallet_mpc::sign::{
 };
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
-    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData, ProtocolData,
+    NetworkEncryptionKeyDkgData, NetworkEncryptionKeyReconfigurationData, ProtocolData, SignData,
 };
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
@@ -51,6 +51,7 @@ use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSi
 use twopc_mpc::sign::EncodableSignature;
 
 pub(crate) mod dwallet_dkg;
+pub(crate) mod internal_checkpoint_dkg_emulation;
 pub(crate) mod network_dkg;
 pub(crate) mod presign;
 pub(crate) mod reconfiguration;
@@ -143,6 +144,30 @@ impl ProtocolCryptographicData {
                     advance_request,
                 }
             }
+            ProtocolData::InternalPresign { data, .. } => {
+                let PublicInput::Presign(public_input) = public_input else {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                };
+
+                let advance_request_result = presign::PresignAdvanceRequestByProtocol::try_new(
+                    &data.signature_algorithm,
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    schnorr_presign_second_round_delay,
+                    serialized_messages_by_consensus_round,
+                )?;
+
+                let Some(advance_request) = advance_request_result else {
+                    return Ok(None);
+                };
+
+                ProtocolCryptographicData::InternalPresign {
+                    data: data.clone(),
+                    public_input: public_input.clone(),
+                    advance_request,
+                }
+            }
             ProtocolData::Sign {
                 data,
                 dwallet_network_encryption_key_id,
@@ -168,6 +193,37 @@ impl ProtocolCryptographicData {
                     .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
                 ProtocolCryptographicData::Sign {
+                    data: data.clone(),
+                    public_input: public_input.clone(),
+                    advance_request,
+                    decryption_key_shares: decryption_key_shares.clone(),
+                }
+            }
+            ProtocolData::InternalSign {
+                data,
+                dwallet_network_encryption_key_id,
+                ..
+            } => {
+                let PublicInput::Sign(public_input) = public_input else {
+                    return Err(DwalletMPCError::InvalidSessionPublicInput);
+                };
+
+                let advance_request_result = SignAdvanceRequestByProtocol::try_new(
+                    &data.signature_algorithm,
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    serialized_messages_by_consensus_round.clone(),
+                )?;
+
+                let Some(advance_request) = advance_request_result else {
+                    return Ok(None);
+                };
+
+                let decryption_key_shares = decryption_key_shares
+                    .decryption_key_shares(dwallet_network_encryption_key_id)?;
+
+                ProtocolCryptographicData::InternalSign {
                     data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
@@ -447,6 +503,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                false,
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
@@ -459,6 +516,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                false,
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
@@ -471,6 +529,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                false,
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
@@ -483,6 +542,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                false,
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
@@ -496,6 +556,73 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                false,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::InternalPresign {
+                public_input: PresignPublicInputByProtocol::Secp256k1ECDSA(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                ..
+            } => Ok(compute_presign::<Secp256k1ECDSAProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                true,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::InternalPresign {
+                public_input: PresignPublicInputByProtocol::Taproot(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Taproot(advance_request),
+                ..
+            } => Ok(compute_presign::<Secp256k1TaprootProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                true,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::InternalPresign {
+                public_input: PresignPublicInputByProtocol::Secp256r1ECDSA(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Secp256r1ECDSA(advance_request),
+                ..
+            } => Ok(compute_presign::<Secp256r1ECDSAProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                true,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::InternalPresign {
+                public_input: PresignPublicInputByProtocol::EdDSA(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::EdDSA(advance_request),
+                ..
+            } => Ok(compute_presign::<Curve25519EdDSAProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                true,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::InternalPresign {
+                public_input: PresignPublicInputByProtocol::SchnorrkelSubstrate(public_input),
+                advance_request:
+                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                ..
+            } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                true,
                 &mut rng,
             )?),
             ProtocolCryptographicData::Sign {
@@ -672,7 +799,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &data.signature_algorithm,
                     &mut rng,
                 )
             }
@@ -702,7 +829,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &data.signature_algorithm,
                     &mut rng,
                 )
             }
@@ -732,7 +859,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &data.signature_algorithm,
                     &mut rng,
                 )
             }
@@ -762,7 +889,7 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &data.signature_algorithm,
                     &mut rng,
                 )
             }
@@ -792,11 +919,159 @@ impl ProtocolCryptographicData {
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data,
+                    &data.signature_algorithm,
                     &mut rng,
                 )
             }
             ProtocolCryptographicData::DWalletDKGAndSign {
+                public_input,
+                advance_request,
+                ..
+            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                public_input.to_string(),
+                advance_request.to_string(),
+            )),
+            ProtocolCryptographicData::InternalSign {
+                public_input: SignPublicInputByProtocol::Secp256k1ECDSA(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    let decrypters = advance_request.senders_for_round(1)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
+                }
+
+                compute_sign::<Secp256k1ECDSAProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::InternalSign {
+                public_input: SignPublicInputByProtocol::Secp256k1Taproot(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    let decrypters = advance_request.senders_for_round(1)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
+                }
+
+                compute_sign::<Secp256k1TaprootProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::InternalSign {
+                public_input: SignPublicInputByProtocol::Secp256r1(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    let decrypters = advance_request.senders_for_round(1)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
+                }
+
+                compute_sign::<Secp256r1ECDSAProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::InternalSign {
+                public_input: SignPublicInputByProtocol::Curve25519(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Curve25519(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    let decrypters = advance_request.senders_for_round(1)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
+                }
+
+                compute_sign::<Curve25519EdDSAProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::InternalSign {
+                public_input: SignPublicInputByProtocol::Ristretto(public_input),
+                advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                decryption_key_shares,
+                data,
+                ..
+            } => {
+                if mpc_round == MPC_SIGN_SECOND_ROUND {
+                    let decrypters = advance_request.senders_for_round(1)?;
+                    update_expected_decrypters_metrics(
+                        &public_input.expected_decrypters,
+                        decrypters,
+                        access_structure,
+                        dwallet_mpc_metrics,
+                    );
+                }
+
+                compute_sign::<RistrettoSchnorrkelSubstrateProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(decryption_key_shares),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::InternalSign {
                 public_input,
                 advance_request,
                 ..

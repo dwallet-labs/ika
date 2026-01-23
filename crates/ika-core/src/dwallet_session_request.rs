@@ -45,6 +45,7 @@ impl Ord for DWalletSessionRequest {
     fn cmp(&self, other: &Self) -> Ordering {
         // System sessions have a higher priority than user session and therefore come first (are smaller).
         // Both system and user sessions are sorted by their sequence number between themselves.
+        // Internal sessions (presign and sign) have lowest priority.
         match (self.session_type, other.session_type) {
             (SessionType::User, SessionType::User) => self
                 .session_sequence_number
@@ -54,6 +55,19 @@ impl Ord for DWalletSessionRequest {
                 .session_sequence_number
                 .cmp(&other.session_sequence_number),
             (SessionType::User, SessionType::System) => Ordering::Greater,
+            (SessionType::InternalPresign, SessionType::InternalPresign) => self
+                .session_sequence_number
+                .cmp(&other.session_sequence_number),
+            (SessionType::InternalSign, SessionType::InternalSign) => self
+                .session_sequence_number
+                .cmp(&other.session_sequence_number),
+            // Internal presign sessions are of the lowest priority (handled last)
+            (SessionType::InternalPresign, _) => Ordering::Greater,
+            (_, SessionType::InternalPresign) => Ordering::Less,
+
+            // Internal sign sessions are of the highest priority (handled first)
+            (SessionType::InternalSign, _) => Ordering::Less,
+            (_, SessionType::InternalSign) => Ordering::Greater,
         }
     }
 }
@@ -114,10 +128,22 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
                     signature_algorithm: None,
                 }
             }
+            ProtocolData::InternalPresign { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve),
+                hash_scheme: None,
+                signature_algorithm: Some(data.signature_algorithm),
+            },
             ProtocolData::Presign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve),
                 hash_scheme: None,
+                signature_algorithm: Some(data.signature_algorithm),
+            },
+            ProtocolData::InternalSign { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve),
+                hash_scheme: Some(data.hash_scheme),
                 signature_algorithm: Some(data.signature_algorithm),
             },
             ProtocolData::Sign { data, .. } => DWalletSessionRequestMetricData {
@@ -191,6 +217,22 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: None,
                 signature_algorithm: Some(data.signature_algorithm),
             },
+            ProtocolCryptographicData::InternalPresign { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve),
+                    hash_scheme: None,
+                    signature_algorithm: Some(data.signature_algorithm),
+                }
+            }
+            ProtocolCryptographicData::InternalSign { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve),
+                    hash_scheme: Some(data.hash_scheme),
+                    signature_algorithm: Some(data.signature_algorithm),
+                }
+            }
             ProtocolCryptographicData::Sign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve),

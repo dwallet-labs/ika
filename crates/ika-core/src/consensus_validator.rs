@@ -77,7 +77,9 @@ impl IkaTxValidator {
                 ConsensusTransactionKind::CapabilityNotificationV1(_)
                 | ConsensusTransactionKind::EndOfPublish(_)
                 | ConsensusTransactionKind::DWalletMPCMessage(..)
-                | ConsensusTransactionKind::DWalletMPCOutput(..) => {}
+                | ConsensusTransactionKind::DWalletMPCOutput(..)
+                | ConsensusTransactionKind::DWalletInternalMPCOutput(..)
+                | ConsensusTransactionKind::InternalSessionsStatusUpdate(..) => {}
                 ConsensusTransactionKind::SystemCheckpointSignature(signature) => {
                     system_checkpoints.push(signature.as_ref());
                     params_batch.push(&signature.checkpoint_message);

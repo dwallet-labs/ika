@@ -6,7 +6,10 @@ use crate::message::DWalletCheckpointMessageKind;
 use crate::messages_dwallet_checkpoint::{
     DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
-use crate::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
+use crate::messages_dwallet_mpc::{
+    DWalletInternalMPCOutput, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutput,
+    InternalSessionsStatusUpdate, SessionIdentifier,
+};
 use crate::messages_system_checkpoints::{
     SystemCheckpointSequenceNumber, SystemCheckpointSignatureMessage,
 };
@@ -56,6 +59,15 @@ pub enum ConsensusTransactionKey {
         Vec<AuthorityName>, // malicious authorities
     ),
     SystemCheckpointSignature(AuthorityName, SystemCheckpointSequenceNumber),
+    DWalletInternalMPCOutput(
+        AuthorityName,
+        SessionIdentifier,
+        DWalletInternalMPCOutputKind,
+        Vec<AuthorityName>, // malicious authorities
+    ),
+    /// Internal sessions status update from a validator.
+    /// The nonce ensures each update is unique.
+    InternalSessionsStatusUpdate(AuthorityName, [u8; 32]),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -92,6 +104,17 @@ impl Debug for ConsensusTransactionKey {
                     "DWalletMPCOutput({authority:?}, {session_identifier:?}, {output:?}, {malicious_authorities:?})"
                 )
             }
+            Self::DWalletInternalMPCOutput(
+                authority,
+                session_identifier,
+                output,
+                malicious_authorities,
+            ) => {
+                write!(
+                    f,
+                    "DWalletInternalMPCOutput({authority:?}, {session_identifier:?}, {output:?}, {malicious_authorities:?})"
+                )
+            }
             ConsensusTransactionKey::SystemCheckpointSignature(name, seq) => {
                 write!(
                     f,
@@ -102,6 +125,14 @@ impl Debug for ConsensusTransactionKey {
             }
             ConsensusTransactionKey::EndOfPublish(authority) => {
                 write!(f, "EndOfPublish({:?})", authority.concise())
+            }
+            ConsensusTransactionKey::InternalSessionsStatusUpdate(authority, nonce) => {
+                write!(
+                    f,
+                    "InternalSessionsStatusUpdate({:?}, 0x{})",
+                    authority.concise(),
+                    hex::encode(nonce)
+                )
             }
         }
     }
@@ -176,6 +207,8 @@ pub enum ConsensusTransactionKind {
     EndOfPublish(AuthorityName),
     DWalletMPCMessage(DWalletMPCMessage),
     DWalletMPCOutput(DWalletMPCOutput),
+    DWalletInternalMPCOutput(DWalletInternalMPCOutput),
+    InternalSessionsStatusUpdate(InternalSessionsStatusUpdate),
 }
 
 impl ConsensusTransaction {
@@ -234,6 +267,30 @@ impl ConsensusTransaction {
         }
     }
 
+    /// Create a new consensus transaction with the output of the MPC session to be sent to the parties.
+    pub fn new_dwallet_internal_mpc_output(
+        authority: AuthorityName,
+        session_identifier: SessionIdentifier,
+        output: DWalletInternalMPCOutputKind,
+        malicious_authorities: Vec<AuthorityName>,
+    ) -> Self {
+        let mut hasher = DefaultHasher::new();
+        authority.hash(&mut hasher);
+        session_identifier.hash(&mut hasher);
+        output.hash(&mut hasher);
+        malicious_authorities.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::DWalletInternalMPCOutput(DWalletInternalMPCOutput {
+                authority,
+                session_identifier,
+                output,
+                malicious_authorities,
+            }),
+        }
+    }
+
     pub fn new_dwallet_checkpoint_signature_message(
         data: DWalletCheckpointSignatureMessage,
     ) -> Self {
@@ -272,6 +329,20 @@ impl ConsensusTransaction {
         }
     }
 
+    /// Create a new consensus transaction with the internal sessions status update.
+    pub fn new_internal_sessions_status_update(
+        status_update: InternalSessionsStatusUpdate,
+    ) -> Self {
+        let mut hasher = DefaultHasher::new();
+        status_update.authority.hash(&mut hasher);
+        status_update.nonce.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update),
+        }
+    }
+
     pub fn get_tracking_id(&self) -> u64 {
         (&self.tracking_id[..])
             .read_u64::<BigEndian>()
@@ -304,6 +375,14 @@ impl ConsensusTransaction {
                     output.malicious_authorities.clone(),
                 )
             }
+            ConsensusTransactionKind::DWalletInternalMPCOutput(output) => {
+                ConsensusTransactionKey::DWalletInternalMPCOutput(
+                    output.authority,
+                    output.session_identifier,
+                    output.output.clone(),
+                    output.malicious_authorities.clone(),
+                )
+            }
             ConsensusTransactionKind::SystemCheckpointSignature(data) => {
                 ConsensusTransactionKey::SystemCheckpointSignature(
                     data.checkpoint_message.auth_sig().authority,
@@ -312,6 +391,12 @@ impl ConsensusTransaction {
             }
             ConsensusTransactionKind::EndOfPublish(origin_authority) => {
                 ConsensusTransactionKey::EndOfPublish(*origin_authority)
+            }
+            ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update) => {
+                ConsensusTransactionKey::InternalSessionsStatusUpdate(
+                    status_update.authority,
+                    status_update.nonce,
+                )
             }
         }
     }
