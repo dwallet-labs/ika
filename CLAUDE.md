@@ -140,7 +140,7 @@ cd sdk/typescript && pnpm test
 ## Git Workflow
 
 **DO:**
-- Run `cargo fmt --all` before any commit
+- Run `cargo fmt --all` before any commit, and include all formatted files in the commit
 - Always work on dedicated feature/fix branches
 - Commit and push after each completed task
 - Fix any hook issues before committing
