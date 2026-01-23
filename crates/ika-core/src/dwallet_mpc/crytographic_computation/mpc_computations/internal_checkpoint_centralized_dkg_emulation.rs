@@ -479,8 +479,8 @@ pub fn compute_decentralized_dkg_output(
             let advance_request = match Party::<Secp256k1DWalletDKGParty>::ready_to_advance(
                 party_id,
                 access_structure,
-                1, // consensus_round - first round
-                HashMap::new(), // mpc_round_to_consensus_rounds_delay - no delays for single-round DKG
+                0, // consensus_round - value doesn't matter for single-round DKG with no message exchange
+                HashMap::new(), // mpc_round_to_consensus_rounds_delay - empty, no delays needed
                 &serialized_messages_by_consensus_round,
             ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))? {
                 ReadyToAdvanceResult::ReadyToAdvance(req) => req,
