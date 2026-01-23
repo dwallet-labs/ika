@@ -310,6 +310,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
     key_data: DWalletNetworkEncryptionKeyData,
     checkpoint_signing_curve: DWalletCurve,
     checkpoint_signing_algorithm: DWalletSignatureAlgorithm,
+    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
 
@@ -326,6 +327,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                     key_data.id.into_bytes(),
                     checkpoint_signing_curve,
                     checkpoint_signing_algorithm,
+                    party_id,
                 )
             }
         } else {
@@ -338,6 +340,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                 key_data.id.into_bytes(),
                 checkpoint_signing_curve,
                 checkpoint_signing_algorithm,
+                party_id,
             )
         };
 
@@ -359,6 +362,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     network_key_id: [u8; 32],
     checkpoint_signing_curve: DWalletCurve,
     checkpoint_signing_algorithm: DWalletSignatureAlgorithm,
+    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -425,6 +429,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                     checkpoint_signing_algorithm,
                     &protocol_pp,
                     access_structure,
+                    party_id,
                 )
             });
 

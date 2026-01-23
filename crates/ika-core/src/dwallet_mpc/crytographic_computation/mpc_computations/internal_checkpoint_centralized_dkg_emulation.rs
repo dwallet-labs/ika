@@ -413,6 +413,7 @@ pub fn compute_decentralized_dkg_output(
     protocol_pp: &[u8],
     centralized_result: &EmulatedCentralizedDKGResult,
     access_structure: &WeightedThresholdAccessStructure,
+    party_id: group::PartyID,
 ) -> DwalletMPCResult<Vec<u8>> {
     use crate::dwallet_mpc::crytographic_computation::mpc_computations::dwallet_dkg::{
         Secp256k1DWalletDKGParty, Secp256r1DWalletDKGParty,
@@ -442,9 +443,6 @@ pub fn compute_decentralized_dkg_output(
 
     // Use OsCsRng for cryptographic randomness
     let mut rng = OsCsRng::default();
-
-    // Use party_id = 1 (any valid party ID works since this is deterministic)
-    let party_id: group::PartyID = 1;
 
     // Empty message maps for round 1 (single-round DKG needs no messages)
     let serialized_messages_by_consensus_round: HashMap<u64, HashMap<group::PartyID, Vec<u8>>> =
@@ -760,6 +758,7 @@ pub fn compute_internal_checkpoint_dkg_output(
     algorithm: DWalletSignatureAlgorithm,
     protocol_pp: &[u8],
     access_structure: &WeightedThresholdAccessStructure,
+    party_id: group::PartyID,
 ) -> Option<(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)> {
     // Compute the session ID for deterministic DKG
     let session_id = internal_checkpoint_dkg_session_id(network_key_id, curve, algorithm);
@@ -788,6 +787,7 @@ pub fn compute_internal_checkpoint_dkg_output(
         protocol_pp,
         &centralized_result,
         access_structure,
+        party_id,
     ) {
         Ok(output) => output,
         Err(e) => {

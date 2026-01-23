@@ -263,6 +263,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     network_key_id: [u8; 32],
     checkpoint_signing_curve: DWalletCurve,
     checkpoint_signing_algorithm: DWalletSignatureAlgorithm,
+    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -326,6 +327,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                     checkpoint_signing_algorithm,
                     &protocol_pp,
                     access_structure,
+                    party_id,
                 )
             });
 

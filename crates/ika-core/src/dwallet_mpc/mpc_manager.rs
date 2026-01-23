@@ -524,6 +524,7 @@ impl DWalletMPCManager {
                             key_data,
                             self.protocol_config.checkpoint_signing_curve(),
                             self.protocol_config.checkpoint_signing_algorithm(),
+                            self.party_id,
                         ).await;
 
                         results.push((key_id, res))
