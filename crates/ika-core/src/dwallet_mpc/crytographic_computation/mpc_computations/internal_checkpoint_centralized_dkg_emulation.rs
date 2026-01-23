@@ -403,18 +403,51 @@ where
 
 /// Helper to execute DKG using existing `try_ready_to_advance` and `compute_dwallet_dkg`.
 ///
-/// The `consensus_round` value doesn't matter for single-round DKG with no message exchange.
-fn execute_dkg<P: Protocol>(
+/// Takes raw bytes and performs deserialization internally, reducing code duplication
+/// in the curve dispatch. The `consensus_round` value doesn't matter for single-round
+/// DKG with no message exchange.
+fn execute_dkg<P, CentralizedPublicKeyShare, KeyShareVerification>(
     curve: DWalletCurve,
     session_id: CommitmentSizedNumber,
-    public_input: <P::DKGDecentralizedParty as mpc::Party>::PublicInput,
+    protocol_pp_bytes: &[u8],
+    centralized_public_key_share_bytes: &[u8],
+    key_share_verification: BytesCentralizedPartyKeyShareVerification,
     access_structure: &WeightedThresholdAccessStructure,
     party_id: group::PartyID,
-    empty_messages: &HashMap<u64, HashMap<group::PartyID, Vec<u8>>>,
     rng: &mut impl group::CsRng,
-) -> DwalletMPCResult<Vec<u8>> {
+) -> DwalletMPCResult<Vec<u8>>
+where
+    P: Protocol,
+    P::ProtocolPublicParameters: serde::de::DeserializeOwned,
+    CentralizedPublicKeyShare: serde::de::DeserializeOwned,
+    KeyShareVerification: TryFrom<BytesCentralizedPartyKeyShareVerification, Error = bcs::Error>,
+    <P::DKGDecentralizedParty as mpc::Party>::PublicInput:
+        From<(Arc<P::ProtocolPublicParameters>, CentralizedPublicKeyShare, KeyShareVerification)>,
+{
+    // Deserialize protocol public parameters
+    let protocol_pp: P::ProtocolPublicParameters =
+        bcs::from_bytes(protocol_pp_bytes).map_err(DwalletMPCError::BcsError)?;
+
+    // Deserialize centralized public key share
+    let centralized_public_key_share: CentralizedPublicKeyShare =
+        bcs::from_bytes(centralized_public_key_share_bytes).map_err(DwalletMPCError::BcsError)?;
+
+    // Convert key share verification to the protocol-specific type
+    let key_share_verification: KeyShareVerification =
+        key_share_verification.try_into().map_err(DwalletMPCError::BcsError)?;
+
+    // Create public input
+    let public_input = (
+        Arc::new(protocol_pp),
+        centralized_public_key_share,
+        key_share_verification,
+    ).into();
+
+    // Empty message maps - single-round DKG needs no messages
+    let empty_messages: HashMap<u64, HashMap<group::PartyID, Vec<u8>>> = HashMap::new();
+
     // consensus_round value doesn't matter for single-round DKG with no message exchange
-    let advance_request = try_ready_to_advance::<P>(party_id, access_structure, 0, empty_messages)?
+    let advance_request = try_ready_to_advance::<P>(party_id, access_structure, 0, &empty_messages)?
         .ok_or_else(|| DwalletMPCError::InternalError(
             "Internal checkpoint DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
         ))?;
@@ -477,72 +510,28 @@ pub fn compute_decentralized_dkg_output(
         centralized_party_secret_key_share: centralized_secret,
     };
 
-    // Empty message maps - single-round DKG needs no messages
-    let empty_messages: HashMap<u64, HashMap<group::PartyID, Vec<u8>>> = HashMap::new();
-
     // Use OsCsRng for cryptographic randomness
     let mut rng = OsCsRng::default();
 
     // Dispatch to the appropriate protocol based on curve.
-    // Each match arm deserializes the curve-specific types, creates the public input,
-    // then calls execute_dkg which uses existing try_ready_to_advance and compute_dwallet_dkg.
+    // The execute_dkg helper handles deserialization and public input construction.
     match curve {
-        DWalletCurve::Secp256k1 => {
-            let protocol_pp: <Secp256k1AsyncDKGProtocol as Protocol>::ProtocolPublicParameters =
-                bcs::from_bytes(protocol_pp).map_err(DwalletMPCError::BcsError)?;
-            let centralized_public_key_share =
-                bcs::from_bytes(&centralized_party_public_key_share_bytes).map_err(DwalletMPCError::BcsError)?;
-            let public_input = (
-                Arc::new(protocol_pp),
-                centralized_public_key_share,
-                key_share_verification.try_into()?,
-            ).into();
-            execute_dkg::<Secp256k1AsyncDKGProtocol>(
-                curve, session_id, public_input, access_structure, party_id, &empty_messages, &mut rng,
-            )
-        }
-        DWalletCurve::Secp256r1 => {
-            let protocol_pp: <Secp256r1AsyncDKGProtocol as Protocol>::ProtocolPublicParameters =
-                bcs::from_bytes(protocol_pp).map_err(DwalletMPCError::BcsError)?;
-            let centralized_public_key_share =
-                bcs::from_bytes(&centralized_party_public_key_share_bytes).map_err(DwalletMPCError::BcsError)?;
-            let public_input = (
-                Arc::new(protocol_pp),
-                centralized_public_key_share,
-                key_share_verification.try_into()?,
-            ).into();
-            execute_dkg::<Secp256r1AsyncDKGProtocol>(
-                curve, session_id, public_input, access_structure, party_id, &empty_messages, &mut rng,
-            )
-        }
-        DWalletCurve::Curve25519 => {
-            let protocol_pp: <Curve25519AsyncDKGProtocol as Protocol>::ProtocolPublicParameters =
-                bcs::from_bytes(protocol_pp).map_err(DwalletMPCError::BcsError)?;
-            let centralized_public_key_share =
-                bcs::from_bytes(&centralized_party_public_key_share_bytes).map_err(DwalletMPCError::BcsError)?;
-            let public_input = (
-                Arc::new(protocol_pp),
-                centralized_public_key_share,
-                key_share_verification.try_into()?,
-            ).into();
-            execute_dkg::<Curve25519AsyncDKGProtocol>(
-                curve, session_id, public_input, access_structure, party_id, &empty_messages, &mut rng,
-            )
-        }
-        DWalletCurve::Ristretto => {
-            let protocol_pp: <RistrettoAsyncDKGProtocol as Protocol>::ProtocolPublicParameters =
-                bcs::from_bytes(protocol_pp).map_err(DwalletMPCError::BcsError)?;
-            let centralized_public_key_share =
-                bcs::from_bytes(&centralized_party_public_key_share_bytes).map_err(DwalletMPCError::BcsError)?;
-            let public_input = (
-                Arc::new(protocol_pp),
-                centralized_public_key_share,
-                key_share_verification.try_into()?,
-            ).into();
-            execute_dkg::<RistrettoAsyncDKGProtocol>(
-                curve, session_id, public_input, access_structure, party_id, &empty_messages, &mut rng,
-            )
-        }
+        DWalletCurve::Secp256k1 => execute_dkg::<Secp256k1AsyncDKGProtocol, _, _>(
+            curve, session_id, protocol_pp, &centralized_party_public_key_share_bytes,
+            key_share_verification, access_structure, party_id, &mut rng,
+        ),
+        DWalletCurve::Secp256r1 => execute_dkg::<Secp256r1AsyncDKGProtocol, _, _>(
+            curve, session_id, protocol_pp, &centralized_party_public_key_share_bytes,
+            key_share_verification, access_structure, party_id, &mut rng,
+        ),
+        DWalletCurve::Curve25519 => execute_dkg::<Curve25519AsyncDKGProtocol, _, _>(
+            curve, session_id, protocol_pp, &centralized_party_public_key_share_bytes,
+            key_share_verification, access_structure, party_id, &mut rng,
+        ),
+        DWalletCurve::Ristretto => execute_dkg::<RistrettoAsyncDKGProtocol, _, _>(
+            curve, session_id, protocol_pp, &centralized_party_public_key_share_bytes,
+            key_share_verification, access_structure, party_id, &mut rng,
+        ),
     }
 }
 
@@ -634,12 +623,12 @@ pub fn compute_internal_checkpoint_dkg_output(
     };
 
     // Convert session_id to CommitmentSizedNumber for the decentralized DKG
-    let session_id_commitment = CommitmentSizedNumber::from_le_slice(session_id.as_ref());
+    let session_id = CommitmentSizedNumber::from_le_slice(session_id.as_ref());
 
     // Compute the decentralized party DKG output
     let decentralized_dkg_public_output = match compute_decentralized_dkg_output(
         curve,
-        session_id_commitment,
+        session_id,
         protocol_pp,
         &centralized_result,
         access_structure,

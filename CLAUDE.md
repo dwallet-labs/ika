@@ -72,6 +72,7 @@ sdk/
 **DO:**
 - Rust 1.90 toolchain (`rust-toolchain.toml`), rustfmt 2024 edition
 - Prefer functional style; use iterators, `map`, `filter`, `fold` over loops
+- Shadow variables when transforming and old value won't be used (keep naming simple)
 - Put imports at file top (e.g., `use std::collections::HashSet;`)
 - Use English words for numbers in names (`first_item`, `second_part`)
 - Module structure: `xxx.rs` as module file with `mod tests` inside
