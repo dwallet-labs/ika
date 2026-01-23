@@ -20,7 +20,6 @@
 //! checkpoint DKG output. The output can then be used for signing checkpoints
 //! without requiring user participation.
 
-use crate::dwallet_mpc::dwallet_dkg::BytesCentralizedPartyKeyShareVerification;
 use commitment::CommitmentSizedNumber;
 use crypto_bigint::Uint;
 use dwallet_mpc_centralized_party::{
@@ -35,7 +34,6 @@ use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
 use twopc_mpc::dkg::centralized_party::SecretKeyShare;
-use twopc_mpc::dkg::Protocol;
 
 /// The result of emulating the centralized party DKG using ZeroRng.
 ///
@@ -403,6 +401,7 @@ where
 /// * `protocol_pp` - The serialized protocol public parameters
 /// * `centralized_result` - The emulated centralized party DKG result
 /// * `access_structure` - The weighted threshold access structure
+/// * `party_id` - The party identifier for this validator
 ///
 /// # Returns
 ///
@@ -416,19 +415,17 @@ pub fn compute_decentralized_dkg_output(
     party_id: group::PartyID,
 ) -> DwalletMPCResult<Vec<u8>> {
     use crate::dwallet_mpc::crytographic_computation::mpc_computations::dwallet_dkg::{
-        Secp256k1DWalletDKGParty, Secp256r1DWalletDKGParty,
-        Curve25519DWalletDKGParty, RistrettoDWalletDKGParty,
+        compute_dwallet_dkg, BytesCentralizedPartyKeyShareVerification,
     };
-    use dwallet_mpc_types::dwallet_mpc::public_key_from_decentralized_dkg_output_by_curve_v2;
-    use dwallet_mpc_types::dwallet_mpc::VersionedDwalletDKGPublicOutput;
     use ika_types::messages_dwallet_mpc::{
         Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
         Secp256r1AsyncDKGProtocol,
     };
-    use mpc::guaranteed_output_delivery::{Party, ReadyToAdvanceResult};
-    use mpc::{GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery};
+    use mpc::GuaranteedOutputDeliveryRoundResult;
+    use mpc::guaranteed_output_delivery::ReadyToAdvanceResult;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use twopc_mpc::dkg::Protocol;
 
     // Get the zero centralized secret for verification
     let centralized_secret = get_zero_centralized_secret(curve)?;
@@ -441,250 +438,136 @@ pub fn compute_decentralized_dkg_output(
     let VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share_bytes) =
         centralized_party_public_key_share;
 
+    // Create the key share verification from the zero centralized secret
+    let key_share_verification = BytesCentralizedPartyKeyShareVerification::Public {
+        centralized_party_secret_key_share: centralized_secret,
+    };
+
+    // Empty message maps - single-round DKG needs no messages
+    let empty_messages: HashMap<u64, HashMap<group::PartyID, Vec<u8>>> = HashMap::new();
+
     // Use OsCsRng for cryptographic randomness
     let mut rng = OsCsRng::default();
 
-    // Empty message maps for round 1 (single-round DKG needs no messages)
-    let serialized_messages_by_consensus_round: HashMap<u64, HashMap<group::PartyID, Vec<u8>>> =
-        HashMap::new();
+    // Inner helper function to execute the DKG given an already-constructed public input.
+    // This avoids code duplication across curve variants.
+    fn execute_dkg<P: Protocol>(
+        curve: DWalletCurve,
+        session_id: CommitmentSizedNumber,
+        public_input: <P::DKGDecentralizedParty as mpc::Party>::PublicInput,
+        access_structure: &WeightedThresholdAccessStructure,
+        party_id: group::PartyID,
+        serialized_messages_by_consensus_round: &HashMap<u64, HashMap<group::PartyID, Vec<u8>>>,
+        rng: &mut impl group::CsRng,
+    ) -> DwalletMPCResult<Vec<u8>> {
+        // Import trait to bring ready_to_advance into scope
+        use mpc::GuaranteesOutputDelivery;
 
-    let public_output_value = match curve {
+        // Get the advance request using ready_to_advance.
+        // consensus_round value doesn't matter for single-round DKG with no message exchange.
+        let advance_request = match mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::ready_to_advance(
+            party_id,
+            access_structure,
+            0, // consensus_round - value doesn't matter for single-round DKG with no message exchange
+            HashMap::new(), // mpc_round_to_consensus_rounds_delay - empty, no delays needed
+            serialized_messages_by_consensus_round,
+        ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))? {
+            ReadyToAdvanceResult::ReadyToAdvance(req) => req,
+            ReadyToAdvanceResult::WaitForMoreMessages { .. } => {
+                return Err(DwalletMPCError::InternalError(
+                    "Internal checkpoint DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
+                ));
+            }
+        };
+
+        // Use the existing compute_dwallet_dkg function
+        let result = compute_dwallet_dkg::<P>(
+            curve,
+            party_id,
+            access_structure,
+            session_id,
+            advance_request,
+            public_input,
+            rng,
+        )?;
+
+        match result {
+            GuaranteedOutputDeliveryRoundResult::Finalize { public_output_value, .. } => {
+                Ok(public_output_value)
+            }
+            GuaranteedOutputDeliveryRoundResult::Advance { .. } => {
+                Err(DwalletMPCError::InternalError(
+                    "Internal checkpoint DKG did not finalize in single round as expected".to_string(),
+                ))
+            }
+        }
+    }
+
+    // Dispatch to the appropriate protocol based on curve.
+    // Each match arm deserializes the curve-specific types, creates the public input,
+    // then calls the generic helper.
+    match curve {
         DWalletCurve::Secp256k1 => {
-            // Deserialize curve-specific types
             let protocol_pp: <Secp256k1AsyncDKGProtocol as Protocol>::ProtocolPublicParameters =
                 bcs::from_bytes(protocol_pp).map_err(DwalletMPCError::BcsError)?;
-            let protocol_pp = Arc::new(protocol_pp);
-
-            // Deserialize the centralized party public key share and proof
-            // Let the compiler infer the exact type from the tuple conversion
             let centralized_public_key_share =
-                bcs::from_bytes(&centralized_party_public_key_share_bytes)
-                    .map_err(DwalletMPCError::BcsError)?;
-
-            // Create the key share verification from the zero centralized secret
-            let key_share_verification: twopc_mpc::dkg::CentralizedPartyKeyShareVerification<_, _, _> =
-                BytesCentralizedPartyKeyShareVerification::Public {
-                    centralized_party_secret_key_share: centralized_secret.clone(),
-                }.try_into().map_err(DwalletMPCError::BcsError)?;
-
-            // Create the public input for the decentralized party DKG
-            // Order: (protocol_pp, centralized_public_key_share, key_share_verification)
-            let public_input: <Secp256k1DWalletDKGParty as mpc::Party>::PublicInput = (
-                protocol_pp,
+                bcs::from_bytes(&centralized_party_public_key_share_bytes).map_err(DwalletMPCError::BcsError)?;
+            let public_input = (
+                Arc::new(protocol_pp),
                 centralized_public_key_share,
-                key_share_verification,
+                key_share_verification.try_into()?,
             ).into();
-
-            // Get the advance request using ready_to_advance
-            let advance_request = match Party::<Secp256k1DWalletDKGParty>::ready_to_advance(
-                party_id,
-                access_structure,
-                0, // consensus_round - value doesn't matter for single-round DKG with no message exchange
-                HashMap::new(), // mpc_round_to_consensus_rounds_delay - empty, no delays needed
-                &serialized_messages_by_consensus_round,
-            ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))? {
-                ReadyToAdvanceResult::ReadyToAdvance(req) => req,
-                ReadyToAdvanceResult::WaitForMoreMessages { .. } => {
-                    return Err(DwalletMPCError::InternalError(
-                        "Internal checkpoint DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
-                    ));
-                }
-            };
-
-            let result = Party::<Secp256k1DWalletDKGParty>::advance_with_guaranteed_output(
-                session_id,
-                party_id,
-                access_structure,
-                advance_request,
-                None,
-                &public_input,
-                &mut rng,
-            ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
-
-            match result {
-                GuaranteedOutputDeliveryRoundResult::Finalize { public_output_value, .. } => public_output_value,
-                GuaranteedOutputDeliveryRoundResult::Advance { .. } => {
-                    return Err(DwalletMPCError::InternalError(
-                        "Internal checkpoint DKG did not finalize in single round as expected".to_string(),
-                    ));
-                }
-            }
+            execute_dkg::<Secp256k1AsyncDKGProtocol>(
+                curve, session_id, public_input,
+                access_structure, party_id, &empty_messages, &mut rng,
+            )
         }
         DWalletCurve::Secp256r1 => {
             let protocol_pp: <Secp256r1AsyncDKGProtocol as Protocol>::ProtocolPublicParameters =
                 bcs::from_bytes(protocol_pp).map_err(DwalletMPCError::BcsError)?;
-            let protocol_pp = Arc::new(protocol_pp);
-
             let centralized_public_key_share =
-                bcs::from_bytes(&centralized_party_public_key_share_bytes)
-                    .map_err(DwalletMPCError::BcsError)?;
-
-            let key_share_verification: twopc_mpc::dkg::CentralizedPartyKeyShareVerification<_, _, _> =
-                BytesCentralizedPartyKeyShareVerification::Public {
-                    centralized_party_secret_key_share: centralized_secret.clone(),
-                }.try_into().map_err(DwalletMPCError::BcsError)?;
-
-            let public_input: <Secp256r1DWalletDKGParty as mpc::Party>::PublicInput = (
-                protocol_pp,
+                bcs::from_bytes(&centralized_party_public_key_share_bytes).map_err(DwalletMPCError::BcsError)?;
+            let public_input = (
+                Arc::new(protocol_pp),
                 centralized_public_key_share,
-                key_share_verification,
+                key_share_verification.try_into()?,
             ).into();
-
-            let advance_request = match Party::<Secp256r1DWalletDKGParty>::ready_to_advance(
-                party_id,
-                access_structure,
-                0,
-                HashMap::new(),
-                &serialized_messages_by_consensus_round,
-            ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))? {
-                ReadyToAdvanceResult::ReadyToAdvance(req) => req,
-                ReadyToAdvanceResult::WaitForMoreMessages { .. } => {
-                    return Err(DwalletMPCError::InternalError(
-                        "Internal checkpoint DKG not ready to advance".to_string(),
-                    ));
-                }
-            };
-
-            let result = Party::<Secp256r1DWalletDKGParty>::advance_with_guaranteed_output(
-                session_id,
-                party_id,
-                access_structure,
-                advance_request,
-                None,
-                &public_input,
-                &mut rng,
-            ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
-
-            match result {
-                GuaranteedOutputDeliveryRoundResult::Finalize { public_output_value, .. } => public_output_value,
-                GuaranteedOutputDeliveryRoundResult::Advance { .. } => {
-                    return Err(DwalletMPCError::InternalError(
-                        "Internal checkpoint DKG did not finalize in single round as expected".to_string(),
-                    ));
-                }
-            }
+            execute_dkg::<Secp256r1AsyncDKGProtocol>(
+                curve, session_id, public_input,
+                access_structure, party_id, &empty_messages, &mut rng,
+            )
         }
         DWalletCurve::Curve25519 => {
             let protocol_pp: <Curve25519AsyncDKGProtocol as Protocol>::ProtocolPublicParameters =
                 bcs::from_bytes(protocol_pp).map_err(DwalletMPCError::BcsError)?;
-            let protocol_pp = Arc::new(protocol_pp);
-
             let centralized_public_key_share =
-                bcs::from_bytes(&centralized_party_public_key_share_bytes)
-                    .map_err(DwalletMPCError::BcsError)?;
-
-            let key_share_verification: twopc_mpc::dkg::CentralizedPartyKeyShareVerification<_, _, _> =
-                BytesCentralizedPartyKeyShareVerification::Public {
-                    centralized_party_secret_key_share: centralized_secret.clone(),
-                }.try_into().map_err(DwalletMPCError::BcsError)?;
-
-            let public_input: <Curve25519DWalletDKGParty as mpc::Party>::PublicInput = (
-                protocol_pp,
+                bcs::from_bytes(&centralized_party_public_key_share_bytes).map_err(DwalletMPCError::BcsError)?;
+            let public_input = (
+                Arc::new(protocol_pp),
                 centralized_public_key_share,
-                key_share_verification,
+                key_share_verification.try_into()?,
             ).into();
-
-            let advance_request = match Party::<Curve25519DWalletDKGParty>::ready_to_advance(
-                party_id,
-                access_structure,
-                0,
-                HashMap::new(),
-                &serialized_messages_by_consensus_round,
-            ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))? {
-                ReadyToAdvanceResult::ReadyToAdvance(req) => req,
-                ReadyToAdvanceResult::WaitForMoreMessages { .. } => {
-                    return Err(DwalletMPCError::InternalError(
-                        "Internal checkpoint DKG not ready to advance".to_string(),
-                    ));
-                }
-            };
-
-            let result = Party::<Curve25519DWalletDKGParty>::advance_with_guaranteed_output(
-                session_id,
-                party_id,
-                access_structure,
-                advance_request,
-                None,
-                &public_input,
-                &mut rng,
-            ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
-
-            match result {
-                GuaranteedOutputDeliveryRoundResult::Finalize { public_output_value, .. } => public_output_value,
-                GuaranteedOutputDeliveryRoundResult::Advance { .. } => {
-                    return Err(DwalletMPCError::InternalError(
-                        "Internal checkpoint DKG did not finalize in single round as expected".to_string(),
-                    ));
-                }
-            }
+            execute_dkg::<Curve25519AsyncDKGProtocol>(
+                curve, session_id, public_input,
+                access_structure, party_id, &empty_messages, &mut rng,
+            )
         }
         DWalletCurve::Ristretto => {
             let protocol_pp: <RistrettoAsyncDKGProtocol as Protocol>::ProtocolPublicParameters =
                 bcs::from_bytes(protocol_pp).map_err(DwalletMPCError::BcsError)?;
-            let protocol_pp = Arc::new(protocol_pp);
-
             let centralized_public_key_share =
-                bcs::from_bytes(&centralized_party_public_key_share_bytes)
-                    .map_err(DwalletMPCError::BcsError)?;
-
-            let key_share_verification: twopc_mpc::dkg::CentralizedPartyKeyShareVerification<_, _, _> =
-                BytesCentralizedPartyKeyShareVerification::Public {
-                    centralized_party_secret_key_share: centralized_secret.clone(),
-                }.try_into().map_err(DwalletMPCError::BcsError)?;
-
-            let public_input: <RistrettoDWalletDKGParty as mpc::Party>::PublicInput = (
-                protocol_pp,
+                bcs::from_bytes(&centralized_party_public_key_share_bytes).map_err(DwalletMPCError::BcsError)?;
+            let public_input = (
+                Arc::new(protocol_pp),
                 centralized_public_key_share,
-                key_share_verification,
+                key_share_verification.try_into()?,
             ).into();
-
-            let advance_request = match Party::<RistrettoDWalletDKGParty>::ready_to_advance(
-                party_id,
-                access_structure,
-                0,
-                HashMap::new(),
-                &serialized_messages_by_consensus_round,
-            ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))? {
-                ReadyToAdvanceResult::ReadyToAdvance(req) => req,
-                ReadyToAdvanceResult::WaitForMoreMessages { .. } => {
-                    return Err(DwalletMPCError::InternalError(
-                        "Internal checkpoint DKG not ready to advance".to_string(),
-                    ));
-                }
-            };
-
-            let result = Party::<RistrettoDWalletDKGParty>::advance_with_guaranteed_output(
-                session_id,
-                party_id,
-                access_structure,
-                advance_request,
-                None,
-                &public_input,
-                &mut rng,
-            ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))?;
-
-            match result {
-                GuaranteedOutputDeliveryRoundResult::Finalize { public_output_value, .. } => public_output_value,
-                GuaranteedOutputDeliveryRoundResult::Advance { .. } => {
-                    return Err(DwalletMPCError::InternalError(
-                        "Internal checkpoint DKG did not finalize in single round as expected".to_string(),
-                    ));
-                }
-            }
+            execute_dkg::<RistrettoAsyncDKGProtocol>(
+                curve, session_id, public_input,
+                access_structure, party_id, &empty_messages, &mut rng,
+            )
         }
-    };
-
-    // Wrap the output in the versioned format
-    let public_key_bytes =
-        public_key_from_decentralized_dkg_output_by_curve_v2(curve, &public_output_value)
-            .map_err(|e| DwalletMPCError::InternalError(e.to_string()))?;
-
-    let versioned_output = VersionedDwalletDKGPublicOutput::V2 {
-        public_key_bytes,
-        dkg_output: public_output_value,
-    };
-
-    bcs::to_bytes(&versioned_output).map_err(DwalletMPCError::BcsError)
+    }
 }
 
 /// Gets the session identifier for internal checkpoint DKG.
