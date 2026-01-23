@@ -414,15 +414,12 @@ pub fn compute_decentralized_dkg_output(
     access_structure: &WeightedThresholdAccessStructure,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<Vec<u8>> {
-    use crate::dwallet_mpc::crytographic_computation::mpc_computations::dwallet_dkg::{
-        compute_dwallet_dkg, BytesCentralizedPartyKeyShareVerification,
-    };
+    use crate::dwallet_mpc::crytographic_computation::mpc_computations::dwallet_dkg::BytesCentralizedPartyKeyShareVerification;
     use ika_types::messages_dwallet_mpc::{
         Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
         Secp256r1AsyncDKGProtocol,
     };
     use mpc::GuaranteedOutputDeliveryRoundResult;
-    use mpc::guaranteed_output_delivery::ReadyToAdvanceResult;
     use std::collections::HashMap;
     use std::sync::Arc;
     use twopc_mpc::dkg::Protocol;
@@ -449,46 +446,29 @@ pub fn compute_decentralized_dkg_output(
     // Use OsCsRng for cryptographic randomness
     let mut rng = OsCsRng::default();
 
-    // Inner helper function to execute the DKG given an already-constructed public input.
-    // This avoids code duplication across curve variants.
+    /// Inner helper to execute DKG using existing try_ready_to_advance and compute_dwallet_dkg.
+    /// consensus_round value doesn't matter for single-round DKG with no message exchange.
     fn execute_dkg<P: Protocol>(
         curve: DWalletCurve,
         session_id: CommitmentSizedNumber,
         public_input: <P::DKGDecentralizedParty as mpc::Party>::PublicInput,
         access_structure: &WeightedThresholdAccessStructure,
         party_id: group::PartyID,
-        serialized_messages_by_consensus_round: &HashMap<u64, HashMap<group::PartyID, Vec<u8>>>,
+        empty_messages: &HashMap<u64, HashMap<group::PartyID, Vec<u8>>>,
         rng: &mut impl group::CsRng,
     ) -> DwalletMPCResult<Vec<u8>> {
-        // Import trait to bring ready_to_advance into scope
-        use mpc::GuaranteesOutputDelivery;
-
-        // Get the advance request using ready_to_advance.
-        // consensus_round value doesn't matter for single-round DKG with no message exchange.
-        let advance_request = match mpc::guaranteed_output_delivery::Party::<P::DKGDecentralizedParty>::ready_to_advance(
-            party_id,
-            access_structure,
-            0, // consensus_round - value doesn't matter for single-round DKG with no message exchange
-            HashMap::new(), // mpc_round_to_consensus_rounds_delay - empty, no delays needed
-            serialized_messages_by_consensus_round,
-        ).map_err(|e| DwalletMPCError::FailedToAdvanceMPC(e.into()))? {
-            ReadyToAdvanceResult::ReadyToAdvance(req) => req,
-            ReadyToAdvanceResult::WaitForMoreMessages { .. } => {
-                return Err(DwalletMPCError::InternalError(
-                    "Internal checkpoint DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
-                ));
-            }
+        use crate::dwallet_mpc::crytographic_computation::mpc_computations::dwallet_dkg::{
+            compute_dwallet_dkg, try_ready_to_advance,
         };
 
-        // Use the existing compute_dwallet_dkg function
+        // consensus_round value doesn't matter for single-round DKG with no message exchange
+        let advance_request = try_ready_to_advance::<P>(party_id, access_structure, 0, empty_messages)?
+            .ok_or_else(|| DwalletMPCError::InternalError(
+                "Internal checkpoint DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
+            ))?;
+
         let result = compute_dwallet_dkg::<P>(
-            curve,
-            party_id,
-            access_structure,
-            session_id,
-            advance_request,
-            public_input,
-            rng,
+            curve, party_id, access_structure, session_id, advance_request, public_input, rng,
         )?;
 
         match result {
@@ -505,7 +485,7 @@ pub fn compute_decentralized_dkg_output(
 
     // Dispatch to the appropriate protocol based on curve.
     // Each match arm deserializes the curve-specific types, creates the public input,
-    // then calls the generic helper.
+    // then calls the helper which uses existing try_ready_to_advance and compute_dwallet_dkg.
     match curve {
         DWalletCurve::Secp256k1 => {
             let protocol_pp: <Secp256k1AsyncDKGProtocol as Protocol>::ProtocolPublicParameters =
@@ -518,8 +498,7 @@ pub fn compute_decentralized_dkg_output(
                 key_share_verification.try_into()?,
             ).into();
             execute_dkg::<Secp256k1AsyncDKGProtocol>(
-                curve, session_id, public_input,
-                access_structure, party_id, &empty_messages, &mut rng,
+                curve, session_id, public_input, access_structure, party_id, &empty_messages, &mut rng,
             )
         }
         DWalletCurve::Secp256r1 => {
@@ -533,8 +512,7 @@ pub fn compute_decentralized_dkg_output(
                 key_share_verification.try_into()?,
             ).into();
             execute_dkg::<Secp256r1AsyncDKGProtocol>(
-                curve, session_id, public_input,
-                access_structure, party_id, &empty_messages, &mut rng,
+                curve, session_id, public_input, access_structure, party_id, &empty_messages, &mut rng,
             )
         }
         DWalletCurve::Curve25519 => {
@@ -548,8 +526,7 @@ pub fn compute_decentralized_dkg_output(
                 key_share_verification.try_into()?,
             ).into();
             execute_dkg::<Curve25519AsyncDKGProtocol>(
-                curve, session_id, public_input,
-                access_structure, party_id, &empty_messages, &mut rng,
+                curve, session_id, public_input, access_structure, party_id, &empty_messages, &mut rng,
             )
         }
         DWalletCurve::Ristretto => {
@@ -563,8 +540,7 @@ pub fn compute_decentralized_dkg_output(
                 key_share_verification.try_into()?,
             ).into();
             execute_dkg::<RistrettoAsyncDKGProtocol>(
-                curve, session_id, public_input,
-                access_structure, party_id, &empty_messages, &mut rng,
+                curve, session_id, public_input, access_structure, party_id, &empty_messages, &mut rng,
             )
         }
     }
