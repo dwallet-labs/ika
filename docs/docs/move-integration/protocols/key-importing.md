@@ -320,7 +320,7 @@ let sign_id = coordinator.request_imported_key_sign_with_partial_user_signature_
 
 You can convert an imported key dWallet from zero-trust mode (encrypted user share) to shared mode (public user share). This enables contract-owned signing without user interaction.
 
-See [Converting to Shared](./converting-to-shared.md) for the complete guide, including:
+See [Converting to Shared](/move-integration/protocols/converting-to-shared) for the complete guide, including:
 - How to save and use the user secret key share
 - TypeScript SDK methods
 - Move contract integration
@@ -345,5 +345,5 @@ See [Converting to Shared](./converting-to-shared.md) for the complete guide, in
 
 ## Next Steps
 
-- Learn about [Integration Patterns](../integration-patterns/) for common use cases
-- See the [Bitcoin Multisig Example](../examples/multisig-bitcoin.md) for a complete implementation
+- Learn about [Integration Patterns](/move-integration/integration-patterns/) for common use cases
+- See the [Bitcoin Multisig Example](/move-integration/examples/multisig-bitcoin-example) for a complete implementation

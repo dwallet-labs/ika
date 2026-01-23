@@ -117,15 +117,15 @@ public struct Treasury has key, store {
 
 ## Documentation Structure
 
-- **[Getting Started](./getting-started.md)** - Set up your Move project with Ika dependencies
-- **[Core Concepts](./core-concepts/)** - Understand the coordinator, capabilities, and payments
-- **[Protocols](./protocols/)** - Deep dive into DKG, presigning, signing, and future signing
-- **[Integration Patterns](./integration-patterns/)** - Common patterns for building with Ika
-- **[Examples](./examples/)** - Full example walkthroughs including Bitcoin multisig
+- **[Getting Started](/move-integration/move-integration-setup)** - Set up your Move project with Ika dependencies
+- **[Core Concepts](/move-integration/core-concepts/)** - Understand the coordinator, capabilities, and payments
+- **[Protocols](/move-integration/protocols/)** - Deep dive into DKG, presigning, signing, and future signing
+- **[Integration Patterns](/move-integration/integration-patterns/)** - Common patterns for building with Ika
+- **[Examples](/move-integration/examples/)** - Full example walkthroughs including Bitcoin multisig
 
 ## Next Steps
 
-1. Start with [Getting Started](./getting-started.md) to set up your project
-2. Read [Core Concepts](./core-concepts/) to understand the building blocks
-3. Follow the [Protocols](./protocols/) guides for each operation type
-4. Check [Examples](./examples/) for complete implementations
+1. Start with [Getting Started](/move-integration/move-integration-setup) to set up your project
+2. Read [Core Concepts](/move-integration/core-concepts/) to understand the building blocks
+3. Follow the [Protocols](/move-integration/protocols/) guides for each operation type
+4. Check [Examples](/move-integration/examples/) for complete implementations

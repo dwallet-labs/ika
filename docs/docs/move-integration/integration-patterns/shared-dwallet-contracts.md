@@ -19,7 +19,7 @@ In this pattern:
 - Perfect for governance, treasuries, and automated systems
 
 :::tip Already Have a Zero-Trust dWallet?
-You can convert an existing zero-trust dWallet to shared mode using `request_make_dwallet_user_secret_key_shares_public()`. This also works for imported key dWallets. See [Converting to Shared](../protocols/converting-to-shared.md) for details.
+You can convert an existing zero-trust dWallet to shared mode using `request_make_dwallet_user_secret_key_shares_public()`. This also works for imported key dWallets. See [Converting to Shared](/move-integration/protocols/converting-to-shared) for details.
 :::
 
 ## Architecture
@@ -471,5 +471,5 @@ public fun process_deposit(
 
 ## Next Steps
 
-- See [Presign Pool Management](./presign-pool-management.md) for managing presigns
-- Check the [Bitcoin Multisig Example](../examples/multisig-bitcoin.md) for a complete implementation
+- See [Presign Pool Management](/move-integration/integration-patterns/presign-pool-management) for managing presigns
+- Check the [Bitcoin Multisig Example](/move-integration/examples/multisig-bitcoin-example) for a complete implementation

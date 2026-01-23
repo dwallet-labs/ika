@@ -362,12 +362,12 @@ public fun sign_ethereum_transaction(
 
 ## When to Use Future Signing Instead
 
-Use [Future Signing](./future-signing.md) when:
+Use [Future Signing](/move-integration/protocols/future-signing-protocol) when:
 - You need governance approval before signing
 - Multiple parties must approve the transaction
 - You want to separate commitment from execution
 
 ## Next Steps
 
-- Learn about [Future Signing](./future-signing.md) for two-phase signing
-- See the [Bitcoin Multisig Example](../examples/multisig-bitcoin.md) for a complete implementation
+- Learn about [Future Signing](/move-integration/protocols/future-signing-protocol) for two-phase signing
+- See the [Bitcoin Multisig Example](/move-integration/examples/multisig-bitcoin-example) for a complete implementation

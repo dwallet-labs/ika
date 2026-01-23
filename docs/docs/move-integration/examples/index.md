@@ -14,7 +14,7 @@ This section provides complete, production-ready examples of Move contracts inte
 
 | Example | Description | Key Features |
 |---------|-------------|--------------|
-| **[Bitcoin Multisig](./multisig-bitcoin.md)** | Multi-signature wallet for Bitcoin transactions | Governance voting, Taproot signatures, presign pools |
+| **[Bitcoin Multisig](/move-integration/examples/multisig-bitcoin-example)** | Multi-signature wallet for Bitcoin transactions | Governance voting, Taproot signatures, presign pools |
 
 ## Example Structure
 
@@ -113,6 +113,6 @@ Use these examples as templates for your own contracts:
 
 ## Next Steps
 
-- Start with the [Bitcoin Multisig Example](./multisig-bitcoin.md)
-- Review [Core Concepts](../core-concepts/) for fundamentals
-- Check [Integration Patterns](../integration-patterns/) for common patterns
+- Start with the [Bitcoin Multisig Example](/move-integration/examples/multisig-bitcoin-example)
+- Review [Core Concepts](/move-integration/core-concepts/) for fundamentals
+- Check [Integration Patterns](/move-integration/integration-patterns/) for common patterns

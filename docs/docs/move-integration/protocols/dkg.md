@@ -327,5 +327,5 @@ const publicKey = publicKeyFromDWalletOutput(
 
 ## Next Steps
 
-- Learn about [Presigning](./presigning.md) to prepare for signatures
-- See [Signing](./signing.md) for creating signatures
+- Learn about [Presigning](/move-integration/protocols/presigning-protocol) to prepare for signatures
+- See [Signing](/move-integration/protocols/signing-protocol) for creating signatures

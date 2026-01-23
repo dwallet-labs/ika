@@ -204,6 +204,6 @@ Ika supports multiple curves and signature algorithms:
 
 Now that your project is set up:
 
-1. Learn about the [Coordinator Architecture](./core-concepts/coordinator-architecture.md)
-2. Understand [Capabilities and Approvals](./core-concepts/capabilities-and-approvals.md)
-3. Follow the [DKG Protocol](./protocols/dkg.md) to create your first dWallet
+1. Learn about the [Coordinator Architecture](/move-integration/core-concepts/coordinator-architecture)
+2. Understand [Capabilities and Approvals](/move-integration/core-concepts/capabilities-and-approvals)
+3. Follow the [DKG Protocol](/move-integration/protocols/dkg-protocol) to create your first dWallet

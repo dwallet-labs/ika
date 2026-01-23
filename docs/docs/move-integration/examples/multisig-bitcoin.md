@@ -478,5 +478,5 @@ await suiClient.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 ## Next Steps
 
 - Review the [full source code](https://github.com/dwallet-labs/ika/tree/main/examples/multisig-bitcoin/contract)
-- Check [Core Concepts](../core-concepts/) for fundamentals
-- See [Integration Patterns](../integration-patterns/) for more patterns
+- Check [Core Concepts](/move-integration/core-concepts/) for fundamentals
+- See [Integration Patterns](/move-integration/integration-patterns/) for more patterns

@@ -289,5 +289,5 @@ assert!(matches, EPartialSignatureDoesNotMatch);
 
 ## Next Steps
 
-- Learn about [Session Management](./session-management.md) for unique operation identifiers
-- Understand [Payment Handling](./payment-handling.md) for managing fees
+- Learn about [Session Management](/move-integration/core-concepts/session-management) for unique operation identifiers
+- Understand [Payment Handling](/move-integration/core-concepts/payment-handling) for managing fees

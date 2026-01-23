@@ -61,12 +61,12 @@ This section covers the core protocols that power dWallet operations. Understand
 
 | Protocol | Purpose | When to Use |
 |----------|---------|-------------|
-| **[DKG](./dkg.md)** | Create a new dWallet | Once per dWallet |
-| **[Presigning](./presigning.md)** | Pre-compute signing material | Before each signature |
-| **[Signing](./signing.md)** | Create a signature immediately | Direct signing without governance |
-| **[Future Signing](./future-signing.md)** | Create signature in two phases | Governance, multisig, delayed execution |
-| **[Key Importing](./key-importing.md)** | Import existing private key | When migrating existing keys |
-| **[Converting to Shared](./converting-to-shared.md)** | Make user share public | Converting zero-trust to shared mode |
+| **[DKG](/move-integration/protocols/dkg-protocol)** | Create a new dWallet | Once per dWallet |
+| **[Presigning](/move-integration/protocols/presigning-protocol)** | Pre-compute signing material | Before each signature |
+| **[Signing](/move-integration/protocols/signing-protocol)** | Create a signature immediately | Direct signing without governance |
+| **[Future Signing](/move-integration/protocols/future-signing-protocol)** | Create signature in two phases | Governance, multisig, delayed execution |
+| **[Key Importing](/move-integration/protocols/key-importing-protocol)** | Import existing private key | When migrating existing keys |
+| **[Converting to Shared](/move-integration/protocols/converting-to-shared)** | Make user share public | Converting zero-trust to shared mode |
 
 ## Choosing Between Sign and Future Sign
 
@@ -114,7 +114,7 @@ let (dwallet_cap, _) = coordinator.request_dwallet_dkg(
 ```
 
 :::info Converting Between Modes
-You can convert a zero-trust dWallet to shared mode later using `request_make_dwallet_user_secret_key_shares_public()`. This is **irreversible** - see [Converting to Shared](./converting-to-shared.md) for details.
+You can convert a zero-trust dWallet to shared mode later using `request_make_dwallet_user_secret_key_shares_public()`. This is **irreversible** - see [Converting to Shared](/move-integration/protocols/converting-to-shared) for details.
 :::
 
 :::tip For Move Contracts
@@ -173,6 +173,6 @@ public macro fun hash_scheme(): u32 { 0 }
 
 ## Next Steps
 
-1. Start with [DKG](./dkg.md) to create your first dWallet
-2. Learn [Presigning](./presigning.md) to prepare for signatures
-3. Choose between [Signing](./signing.md) or [Future Signing](./future-signing.md) based on your use case
+1. Start with [DKG](/move-integration/protocols/dkg-protocol) to create your first dWallet
+2. Learn [Presigning](/move-integration/protocols/presigning-protocol) to prepare for signatures
+3. Choose between [Signing](/move-integration/protocols/signing-protocol) or [Future Signing](/move-integration/protocols/future-signing-protocol) based on your use case

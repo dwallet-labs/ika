@@ -231,5 +231,5 @@ The coordinator validates its version internally. If you encounter version error
 
 ## Next Steps
 
-- Learn about [Capabilities and Approvals](./capabilities-and-approvals.md) that control dWallet authorization
-- Understand [Session Management](./session-management.md) for protocol operations
+- Learn about [Capabilities and Approvals](/move-integration/core-concepts/capabilities-and-approvals) that control dWallet authorization
+- Understand [Session Management](/move-integration/core-concepts/session-management) for protocol operations

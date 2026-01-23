@@ -331,5 +331,5 @@ public fun add_presign(
 
 ## Next Steps
 
-- Learn about [Signing](./signing.md) to use your presigns
-- See [Future Signing](./future-signing.md) for two-phase signing workflows
+- Learn about [Signing](/move-integration/protocols/signing-protocol) to use your presigns
+- See [Future Signing](/move-integration/protocols/future-signing-protocol) for two-phase signing workflows

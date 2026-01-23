@@ -239,4 +239,4 @@ public fun create_dwallet(
 
 ## Next Steps
 
-- Learn about [Payment Handling](./payment-handling.md) for managing protocol fees
+- Learn about [Payment Handling](/move-integration/core-concepts/payment-handling) for managing protocol fees

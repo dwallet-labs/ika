@@ -14,8 +14,8 @@ This section covers common patterns and best practices for integrating Ika dWall
 
 | Pattern | Description | Use Case |
 |---------|-------------|----------|
-| **[Shared dWallet Contracts](./shared-dwallet-contracts.md)** | Contract-owned dWallets that sign without user interaction | DAOs, treasuries, automated systems |
-| **[Presign Pool Management](./presign-pool-management.md)** | Maintain a pool of presigns for continuous operation | Any contract that signs frequently |
+| **[Shared dWallet Contracts](/move-integration/integration-patterns/shared-dwallet-contracts)** | Contract-owned dWallets that sign without user interaction | DAOs, treasuries, automated systems |
+| **[Presign Pool Management](/move-integration/integration-patterns/presign-pool-management)** | Maintain a pool of presigns for continuous operation | Any contract that signs frequently |
 
 ## Pattern Overview
 
@@ -147,5 +147,5 @@ fun return_payment_coins(
 
 ## Next Steps
 
-- Learn about [Shared dWallet Contracts](./shared-dwallet-contracts.md) for DAO and treasury use cases
-- See [Presign Pool Management](./presign-pool-management.md) for continuous signing operations
+- Learn about [Shared dWallet Contracts](/move-integration/integration-patterns/shared-dwallet-contracts) for DAO and treasury use cases
+- See [Presign Pool Management](/move-integration/integration-patterns/presign-pool-management) for continuous signing operations

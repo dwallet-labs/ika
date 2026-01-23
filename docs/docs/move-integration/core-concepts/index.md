@@ -16,10 +16,10 @@ Ika's Move integration is built around several key concepts:
 
 | Concept | Description |
 |---------|-------------|
-| **[Coordinator Architecture](./coordinator-architecture.md)** | The `DWalletCoordinator` is the central shared object that manages all dWallet operations |
-| **[Capabilities and Approvals](./capabilities-and-approvals.md)** | Capability objects control authorization for dWallet operations |
-| **[Session Management](./session-management.md)** | Unique identifiers ensure each protocol operation is processed exactly once |
-| **[Payment Handling](./payment-handling.md)** | All operations require IKA and SUI fees |
+| **[Coordinator Architecture](/move-integration/core-concepts/coordinator-architecture)** | The `DWalletCoordinator` is the central shared object that manages all dWallet operations |
+| **[Capabilities and Approvals](/move-integration/core-concepts/capabilities-and-approvals)** | Capability objects control authorization for dWallet operations |
+| **[Session Management](/move-integration/core-concepts/session-management)** | Unique identifiers ensure each protocol operation is processed exactly once |
+| **[Payment Handling](/move-integration/core-concepts/payment-handling)** | All operations require IKA and SUI fees |
 
 ## How They Work Together
 
@@ -99,4 +99,4 @@ public struct MyContract has key, store {
 
 ## Next Steps
 
-Start with [Coordinator Architecture](./coordinator-architecture.md) to understand how the coordinator works, then move through the other concepts in order.
+Start with [Coordinator Architecture](/move-integration/core-concepts/coordinator-architecture) to understand how the coordinator works, then move through the other concepts in order.
