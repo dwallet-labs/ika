@@ -20,6 +20,9 @@
 //! checkpoint DKG output. The output can then be used for signing checkpoints
 //! without requiring user participation.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use commitment::CommitmentSizedNumber;
 use crypto_bigint::Uint;
 use dwallet_mpc_centralized_party::{
@@ -32,8 +35,18 @@ use dwallet_mpc_types::dwallet_mpc::{
 use dwallet_rng::ZeroRng;
 use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use mpc::WeightedThresholdAccessStructure;
+use ika_types::messages_dwallet_mpc::{
+    Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
+    Secp256r1AsyncDKGProtocol, SessionIdentifier, SessionType,
+};
+use merlin::Transcript;
+use mpc::{GuaranteedOutputDeliveryRoundResult, WeightedThresholdAccessStructure};
 use twopc_mpc::dkg::centralized_party::SecretKeyShare;
+use twopc_mpc::dkg::Protocol;
+
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::dwallet_dkg::{
+    BytesCentralizedPartyKeyShareVerification, compute_dwallet_dkg, try_ready_to_advance,
+};
 
 /// The result of emulating the centralized party DKG using ZeroRng.
 ///
@@ -388,6 +401,40 @@ where
     .map_err(|e| DwalletMPCError::InternalError(format!("Emulated centralized sign failed: {e}")))
 }
 
+/// Helper to execute DKG using existing `try_ready_to_advance` and `compute_dwallet_dkg`.
+///
+/// The `consensus_round` value doesn't matter for single-round DKG with no message exchange.
+fn execute_dkg<P: Protocol>(
+    curve: DWalletCurve,
+    session_id: CommitmentSizedNumber,
+    public_input: <P::DKGDecentralizedParty as mpc::Party>::PublicInput,
+    access_structure: &WeightedThresholdAccessStructure,
+    party_id: group::PartyID,
+    empty_messages: &HashMap<u64, HashMap<group::PartyID, Vec<u8>>>,
+    rng: &mut impl group::CsRng,
+) -> DwalletMPCResult<Vec<u8>> {
+    // consensus_round value doesn't matter for single-round DKG with no message exchange
+    let advance_request = try_ready_to_advance::<P>(party_id, access_structure, 0, empty_messages)?
+        .ok_or_else(|| DwalletMPCError::InternalError(
+            "Internal checkpoint DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
+        ))?;
+
+    let result = compute_dwallet_dkg::<P>(
+        curve, party_id, access_structure, session_id, advance_request, public_input, rng,
+    )?;
+
+    match result {
+        GuaranteedOutputDeliveryRoundResult::Finalize { public_output_value, .. } => {
+            Ok(public_output_value)
+        }
+        GuaranteedOutputDeliveryRoundResult::Advance { .. } => {
+            Err(DwalletMPCError::InternalError(
+                "Internal checkpoint DKG did not finalize in single round as expected".to_string(),
+            ))
+        }
+    }
+}
+
 /// Computes the decentralized party DKG output for internal checkpoint signing.
 ///
 /// This function runs the decentralized party DKG protocol locally. Since the DKG
@@ -414,16 +461,6 @@ pub fn compute_decentralized_dkg_output(
     access_structure: &WeightedThresholdAccessStructure,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<Vec<u8>> {
-    use crate::dwallet_mpc::crytographic_computation::mpc_computations::dwallet_dkg::BytesCentralizedPartyKeyShareVerification;
-    use ika_types::messages_dwallet_mpc::{
-        Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
-        Secp256r1AsyncDKGProtocol,
-    };
-    use mpc::GuaranteedOutputDeliveryRoundResult;
-    use std::collections::HashMap;
-    use std::sync::Arc;
-    use twopc_mpc::dkg::Protocol;
-
     // Get the zero centralized secret for verification
     let centralized_secret = get_zero_centralized_secret(curve)?;
 
@@ -446,46 +483,9 @@ pub fn compute_decentralized_dkg_output(
     // Use OsCsRng for cryptographic randomness
     let mut rng = OsCsRng::default();
 
-    /// Inner helper to execute DKG using existing try_ready_to_advance and compute_dwallet_dkg.
-    /// consensus_round value doesn't matter for single-round DKG with no message exchange.
-    fn execute_dkg<P: Protocol>(
-        curve: DWalletCurve,
-        session_id: CommitmentSizedNumber,
-        public_input: <P::DKGDecentralizedParty as mpc::Party>::PublicInput,
-        access_structure: &WeightedThresholdAccessStructure,
-        party_id: group::PartyID,
-        empty_messages: &HashMap<u64, HashMap<group::PartyID, Vec<u8>>>,
-        rng: &mut impl group::CsRng,
-    ) -> DwalletMPCResult<Vec<u8>> {
-        use crate::dwallet_mpc::crytographic_computation::mpc_computations::dwallet_dkg::{
-            compute_dwallet_dkg, try_ready_to_advance,
-        };
-
-        // consensus_round value doesn't matter for single-round DKG with no message exchange
-        let advance_request = try_ready_to_advance::<P>(party_id, access_structure, 0, empty_messages)?
-            .ok_or_else(|| DwalletMPCError::InternalError(
-                "Internal checkpoint DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
-            ))?;
-
-        let result = compute_dwallet_dkg::<P>(
-            curve, party_id, access_structure, session_id, advance_request, public_input, rng,
-        )?;
-
-        match result {
-            GuaranteedOutputDeliveryRoundResult::Finalize { public_output_value, .. } => {
-                Ok(public_output_value)
-            }
-            GuaranteedOutputDeliveryRoundResult::Advance { .. } => {
-                Err(DwalletMPCError::InternalError(
-                    "Internal checkpoint DKG did not finalize in single round as expected".to_string(),
-                ))
-            }
-        }
-    }
-
     // Dispatch to the appropriate protocol based on curve.
     // Each match arm deserializes the curve-specific types, creates the public input,
-    // then calls the helper which uses existing try_ready_to_advance and compute_dwallet_dkg.
+    // then calls execute_dkg which uses existing try_ready_to_advance and compute_dwallet_dkg.
     match curve {
         DWalletCurve::Secp256k1 => {
             let protocol_pp: <Secp256k1AsyncDKGProtocol as Protocol>::ProtocolPublicParameters =
@@ -569,10 +569,7 @@ pub fn internal_checkpoint_dkg_session_id(
     network_key_id: &[u8],
     curve: DWalletCurve,
     signature_algorithm: DWalletSignatureAlgorithm,
-) -> ika_types::messages_dwallet_mpc::SessionIdentifier {
-    use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
-    use merlin::Transcript;
-
+) -> SessionIdentifier {
     // Compute a deterministic preimage using Merlin transcript
     let mut transcript = Transcript::new(b"Internal Checkpoint DKG Session ID");
     transcript.append_message(b"network_key_id", network_key_id);
