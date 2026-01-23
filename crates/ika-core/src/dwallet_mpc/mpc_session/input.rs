@@ -315,6 +315,9 @@ pub(crate) fn session_input_from_request(
 
             // Emulate the centralized party's partial signature using ZeroRng.
             // All validators will produce identical output.
+            // NOTE: this is a cryptographic computation done outside of a Rayon context; it could be expensive.
+            // Currently, we are using schnorr signatures for which it is cheap;
+            // if in the future we should support other signature algorithms for internal sign, e.g. ECDSA, we would have to add an option to the Sign protocol to emulate the message internally, or compute it separately within a rayon context.
             let message_centralized_signature = emulate_centralized_party_partial_signature(
                 data.signature_algorithm,
                 &emulated_dkg_result,
