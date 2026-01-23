@@ -320,7 +320,6 @@ public fun add_presign(
 | SchnorrkelSubstrate | Global | RISTRETTO |
 | ECDSASecp256k1 (DKG) | Global | SECP256K1 |
 | ECDSASecp256k1 (Imported) | dWallet-specific | SECP256K1 |
-| ECDSASecp256r1 | dWallet-specific | SECP256R1 |
 
 ## Best Practices
 
