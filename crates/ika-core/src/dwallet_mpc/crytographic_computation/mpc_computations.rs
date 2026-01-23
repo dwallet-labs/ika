@@ -51,7 +51,7 @@ use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSi
 use twopc_mpc::sign::EncodableSignature;
 
 pub(crate) mod dwallet_dkg;
-pub(crate) mod internal_checkpoint_centralized_dkg_emulation;
+pub(crate) mod internal_checkpoint_dkg_emulation;
 pub(crate) mod network_dkg;
 pub(crate) mod presign;
 pub(crate) mod reconfiguration;
