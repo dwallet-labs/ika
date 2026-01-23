@@ -208,7 +208,7 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
         _epoch_store: &AuthorityPerEpochStore,
         _info: &DWalletCheckpointSignatureMessage,
     ) -> IkaResult {
-        todo!()
+        Ok(())
     }
 
     fn notify_checkpoint(&self) -> IkaResult {

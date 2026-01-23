@@ -204,11 +204,11 @@ impl ProtocolCryptographicData {
                 dwallet_network_encryption_key_id,
                 ..
             } => {
-                let PublicInput::DWalletDKGAndSign(public_input) = public_input else {
+                let PublicInput::Sign(public_input) = public_input else {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result = DWalletDKGAndSignAdvanceRequestByProtocol::try_new(
+                let advance_request_result = SignAdvanceRequestByProtocol::try_new(
                     &data.signature_algorithm,
                     party_id,
                     access_structure,
@@ -932,9 +932,9 @@ impl ProtocolCryptographicData {
                 advance_request.to_string(),
             )),
             ProtocolCryptographicData::InternalSign {
-                public_input: DKGAndSignPublicInputByProtocol::Secp256k1ECDSA(public_input),
+                public_input: SignPublicInputByProtocol::Secp256k1ECDSA(public_input),
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                    SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -949,22 +949,21 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_dwallet_dkg_and_sign::<Secp256k1ECDSAProtocol>(
-                    data.curve,
+                compute_sign::<Secp256k1ECDSAProtocol>(
                     party_id,
                     access_structure,
                     session_id,
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data.signature_algorithm,
+                    &data,
                     &mut rng,
                 )
             }
             ProtocolCryptographicData::InternalSign {
-                public_input: DKGAndSignPublicInputByProtocol::Secp256k1Taproot(public_input),
+                public_input: SignPublicInputByProtocol::Secp256k1Taproot(public_input),
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                    SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -979,22 +978,21 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_dwallet_dkg_and_sign::<Secp256k1TaprootProtocol>(
-                    data.curve,
+                compute_sign::<Secp256k1TaprootProtocol>(
                     party_id,
                     access_structure,
                     session_id,
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data.signature_algorithm,
+                    &data,
                     &mut rng,
                 )
             }
             ProtocolCryptographicData::InternalSign {
-                public_input: DKGAndSignPublicInputByProtocol::Secp256r1(public_input),
+                public_input: SignPublicInputByProtocol::Secp256r1(public_input),
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                    SignAdvanceRequestByProtocol::Secp256r1(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -1009,22 +1007,21 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_dwallet_dkg_and_sign::<Secp256r1ECDSAProtocol>(
-                    data.curve,
+                compute_sign::<Secp256r1ECDSAProtocol>(
                     party_id,
                     access_structure,
                     session_id,
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data.signature_algorithm,
+                    &data,
                     &mut rng,
                 )
             }
             ProtocolCryptographicData::InternalSign {
-                public_input: DKGAndSignPublicInputByProtocol::Curve25519(public_input),
+                public_input: SignPublicInputByProtocol::Curve25519(public_input),
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
+                    SignAdvanceRequestByProtocol::Curve25519(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -1039,22 +1036,21 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_dwallet_dkg_and_sign::<Curve25519EdDSAProtocol>(
-                    data.curve,
+                compute_sign::<Curve25519EdDSAProtocol>(
                     party_id,
                     access_structure,
                     session_id,
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data.signature_algorithm,
+                    &data,
                     &mut rng,
                 )
             }
             ProtocolCryptographicData::InternalSign {
-                public_input: DKGAndSignPublicInputByProtocol::Ristretto(public_input),
+                public_input: SignPublicInputByProtocol::Ristretto(public_input),
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
+                    SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 decryption_key_shares,
                 data,
                 ..
@@ -1069,15 +1065,14 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_dwallet_dkg_and_sign::<RistrettoSchnorrkelSubstrateProtocol>(
-                    data.curve,
+                compute_sign::<RistrettoSchnorrkelSubstrateProtocol>(
                     party_id,
                     access_structure,
                     session_id,
                     advance_request,
                     public_input,
                     Some(decryption_key_shares),
-                    &data.signature_algorithm,
+                    &data,
                     &mut rng,
                 )
             }

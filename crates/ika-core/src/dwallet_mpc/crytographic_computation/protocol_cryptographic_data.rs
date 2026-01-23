@@ -59,8 +59,8 @@ pub(crate) enum ProtocolCryptographicData {
 
     InternalSign {
         data: InternalSignData,
-        public_input: DKGAndSignPublicInputByProtocol,
-        advance_request: DWalletDKGAndSignAdvanceRequestByProtocol,
+        public_input: SignPublicInputByProtocol,
+        advance_request: SignAdvanceRequestByProtocol,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
 
@@ -193,27 +193,27 @@ impl ProtocolCryptographicData {
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalSign {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                    SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalSign {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                    SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalSign {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                    SignAdvanceRequestByProtocol::Secp256r1(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalSign {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
+                    SignAdvanceRequestByProtocol::Curve25519(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalSign {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
+                    SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::EncryptedShareVerification { .. } => 1,
@@ -376,27 +376,27 @@ impl ProtocolCryptographicData {
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalSign {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
+                    SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalSign {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
+                    SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalSign {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Secp256r1(advance_request),
+                    SignAdvanceRequestByProtocol::Secp256r1(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalSign {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Curve25519(advance_request),
+                    SignAdvanceRequestByProtocol::Curve25519(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalSign {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
+                    SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::ImportedKeyVerification {
