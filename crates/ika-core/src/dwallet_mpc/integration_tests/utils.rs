@@ -9,6 +9,7 @@ use crate::{SuiDataReceivers, SuiDataSenders};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
+use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use dwallet_rng::RootSeed;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
@@ -20,7 +21,6 @@ use ika_types::messages_dwallet_mpc::{
     DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, InternalSessionsStatusUpdate,
     SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
-use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -34,15 +34,13 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
     pub(crate) round_to_messages: Arc<Mutex<HashMap<Round, Vec<DWalletMPCMessage>>>>,
     pub(crate) round_to_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletMPCOutput>>>>,
-    pub(crate) round_to_internal_outputs:
-        Arc<Mutex<HashMap<Round, Vec<DWalletInternalMPCOutput>>>>,
+    pub(crate) round_to_internal_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletInternalMPCOutput>>>>,
     pub(crate) round_to_verified_checkpoint:
         Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
     pub(crate) round_to_status_updates:
         Arc<Mutex<HashMap<Round, Vec<InternalSessionsStatusUpdate>>>>,
     /// Presign pool keyed by signature algorithm
-    pub(crate) presign_pools:
-        Arc<Mutex<HashMap<DWalletSignatureAlgorithm, Vec<Vec<u8>>>>>,
+    pub(crate) presign_pools: Arc<Mutex<HashMap<DWalletSignatureAlgorithm, Vec<Vec<u8>>>>>,
 }
 
 pub(crate) struct IntegrationTestState {

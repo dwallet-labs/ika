@@ -60,11 +60,7 @@ async fn test_presign_pool_state_preserved() {
             .collect();
 
         epoch_store
-            .insert_presigns(
-                DWalletSignatureAlgorithm::ECDSASecp256k1,
-                1,
-                presigns,
-            )
+            .insert_presigns(DWalletSignatureAlgorithm::ECDSASecp256k1, 1, presigns)
             .expect("Failed to insert presigns");
     }
 
@@ -167,7 +163,10 @@ async fn test_validators_continue_sessions_across_rounds() {
 
     // Run multiple phases to verify session continuity
     for phase in 0..3 {
-        info!("Starting phase {} at consensus round {}", phase, test_state.consensus_round);
+        info!(
+            "Starting phase {} at consensus round {}",
+            phase, test_state.consensus_round
+        );
 
         // Run 10 consensus rounds per phase
         for _ in 0..10 {
@@ -185,7 +184,8 @@ async fn test_validators_continue_sessions_across_rounds() {
         }
 
         // Record session counts at end of phase
-        let phase_counts: Vec<usize> = test_state.dwallet_mpc_services
+        let phase_counts: Vec<usize> = test_state
+            .dwallet_mpc_services
             .iter()
             .map(|s| s.dwallet_mpc_manager().sessions.len())
             .collect();
@@ -201,10 +201,7 @@ async fn test_validators_continue_sessions_across_rounds() {
     // Verify that all validators maintained sessions throughout
     for (i, validator_counts) in session_counts_over_time.iter().enumerate() {
         for (v, &count) in validator_counts.iter().enumerate() {
-            info!(
-                "Phase {}, Validator {}: {} sessions",
-                i, v, count
-            );
+            info!("Phase {}, Validator {}: {} sessions", i, v, count);
         }
     }
 
@@ -287,7 +284,10 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
         }
 
         if round % 5 == 0 {
-            info!("Round {} completed (validator {} is unresponsive)", round, unresponsive_validator);
+            info!(
+                "Round {} completed (validator {} is unresponsive)",
+                round, unresponsive_validator
+            );
         }
     }
 
@@ -295,15 +295,15 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
     for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
         if i != unresponsive_validator {
             let session_count = service.dwallet_mpc_manager().sessions.len();
-            info!(
-                "Responsive validator {} has {} sessions",
-                i, session_count
-            );
+            info!("Responsive validator {} has {} sessions", i, session_count);
         }
     }
 
     // Now "restart" the unresponsive validator by running its service loop
-    info!("Bringing validator {} back online...", unresponsive_validator);
+    info!(
+        "Bringing validator {} back online...",
+        unresponsive_validator
+    );
 
     // Run more rounds with all validators
     for _ in 0..10 {
@@ -323,10 +323,7 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
     // Verify all validators are now functioning
     for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
         let session_count = service.dwallet_mpc_manager().sessions.len();
-        info!(
-            "Final: Validator {} has {} sessions",
-            i, session_count
-        );
+        info!("Final: Validator {} has {} sessions", i, session_count);
     }
 
     info!("Test passed: System resilience to temporary unresponsiveness verified");
@@ -381,18 +378,17 @@ async fn test_epoch_store_presign_pool_operations() {
         .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
         .expect("Failed to get pool size");
 
-    assert_eq!(pool_size_after_consume, 9, "Pool should have 9 presigns after consuming one");
+    assert_eq!(
+        pool_size_after_consume, 9,
+        "Pool should have 9 presigns after consuming one"
+    );
     info!("Pool size after consume: {}", pool_size_after_consume);
 
     // Test inserting more presigns (simulating internal presign completion)
     let more_presigns: Vec<Vec<u8>> = (10..15).map(|i| vec![i as u8; 32]).collect();
 
     test_epoch_store
-        .insert_presigns(
-            DWalletSignatureAlgorithm::ECDSASecp256k1,
-            1,
-            more_presigns,
-        )
+        .insert_presigns(DWalletSignatureAlgorithm::ECDSASecp256k1, 1, more_presigns)
         .expect("Failed to insert more presigns");
 
     let final_pool_size = test_epoch_store

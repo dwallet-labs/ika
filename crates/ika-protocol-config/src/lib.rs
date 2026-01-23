@@ -268,6 +268,25 @@ pub struct ProtocolConfig {
 
     checkpoint_signing_curve: Option<DWalletCurve>,
     checkpoint_signing_algorithm: Option<DWalletSignatureAlgorithm>,
+
+    // === Internal Presign Configuration ===
+    internal_secp256k1_ecdsa_presign_pool_minimum_size: Option<u64>,
+    internal_secp256r1_ecdsa_presign_pool_minimum_size: Option<u64>,
+    internal_eddsa_presign_pool_minimum_size: Option<u64>,
+    internal_schnorrkel_substrate_presign_pool_minimum_size: Option<u64>,
+    internal_taproot_presign_pool_minimum_size: Option<u64>,
+
+    internal_secp256k1_ecdsa_presign_consensus_round_delay: Option<u64>,
+    internal_secp256r1_ecdsa_presign_consensus_round_delay: Option<u64>,
+    internal_eddsa_presign_consensus_round_delay: Option<u64>,
+    internal_schnorrkel_substrate_presign_consensus_round_delay: Option<u64>,
+    internal_taproot_presign_consensus_round_delay: Option<u64>,
+
+    internal_secp256k1_ecdsa_presign_sessions_to_instantiate: Option<u64>,
+    internal_secp256r1_ecdsa_presign_sessions_to_instantiate: Option<u64>,
+    internal_eddsa_presign_sessions_to_instantiate: Option<u64>,
+    internal_schnorrkel_substrate_presign_sessions_to_instantiate: Option<u64>,
+    internal_taproot_presign_sessions_to_instantiate: Option<u64>,
 }
 
 // feature flags
@@ -489,6 +508,26 @@ impl ProtocolConfig {
 
             checkpoint_signing_curve: Some(DWalletCurve::Curve25519),
             checkpoint_signing_algorithm: Some(DWalletSignatureAlgorithm::EdDSA),
+
+            // === Internal Presign Configuration ===
+            // Pool minimum sizes
+            internal_secp256k1_ecdsa_presign_pool_minimum_size: None,
+            internal_secp256r1_ecdsa_presign_pool_minimum_size: None,
+            internal_eddsa_presign_pool_minimum_size: None,
+            internal_schnorrkel_substrate_presign_pool_minimum_size: None,
+            internal_taproot_presign_pool_minimum_size: None,
+            // Consensus round delays
+            internal_secp256k1_ecdsa_presign_consensus_round_delay: None,
+            internal_secp256r1_ecdsa_presign_consensus_round_delay: None,
+            internal_eddsa_presign_consensus_round_delay: None,
+            internal_schnorrkel_substrate_presign_consensus_round_delay: None,
+            internal_taproot_presign_consensus_round_delay: None,
+            // Sessions to instantiate
+            internal_secp256k1_ecdsa_presign_sessions_to_instantiate: None,
+            internal_secp256r1_ecdsa_presign_sessions_to_instantiate: None,
+            internal_eddsa_presign_sessions_to_instantiate: None,
+            internal_schnorrkel_substrate_presign_sessions_to_instantiate: None,
+            internal_taproot_presign_sessions_to_instantiate: None,
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);

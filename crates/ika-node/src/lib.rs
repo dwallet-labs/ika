@@ -168,7 +168,6 @@ use ika_core::consensus_handler::ConsensusHandlerInitializer;
 use ika_core::dwallet_mpc::InternalCheckpointSignRequest;
 use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use ika_core::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
-use tokio::sync::mpsc::UnboundedSender;
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
@@ -185,6 +184,7 @@ use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPac
 pub use simulator::set_jwk_injector;
 #[cfg(msim)]
 use simulator::*;
+use tokio::sync::mpsc::UnboundedSender;
 
 pub struct IkaNode {
     config: NodeConfig,

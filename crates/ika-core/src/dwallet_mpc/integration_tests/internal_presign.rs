@@ -57,12 +57,19 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
         .dwallet_mpc_manager()
         .protocol_config;
 
-    let eddsa_delay = protocol_config
-        .get_internal_presign_consensus_round_delay(DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA);
-    let eddsa_min_pool_size = protocol_config
-        .get_internal_presign_pool_minimum_size(DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA);
+    let eddsa_delay = protocol_config.get_internal_presign_consensus_round_delay(
+        DWalletCurve::Curve25519,
+        DWalletSignatureAlgorithm::EdDSA,
+    );
+    let eddsa_min_pool_size = protocol_config.get_internal_presign_pool_minimum_size(
+        DWalletCurve::Curve25519,
+        DWalletSignatureAlgorithm::EdDSA,
+    );
     let eddsa_sessions_to_instantiate = protocol_config
-        .get_internal_presign_sessions_to_instantiate(DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA);
+        .get_internal_presign_sessions_to_instantiate(
+            DWalletCurve::Curve25519,
+            DWalletSignatureAlgorithm::EdDSA,
+        );
 
     info!(
         "EdDSA config: delay={}, min_pool_size={}, sessions_to_instantiate={}",
@@ -99,9 +106,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
         if current_internal_presign_count > internal_presign_count {
             info!(
                 "Round {}: New internal presign sessions created. Total: {} (was {})",
-                test_state.consensus_round,
-                current_internal_presign_count,
-                internal_presign_count
+                test_state.consensus_round, current_internal_presign_count, internal_presign_count
             );
             internal_presign_count = current_internal_presign_count;
         }
@@ -184,11 +189,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             .collect();
 
         epoch_store
-            .insert_presigns(
-                DWalletSignatureAlgorithm::ECDSASecp256k1,
-                1,
-                presigns,
-            )
+            .insert_presigns(DWalletSignatureAlgorithm::ECDSASecp256k1, 1, presigns)
             .expect("Failed to insert presigns");
     }
 
@@ -197,10 +198,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         let pool_size = epoch_store
             .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
             .expect("Failed to get pool size");
-        assert_eq!(
-            pool_size, min_pool_size,
-            "Pool should be at minimum size"
-        );
+        assert_eq!(pool_size, min_pool_size, "Pool should be at minimum size");
     }
 
     // Count initial internal presign sessions
@@ -310,10 +308,7 @@ async fn test_internal_presign_continues_when_idle() {
     let active_sessions = manager.sessions.len();
     let is_idle = active_sessions < idle_threshold as usize;
 
-    info!(
-        "Active sessions: {}, Is idle: {}",
-        active_sessions, is_idle
-    );
+    info!("Active sessions: {}, Is idle: {}", active_sessions, is_idle);
 
     // Track internal presign sessions
     let initial_internal_presign_count: usize = manager

@@ -58,9 +58,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::messages_consensus::Round;
+use tokio::sync::mpsc::UnboundedReceiver;
 #[cfg(feature = "test-utils")]
 use tokio::sync::watch;
-use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
 
@@ -343,7 +343,10 @@ impl DWalletMPCService {
 
             let instantiated = self
                 .dwallet_mpc_manager
-                .instantiate_internal_sign_session_for_checkpoint(request.checkpoint_sequence_number, request.message);
+                .instantiate_internal_sign_session_for_checkpoint(
+                    request.checkpoint_sequence_number,
+                    request.message,
+                );
 
             if instantiated {
                 debug!(
@@ -726,65 +729,67 @@ impl DWalletMPCService {
                 .chain(completed_internal_sessions)
                 .collect();
 
-            let global_presign_checkpoint_messages =
-                if !self.agreed_global_presign_requests_queue.is_empty() {
-                    let mut unprocessed_requests = Vec::new();
-                    let mut global_presign_checkpoint_messages = Vec::new();
-                    for request in self.agreed_global_presign_requests_queue.clone() {
-                        match self.epoch_store.pop_presign(request.signature_algorithm) {
-                            Ok(Some(presign)) => {
-                                self.processed_global_presign_requests_session_identifiers
-                                    .insert(request.session_identifier);
+            let global_presign_checkpoint_messages = if !self
+                .agreed_global_presign_requests_queue
+                .is_empty()
+            {
+                let mut unprocessed_requests = Vec::new();
+                let mut global_presign_checkpoint_messages = Vec::new();
+                for request in self.agreed_global_presign_requests_queue.clone() {
+                    match self.epoch_store.pop_presign(request.signature_algorithm) {
+                        Ok(Some(presign)) => {
+                            self.processed_global_presign_requests_session_identifiers
+                                .insert(request.session_identifier);
 
-                                match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
-                                    Ok(presign) => {
-                                        info!(presign_session_id =? request.session_identifier, presign_id =? request.presign_id, session_sequence_number =? request
+                            match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
+                                Ok(presign) => {
+                                    info!(presign_session_id =? request.session_identifier, presign_id =? request.presign_id, session_sequence_number =? request
                                                         .session_sequence_number, "using presign from internal presign pool for global presign request");
 
-                                        let checkpoint_message =
-                                            DWalletCheckpointMessageKind::RespondDWalletPresign(
-                                                PresignOutput {
-                                                    presign,
-                                                    dwallet_id: None,
-                                                    presign_id: request.presign_id.to_vec(),
-                                                    rejected: false,
-                                                    session_sequence_number: request
-                                                        .session_sequence_number,
-                                                },
-                                            );
-
-                                        global_presign_checkpoint_messages.push(checkpoint_message);
-                                    }
-                                    Err(e) => {
-                                        error!(
-                                            error=?e,
-                                            should_never_happen =? true,
-                                            "failed to serialize presign output"
+                                    let checkpoint_message =
+                                        DWalletCheckpointMessageKind::RespondDWalletPresign(
+                                            PresignOutput {
+                                                presign,
+                                                dwallet_id: None,
+                                                presign_id: request.presign_id.to_vec(),
+                                                rejected: false,
+                                                session_sequence_number: request
+                                                    .session_sequence_number,
+                                            },
                                         );
-                                    }
+
+                                    global_presign_checkpoint_messages.push(checkpoint_message);
+                                }
+                                Err(e) => {
+                                    error!(
+                                        error=?e,
+                                        should_never_happen =? true,
+                                        "failed to serialize presign output"
+                                    );
                                 }
                             }
-                            Ok(None) => {
-                                unprocessed_requests.push(request);
-                            }
-                            Err(e) => {
-                                error!(
-                                    error=?e,
-                                    last_read_consensus_round=self.last_read_consensus_round,
-                                    "failed to pop presign from DB"
-                                );
+                        }
+                        Ok(None) => {
+                            unprocessed_requests.push(request);
+                        }
+                        Err(e) => {
+                            error!(
+                                error=?e,
+                                last_read_consensus_round=self.last_read_consensus_round,
+                                "failed to pop presign from DB"
+                            );
 
-                                unprocessed_requests.push(request);
-                            }
+                            unprocessed_requests.push(request);
                         }
                     }
+                }
 
-                    self.agreed_global_presign_requests_queue = unprocessed_requests;
+                self.agreed_global_presign_requests_queue = unprocessed_requests;
 
-                    global_presign_checkpoint_messages
-                } else {
-                    Vec::new()
-                };
+                global_presign_checkpoint_messages
+            } else {
+                Vec::new()
+            };
 
             // Take back the external outputs' internal checkpoint messages
             let mut checkpoint_messages: Vec<_> = agreed_external_mpc_outputs

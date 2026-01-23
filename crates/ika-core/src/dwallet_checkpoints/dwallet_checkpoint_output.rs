@@ -98,7 +98,10 @@ impl<T: SubmitToConsensus> DWalletCheckpointOutput for SubmitDWalletCheckpointTo
                 message: message_to_sign,
             };
 
-            if let Err(e) = self.internal_checkpoint_sign_sender.send(internal_sign_request) {
+            if let Err(e) = self
+                .internal_checkpoint_sign_sender
+                .send(internal_sign_request)
+            {
                 warn!(
                     checkpoint_seq,
                     error = %e,

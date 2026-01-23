@@ -10,13 +10,13 @@
 //! 4. Signature verification against the network key
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
+use crate::dwallet_mpc::InternalCheckpointSignRequest;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg::{
     emulate_centralized_dkg_for_internal_signing, internal_checkpoint_dkg_session_id,
 };
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
-use crate::dwallet_mpc::InternalCheckpointSignRequest;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use ika_types::committee::Committee;
 use ika_types::messages_dwallet_mpc::SessionType;
@@ -100,7 +100,10 @@ async fn test_internal_checkpoint_sign_flow() {
             .presign_pool_size(signature_algorithm)
             .expect("Failed to get pool size");
         assert_eq!(pool_size, 1, "Pool should have one presign");
-        info!("Presign pool size for {:?}: {}", signature_algorithm, pool_size);
+        info!(
+            "Presign pool size for {:?}: {}",
+            signature_algorithm, pool_size
+        );
     }
 
     // Count initial internal sign sessions
@@ -139,10 +142,8 @@ fn test_internal_checkpoint_dkg_session_id_determinism() {
     let curve = DWalletCurve::Curve25519;
     let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-    let session_id_1 =
-        internal_checkpoint_dkg_session_id(&network_key_id, epoch, curve, algorithm);
-    let session_id_2 =
-        internal_checkpoint_dkg_session_id(&network_key_id, epoch, curve, algorithm);
+    let session_id_1 = internal_checkpoint_dkg_session_id(&network_key_id, epoch, curve, algorithm);
+    let session_id_2 = internal_checkpoint_dkg_session_id(&network_key_id, epoch, curve, algorithm);
 
     assert_eq!(
         session_id_1, session_id_2,

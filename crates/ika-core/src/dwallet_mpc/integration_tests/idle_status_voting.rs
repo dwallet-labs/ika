@@ -278,7 +278,10 @@ async fn test_status_updates_distributed_through_consensus() {
         total_status_updates += status_updates.values().map(|v| v.len()).sum::<usize>();
     }
 
-    info!("Total status updates across all validators: {}", total_status_updates);
+    info!(
+        "Total status updates across all validators: {}",
+        total_status_updates
+    );
 
     // Status updates should have been distributed
     // Each round, each validator sends 1 status update, and it gets distributed to all
@@ -364,10 +367,7 @@ async fn test_weighted_majority_voting_on_idle_status() {
         info!("Validator {} is_idle: {}", i, is_idle);
     }
 
-    info!(
-        "{} out of 4 validators report being idle",
-        idle_validators
-    );
+    info!("{} out of 4 validators report being idle", idle_validators);
 
     // Run more consensus rounds to build up majority vote
     for _ in 0..15 {
