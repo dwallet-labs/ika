@@ -266,25 +266,8 @@ pub struct ProtocolConfig {
     network_encryption_key_version: Option<u64>,
     reconfiguration_message_version: Option<u64>,
 
-    // The number of threshold underneath which a validator considers itself idle
-    idle_session_count_threshold: Option<u64>,
     checkpoint_signing_curve: Option<DWalletCurve>,
     checkpoint_signing_algorithm: Option<DWalletSignatureAlgorithm>,
-    internal_secp256k1_ecdsa_presign_pool_minimum_size: Option<u64>,
-    internal_secp256r1_ecdsa_presign_pool_minimum_size: Option<u64>,
-    internal_taproot_presign_pool_minimum_size: Option<u64>,
-    internal_eddsa_presign_pool_minimum_size: Option<u64>,
-    internal_schnorrkel_substrate_presign_pool_minimum_size: Option<u64>,
-    internal_secp256k1_ecdsa_presign_consensus_round_delay: Option<u64>,
-    internal_secp256r1_ecdsa_presign_consensus_round_delay: Option<u64>,
-    internal_taproot_presign_consensus_round_delay: Option<u64>,
-    internal_eddsa_presign_consensus_round_delay: Option<u64>,
-    internal_schnorrkel_substrate_presign_consensus_round_delay: Option<u64>,
-    internal_secp256k1_ecdsa_presign_sessions_to_instantiate: Option<u64>,
-    internal_secp256r1_ecdsa_presign_sessions_to_instantiate: Option<u64>,
-    internal_taproot_presign_sessions_to_instantiate: Option<u64>,
-    internal_eddsa_presign_sessions_to_instantiate: Option<u64>,
-    internal_schnorrkel_substrate_presign_sessions_to_instantiate: Option<u64>,
 }
 
 // feature flags
@@ -503,29 +486,9 @@ impl ProtocolConfig {
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
-            idle_session_count_threshold: Some(8),
+
             checkpoint_signing_curve: Some(DWalletCurve::Curve25519),
             checkpoint_signing_algorithm: Some(DWalletSignatureAlgorithm::EdDSA),
-
-            internal_secp256k1_ecdsa_presign_pool_minimum_size: Some(1000),
-            internal_secp256k1_ecdsa_presign_consensus_round_delay: Some(500),
-            internal_secp256k1_ecdsa_presign_sessions_to_instantiate: Some(1),
-
-            internal_secp256r1_ecdsa_presign_pool_minimum_size: Some(100),
-            internal_secp256r1_ecdsa_presign_consensus_round_delay: Some(1000),
-            internal_secp256r1_ecdsa_presign_sessions_to_instantiate: Some(1),
-
-            internal_taproot_presign_pool_minimum_size: Some(5000),
-            internal_taproot_presign_consensus_round_delay: Some(200),
-            internal_taproot_presign_sessions_to_instantiate: Some(1),
-
-            internal_eddsa_presign_pool_minimum_size: Some(20000),
-            internal_eddsa_presign_consensus_round_delay: Some(30),
-            internal_eddsa_presign_sessions_to_instantiate: Some(2),
-
-            internal_schnorrkel_substrate_presign_pool_minimum_size: Some(100),
-            internal_schnorrkel_substrate_presign_consensus_round_delay: Some(2000),
-            internal_schnorrkel_substrate_presign_sessions_to_instantiate: Some(1),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);

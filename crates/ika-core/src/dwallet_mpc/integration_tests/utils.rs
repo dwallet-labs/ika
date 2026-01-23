@@ -8,6 +8,7 @@ use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
+use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use dwallet_rng::RootSeed;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
@@ -16,8 +17,8 @@ use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
-    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
-    InternalSessionsStatusUpdate, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
+    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, InternalSessionsStatusUpdate,
+    SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use std::collections::HashMap;
@@ -154,64 +155,36 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
 
     fn next_dwallet_internal_mpc_output(
         &self,
-        last_consensus_round: Option<Round>,
+        _last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>> {
-        let round_to_internal_outputs = self.round_to_internal_outputs.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(round_to_internal_outputs
-                .get(&0)
-                .map(|outputs| (0, outputs.clone())));
-        }
-        Ok(round_to_internal_outputs
-            .get(&(last_consensus_round.unwrap() + 1))
-            .map(|outputs| (last_consensus_round.unwrap() + 1, outputs.clone())))
+        Ok(None)
     }
 
     fn insert_presigns(
         &self,
-        signature_algorithm: DWalletSignatureAlgorithm,
+        _signature_algorithm: DWalletSignatureAlgorithm,
         _session_sequence_number: u64,
-        presigns: Vec<Vec<u8>>,
+        _presigns: Vec<Vec<u8>>,
     ) -> IkaResult<()> {
-        let mut pools = self.presign_pools.lock().unwrap();
-        pools
-            .entry(signature_algorithm)
-            .or_default()
-            .extend(presigns);
         Ok(())
     }
 
-    fn presign_pool_size(&self, signature_algorithm: DWalletSignatureAlgorithm) -> IkaResult<u64> {
-        let pools = self.presign_pools.lock().unwrap();
-        Ok(pools.get(&signature_algorithm).map_or(0, |v| v.len()) as u64)
+    fn presign_pool_size(&self, _signature_algorithm: DWalletSignatureAlgorithm) -> IkaResult<u64> {
+        Ok(0)
     }
 
     fn pop_presign(
         &self,
-        signature_algorithm: DWalletSignatureAlgorithm,
+        _signature_algorithm: DWalletSignatureAlgorithm,
     ) -> IkaResult<Option<Vec<u8>>> {
-        let mut pools = self.presign_pools.lock().unwrap();
-        if let Some(pool) = pools.get_mut(&signature_algorithm) {
-            if !pool.is_empty() {
-                return Ok(Some(pool.remove(0)));
-            }
-        }
         Ok(None)
     }
 
     fn next_internal_sessions_status_update(
         &self,
-        last_consensus_round: Option<Round>,
+        _last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>> {
-        let round_to_status_updates = self.round_to_status_updates.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(round_to_status_updates
-                .get(&0)
-                .map(|updates| (0, updates.clone())));
-        }
-        Ok(round_to_status_updates
-            .get(&(last_consensus_round.unwrap() + 1))
-            .map(|updates| (last_consensus_round.unwrap() + 1, updates.clone())))
+        Ok(None)
     }
 }
 
@@ -279,7 +252,7 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
         _epoch_store: &AuthorityPerEpochStore,
         _info: &DWalletCheckpointSignatureMessage,
     ) -> IkaResult {
-        todo!()
+        Ok(())
     }
 
     fn notify_checkpoint(&self) -> IkaResult {

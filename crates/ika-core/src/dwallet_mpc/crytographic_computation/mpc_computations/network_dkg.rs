@@ -6,9 +6,7 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg::{
-    emulate_centralized_dkg_for_internal_signing, internal_checkpoint_dkg_session_id,
-};
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg_emulation::compute_internal_checkpoint_dkg_output;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
@@ -312,6 +310,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
     key_data: DWalletNetworkEncryptionKeyData,
     checkpoint_signing_curve: DWalletCurve,
     checkpoint_signing_algorithm: DWalletSignatureAlgorithm,
+    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
 
@@ -328,6 +327,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                     key_data.id.into_bytes(),
                     checkpoint_signing_curve,
                     checkpoint_signing_algorithm,
+                    party_id,
                 )
             }
         } else {
@@ -340,6 +340,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                 key_data.id.into_bytes(),
                 checkpoint_signing_curve,
                 checkpoint_signing_algorithm,
+                party_id,
             )
         };
 
@@ -361,6 +362,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     network_key_id: [u8; 32],
     checkpoint_signing_curve: DWalletCurve,
     checkpoint_signing_algorithm: DWalletSignatureAlgorithm,
+    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -405,17 +407,31 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
             );
 
             // Compute the internal checkpoint DKG output for checkpoint signing
-            // We need to serialize the protocol public parameters for the emulated DKG
-            let internal_checkpoint_dkg_output = compute_internal_checkpoint_dkg_output(
-                epoch,
-                &network_key_id,
-                checkpoint_signing_curve,
-                checkpoint_signing_algorithm,
-                &bcs::to_bytes(&*secp256k1_protocol_public_parameters).ok(),
-                &bcs::to_bytes(&*secp256r1_protocol_public_parameters).ok(),
-                &bcs::to_bytes(&*ristretto_protocol_public_parameters).ok(),
-                &bcs::to_bytes(&*curve25519_protocol_public_parameters).ok(),
-            );
+            // Select the protocol PP for the checkpoint signing curve
+            let internal_checkpoint_dkg_output = match checkpoint_signing_curve {
+                DWalletCurve::Secp256k1 => {
+                    bcs::to_bytes(&*secp256k1_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Secp256r1 => {
+                    bcs::to_bytes(&*secp256r1_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Ristretto => {
+                    bcs::to_bytes(&*ristretto_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Curve25519 => {
+                    bcs::to_bytes(&*curve25519_protocol_public_parameters).ok()
+                }
+            }
+            .and_then(|protocol_pp| {
+                compute_internal_checkpoint_dkg_output(
+                    &network_key_id,
+                    checkpoint_signing_curve,
+                    checkpoint_signing_algorithm,
+                    &protocol_pp,
+                    access_structure,
+                    party_id,
+                )
+            });
 
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,

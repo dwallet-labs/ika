@@ -4,7 +4,7 @@ use group::{CsRng, OsCsRng};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use merlin::Transcript;
 use rand_chacha::ChaCha20Rng;
-use rand_chacha::rand_core::{RngCore, SeedableRng};
+use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use zeroize::ZeroizeOnDrop;
 
@@ -107,8 +107,6 @@ impl RootSeed {
 // =============================================================================
 // ZERO RNG - DETERMINISTIC ZERO-RETURNING RANDOM NUMBER GENERATOR
 // =============================================================================
-
-use rand_chacha::rand_core::CryptoRng;
 
 /// A deterministic random number generator that **ALWAYS RETURNS ZEROS**.
 ///

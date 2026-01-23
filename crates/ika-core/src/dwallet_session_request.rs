@@ -188,9 +188,13 @@ impl Ord for DWalletSessionRequest {
             (SessionType::InternalSign, SessionType::InternalSign) => self
                 .session_sequence_number
                 .cmp(&other.session_sequence_number),
-            // Internal sessions have lowest priority (come last)
-            (SessionType::InternalPresign | SessionType::InternalSign, _) => Ordering::Greater,
-            (_, SessionType::InternalPresign | SessionType::InternalSign) => Ordering::Less,
+            // Internal presign sessions are of the lowest priority (handled last)
+            (SessionType::InternalPresign, _) => Ordering::Greater,
+            (_, SessionType::InternalPresign) => Ordering::Less,
+
+            // Internal sign sessions are of the highest priority (handled first)
+            (SessionType::InternalSign, _) => Ordering::Less,
+            (_, SessionType::InternalSign) => Ordering::Greater,
         }
     }
 }
@@ -345,6 +349,14 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                     name: data.to_string(),
                     curve: Some(data.curve),
                     hash_scheme: None,
+                    signature_algorithm: Some(data.signature_algorithm),
+                }
+            }
+            ProtocolCryptographicData::InternalSign { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve),
+                    hash_scheme: Some(data.hash_scheme),
                     signature_algorithm: Some(data.signature_algorithm),
                 }
             }

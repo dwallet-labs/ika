@@ -136,13 +136,41 @@ fn centralized_dkg_output_v2<P: twopc_mpc::dkg::Protocol>(
     protocol_pp: Vec<u8>,
     session_id: Vec<u8>,
 ) -> anyhow::Result<CentralizedDKGWasmResult> {
+    centralized_dkg_output_v2_with_rng::<P, _>(protocol_pp, session_id, &mut OsCsRng)
+}
+
+/// Executes the centralized party DKG with a custom RNG.
+///
+/// This is a lower-level function that allows callers to provide their own RNG,
+/// enabling deterministic output for internal signing (using ZeroRng) or
+/// random output for user-initiated DKG (using OsCsRng).
+///
+/// # Type Parameters
+///
+/// * `P` - The DKG protocol type
+/// * `R` - The RNG type (must implement CryptoRngCore)
+///
+/// # Parameters
+///
+/// * `protocol_pp` - Serialized protocol public parameters
+/// * `session_id` - Session identifier bytes
+/// * `rng` - The random number generator to use
+///
+/// # Returns
+///
+/// The centralized DKG result containing public key share, proof, and secret output.
+pub fn centralized_dkg_output_v2_with_rng<P: twopc_mpc::dkg::Protocol, R: group::CsRng>(
+    protocol_pp: Vec<u8>,
+    session_id: Vec<u8>,
+    rng: &mut R,
+) -> anyhow::Result<CentralizedDKGWasmResult> {
     let protocol_public_parameters: P::ProtocolPublicParameters = bcs::from_bytes(&protocol_pp)?;
     let session_identifier = CommitmentSizedNumber::from_le_slice(&session_id);
     let round_result = P::DKGCentralizedPartyRound::advance(
         (),
         &(),
         &(protocol_public_parameters, session_identifier).into(),
-        &mut OsCsRng,
+        rng,
     )
     .map_err(|e| anyhow!("advance() failed on the DKGCentralizedParty: {}", e.into()))?;
 
@@ -688,6 +716,36 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
     centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput,
     protocol_pp: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
+    advance_sign_by_protocol_with_rng::<P, _>(
+        centralized_party_secret_key_share,
+        presign,
+        message,
+        hash_scheme,
+        centralized_party_dkg_public_output,
+        protocol_pp,
+        &mut OsCsRng,
+    )
+}
+
+/// Executes the centralized party signing with a custom RNG.
+///
+/// This is a lower-level function that allows callers to provide their own RNG,
+/// enabling deterministic output for internal signing (using ZeroRng) or
+/// random output for user-initiated signing (using OsCsRng).
+///
+/// # Type Parameters
+///
+/// * `P` - The signing protocol type
+/// * `R` - The RNG type (must implement CryptoRngCore)
+pub fn advance_sign_by_protocol_with_rng<P: twopc_mpc::sign::Protocol, R: group::CsRng>(
+    centralized_party_secret_key_share: &[u8],
+    presign: &[u8],
+    message: Vec<u8>,
+    hash_scheme: HashScheme,
+    centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput,
+    protocol_pp: &[u8],
+    rng: &mut R,
+) -> anyhow::Result<Vec<u8>> {
     let versioned_centralized_party_secret_key_share: VersionedDwalletUserSecretShare =
         bcs::from_bytes(centralized_party_secret_key_share)?;
     let VersionedDwalletUserSecretShare::V1(centralized_party_secret_key_share) =
@@ -710,7 +768,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
         (),
         &centralized_party_secret_key_share,
         &centralized_party_public_input,
-        &mut OsCsRng,
+        rng,
     );
     match round_result {
         Ok(round_result) => {

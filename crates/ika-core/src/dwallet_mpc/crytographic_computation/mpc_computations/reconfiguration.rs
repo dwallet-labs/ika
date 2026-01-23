@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::debug_variable_chunks;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg::{
-    emulate_centralized_dkg_for_internal_signing, internal_checkpoint_dkg_session_id,
-};
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg_emulation::compute_internal_checkpoint_dkg_output;
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
@@ -266,6 +264,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     network_key_id: [u8; 32],
     checkpoint_signing_curve: DWalletCurve,
     checkpoint_signing_algorithm: DWalletSignatureAlgorithm,
+    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -307,17 +306,31 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
             );
 
             // Compute the internal checkpoint DKG output for checkpoint signing
-            // We need to serialize the protocol public parameters for the emulated DKG
-            let internal_checkpoint_dkg_output = compute_internal_checkpoint_dkg_output(
-                epoch,
-                &network_key_id,
-                checkpoint_signing_curve,
-                checkpoint_signing_algorithm,
-                &bcs::to_bytes(&*secp256k1_protocol_public_parameters).ok(),
-                &bcs::to_bytes(&*secp256r1_protocol_public_parameters).ok(),
-                &bcs::to_bytes(&*ristretto_protocol_public_parameters).ok(),
-                &bcs::to_bytes(&*curve25519_protocol_public_parameters).ok(),
-            );
+            // Select the protocol PP for the checkpoint signing curve
+            let internal_checkpoint_dkg_output = match checkpoint_signing_curve {
+                DWalletCurve::Secp256k1 => {
+                    bcs::to_bytes(&*secp256k1_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Secp256r1 => {
+                    bcs::to_bytes(&*secp256r1_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Ristretto => {
+                    bcs::to_bytes(&*ristretto_protocol_public_parameters).ok()
+                }
+                DWalletCurve::Curve25519 => {
+                    bcs::to_bytes(&*curve25519_protocol_public_parameters).ok()
+                }
+            }
+            .and_then(|protocol_pp| {
+                compute_internal_checkpoint_dkg_output(
+                    &network_key_id,
+                    checkpoint_signing_curve,
+                    checkpoint_signing_algorithm,
+                    &protocol_pp,
+                    access_structure,
+                    party_id,
+                )
+            });
 
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,

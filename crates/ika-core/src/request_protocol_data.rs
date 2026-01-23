@@ -85,6 +85,16 @@ pub struct InternalSignData {
     pub hash_scheme: HashScheme,
 }
 
+impl From<&InternalSignData> for SignData {
+    fn from(internal: &InternalSignData) -> Self {
+        SignData {
+            curve: internal.curve,
+            signature_algorithm: internal.signature_algorithm,
+            hash_scheme: internal.hash_scheme,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Network Encryption Key DKG")]
 pub struct NetworkEncryptionKeyDkgData {}

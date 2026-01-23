@@ -129,7 +129,7 @@ pub struct NetworkEncryptionKeyPublicData {
 
     /// The DKG output for internal checkpoint signing.
     ///
-    /// This field holds the decentralized party DKG output created using a deterministic
+    /// This field holds the centralized party DKG output created using a deterministic
     /// zero-returning RNG (`ZeroRng`) to emulate the centralized party. This enables
     /// the network to perform internal signing operations (e.g., checkpoint signing)
     /// without requiring an actual user.
@@ -397,13 +397,13 @@ impl NetworkEncryptionKeyPublicData {
             .clone()
     }
 
-    /// Returns the internal checkpoint DKG output if available.
+    /// Returns the internal checkpoint centralized DKG output if available.
     ///
     /// The output contains:
     /// - The curve used for signing
     /// - The signature algorithm
     /// - The serialized `VersionedDwalletDKGPublicOutput`
-    pub fn internal_checkpoint_dkg_output(
+    pub fn internal_checkpoint_centralized_dkg_output(
         &self,
     ) -> Option<&(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)> {
         self.internal_checkpoint_dkg_output.as_ref()

@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use super::error::Result;
+use super::error::{Error, Result};
 use crate::committee::{Committee, EpochId};
 use crate::digests::{
     DWalletCheckpointContentsDigest, DWalletCheckpointMessageDigest,
@@ -42,7 +42,10 @@ impl ReadStore for SharedInMemoryStore {
     }
 
     fn get_latest_dwallet_checkpoint(&self) -> Result<VerifiedDWalletCheckpointMessage> {
-        todo!()
+        self.inner()
+            .get_highest_verified_dwallet_checkpoint()
+            .cloned()
+            .ok_or_else(|| Error::missing("No dwallet checkpoint available"))
     }
 
     fn get_highest_verified_dwallet_checkpoint(
@@ -88,7 +91,10 @@ impl ReadStore for SharedInMemoryStore {
     }
 
     fn get_latest_system_checkpoint(&self) -> Result<VerifiedSystemCheckpointMessage> {
-        todo!()
+        self.inner()
+            .get_highest_verified_system_checkpoint()
+            .cloned()
+            .ok_or_else(|| Error::missing("No system checkpoint available"))
     }
 
     fn get_highest_verified_system_checkpoint(
@@ -546,7 +552,9 @@ impl ReadStore for SingleCheckpointSharedInMemoryStore {
     }
 
     fn get_latest_dwallet_checkpoint(&self) -> Result<VerifiedDWalletCheckpointMessage> {
-        todo!()
+        self.0
+            .get_highest_verified_dwallet_checkpoint()?
+            .ok_or_else(|| Error::missing("No dwallet checkpoint available"))
     }
 
     fn get_highest_verified_dwallet_checkpoint(
@@ -581,7 +589,9 @@ impl ReadStore for SingleCheckpointSharedInMemoryStore {
     }
 
     fn get_latest_system_checkpoint(&self) -> Result<VerifiedSystemCheckpointMessage> {
-        todo!()
+        self.0
+            .get_highest_verified_system_checkpoint()?
+            .ok_or_else(|| Error::missing("No system checkpoint available"))
     }
 
     fn get_highest_verified_system_checkpoint(

@@ -2,6 +2,7 @@ use crate::crypto::{AuthorityName, keccak256_digest};
 use crate::message::DWalletCheckpointMessageKind;
 use anyhow::anyhow;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use group::HashScheme;
 use move_core_types::account_address::AccountAddress;
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
@@ -89,7 +90,8 @@ pub enum DWalletInternalMPCOutputKind {
         output: Vec<u8>,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
-    }, // todo: needs hash, hash_scheme: HashScheme },
+        hash_scheme: HashScheme,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -115,14 +117,33 @@ pub struct GlobalPresignRequest {
 pub struct InternalSessionsStatusUpdate {
     /// The authority that sent this status update.
     pub authority: AuthorityName,
-    // TODO: delete
-    /// The consensus round this update is for.
-    pub consensus_round: u64,
+    /// A random unique value used once, sampled each time anew,
+    /// used to make this update unique, such that its key will be unique.
+    pub nonce: [u8; 32],
     /// Whether this validator is idle (has fewer sessions ready to execute
     /// than the idle session count threshold).
     pub is_idle: bool,
     /// The global presign requests this validator received.
     pub global_presign_requests: Vec<GlobalPresignRequest>,
+}
+
+impl InternalSessionsStatusUpdate {
+    /// Creates a new `InternalSessionsStatusUpdate` with a freshly sampled random nonce.
+    pub fn new(
+        authority: AuthorityName,
+        is_idle: bool,
+        global_presign_requests: Vec<GlobalPresignRequest>,
+    ) -> Self {
+        use rand::RngCore;
+        let mut nonce = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        Self {
+            authority,
+            nonce,
+            is_idle,
+            global_presign_requests,
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Debug, Serialize, Deserialize)]
@@ -133,6 +154,17 @@ pub enum DWalletMPCOutputKind {
     External {
         output: Vec<DWalletCheckpointMessageKind>,
     },
+}
+
+impl DWalletMPCOutput {
+    // TODO: delete
+    pub fn rejected(&self) -> Option<bool> {
+        if let [output] = &self.output[..] {
+            output.rejected()
+        } else {
+            false
+        }
+    }
 }
 
 impl DWalletMPCOutputKind {

@@ -10,6 +10,7 @@ edition = "2024"
 workspace = true
 
 [dependencies]
+crypto-bigint.workspace = true
 hex.workspace = true
 group.workspace = true
 mpc.workspace = true
@@ -77,12 +78,13 @@ strum_macros.workspace = true
 derive_more.workspace = true
 derivative = "2.2.0"
 
+dwallet-mpc-centralized-party = { path = "../dwallet-mpc-centralized-party" }
+
 [dev-dependencies]
 ika-types = {workspace = true, features = ["test_helpers"]}
 class_groups = { workspace = true, features = ["threshold", "parallel", "test_helpers"]}
 tracing-subscriber = "0.3.19"
 base64 = "0.22.1"
-dwallet-mpc-centralized-party = { path = "../dwallet-mpc-centralized-party" }
 
 [target.'cfg(not(target_env = "msvc"))'.dev-dependencies]
 pprof.workspace = true

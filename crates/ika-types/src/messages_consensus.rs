@@ -65,8 +65,9 @@ pub enum ConsensusTransactionKey {
         DWalletInternalMPCOutputKind,
         Vec<AuthorityName>, // malicious authorities
     ),
-    /// Internal sessions status update from a validator for a given consensus round.
-    InternalSessionsStatusUpdate(AuthorityName, u64 /* consensus_round */),
+    /// Internal sessions status update from a validator.
+    /// The nonce ensures each update is unique.
+    InternalSessionsStatusUpdate(AuthorityName, [u8; 32]),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -125,12 +126,12 @@ impl Debug for ConsensusTransactionKey {
             ConsensusTransactionKey::EndOfPublish(authority) => {
                 write!(f, "EndOfPublish({:?})", authority.concise())
             }
-            ConsensusTransactionKey::InternalSessionsStatusUpdate(authority, consensus_round) => {
+            ConsensusTransactionKey::InternalSessionsStatusUpdate(authority, nonce) => {
                 write!(
                     f,
-                    "InternalSessionsStatusUpdate({:?}, {:?})",
+                    "InternalSessionsStatusUpdate({:?}, 0x{})",
                     authority.concise(),
-                    consensus_round
+                    hex::encode(nonce)
                 )
             }
         }
@@ -334,9 +335,7 @@ impl ConsensusTransaction {
     ) -> Self {
         let mut hasher = DefaultHasher::new();
         status_update.authority.hash(&mut hasher);
-        status_update.consensus_round.hash(&mut hasher);
-        status_update.is_idle.hash(&mut hasher);
-        status_update.global_presign_requests.hash(&mut hasher);
+        status_update.nonce.hash(&mut hasher);
         let tracking_id = hasher.finish().to_le_bytes();
         Self {
             tracking_id,
@@ -396,7 +395,7 @@ impl ConsensusTransaction {
             ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update) => {
                 ConsensusTransactionKey::InternalSessionsStatusUpdate(
                     status_update.authority,
-                    status_update.consensus_round,
+                    status_update.nonce,
                 )
             }
         }
