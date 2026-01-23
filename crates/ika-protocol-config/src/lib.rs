@@ -246,6 +246,11 @@ pub struct ProtocolConfig {
     /// above 33 (f) will not be allowed.
     consensus_bad_nodes_stake_threshold: Option<u64>,
 
+    /// The threshold for determining if a validator is idle based on the number
+    /// of ready-to-run MPC sessions plus currently running computations.
+    /// If the total session count is below this threshold, the validator is considered idle.
+    idle_session_count_threshold: Option<u64>,
+
     // === Used at Sui consensus for current ProtocolConfig version (MAX 84) ===
     /// The maximum serialised transaction size (in bytes) accepted by consensus. That should be bigger than the
     /// `max_tx_size_bytes` with some additional headroom.
@@ -487,6 +492,9 @@ impl ProtocolConfig {
             // responsibility is shared amongst more nodes. We can increase that once we do have
             // higher confidence.
             consensus_bad_nodes_stake_threshold: Some(30),
+
+            // Idle threshold for MPC session management
+            idle_session_count_threshold: Some(10),
 
             // TODO (#873): Implement a production grade configuration upgrade mechanism
             // We use the `_for_testing` functions because they are currently the only way

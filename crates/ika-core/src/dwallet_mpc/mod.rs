@@ -34,7 +34,7 @@ pub use crytographic_computation::protocol_cryptographic_data;
 mod integration_tests;
 
 pub(crate) use crytographic_computation::mpc_computations::{
-    dwallet_dkg, internal_checkpoint_dkg, network_dkg, presign, reconfiguration, sign,
+    dwallet_dkg, network_dkg, presign, reconfiguration, sign,
 };
 pub(crate) use crytographic_computation::native_computations::{
     encrypt_user_share, make_dwallet_user_secret_key_shares_public,

@@ -1147,6 +1147,7 @@ impl DWalletMPCManager {
                 output,
                 curve,
                 signature_algorithm,
+                hash_scheme: _,
             } => {
                 // Log the internal sign output for checkpoint signing.
                 // This signature will eventually replace BLS checkpoint signatures.

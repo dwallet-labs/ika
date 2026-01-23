@@ -162,7 +162,7 @@ impl DWalletMPCOutput {
         if let [output] = &self.output[..] {
             output.rejected()
         } else {
-            false
+            Some(false)
         }
     }
 }

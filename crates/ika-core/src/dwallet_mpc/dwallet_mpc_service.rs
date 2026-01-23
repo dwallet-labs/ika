@@ -378,12 +378,8 @@ impl DWalletMPCService {
             return;
         }
 
-        let status_update = InternalSessionsStatusUpdate {
-            authority: self.name,
-            consensus_round,
-            is_idle,
-            global_presign_requests,
-        };
+        let status_update =
+            InternalSessionsStatusUpdate::new(self.name, is_idle, global_presign_requests);
 
         let consensus_tx = ConsensusTransaction::new_internal_sessions_status_update(status_update);
 
@@ -1145,6 +1141,7 @@ impl DWalletMPCService {
                             output,
                             curve: data.curve,
                             signature_algorithm: data.signature_algorithm,
+                            hash_scheme: data.hash_scheme,
                         },
                         malicious_authorities,
                     ))
