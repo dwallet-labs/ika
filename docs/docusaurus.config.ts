@@ -89,6 +89,12 @@ const config: Config = {
 				},
 				{
 					type: 'docSidebar',
+					sidebarId: 'moveIntegrationSidebar',
+					position: 'left',
+					label: 'Move Integration',
+				},
+				{
+					type: 'docSidebar',
 					sidebarId: 'coreConceptsSidebar',
 					position: 'left',
 					label: 'Core Concepts',
