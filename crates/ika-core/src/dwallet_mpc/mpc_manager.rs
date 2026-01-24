@@ -28,8 +28,8 @@ use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, SessionIdentifier,
-    SessionType,
+    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
+    InternalSessionsStatusUpdate, SessionIdentifier, SessionType,
 };
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -38,6 +38,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tracing::{debug, error, info};
+
+/// Result of majority voting on status updates.
+#[derive(Debug, Clone)]
+pub struct AgreedStatusUpdate {
+    /// Whether the majority of validators are idle.
+    pub is_idle: bool,
+    /// The presign session requests that reached quorum agreement.
+    pub global_presign_requests: Vec<GlobalPresignRequest>,
+}
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -85,6 +94,10 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) schnorr_presign_second_round_delay: u64,
     sui_data_receivers: SuiDataReceivers,
     pub(crate) protocol_config: ProtocolConfig,
+
+    /// Status updates received from validators, indexed by consensus round.
+    /// For each round, we track updates by party ID.
+    status_updates_by_round: HashMap<u64, HashMap<PartyID, InternalSessionsStatusUpdate>>,
 }
 
 impl DWalletMPCManager {
@@ -171,6 +184,7 @@ impl DWalletMPCManager {
             decryption_key_reconfiguration_third_round_delay,
             schnorr_presign_second_round_delay,
             protocol_config,
+            status_updates_by_round: HashMap::new(),
         })
     }
 
@@ -238,6 +252,135 @@ impl DWalletMPCManager {
         }
 
         (checkpoint_messages, completed_sessions)
+    }
+
+    /// Handle status updates for a consensus round.
+    /// Collects updates from all validators and performs majority voting to determine
+    /// the agreed-upon idle status and presign session requests.
+    pub fn handle_status_updates(
+        &mut self,
+        consensus_round: u64,
+        status_updates: Vec<InternalSessionsStatusUpdate>,
+    ) -> Option<AgreedStatusUpdate> {
+        for status_update in status_updates {
+            let sender_authority = status_update.authority;
+
+            let Ok(sender_party_id) =
+                authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
+            else {
+                error!(
+                    sender_authority=?sender_authority,
+                    consensus_round,
+                    should_never_happen =? true,
+                    "got a status update for an authority without party ID",
+                );
+                continue;
+            };
+
+            let round_updates = self
+                .status_updates_by_round
+                .entry(consensus_round)
+                .or_default();
+
+            if let Entry::Vacant(e) = round_updates.entry(sender_party_id) {
+                e.insert(status_update);
+            }
+        }
+
+        // Try to build majority vote from collected updates
+        self.build_status_update_majority_vote(consensus_round)
+    }
+
+    /// Build majority vote for status updates at a given consensus round.
+    fn build_status_update_majority_vote(
+        &mut self,
+        consensus_round: u64,
+    ) -> Option<AgreedStatusUpdate> {
+        let mut status_updates: HashMap<PartyID, InternalSessionsStatusUpdate> = HashMap::new();
+
+        for (round, updates) in self.status_updates_by_round.clone() {
+            if round <= consensus_round {
+                for (sender_party_id, update) in updates {
+                    // take the last update from each sender party ID
+                    status_updates.insert(sender_party_id, update);
+                }
+            }
+        }
+
+        if status_updates.is_empty() {
+            return None;
+        }
+
+        let idle_votes: HashMap<_, _> = status_updates
+            .iter()
+            .map(|(&party_id, update)| (party_id, update.is_idle))
+            .collect();
+
+        let network_is_idle = match idle_votes.weighted_majority_vote(&self.access_structure) {
+            Ok((_, majority_vote)) => majority_vote,
+            Err(mpc::Error::ThresholdNotReached) => false,
+            Err(e) => {
+                error!(
+                    consensus_round,
+                    error = %e,
+                    "Failed to build idle status to finalize"
+                );
+
+                false
+            }
+        };
+
+        let presign_requests_votes: HashMap<_, _> = status_updates
+            .into_iter()
+            .map(|(party_id, update)| (party_id, update.global_presign_requests))
+            .collect();
+        let requests: HashSet<_> = presign_requests_votes.values().flatten().cloned().collect();
+
+        let agreed_global_presign_requests: Vec<_> = requests
+            .into_iter()
+            .filter(|request| {
+                let current_request_votes: HashMap<_, _> = presign_requests_votes
+                    .iter()
+                    .map(|(&party_id, requests)| (party_id, requests.contains(request)))
+                    .collect();
+
+                match current_request_votes.weighted_majority_vote(&self.access_structure) {
+                    Ok((_, majority_vote)) => majority_vote,
+                    Err(mpc::Error::ThresholdNotReached) => false,
+                    Err(e) => {
+                        error!(
+                            session_id = ?request.session_identifier,
+                            error = %e,
+                            "Failed to build global presign request to finalize"
+                        );
+
+                        false
+                    }
+                }
+            })
+            .collect();
+
+        Some(AgreedStatusUpdate {
+            is_idle: network_is_idle,
+            global_presign_requests: agreed_global_presign_requests,
+        })
+    }
+
+    /// Returns the number of currently running computations.
+    pub fn running_computation_count(&self) -> usize {
+        self.cryptographic_computations_orchestrator
+            .currently_running_cryptographic_computations
+            .len()
+    }
+
+    /// Computes whether this validator is idle based on the number of ready-to-run
+    /// sessions plus currently running computations, compared to the threshold.
+    pub fn compute_is_idle(&self, number_of_ready_to_advance_sessions: usize) -> bool {
+        let number_of_executing_sessions = self.running_computation_count();
+        let total_session_count =
+            number_of_ready_to_advance_sessions + number_of_executing_sessions;
+        let threshold = self.protocol_config.idle_session_count_threshold();
+        total_session_count < threshold as usize
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.
