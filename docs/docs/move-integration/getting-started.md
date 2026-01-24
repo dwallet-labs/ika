@@ -182,23 +182,29 @@ Ika supports multiple curves and signature algorithms:
 
 ### Signature Algorithms
 
-| Algorithm | ID | Compatible Curves |
-|-----------|-----|-------------------|
-| ECDSASecp256k1 | 0 | SECP256K1 |
-| Taproot | 1 | SECP256K1 |
-| SchnorrkelSubstrate | 2 | RISTRETTO |
-| ECDSASecp256r1 | 3 | SECP256R1 |
-| EdDSA | 4 | ED25519 |
+Signature algorithm IDs are **relative to the curve**:
+
+| Curve | Algorithm | ID |
+|-------|-----------|-----|
+| SECP256K1 | ECDSASecp256k1 | 0 |
+| SECP256K1 | Taproot | 1 |
+| SECP256R1 | ECDSASecp256r1 | 0 |
+| ED25519 | EdDSA | 0 |
+| RISTRETTO | SchnorrkelSubstrate | 0 |
 
 ### Hash Schemes
 
-| Hash | ID | Compatible Algorithms |
-|------|-----|----------------------|
-| SHA256 | 0 | ECDSASecp256k1, Taproot, ECDSASecp256r1 |
-| KECCAK256 | 1 | ECDSASecp256k1 (Ethereum) |
-| DoubleSHA256 | 2 | ECDSASecp256k1 (Bitcoin) |
-| SHA512 | 3 | EdDSA |
-| Merlin | 4 | SchnorrkelSubstrate |
+Hash scheme IDs are **relative to the curve + signature algorithm**:
+
+| Curve | Algorithm | Hash | ID |
+|-------|-----------|------|-----|
+| SECP256K1 | ECDSASecp256k1 | KECCAK256 (Ethereum) | 0 |
+| SECP256K1 | ECDSASecp256k1 | SHA256 | 1 |
+| SECP256K1 | ECDSASecp256k1 | DoubleSHA256 (Bitcoin) | 2 |
+| SECP256K1 | Taproot | SHA256 | 0 |
+| SECP256R1 | ECDSASecp256r1 | SHA256 | 0 |
+| ED25519 | EdDSA | SHA512 | 0 |
+| RISTRETTO | SchnorrkelSubstrate | Merlin | 0 |
 
 ## Next Steps
 

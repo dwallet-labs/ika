@@ -136,22 +136,44 @@ const RISTRETTO: u32 = 3;  // Privacy applications
 
 ### Signature Algorithms
 
+IDs are **relative to the curve**:
+
 ```rust
+// For SECP256K1:
 const ECDSA_SECP256K1: u32 = 0;
 const TAPROOT: u32 = 1;
-const SCHNORRKEL_SUBSTRATE: u32 = 2;
-const ECDSA_SECP256R1: u32 = 3;
-const EDDSA: u32 = 4;
+
+// For SECP256R1:
+const ECDSA_SECP256R1: u32 = 0;
+
+// For ED25519:
+const EDDSA: u32 = 0;
+
+// For RISTRETTO:
+const SCHNORRKEL_SUBSTRATE: u32 = 0;
 ```
 
 ### Hash Schemes
 
+IDs are **relative to the curve + signature algorithm**:
+
 ```rust
+// For SECP256K1 + ECDSA:
+const KECCAK256: u32 = 0;  // Ethereum
+const SHA256: u32 = 1;
+const DOUBLE_SHA256: u32 = 2;  // Bitcoin
+
+// For SECP256K1 + Taproot:
 const SHA256: u32 = 0;
-const KECCAK256: u32 = 1;
-const DOUBLE_SHA256: u32 = 2;
-const SHA512: u32 = 3;
-const MERLIN: u32 = 4;
+
+// For SECP256R1 + ECDSA:
+const SHA256: u32 = 0;
+
+// For ED25519 + EdDSA:
+const SHA512: u32 = 0;
+
+// For RISTRETTO + Schnorrkel:
+const MERLIN: u32 = 0;
 ```
 
 ## Example: Bitcoin Taproot Configuration
