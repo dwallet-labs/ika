@@ -101,6 +101,11 @@ pub(crate) struct DWalletMPCManager {
 
     /// Global presign requests collected from Sui events, to be broadcast in status updates.
     pub(crate) global_presign_requests: Vec<GlobalPresignRequest>,
+
+    /// Session identifiers of presign requests that have already been sent through consensus.
+    /// When we receive our own status update back from consensus, we mark those requests as sent.
+    /// This prevents sending the same request multiple times.
+    sent_presign_request_session_identifiers: HashSet<SessionIdentifier>,
 }
 
 impl DWalletMPCManager {
@@ -189,6 +194,7 @@ impl DWalletMPCManager {
             protocol_config,
             status_updates_by_round: HashMap::new(),
             global_presign_requests: Vec::new(),
+            sent_presign_request_session_identifiers: HashSet::new(),
         })
     }
 
@@ -281,6 +287,15 @@ impl DWalletMPCManager {
                 continue;
             };
 
+            // When we receive our own status update back from consensus,
+            // mark the presign requests as sent to avoid re-sending them.
+            if sender_authority == self.validator_name {
+                for request in &status_update.global_presign_requests {
+                    self.sent_presign_request_session_identifiers
+                        .insert(request.session_identifier);
+                }
+            }
+
             let round_updates = self
                 .status_updates_by_round
                 .entry(consensus_round)
@@ -338,6 +353,7 @@ impl DWalletMPCManager {
             .into_iter()
             .map(|(party_id, update)| (party_id, update.global_presign_requests))
             .collect();
+
         let requests: HashSet<_> = presign_requests_votes.values().flatten().cloned().collect();
 
         let agreed_global_presign_requests: Vec<_> = requests
@@ -368,6 +384,19 @@ impl DWalletMPCManager {
             is_idle: network_is_idle,
             global_presign_requests: agreed_global_presign_requests,
         })
+    }
+
+    /// Returns presign requests that haven't been sent through consensus yet.
+    pub(crate) fn get_unsent_presign_requests(&self) -> Vec<GlobalPresignRequest> {
+        self.global_presign_requests
+            .iter()
+            .filter(|request| {
+                !self
+                    .sent_presign_request_session_identifiers
+                    .contains(&request.session_identifier)
+            })
+            .cloned()
+            .collect()
     }
 
     /// Returns the number of currently running computations.

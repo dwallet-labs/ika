@@ -304,22 +304,26 @@ impl DWalletMPCService {
         self.send_status_update_to_consensus(is_idle).await;
     }
 
-    /// Send status update to consensus if the status has changed since the last update.
+    /// Send status update to consensus if there are unsent presign requests or idle status changed.
     async fn send_status_update_to_consensus(&mut self, is_idle: bool) {
         let Some(consensus_round) = self.last_read_consensus_round else {
             return;
         };
 
-        let global_presign_requests = self.dwallet_mpc_manager.global_presign_requests.clone();
+        // Only include presign requests that haven't been sent yet.
+        let unsent_presign_requests = self.dwallet_mpc_manager.get_unsent_presign_requests();
 
-        // Check if status has changed since last update.
-        let current_status = (is_idle, global_presign_requests.clone());
-        if self.last_sent_status.as_ref() == Some(&current_status) {
+        // Check if there's anything new to send.
+        let has_unsent_requests = !unsent_presign_requests.is_empty();
+        let idle_status_changed =
+            self.last_sent_status.as_ref().map(|(idle, _)| *idle) != Some(is_idle);
+
+        if !has_unsent_requests && !idle_status_changed {
             return;
         }
 
         let status_update =
-            InternalSessionsStatusUpdate::new(self.name, is_idle, global_presign_requests);
+            InternalSessionsStatusUpdate::new(self.name, is_idle, unsent_presign_requests);
 
         let consensus_tx = ConsensusTransaction::new_internal_sessions_status_update(status_update);
 
@@ -334,8 +338,8 @@ impl DWalletMPCService {
                 "Failed to submit status update to consensus"
             );
         } else {
-            // Update last sent status on successful submission.
-            self.last_sent_status = Some(current_status);
+            // Update last sent idle status.
+            self.last_sent_status = Some((is_idle, Vec::new()));
         }
     }
 
