@@ -42,7 +42,10 @@ use ika_types::message::{
     SignOutput,
 };
 use ika_types::messages_consensus::ConsensusTransaction;
-use ika_types::messages_dwallet_mpc::{SessionIdentifier, UserSecretKeyShareEventType};
+use ika_types::messages_dwallet_mpc::{
+    GlobalPresignRequest, InternalSessionsStatusUpdate, SessionIdentifier,
+    UserSecretKeyShareEventType,
+};
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
@@ -77,6 +80,8 @@ pub struct DWalletMPCService {
     pub epoch: EpochId,
     pub protocol_config: ProtocolConfig,
     pub committee: Arc<Committee>,
+    /// Tracks the last sent status to avoid sending duplicate updates.
+    last_sent_status: Option<(bool, Vec<GlobalPresignRequest>)>,
 }
 
 impl DWalletMPCService {
@@ -138,6 +143,7 @@ impl DWalletMPCService {
             epoch: epoch_id,
             protocol_config,
             committee,
+            last_sent_status: None,
         }
     }
 
@@ -179,6 +185,7 @@ impl DWalletMPCService {
             epoch: 1,
             protocol_config: ProtocolConfig::get_for_min_version(),
             committee: Arc::new(committee),
+            last_sent_status: None,
         }
     }
 
@@ -285,13 +292,51 @@ impl DWalletMPCService {
             return;
         };
 
-        let completed_computation_results = self
+        let (computation_results, is_idle) = self
             .dwallet_mpc_manager
             .perform_cryptographic_computation(last_read_consensus_round)
             .await;
 
-        self.handle_computation_results_and_submit_to_consensus(completed_computation_results)
+        self.handle_computation_results_and_submit_to_consensus(computation_results)
             .await;
+
+        // Send status update to consensus using the result from cryptographic computations.
+        self.send_status_update_to_consensus(is_idle).await;
+    }
+
+    /// Send status update to consensus if the status has changed since the last update.
+    async fn send_status_update_to_consensus(&mut self, is_idle: bool) {
+        let Some(consensus_round) = self.last_read_consensus_round else {
+            return;
+        };
+
+        let global_presign_requests = self.dwallet_mpc_manager.global_presign_requests.clone();
+
+        // Check if status has changed since last update.
+        let current_status = (is_idle, global_presign_requests.clone());
+        if self.last_sent_status.as_ref() == Some(&current_status) {
+            return;
+        }
+
+        let status_update =
+            InternalSessionsStatusUpdate::new(self.name, is_idle, global_presign_requests);
+
+        let consensus_tx = ConsensusTransaction::new_internal_sessions_status_update(status_update);
+
+        if let Err(e) = self
+            .dwallet_submit_to_consensus
+            .submit_to_consensus(&[consensus_tx])
+            .await
+        {
+            error!(
+                error = ?e,
+                consensus_round,
+                "Failed to submit status update to consensus"
+            );
+        } else {
+            // Update last sent status on successful submission.
+            self.last_sent_status = Some(current_status);
+        }
     }
 
     async fn handle_new_requests(&mut self) -> DwalletMPCResult<Vec<DWalletSessionRequest>> {

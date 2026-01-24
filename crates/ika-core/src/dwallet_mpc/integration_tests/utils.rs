@@ -35,6 +35,8 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) round_to_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletMPCOutput>>>>,
     pub(crate) round_to_verified_checkpoint:
         Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
+    pub(crate) round_to_status_updates:
+        Arc<Mutex<HashMap<Round, Vec<InternalSessionsStatusUpdate>>>>,
 }
 
 pub(crate) struct IntegrationTestState {
@@ -82,6 +84,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_messages: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_outputs: Arc::new(Mutex::new(Default::default())),
             round_to_verified_checkpoint: Arc::new(Mutex::new(Default::default())),
+            round_to_status_updates: Arc::new(Mutex::new(Default::default())),
         }
     }
 }
@@ -370,10 +373,23 @@ pub(crate) fn send_advance_results_between_parties(
             })
             .collect();
         let dwallet_outputs: Vec<_> = consensus_messages
+            .clone()
             .into_iter()
             .filter_map(|message| {
                 if let ConsensusTransactionKind::DWalletMPCOutput(message) = message.kind {
                     Some(message)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let status_updates: Vec<_> = consensus_messages
+            .into_iter()
+            .filter_map(|message| {
+                if let ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update) =
+                    message.kind
+                {
+                    Some(status_update)
                 } else {
                     None
                 }
@@ -402,6 +418,15 @@ pub(crate) fn send_advance_results_between_parties(
                 .lock()
                 .unwrap()
                 .insert(new_data_consensus_round, vec![]);
+
+            // Distribute status updates to all parties.
+            other_epoch_store
+                .round_to_status_updates
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default()
+                .extend(status_updates.clone());
         }
     }
 }

@@ -98,6 +98,9 @@ pub(crate) struct DWalletMPCManager {
     /// Status updates received from validators, indexed by consensus round.
     /// For each round, we track updates by party ID.
     status_updates_by_round: HashMap<u64, HashMap<PartyID, InternalSessionsStatusUpdate>>,
+
+    /// Global presign requests collected from Sui events, to be broadcast in status updates.
+    pub(crate) global_presign_requests: Vec<GlobalPresignRequest>,
 }
 
 impl DWalletMPCManager {
@@ -185,6 +188,7 @@ impl DWalletMPCManager {
             schnorr_presign_second_round_delay,
             protocol_config,
             status_updates_by_round: HashMap::new(),
+            global_presign_requests: Vec::new(),
         })
     }
 
@@ -503,11 +507,14 @@ impl DWalletMPCManager {
     /// The messages to advance with are built on the spot, assuming they satisfy required conditions.
     /// They are put on a `ComputationRequest` and forwarded to the `orchestrator` for execution.
     ///
-    /// Returns the completed computation results.
+    /// Returns the completed computation results and whether the validator is idle.
     pub(crate) async fn perform_cryptographic_computation(
         &mut self,
         last_read_consensus_round: u64,
-    ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
+    ) -> (
+        HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>>,
+        bool,
+    ) {
         let mut ready_to_advance_sessions: Vec<_> = self
             .sessions
             .iter()
@@ -538,6 +545,8 @@ impl DWalletMPCManager {
 
         ready_to_advance_sessions
             .sort_by(|(_, request), (_, other_request)| request.cmp(other_request));
+
+        let number_of_ready_to_advance_sessions = ready_to_advance_sessions.len();
 
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
@@ -592,6 +601,9 @@ impl DWalletMPCManager {
         let completed_computation_results = self
             .cryptographic_computations_orchestrator
             .receive_completed_computations(self.dwallet_mpc_metrics.clone());
+
+        let is_idle = self.compute_is_idle(number_of_ready_to_advance_sessions);
+
         for (computation_id, computation_request) in computation_requests {
             let spawned_computation = self
                 .cryptographic_computations_orchestrator
@@ -603,11 +615,11 @@ impl DWalletMPCManager {
                 .await;
 
             if !spawned_computation {
-                return completed_computation_results;
+                return (completed_computation_results, is_idle);
             }
         }
 
-        completed_computation_results
+        (completed_computation_results, is_idle)
     }
 
     pub(crate) fn try_receiving_next_active_committee(&mut self) -> bool {
