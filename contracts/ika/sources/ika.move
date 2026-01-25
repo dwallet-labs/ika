@@ -28,7 +28,7 @@ public struct IKA has drop {}
 
 // === Init Function ===
 
-#[allow(lint(share_owned), deprecated_usage)]
+#[allow(deprecated_usage)]
 fun init(otw: IKA, ctx: &mut TxContext) {
     let (mut treasury_cap, coin_metadata) = coin::create_currency(
         otw,

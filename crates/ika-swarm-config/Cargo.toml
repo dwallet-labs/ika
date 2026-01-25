@@ -39,6 +39,7 @@ move-core-types.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 move-package.workspace = true
+move-package-alt-compilation.workspace = true
 dwallet-mpc-types.workspace = true
 url.workspace = true
 

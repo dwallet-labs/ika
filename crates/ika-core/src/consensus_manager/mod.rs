@@ -246,7 +246,9 @@ impl ReplayWaiter {
                 continue;
             };
             info!("Waiting for consensus handler to finish replaying ...");
-            monitor.replay_complete().await;
+            monitor
+                .replay_to_consumer_last_processed_commit_complete()
+                .await;
             break;
         }
     }

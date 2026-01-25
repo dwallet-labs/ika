@@ -6,7 +6,7 @@ use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use consensus_config::{Committee, NetworkKeyPair, Parameters, ProtocolKeyPair};
 use consensus_core::{
-    Clock, CommitConsumer, CommitConsumerMonitor, CommitIndex, ConsensusAuthority,
+    Clock, CommitConsumerArgs, CommitConsumerMonitor, CommitIndex, ConsensusAuthority, NetworkType,
 };
 use fastcrypto::ed25519;
 use ika_config::NodeConfig;
@@ -125,8 +125,10 @@ impl ConsensusManagerTrait for MysticetiManager {
 
         let consensus_handler = consensus_handler_initializer.new_consensus_handler();
 
-        let (commit_consumer, commit_receiver, _) =
-            CommitConsumer::new(consensus_handler.last_processed_subdag_index() as CommitIndex);
+        let last_processed_commit_index =
+            consensus_handler.last_processed_subdag_index() as CommitIndex;
+        let (commit_consumer, commit_receiver, _block_receiver) =
+            CommitConsumerArgs::new(last_processed_commit_index, last_processed_commit_index);
         let monitor = commit_consumer.monitor();
 
         let handler =
@@ -165,7 +167,7 @@ impl ConsensusManagerTrait for MysticetiManager {
         // AND THAT WE OVERRIDE THE SUI PROTOCOL CONFIG VALUES
         let mut protocol_config = sui_protocol_config::ProtocolConfig::get_for_version(
             // Version 84 was taken from Sui, DO NOT CHANGE IT.
-            sui_protocol_config::ProtocolVersion::new(87),
+            sui_protocol_config::ProtocolVersion::new(ika_protocol_config.sui_protocol_version()),
             sui_protocol_config::Chain::Mainnet,
         );
 
@@ -201,13 +203,17 @@ impl ConsensusManagerTrait for MysticetiManager {
             ika_protocol_config.consensus_batched_block_sync(),
         );
 
+        // protocol_config.set_consensus_skip_gced_blocks_in_direct_finalization_for_testing(
+        //     ika_protocol_config.consensus_skip_gced_blocks_in_direct_finalization(),
+        // );
+
         // TODO: Do not remove this, this will be set once there is a "set" function for it.
         // protocol_config.set_enforce_checkpoint_timestamp_monotonicity_for_testing(
         //     ika_protocol_config.enforce_checkpoint_timestamp_monotonicity(),
         // );
 
         let authority = ConsensusAuthority::start(
-            protocol_config.consensus_network(),
+            NetworkType::Tonic,
             epoch_store.epoch_start_config().epoch_start_timestamp_ms(),
             own_index,
             committee.clone(),

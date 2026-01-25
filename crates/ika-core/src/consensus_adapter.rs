@@ -39,13 +39,14 @@ use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::consensus_handler::{SequencedConsensusTransactionKey, classify};
 use crate::consensus_throughput_calculator::ConsensusThroughputProfiler;
 use crate::metrics::LatencyObserver;
-use consensus_core::{BlockStatus, ConnectionStatus};
+use consensus_core::BlockStatus;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityName;
 use ika_types::fp_ensure;
 use ika_types::messages_consensus::ConsensusTransactionKind;
 use ika_types::messages_consensus::{ConsensusPosition, ConsensusTransaction};
-use mysten_metrics::{GaugeGuard, GaugeGuardFutureExt, spawn_monitored_task};
+use mysten_metrics::{GaugeGuard, InflightGuardFutureExt, spawn_monitored_task};
+use mysten_network::anemo_connection_monitor::ConnectionStatus;
 use sui_simulator::anemo::PeerId;
 use tokio::time::Duration;
 use tracing::{debug, trace, warn};
@@ -648,7 +649,7 @@ impl ConsensusAdapter {
             let _permit: SemaphorePermit = self
                 .submit_semaphore
                 .acquire()
-                .count_in_flight(&self.metrics.sequencing_in_flight_semaphore_wait)
+                .count_in_flight(self.metrics.sequencing_in_flight_semaphore_wait.clone())
                 .await
                 .expect("Consensus adapter does not close semaphore");
             let _in_flight_submission_guard =

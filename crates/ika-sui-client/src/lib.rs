@@ -1435,7 +1435,7 @@ impl SuiClientInner for SuiSdkClient {
         Ok(ObjectArg::SharedObject {
             id: ika_system_object_id,
             initial_shared_version,
-            mutable: true,
+            mutability: sui_types::transaction::SharedObjectMutability::Mutable,
         })
     }
 
@@ -1456,7 +1456,7 @@ impl SuiClientInner for SuiSdkClient {
         Ok(ObjectArg::SharedObject {
             id: obj_id,
             initial_shared_version,
-            mutable: false,
+            mutability: sui_types::transaction::SharedObjectMutability::Immutable,
         })
     }
 
@@ -1506,7 +1506,7 @@ impl SuiClientInner for SuiSdkClient {
         match self.quorum_driver_api().execute_transaction_block(
             tx,
             SuiTransactionBlockResponseOptions::new().with_effects().with_events(),
-            Some(sui_types::quorum_driver_types::ExecuteTransactionRequestType::WaitForEffectsCert),
+            Some(sui_types::transaction_driver_types::ExecuteTransactionRequestType::WaitForEffectsCert),
         ).await {
             Ok(response) => Ok(response),
             Err(e) => Err(IkaError::SuiClientTxFailureGeneric(tx_digest, e.to_string())),

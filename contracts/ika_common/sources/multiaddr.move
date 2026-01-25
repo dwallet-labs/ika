@@ -68,7 +68,7 @@ fun validate_with_transport(addr: &String, transport: String): bool {
 
     // Find the parts by iterating through the string once
     let mut part_start = 1; // Skip first slash
-    let mut part_num = 0;
+    let mut part_num = 0u16;
     let mut protocol = string::utf8(b"");
     let mut address = string::utf8(b"");
     let mut actual_transport = string::utf8(b"");

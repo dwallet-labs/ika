@@ -102,8 +102,8 @@ axum = { version = "0.8", default-features = false, features = [
     "ws",
 ] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
-axum-server = { git = "https://github.com/bmwill/axum-server.git", rev = "f44323e271afdd1365fd0c8b0a4c0bbdf4956cb7", version = "0.6", default-features = false, features = [
-    "tls-rustls",
+axum-server = { version = "0.8", default-features = false, features = [
+    "tls-rustls-no-provider",
 ] }
 backoff = { version = "0.4.0", features = [
     "futures",
@@ -150,7 +150,7 @@ indexmap = { version = "2.1.0", features = ["serde"] }
 indicatif = "0.18.0"
 insta = { version = "1.21.1", features = ["redactions", "yaml", "json"] }
 itertools = "0.14.0"
-jemalloc-ctl = "^0.5"
+tikv-jemalloc-ctl = "^0.5"
 jsonrpsee = { version = "0.25.1", features = ["server", "macros", "ws-client", "http-client", "jsonrpsee-core"] }
 lru = "0.16.0"
 merlin = { version = "3", default-features = false }
@@ -162,7 +162,7 @@ moka = { version = "0.12", default-features = false, features = [
     "atomic64",
 ] }
 more-asserts = "0.3.1"
-msim = { git = "https://github.com/MystenLabs/mysten-sim.git", rev = "2a170f4cd81c5cd10f5e4a5e810068f3045f41b6", package = "msim" }
+msim = { git = "https://github.com/MystenLabs/mysten-sim.git", rev = "9d787303d855f6cec92eb94933717d4ee1963548", package = "msim" }
 multiaddr = "0.17.0"
 nonempty = "0.11.0"
 num-bigint = "0.4.4"
@@ -254,64 +254,66 @@ shlex = "1.3.0"
 lazy_static = "1.5.0"
 
 # Move dependencies
-move-binary-format = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-move-bytecode-utils = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-move-compiler = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-move-package = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-move-symbol-pool = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-move-core-types = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
+move-binary-format = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+move-bytecode-utils = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+move-compiler = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+move-package = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+move-package-alt-compilation = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+move-symbol-pool = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+move-core-types = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
 
 
-fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "69d496c71fb37e3d22fe85e5bbfd4256d61422b9" }
-fastcrypto-tbls = { git = "https://github.com/MystenLabs/fastcrypto", rev = "69d496c71fb37e3d22fe85e5bbfd4256d61422b9" }
-fastcrypto-zkp = { git = "https://github.com/MystenLabs/fastcrypto", rev = "69d496c71fb37e3d22fe85e5bbfd4256d61422b9", package = "fastcrypto-zkp" }
+fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "4db0e90c732bbf7420ca20de808b698883148d9c" }
+fastcrypto-tbls = { git = "https://github.com/MystenLabs/fastcrypto", rev = "4db0e90c732bbf7420ca20de808b698883148d9c" }
+fastcrypto-zkp = { git = "https://github.com/MystenLabs/fastcrypto", rev = "4db0e90c732bbf7420ca20de808b698883148d9c", package = "fastcrypto-zkp" }
 
 # anemo dependencies
-anemo = { git = "https://github.com/mystenlabs/anemo.git", rev = "9c52c3c7946532163a79129db15180cdb984bab4" }
-anemo-build = { git = "https://github.com/mystenlabs/anemo.git", rev = "9c52c3c7946532163a79129db15180cdb984bab4" }
-anemo-tower = { git = "https://github.com/mystenlabs/anemo.git", rev = "9c52c3c7946532163a79129db15180cdb984bab4" }
+anemo = { git = "https://github.com/mystenlabs/anemo.git", rev = "4b5f0f1d06a31c8ef78ec2e5b446bc633e4e2f77" }
+anemo-build = { git = "https://github.com/mystenlabs/anemo.git", rev = "4b5f0f1d06a31c8ef78ec2e5b446bc633e4e2f77" }
+anemo-tower = { git = "https://github.com/mystenlabs/anemo.git", rev = "4b5f0f1d06a31c8ef78ec2e5b446bc633e4e2f77" }
 
 ### Sui Members ###
-bin-version =  { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-mysten-common = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-mysten-metrics = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-mysten-network = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-mysten-service = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-shared-crypto = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-config = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-faucet = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-graphql-rpc = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-indexer = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-json = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-json-rpc-api = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-keys = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-macros = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-metrics-push-client = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-move = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-move-build = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-package-management = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-protocol-config = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-protocol-config-macros = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-sdk = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-simulator = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-storage = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-swarm = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-swarm-config = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-test-transaction-builder = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-tls = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-transaction-checks = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-sui-types = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-telemetry-subscribers = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-test-cluster = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-typed-store = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-typed-store-error = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
+bin-version =  { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+mysten-common = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+mysten-metrics = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+mysten-network = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+mysten-service = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+shared-crypto = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-config = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-faucet = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-graphql-rpc = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-indexer = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-json = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-json-rpc-api = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-keys = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-macros = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-metrics-push-client = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-move = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-move-build = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-package-management = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-protocol-config = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-protocol-config-macros = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-sdk = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-simulator = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-storage = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-swarm = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-swarm-config = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-test-transaction-builder = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-tls = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-transaction-checks = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+sui-types = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+telemetry-subscribers = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+test-cluster = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+typed-store = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+typed-store-error = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
 
-sui-execution = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
+sui-execution = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
 
-consensus-config = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
-consensus-core = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.51.5" }
+consensus-config = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+consensus-core = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
+consensus-types = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1.64.0" }
 
 ### Workspace Members ###
 dwallet-rng = { path = "crates/dwallet-rng" }
