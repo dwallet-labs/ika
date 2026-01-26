@@ -495,18 +495,25 @@ impl DWalletMPCService {
                 }
             };
 
-            // Status updates are optional - may not exist for every round.
             let status_updates = self
                 .epoch_store
                 .next_internal_sessions_status_update(self.last_read_consensus_round);
             let status_updates = match status_updates {
-                Ok(Some((status_updates_round, updates)))
-                    if status_updates_round == mpc_messages_consensus_round =>
-                {
+                Ok(Some((status_updates_round, updates))) => {
+                    if status_updates_round != mpc_messages_consensus_round {
+                        error!(
+                            ?status_updates_round,
+                            ?mpc_messages_consensus_round,
+                            "status updates consensus round does not match MPC messages consensus round"
+                        );
+                        panic!(
+                            "status updates consensus round does not match MPC messages consensus round"
+                        );
+                    }
                     updates
                 }
-                Ok(_) => {
-                    // No status updates for this round, or round mismatch - use empty list.
+                Ok(None) => {
+                    // No status updates for this round - use empty list.
                     Vec::new()
                 }
                 Err(e) => {

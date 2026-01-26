@@ -337,41 +337,16 @@ impl DWalletMPCManager {
                     .or_default();
                 parties.insert(sender_party_id);
 
-                // Check if majority is reached for this presign request.
-                // Build votes map from all committee members.
-                let votes: HashMap<_, _> = self
-                    .committee
-                    .voting_rights
-                    .iter()
-                    .filter_map(|(authority_name, _)| {
-                        authority_name_to_party_id_from_committee(&self.committee, authority_name)
-                            .ok()
-                            .map(|party_id| (party_id, parties.contains(&party_id)))
-                    })
-                    .collect();
-
-                match votes.weighted_majority_vote(&self.access_structure) {
-                    Ok((_, true)) => {
-                        // Majority reached - mark as completed and add to result.
-                        self.completed_presign_session_identifiers
-                            .insert(session_identifier);
-                        agreed_presign_requests.push(request);
-                        info!(
-                            ?session_identifier,
-                            consensus_round, "Presign request reached majority vote"
-                        );
-                    }
-                    Ok((_, false)) | Err(mpc::Error::ThresholdNotReached) => {
-                        // Not yet reached majority, continue collecting votes.
-                    }
-                    Err(e) => {
-                        error!(
-                            ?session_identifier,
-                            consensus_round,
-                            error = %e,
-                            "Failed to compute majority vote for presign request"
-                        );
-                    }
+                // Check if the parties that voted form an authorized subset.
+                if self.access_structure.is_authorized_subset(parties).is_ok() {
+                    // Majority reached - mark as completed and add to result.
+                    self.completed_presign_session_identifiers
+                        .insert(session_identifier);
+                    agreed_presign_requests.push(request);
+                    info!(
+                        ?session_identifier,
+                        consensus_round, "Presign request reached majority vote"
+                    );
                 }
             }
         }
