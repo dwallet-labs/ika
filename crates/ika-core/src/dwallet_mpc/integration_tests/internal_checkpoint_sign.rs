@@ -11,7 +11,7 @@
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::dwallet_mpc::InternalCheckpointSignRequest;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg::{
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg_emulation::{
     emulate_centralized_dkg_for_internal_signing, internal_checkpoint_dkg_session_id,
 };
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
@@ -138,12 +138,11 @@ async fn test_internal_checkpoint_sign_flow() {
 #[test]
 fn test_internal_checkpoint_dkg_session_id_determinism() {
     let network_key_id = [1u8; 32];
-    let epoch = 42;
     let curve = DWalletCurve::Curve25519;
     let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-    let session_id_1 = internal_checkpoint_dkg_session_id(&network_key_id, epoch, curve, algorithm);
-    let session_id_2 = internal_checkpoint_dkg_session_id(&network_key_id, epoch, curve, algorithm);
+    let session_id_1 = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
+    let session_id_2 = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
 
     assert_eq!(
         session_id_1, session_id_2,
@@ -151,11 +150,12 @@ fn test_internal_checkpoint_dkg_session_id_determinism() {
     );
 
     // Different inputs should produce different session IDs
+    let different_network_key_id = [2u8; 32];
     let session_id_3 =
-        internal_checkpoint_dkg_session_id(&network_key_id, epoch + 1, curve, algorithm);
+        internal_checkpoint_dkg_session_id(&different_network_key_id, curve, algorithm);
     assert_ne!(
         session_id_1, session_id_3,
-        "Different epochs should produce different session IDs"
+        "Different network key IDs should produce different session IDs"
     );
 }
 

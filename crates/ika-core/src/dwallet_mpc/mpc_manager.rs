@@ -108,11 +108,26 @@ pub(crate) struct DWalletMPCManager {
     /// The epoch store for persisting presign pools to disk.
     epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 
-    /// Status updates received from validators, indexed by consensus round.
-    /// For each round, we track updates by party ID.
-    status_updates_by_round: HashMap<u64, HashMap<PartyID, InternalSessionsStatusUpdate>>,
+    /// Tracks the idle status of each party, overwritten on each status update.
+    /// At the end of processing status updates for a consensus round, we majority vote
+    /// to determine the network's idle status.
+    idle_status_by_party: HashMap<PartyID, bool>,
 
+    /// Tracks which parties have seen each presign request.
+    /// When a presign request reaches majority, it's moved to `completed_presign_session_identifiers`.
+    user_requests_of_internal_resources: HashMap<SessionIdentifier, HashSet<PartyID>>,
+
+    /// Session identifiers of presign requests that have reached majority vote.
+    /// Once completed, we don't record new votes for these requests.
+    completed_presign_session_identifiers: HashSet<SessionIdentifier>,
+
+    /// Global presign requests collected from Sui events, to be broadcast in status updates.
     pub(crate) global_presign_requests: Vec<GlobalPresignRequest>,
+
+    /// Session identifiers of presign requests that have already been sent through consensus.
+    /// When we receive our own status update back from consensus, we mark those requests as sent.
+    /// This prevents sending the same request multiple times.
+    sent_presign_requests: HashSet<SessionIdentifier>,
 }
 
 impl DWalletMPCManager {
@@ -204,8 +219,11 @@ impl DWalletMPCManager {
             protocol_config,
             next_internal_presign_sequence_number: 1,
             epoch_store,
-            status_updates_by_round: HashMap::new(),
+            idle_status_by_party: HashMap::new(),
+            user_requests_of_internal_resources: HashMap::new(),
+            completed_presign_session_identifiers: HashSet::new(),
             global_presign_requests: Vec::new(),
+            sent_presign_requests: HashSet::new(),
         })
     }
 
@@ -277,13 +295,20 @@ impl DWalletMPCManager {
     }
 
     /// Handle status updates for a consensus round.
-    /// Collects updates from all validators and performs majority voting to determine
-    /// the agreed-upon idle status and presign session requests.
+    ///
+    /// For each status update:
+    /// - Override the sender's idle status in `idle_status_by_party`
+    /// - For each presign request, add the sender to `user_requests_of_internal_resources`
+    ///   and immediately check if majority is reached
+    ///
+    /// At the end, perform majority vote on idle status using `idle_status_by_party`.
     pub fn handle_status_updates(
         &mut self,
         consensus_round: u64,
         status_updates: Vec<InternalSessionsStatusUpdate>,
     ) -> Option<AgreedStatusUpdate> {
+        let mut agreed_presign_requests = Vec::new();
+
         for status_update in status_updates {
             let sender_authority = status_update.authority;
 
@@ -299,96 +324,95 @@ impl DWalletMPCManager {
                 continue;
             };
 
-            let round_updates = self
-                .status_updates_by_round
-                .entry(consensus_round)
-                .or_default();
-
-            if let Entry::Vacant(e) = round_updates.entry(sender_party_id) {
-                e.insert(status_update);
+            // When we receive our own status update back from consensus,
+            // mark the presign requests as sent to avoid re-sending them.
+            if sender_authority == self.validator_name {
+                for request in &status_update.global_presign_requests {
+                    self.sent_presign_requests
+                        .insert(request.session_identifier);
+                }
             }
-        }
 
-        // Try to build majority vote from collected updates
-        self.build_status_update_majority_vote(consensus_round)
-    }
+            // Override the idle status for this party.
+            self.idle_status_by_party
+                .insert(sender_party_id, status_update.is_idle);
 
-    /// Build majority vote for status updates at a given consensus round.
-    fn build_status_update_majority_vote(
-        &mut self,
-        consensus_round: u64,
-    ) -> Option<AgreedStatusUpdate> {
-        let mut status_updates: HashMap<PartyID, InternalSessionsStatusUpdate> = HashMap::new();
+            // Process each presign request and check for majority immediately.
+            for request in status_update.global_presign_requests {
+                let session_identifier = request.session_identifier;
 
-        for (round, updates) in self.status_updates_by_round.clone() {
-            // TODO: why isn't this if in the output building process too?
-            if round <= consensus_round {
-                for (sender_party_id, update) in updates {
-                    // take the last update from each sender party ID
-                    // TODO: what is the advantage of doing this way vs. just keeping a HashMap<PartyId, InternalSessionsStatusUpdate> as  status_updates_by_round?
-                    // The problem is memory usage that never gets cleaned
-                    status_updates.insert(sender_party_id, update);
+                // Skip if this presign request has already reached majority.
+                if self
+                    .completed_presign_session_identifiers
+                    .contains(&session_identifier)
+                {
+                    continue;
+                }
+
+                // Add this party's vote for this presign request.
+                let parties = self
+                    .user_requests_of_internal_resources
+                    .entry(session_identifier)
+                    .or_default();
+                parties.insert(sender_party_id);
+
+                // Check if the parties that voted form an authorized subset.
+                if self.access_structure.is_authorized_subset(parties).is_ok() {
+                    // Majority reached - mark as completed and add to result.
+                    self.completed_presign_session_identifiers
+                        .insert(session_identifier);
+                    agreed_presign_requests.push(request);
+                    info!(
+                        ?session_identifier,
+                        consensus_round, "Presign request reached majority vote"
+                    );
                 }
             }
         }
 
-        if status_updates.is_empty() {
-            return None;
+        // Perform majority vote on idle status at the end of processing.
+        let network_is_idle = self.compute_idle_status_majority_vote();
+
+        Some(AgreedStatusUpdate {
+            is_idle: network_is_idle,
+            global_presign_requests: agreed_presign_requests,
+        })
+    }
+
+    /// Compute majority vote for idle status using the accumulated `idle_status_by_party`.
+    fn compute_idle_status_majority_vote(&self) -> bool {
+        if self.idle_status_by_party.is_empty() {
+            return false;
         }
 
-        let idle_votes: HashMap<_, _> = status_updates
-            .iter()
-            .map(|(&party_id, update)| (party_id, update.is_idle))
-            .collect();
-
-        let network_is_idle = match idle_votes.weighted_majority_vote(&self.access_structure) {
+        match self
+            .idle_status_by_party
+            .clone()
+            .weighted_majority_vote(&self.access_structure)
+        {
             Ok((_, majority_vote)) => majority_vote,
             Err(mpc::Error::ThresholdNotReached) => false,
             Err(e) => {
                 error!(
-                    consensus_round,
                     error = %e,
-                    "Failed to build idle status to finalize"
+                    "Failed to compute idle status majority vote"
                 );
-
                 false
             }
-        };
+        }
+    }
 
-        let presign_requests_votes: HashMap<_, _> = status_updates
-            .into_iter()
-            .map(|(party_id, update)| (party_id, update.global_presign_requests))
-            .collect();
-        let requests: HashSet<_> = presign_requests_votes.values().flatten().cloned().collect();
-
-        let agreed_global_presign_requests: Vec<_> = requests
-            .into_iter()
+    /// Returns presign requests that haven't been sent through consensus yet.
+    pub(crate) fn get_unsent_presign_requests(&self) -> Vec<GlobalPresignRequest> {
+        self.global_presign_requests
+            .iter()
             .filter(|request| {
-                let current_request_votes: HashMap<_, _> = presign_requests_votes
-                    .iter()
-                    .map(|(&party_id, requests)| (party_id, requests.contains(request)))
-                    .collect();
-
-                match current_request_votes.weighted_majority_vote(&self.access_structure) {
-                    Ok((_, majority_vote)) => majority_vote,
-                    Err(mpc::Error::ThresholdNotReached) => false,
-                    Err(e) => {
-                        error!(
-                            session_id = ?request.session_identifier,
-                            error = %e,
-                            "Failed to build global presign request to finalize"
-                        );
-
-                        false
-                    }
-                }
+                !self
+                    .sent_presign_requests
+                    .contains(&request.session_identifier)
             })
-            .collect();
-
-        Some(AgreedStatusUpdate {
-            is_idle: network_is_idle,
-            global_presign_requests: agreed_global_presign_requests,
-        })
+            .cloned()
+            .collect()
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.

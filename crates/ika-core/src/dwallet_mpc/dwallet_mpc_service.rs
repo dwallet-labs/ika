@@ -83,8 +83,8 @@ pub struct DWalletMPCService {
     pub epoch: EpochId,
     pub protocol_config: ProtocolConfig,
     pub committee: Arc<Committee>,
-    /// The last status update sent to consensus, used to avoid sending duplicate updates.
-    last_sent_status: Option<(bool, Vec<GlobalPresignRequest>)>,
+    /// Tracks the last sent idle status to avoid sending duplicate updates.
+    last_sent_idle_status: Option<bool>,
     /// The number of consensus rounds since epoch started.
     /// Needed because the consensus rounds themselves might not be consecutive.
     number_of_consensus_rounds: u64,
@@ -158,7 +158,7 @@ impl DWalletMPCService {
             epoch: epoch_id,
             protocol_config,
             committee,
-            last_sent_status: None,
+            last_sent_idle_status: None,
             number_of_consensus_rounds: 0,
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
@@ -210,7 +210,7 @@ impl DWalletMPCService {
             epoch: 1,
             protocol_config: ProtocolConfig::get_for_min_version(),
             committee: Arc::new(committee),
-            last_sent_status: None,
+            last_sent_idle_status: None,
             number_of_consensus_rounds: 0,
             network_is_idle: false,
             processed_global_presign_requests_session_identifiers: HashSet::new(),
@@ -362,24 +362,25 @@ impl DWalletMPCService {
         }
     }
 
-    /// Sends a status update to consensus with the given computation result.
-    /// Only sends if the status has changed since the last update.
+    /// Send status update to consensus if there are unsent presign requests or idle status changed.
     async fn send_status_update_to_consensus(&mut self, is_idle: bool) {
-        // TODO: check protocol version
         let Some(consensus_round) = self.last_read_consensus_round else {
             return;
         };
 
-        let global_presign_requests = self.dwallet_mpc_manager.global_presign_requests.clone();
+        // Only include presign requests that haven't been sent yet.
+        let unsent_presign_requests = self.dwallet_mpc_manager.get_unsent_presign_requests();
 
-        // Check if status has changed since last update
-        let current_status = (is_idle, global_presign_requests.clone());
-        if self.last_sent_status.as_ref() == Some(&current_status) {
+        // Check if there's anything new to send.
+        let has_unsent_requests = !unsent_presign_requests.is_empty();
+        let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
+
+        if !has_unsent_requests && !idle_status_changed {
             return;
         }
 
         let status_update =
-            InternalSessionsStatusUpdate::new(self.name, is_idle, global_presign_requests);
+            InternalSessionsStatusUpdate::new(self.name, is_idle, unsent_presign_requests);
 
         let consensus_tx = ConsensusTransaction::new_internal_sessions_status_update(status_update);
 
@@ -394,8 +395,8 @@ impl DWalletMPCService {
                 "Failed to submit status update to consensus"
             );
         } else {
-            // Update last sent status on successful submission
-            self.last_sent_status = Some(current_status);
+            // Update last sent idle status.
+            self.last_sent_idle_status = Some(is_idle);
         }
     }
 
@@ -601,15 +602,23 @@ impl DWalletMPCService {
             let status_updates = self
                 .epoch_store
                 .next_internal_sessions_status_update(self.last_read_consensus_round);
-
-            let (status_round, status_updates) = match status_updates {
-                Ok(status_updates) => {
-                    if let Some((status_round, status_updates)) = status_updates {
-                        (status_round, status_updates)
-                    } else {
-                        error!("failed to get status updates, None value");
-                        panic!("failed to get status updates, None value");
+            let status_updates = match status_updates {
+                Ok(Some((status_updates_round, updates))) => {
+                    if status_updates_round != mpc_messages_consensus_round {
+                        error!(
+                            ?status_updates_round,
+                            ?mpc_messages_consensus_round,
+                            "status updates consensus round does not match MPC messages consensus round"
+                        );
+                        panic!(
+                            "status updates consensus round does not match MPC messages consensus round"
+                        );
                     }
+                    updates
+                }
+                Ok(None) => {
+                    // No status updates for this round - use empty list.
+                    Vec::new()
                 }
                 Err(e) => {
                     error!(
@@ -625,7 +634,6 @@ impl DWalletMPCService {
                 || mpc_messages_consensus_round
                     != verified_dwallet_checkpoint_messages_consensus_round
                 || mpc_messages_consensus_round != internal_mpc_outputs_consensus_round
-                || mpc_messages_consensus_round != status_round
             {
                 error!(
                     ?mpc_messages_consensus_round,
