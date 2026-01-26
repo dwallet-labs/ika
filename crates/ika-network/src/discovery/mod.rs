@@ -10,7 +10,6 @@ use ika_types::crypto::{NetworkKeyPair, Signer, ToFromBytes, VerifyingKey};
 use ika_types::digests::Digest;
 use ika_types::intent::IntentScope;
 use ika_types::message_envelope::{Envelope, Message, VerifiedEnvelope};
-use mysten_common::debug_fatal;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::{
@@ -593,7 +592,10 @@ fn update_known_peers(
             // );
             error!(
                 should_never_happen=true,
-                peer_info,
+                peer_id=peer_info.peer_id,
+                access_type=peer_info.access_type,
+                addresses=peer_info.addresses,
+                timestamp_ms=peer_info.timestamp_ms,
                 "Failed to convert anemo PeerId to Ed25519PublicKey"
             );
             continue;
