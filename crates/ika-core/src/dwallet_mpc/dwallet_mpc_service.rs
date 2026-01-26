@@ -80,8 +80,8 @@ pub struct DWalletMPCService {
     pub epoch: EpochId,
     pub protocol_config: ProtocolConfig,
     pub committee: Arc<Committee>,
-    /// Tracks the last sent status to avoid sending duplicate updates.
-    last_sent_status: Option<(bool, Vec<GlobalPresignRequest>)>,
+    /// Tracks the last sent idle status to avoid sending duplicate updates.
+    last_sent_idle_status: Option<bool>,
 }
 
 impl DWalletMPCService {
@@ -143,7 +143,7 @@ impl DWalletMPCService {
             epoch: epoch_id,
             protocol_config,
             committee,
-            last_sent_status: None,
+            last_sent_idle_status: None,
         }
     }
 
@@ -185,7 +185,7 @@ impl DWalletMPCService {
             epoch: 1,
             protocol_config: ProtocolConfig::get_for_min_version(),
             committee: Arc::new(committee),
-            last_sent_status: None,
+            last_sent_idle_status: None,
         }
     }
 
@@ -315,8 +315,7 @@ impl DWalletMPCService {
 
         // Check if there's anything new to send.
         let has_unsent_requests = !unsent_presign_requests.is_empty();
-        let idle_status_changed =
-            self.last_sent_status.as_ref().map(|(idle, _)| *idle) != Some(is_idle);
+        let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
 
         if !has_unsent_requests && !idle_status_changed {
             return;
@@ -339,7 +338,7 @@ impl DWalletMPCService {
             );
         } else {
             // Update last sent idle status.
-            self.last_sent_status = Some((is_idle, Vec::new()));
+            self.last_sent_idle_status = Some(is_idle);
         }
     }
 
