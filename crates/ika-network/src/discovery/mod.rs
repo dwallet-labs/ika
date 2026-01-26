@@ -586,10 +586,10 @@ fn update_known_peers(
             continue;
         }
         let Ok(public_key) = Ed25519PublicKey::from_bytes(&peer_info.peer_id.0) else {
-            debug_fatal!(
-                // This should never happen.
-                "Failed to convert anemo PeerId {:?} to Ed25519PublicKey",
-                peer_info.peer_id
+            error!(
+                should_never_happen=true,
+                peer_info,
+                "Failed to convert anemo PeerId to Ed25519PublicKey"
             );
             continue;
         };

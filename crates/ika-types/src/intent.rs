@@ -32,7 +32,9 @@ impl TryFrom<u8> for IntentVersion {
 /// valid signature for an (any) intent in app_2.
 #[derive(Serialize_repr, Deserialize_repr, Copy, Clone, PartialEq, Eq, Debug, Hash)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum AppId {
+    #[default]
     Ika = 0,
 }
 
@@ -44,11 +46,6 @@ impl TryFrom<u8> for AppId {
     }
 }
 
-impl Default for AppId {
-    fn default() -> Self {
-        Self::Ika
-    }
-}
 
 /// This enums specifies the intent scope. Two intents for different scope should
 /// never collide, so no signature provided for one intent scope can be used for

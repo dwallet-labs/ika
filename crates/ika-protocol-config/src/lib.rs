@@ -77,10 +77,12 @@ impl std::ops::Add<u64> for ProtocolVersion {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Copy, PartialOrd, Ord, Eq, ValueEnum)]
+#[derive(Default)]
 pub enum Chain {
     Mainnet,
     Testnet,
     Devnet,
+    #[default]
     Unknown,
 }
 
@@ -95,11 +97,6 @@ impl From<String> for Chain {
     }
 }
 
-impl Default for Chain {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
 
 impl Chain {
     pub fn as_str(self) -> &'static str {

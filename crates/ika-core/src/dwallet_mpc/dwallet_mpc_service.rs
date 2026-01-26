@@ -590,7 +590,7 @@ impl DWalletMPCService {
 
             let Some(session) = self.dwallet_mpc_manager.sessions.get(&session_identifier) else {
                 error!(
-                    should_never_happen =? true,
+                    should_never_happen=true,
                     ?session_identifier,
                     validator=?validator_name,
                     ?computation_result_data,
