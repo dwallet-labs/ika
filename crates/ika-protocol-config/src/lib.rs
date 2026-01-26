@@ -511,7 +511,7 @@ impl ProtocolConfig {
                     cfg.reconfiguration_message_version = Some(2);
                 }
                 4 => {
-                    cfg.sui_protocol_version = Some(109);
+                    cfg.sui_protocol_version = Some(108);
                     cfg.feature_flags
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                 }

@@ -165,7 +165,7 @@ more-asserts = "0.3.1"
 msim = { git = "https://github.com/MystenLabs/mysten-sim.git", rev = "9d787303d855f6cec92eb94933717d4ee1963548", package = "msim" }
 multiaddr = "0.17.0"
 nonempty = "0.11.0"
-num-bigint = "0.4.4"
+num-bigint = "0.4.6"
 num_cpus = "1.15.0"
 num_enum = "0.7.4"
 object_store = { version = "0.11.2", features = [

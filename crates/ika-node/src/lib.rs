@@ -46,7 +46,7 @@ use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
 };
-use ika_core::consensus_manager::{ConsensusManager, ConsensusManagerTrait};
+use ika_core::consensus_manager::ConsensusManager;
 use ika_core::consensus_throughput_calculator::{
     ConsensusThroughputCalculator, ConsensusThroughputProfiler, ThroughputProfileRanges,
 };
