@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 use std::{cmp::Ordering, fmt::Display};
 
-use consensus_core::{BlockAPI, CommitDigest, CommitRef, VerifiedBlock};
+use consensus_core::{BlockAPI, CommitDigest, VerifiedBlock};
 use consensus_types::block::{BlockRef, TransactionIndex};
 use ika_types::{
     digests::ConsensusCommitDigest,
@@ -19,9 +19,6 @@ pub(crate) struct ParsedTransaction {
 }
 
 pub(crate) trait ConsensusCommitAPI: Display {
-    /// Returns the ref of consensus output.
-    fn commit_ref(&self) -> CommitRef;
-
     fn reputation_score_sorted_desc(&self) -> Option<Vec<(AuthorityIndex, u64)>>;
     fn leader_round(&self) -> u64;
     fn leader_author_index(&self) -> AuthorityIndex;
@@ -40,10 +37,6 @@ pub(crate) trait ConsensusCommitAPI: Display {
 }
 
 impl ConsensusCommitAPI for consensus_core::CommittedSubDag {
-    fn commit_ref(&self) -> CommitRef {
-        self.commit_ref
-    }
-
     fn reputation_score_sorted_desc(&self) -> Option<Vec<(AuthorityIndex, u64)>> {
         if !self.reputation_scores_desc.is_empty() {
             Some(

@@ -46,7 +46,6 @@ impl TryFrom<u8> for AppId {
     }
 }
 
-
 /// This enums specifies the intent scope. Two intents for different scope should
 /// never collide, so no signature provided for one intent scope can be used for
 /// another, even when the serialized data itself may be the same.

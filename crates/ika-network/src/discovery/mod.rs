@@ -25,7 +25,7 @@ use tokio::{
     sync::oneshot,
     task::{AbortHandle, JoinSet},
 };
-use tracing::{debug, info, trace, warn, error};
+use tracing::{debug, error, info, trace, warn};
 
 const TIMEOUT: Duration = Duration::from_secs(1);
 const ONE_DAY_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
@@ -591,11 +591,8 @@ fn update_known_peers(
             //     peer_info.peer_id
             // );
             error!(
-                should_never_happen=true,
-                peer_id=peer_info.peer_id,
-                access_type=peer_info.access_type,
-                addresses=peer_info.addresses,
-                timestamp_ms=peer_info.timestamp_ms,
+                should_never_happen = true,
+                ?peer_info,
                 "Failed to convert anemo PeerId to Ed25519PublicKey"
             );
             continue;
