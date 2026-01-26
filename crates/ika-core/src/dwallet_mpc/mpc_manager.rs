@@ -942,7 +942,7 @@ impl DWalletMPCManager {
             }
             session.mark_mpc_session_as_completed();
             session.clear_data();
-        }
+        }sf
     }
 
     pub(crate) fn complete_computation_mpc_session_and_create_if_not_exists(
