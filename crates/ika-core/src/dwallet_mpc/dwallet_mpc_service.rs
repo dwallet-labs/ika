@@ -43,8 +43,7 @@ use ika_types::message::{
 };
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
-    GlobalPresignRequest, InternalSessionsStatusUpdate, SessionIdentifier,
-    UserSecretKeyShareEventType,
+    InternalSessionsStatusUpdate, SessionIdentifier, UserSecretKeyShareEventType,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -496,6 +495,30 @@ impl DWalletMPCService {
                 }
             };
 
+            // Status updates are optional - may not exist for every round.
+            let status_updates = self
+                .epoch_store
+                .next_internal_sessions_status_update(self.last_read_consensus_round);
+            let status_updates = match status_updates {
+                Ok(Some((status_updates_round, updates)))
+                    if status_updates_round == mpc_messages_consensus_round =>
+                {
+                    updates
+                }
+                Ok(_) => {
+                    // No status updates for this round, or round mismatch - use empty list.
+                    Vec::new()
+                }
+                Err(e) => {
+                    error!(
+                        error=?e,
+                        last_read_consensus_round=self.last_read_consensus_round,
+                        "failed to load status updates from the local DB"
+                    );
+                    panic!("failed to load status updates from the local DB");
+                }
+            };
+
             if mpc_messages_consensus_round != mpc_outputs_consensus_round
                 || mpc_messages_consensus_round
                     != verified_dwallet_checkpoint_messages_consensus_round
@@ -533,6 +556,11 @@ impl DWalletMPCService {
             let (mut checkpoint_messages, completed_sessions) = self
                 .dwallet_mpc_manager
                 .handle_consensus_round_outputs(consensus_round, mpc_outputs);
+
+            // Process the status updates for the current round.
+            let _agreed_status = self
+                .dwallet_mpc_manager
+                .handle_status_updates(consensus_round, status_updates);
 
             // Add messages from the consensus output such as EndOfPublish.
             checkpoint_messages.extend(verified_dwallet_checkpoint_messages);
