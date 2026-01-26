@@ -553,14 +553,23 @@ impl DWalletMPCService {
                 .epoch_store
                 .next_dwallet_internal_mpc_output(self.last_read_consensus_round);
 
-            let (internal_mpc_outputs_consensus_round, internal_mpc_outputs) = match mpc_outputs {
-                Ok(mpc_outputs) => {
-                    if let Some(mpc_outputs) = mpc_outputs {
-                        mpc_outputs
-                    } else {
-                        error!("failed to get internal mpc outputs, None value");
-                        panic!("failed to get internal mpc outputs, None value");
+            let internal_mpc_outputs = match mpc_outputs {
+                Ok(Some((round, outputs))) => {
+                    // Validate round matches
+                    if round != mpc_messages_consensus_round {
+                        error!(
+                            ?mpc_messages_consensus_round,
+                            ?round,
+                            "consensus round mismatch for internal MPC outputs"
+                        );
+                        panic!("consensus round mismatch for internal MPC outputs");
                     }
+                    outputs
+                }
+                Ok(None) => {
+                    // No internal MPC outputs for this round - use empty list.
+                    // This can happen during initialization or when no internal outputs are generated.
+                    Vec::new()
                 }
                 Err(e) => {
                     error!(
@@ -575,19 +584,22 @@ impl DWalletMPCService {
             let verified_dwallet_checkpoint_messages = self
                 .epoch_store
                 .next_verified_dwallet_checkpoint_message(self.last_read_consensus_round);
-            let (
-                verified_dwallet_checkpoint_messages_consensus_round,
-                verified_dwallet_checkpoint_messages,
-            ) = match verified_dwallet_checkpoint_messages {
-                Ok(verified_dwallet_checkpoint_messages) => {
-                    if let Some(verified_dwallet_checkpoint_messages) =
-                        verified_dwallet_checkpoint_messages
-                    {
-                        verified_dwallet_checkpoint_messages
-                    } else {
-                        error!("failed to get verified dwallet checkpoint messages, None value");
-                        panic!("failed to get verified dwallet checkpoint messages, None value");
+            let verified_dwallet_checkpoint_messages = match verified_dwallet_checkpoint_messages {
+                Ok(Some((round, messages))) => {
+                    // Validate round matches
+                    if round != mpc_messages_consensus_round {
+                        error!(
+                            ?mpc_messages_consensus_round,
+                            ?round,
+                            "consensus round mismatch for verified checkpoint messages"
+                        );
+                        panic!("consensus round mismatch for verified checkpoint messages");
                     }
+                    messages
+                }
+                Ok(None) => {
+                    // No verified checkpoint messages for this round - use empty list.
+                    Vec::new()
                 }
                 Err(e) => {
                     error!(
@@ -638,13 +650,11 @@ impl DWalletMPCService {
                 error!(
                     ?mpc_messages_consensus_round,
                     ?external_mpc_outputs_consensus_round,
-                    ?mpc_messages_consensus_round,
-                    ?verified_dwallet_checkpoint_messages_consensus_round,
-                    "the consensus rounds of MPC messages, MPC outputs and checkpoint messages do not match"
+                    "the consensus rounds of MPC messages and external MPC outputs do not match"
                 );
 
                 panic!(
-                    "the consensus rounds of MPC messages, MPC outputs and checkpoint messages do not match"
+                    "the consensus rounds of MPC messages and external MPC outputs do not match"
                 );
             }
 

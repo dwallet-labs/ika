@@ -85,10 +85,10 @@ impl TestingAuthorityPerEpochStore {
             pending_checkpoints: Arc::new(Mutex::new(vec![])),
             // The DWalletMPCService expects at least on round of messages to be present before start functioning.
             round_to_messages: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            round_to_outputs: Arc::new(Mutex::new(Default::default())),
-            round_to_internal_outputs: Arc::new(Mutex::new(Default::default())),
-            round_to_verified_checkpoint: Arc::new(Mutex::new(Default::default())),
-            round_to_status_updates: Arc::new(Mutex::new(Default::default())),
+            round_to_outputs: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            round_to_internal_outputs: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            round_to_verified_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            round_to_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             presign_pools: Arc::new(Mutex::new(Default::default())),
         }
     }

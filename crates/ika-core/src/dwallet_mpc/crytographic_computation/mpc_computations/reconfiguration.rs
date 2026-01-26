@@ -19,6 +19,7 @@ use mpc::{Party, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::debug;
+use tracing::error;
 
 pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
     /// Generates the public input required for the reconfiguration protocol.
