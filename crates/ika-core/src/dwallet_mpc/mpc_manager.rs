@@ -345,7 +345,7 @@ impl DWalletMPCManager {
                     agreed_presign_requests.push(request);
                     info!(
                         ?session_identifier,
-                        consensus_round, "Presign request reached majority vote"
+                        consensus_round, "Presign request has been agreed upon"
                     );
                 }
             }
