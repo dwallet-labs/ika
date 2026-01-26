@@ -101,7 +101,7 @@ axum = { version = "0.8", default-features = false, features = [
     "query",
     "ws",
 ] }
-axum-extra = { version = "0.10", features = ["typed-header"] }
+axum-extra = { version = "0.12.5", features = ["typed-header"] }
 axum-server = { version = "0.8", default-features = false, features = [
     "tls-rustls-no-provider",
 ] }
@@ -118,10 +118,10 @@ byteorder = "1.4.3"
 bytes = { version = "1.5.0", features = ["serde"] }
 chrono = { version = "0.4.39", features = ["clock", "serde"] }
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
-const-str = "0.5.3"
+const-str = "1.0.0"
 colored = "3.0.0"
 count-min-sketch = "0.1.7"
-criterion = { version = "0.6.0", features = [
+criterion = { version = "0.8.1", features = [
     "async",
     "async_tokio",
     "html_reports",
@@ -140,7 +140,7 @@ eyre = "0.6.8"
 flate2 = "1.0.28"
 fs_extra = "1.3.0"
 futures = "0.3.28"
-governor = "0.6.0"
+governor = "0.6.3"
 hex = "0.4.3"
 http = "1"
 humantime = "2.1.0"
@@ -150,12 +150,12 @@ indexmap = { version = "2.1.0", features = ["serde"] }
 indicatif = "0.18.0"
 insta = { version = "1.21.1", features = ["redactions", "yaml", "json"] }
 itertools = "0.14.0"
-tikv-jemalloc-ctl = "^0.5"
-jsonrpsee = { version = "0.25.1", features = ["server", "macros", "ws-client", "http-client", "jsonrpsee-core"] }
+tikv-jemalloc-ctl = "0.5.4"
+jsonrpsee = { version = "0.26.0", features = ["server", "macros", "ws-client", "http-client", "jsonrpsee-core"] }
 lru = "0.16.0"
 merlin = { version = "3", default-features = false }
 miette = { version = "7", features = ["fancy"] }
-mockall = "0.13.1"
+mockall = "0.14.0"
 mime = "0.3"
 moka = { version = "0.12", default-features = false, features = [
     "sync",
@@ -163,8 +163,8 @@ moka = { version = "0.12", default-features = false, features = [
 ] }
 more-asserts = "0.3.1"
 msim = { git = "https://github.com/MystenLabs/mysten-sim.git", rev = "9d787303d855f6cec92eb94933717d4ee1963548", package = "msim" }
-multiaddr = "0.17.0"
-nonempty = "0.11.0"
+multiaddr = "0.18.2"
+nonempty = "0.12.0"
 num-bigint = "0.4.6"
 num_cpus = "1.15.0"
 num_enum = "0.7.4"
@@ -183,8 +183,8 @@ prometheus = "0.13.3"
 quote = "1.0.23"
 rand = "0.9"
 rand_chacha = "0.9"
-prost = "0.13"
-prost-build = "0.13"
+prost = "0.14.3"
+prost-build = "0.14.3"
 rayon = "1.11.0"
 protobuf = { version = "2.28", features = ["with-bytes"] }
 regex = "1.7.1"
@@ -224,13 +224,13 @@ thiserror = "2.0.12"
 tokio = "1.44.2"
 tokio-retry = "0.3"
 tokio-stream = { version = "0.1.14", features = ["sync", "net"] }
-tonic = { version = "0.13.1", features = [
+tonic = { version = "0.14.2", features = [
     "zstd",
     "transport",
     "tls-webpki-roots",
 ] }
-tonic-build = { version = "0.13.1", features = ["prost", "transport"] }
-tonic-health = "0.13.1"
+tonic-build = { version = "0.14.2", features = ["prost", "transport"] }
+tonic-health = "0.14.2"
 tower = { version = "0.5", features = [
     "full",
     "util",
@@ -239,7 +239,7 @@ tower = { version = "0.5", features = [
     "limit",
 ] }
 twox-hash = "2.1.1"
-tower-http = { version = "0.5", features = [
+tower-http = { version = "0.6.8", features = [
     "cors",
     "full",
     "trace",
