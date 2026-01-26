@@ -126,7 +126,11 @@ pub fn populate_labels(
     host_label.set_name("host".into());
     host_label.set_value(name);
 
-    let labels = vec![network_label, host_label];
+    let mut source_label = proto::LabelPair::default();
+    source_label.set_name("metrics_source".into());
+    source_label.set_value("ika-proxy".into());
+
+    let labels = vec![network_label, host_label, source_label];
 
     let mut data = data;
     // add our extra labels to our incoming metric data
@@ -375,6 +379,7 @@ mod tests {
             &create_labels(vec![
                 ("network", "unittest-network"),
                 ("host", "validator-0"),
+                ("metrics_source", "ika-proxy"),
             ])
         );
     }
