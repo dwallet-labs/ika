@@ -1564,7 +1564,7 @@ checksum = "d89aabfae550a5c44b43ab941844ffcd2e993cb6900b342debf59e9ea74acdb8"
 dependencies = [
  "async-trait",
  "futures-util",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "tokio",
 ]
 
@@ -2533,7 +2533,7 @@ dependencies = [
  "mysten-metrics",
  "mysten-network",
  "nom",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "prometheus",
  "prost 0.13.4",
  "quinn-proto",
@@ -2878,7 +2878,7 @@ dependencies = [
  "crossterm_winapi",
  "libc",
  "mio 0.8.11",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "signal-hook",
  "signal-hook-mio",
  "winapi",
@@ -2893,7 +2893,7 @@ dependencies = [
  "bitflags 2.8.0",
  "crossterm_winapi",
  "mio 1.0.4",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "rustix 0.38.44",
  "signal-hook",
  "signal-hook-mio",
@@ -3162,7 +3162,7 @@ dependencies = [
  "hashbrown 0.14.5",
  "lock_api",
  "once_cell",
- "parking_lot_core 0.9.10",
+ "parking_lot_core 0.9.12",
 ]
 
 [[package]]
@@ -5023,7 +5023,7 @@ dependencies = [
  "futures-timer",
  "no-std-compat",
  "nonzero_ext",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "portable-atomic",
  "quanta",
  "rand 0.8.5",
@@ -5853,7 +5853,7 @@ dependencies = [
  "mpc",
  "mysten-common",
  "mysten-metrics",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "pprof",
  "prometheus",
  "rand 0.9.0",
@@ -6719,7 +6719,7 @@ dependencies = [
  "http-body 1.0.1",
  "http-body-util",
  "jsonrpsee-types 0.24.9",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "pin-project",
  "rand 0.8.5",
  "rustc-hash 2.1.0",
@@ -6745,7 +6745,7 @@ dependencies = [
  "http-body 1.0.1",
  "http-body-util",
  "jsonrpsee-types 0.25.1",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "pin-project",
  "rand 0.9.0",
  "rustc-hash 2.1.0",
@@ -7241,11 +7241,10 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 
 [[package]]
 name = "lock_api"
-version = "0.4.12"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07af8b9cdd281b7915f413fa73f29ebd5d55d0d3f0155584dade1ff18cea1b17"
+checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
 dependencies = [
- "autocfg",
  "scopeguard",
 ]
 
@@ -7645,7 +7644,7 @@ dependencies = [
  "crossbeam-epoch",
  "crossbeam-utils",
  "loom",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "portable-atomic",
  "rustc_version",
  "smallvec",
@@ -8671,7 +8670,7 @@ dependencies = [
  "futures",
  "mysten-metrics",
  "once_cell",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "rand 0.8.5",
  "reqwest 0.12.12",
  "snap",
@@ -8691,7 +8690,7 @@ dependencies = [
  "dashmap",
  "futures",
  "once_cell",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "prometheus",
  "prometheus-closure-metric",
  "scopeguard",
@@ -8768,7 +8767,7 @@ checksum = "40a3eb6b7c682b65d1f631ec3176829d72ab450b3aacdd3f719bf220822e59ac"
 dependencies = [
  "libc",
  "once_cell",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "thiserror 1.0.69",
  "widestring",
  "winapi",
@@ -9147,7 +9146,7 @@ dependencies = [
  "hyper 1.6.0",
  "itertools 0.13.0",
  "md-5",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "percent-encoding",
  "quick-xml",
  "rand 0.8.5",
@@ -9503,12 +9502,12 @@ dependencies = [
 
 [[package]]
 name = "parking_lot"
-version = "0.12.3"
+version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1bf18183cf54e8d6059647fc3063646a1801cf30896933ec2311622cc4b9a27"
+checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
 dependencies = [
  "lock_api",
- "parking_lot_core 0.9.10",
+ "parking_lot_core 0.9.12",
 ]
 
 [[package]]
@@ -9527,15 +9526,15 @@ dependencies = [
 
 [[package]]
 name = "parking_lot_core"
-version = "0.9.10"
+version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e401f977ab385c9e4e3ab30627d6f26d00e2c73eef317493c4ec6d468726cf8"
+checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
 dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall 0.5.8",
  "smallvec",
- "windows-targets 0.52.6",
+ "windows-link",
 ]
 
 [[package]]
@@ -10123,7 +10122,7 @@ dependencies = [
  "fnv",
  "lazy_static",
  "memchr",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "protobuf",
  "thiserror 1.0.69",
 ]
@@ -10607,7 +10606,7 @@ dependencies = [
  "libc",
  "mio 0.8.11",
  "num_cpus",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.5.8",
@@ -10624,7 +10623,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio 1.0.4",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.5.8",
@@ -12358,7 +12357,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "938d512196766101d333398efde81bc1f37b00cb42c2f8350e5df639f040bbbe"
 dependencies = [
  "new_debug_unreachable",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "phf_shared",
  "precomputed-hash",
 ]
@@ -12581,7 +12580,7 @@ dependencies = [
  "move-vm-types",
  "mysten-common",
  "mysten-metrics",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "serde",
  "serde_json",
  "sui-macros",
@@ -12610,7 +12609,7 @@ dependencies = [
  "move-vm-runtime-v0",
  "move-vm-types-v0",
  "once_cell",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "serde",
  "sui-macros",
  "sui-move-natives-v0",
@@ -12637,7 +12636,7 @@ dependencies = [
  "move-vm-profiler",
  "move-vm-runtime-v1",
  "move-vm-types-v1",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "serde",
  "sui-macros",
  "sui-move-natives-v1",
@@ -12664,7 +12663,7 @@ dependencies = [
  "move-vm-profiler",
  "move-vm-runtime-v2",
  "move-vm-types-v2",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "serde",
  "sui-macros",
  "sui-move-natives-v2",
@@ -12816,7 +12815,7 @@ dependencies = [
  "num_cpus",
  "object_store",
  "once_cell",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "prometheus",
  "rand 0.8.5",
  "rayon",
@@ -13736,7 +13735,7 @@ dependencies = [
  "mysten-metrics",
  "mysten-network",
  "mysten-service",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "prometheus",
  "reqwest 0.12.12",
  "serde",
@@ -13910,7 +13909,7 @@ dependencies = [
  "move-bytecode-utils",
  "move-core-types",
  "move-vm-config",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "prometheus",
  "rand 0.8.5",
  "regex",
@@ -14158,7 +14157,7 @@ dependencies = [
  "mysten-metrics",
  "num_enum 0.6.1",
  "object_store",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "percent-encoding",
  "prometheus",
  "reqwest 0.12.12",
@@ -14354,7 +14353,7 @@ dependencies = [
  "num_enum 0.6.1",
  "once_cell",
  "p384",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "passkey-types",
  "prometheus",
  "proptest",
@@ -14990,7 +14989,7 @@ dependencies = [
  "io-uring",
  "libc",
  "mio 1.0.4",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "pin-project-lite",
  "signal-hook-registry",
  "slab",
@@ -15054,7 +15053,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "log",
- "parking_lot 0.12.3",
+ "parking_lot 0.12.5",
  "percent-encoding",
  "phf",
  "pin-project-lite",
@@ -16449,6 +16448,12 @@ dependencies = [
  "quote",
  "syn 2.0.104",
 ]
+
+[[package]]
+name = "windows-link"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45e46c0661abb7180e7b9c281db115305d49ca1709ab8242adf09666d2173c65"
 
 [[package]]
 name = "windows-registry"
