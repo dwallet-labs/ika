@@ -1,0 +1,10 @@
+{
+	"title": "Core Concepts",
+	"pages": [
+		"overview",
+		"coordinator-architecture",
+		"capabilities-and-approvals",
+		"session-management",
+		"payment-handling"
+	]
+}

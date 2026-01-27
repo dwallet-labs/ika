@@ -1,41 +1,57 @@
-# Website
+# Ika Documentation
 
-This website is built using [Docusaurus](https://docusaurus.io/), a modern static website generator.
+This documentation site is built using [Fumadocs](https://fumadocs.dev/), a modern Next.js-based documentation framework.
 
 ## Installation
 
 ```bash
-yarn
+npm install
 ```
 
 ## Local Development
 
 ```bash
-yarn start
+npm run dev
 ```
 
-This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
+This starts a local development server at `http://localhost:3000`. Changes are reflected live.
 
 ## Build
 
 ```bash
-yarn build
+npm run build
 ```
 
-This command generates static content into the `build` directory and can be served using any static contents hosting service.
+This generates an optimized production build in the `.next` directory.
+
+## Preview Production Build
+
+```bash
+npm run start
+```
+
+## Project Structure
+
+```
+docs/
+├── app/                    # Next.js app directory
+│   ├── docs/              # Documentation pages
+│   ├── api/search/        # Search API
+│   └── layout.tsx         # Root layout
+├── content/docs/          # MDX documentation content
+│   ├── sdk/              # SDK documentation
+│   ├── move-integration/ # Move integration docs
+│   ├── core-concepts/    # Core concepts
+│   ├── operators/        # Operator guides
+│   └── code-examples/    # Code examples
+├── components/            # React components
+├── lib/                   # Utilities and source config
+└── public/               # Static assets
+```
 
 ## Deployment
 
-Using SSH:
+Deploy to any platform that supports Next.js:
 
-```bash
-USE_SSH=true yarn deploy
-```
-
-Not using SSH:
-
-```bash
-GIT_USER=<Your GitHub username> yarn deploy
-```
-
-If you are using GitHub pages for hosting, this command is a convenient way to build the website and push to the `gh-pages` branch.
+- **Vercel**: Connect your repository for automatic deployments
+- **Static Export**: Run `npm run build` with `output: 'export'` in next.config.mjs

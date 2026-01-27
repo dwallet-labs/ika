@@ -1,0 +1,13 @@
+{
+  "title": "SDK",
+  "root": true,
+  "pages": [
+    "index",
+    "setup-localnet",
+    "ika-client",
+    "ika-transaction",
+    "cryptographic-primitives",
+    "user-share-encryption-keys",
+    "cryptography"
+  ]
+}

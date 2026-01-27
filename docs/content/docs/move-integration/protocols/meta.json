@@ -1,0 +1,12 @@
+{
+	"title": "Protocols",
+	"pages": [
+		"overview",
+		"dkg",
+		"presigning",
+		"signing",
+		"future-signing",
+		"key-importing",
+		"converting-to-shared"
+	]
+}

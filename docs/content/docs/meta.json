@@ -1,0 +1,10 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "sdk",
+    "move-integration",
+    "core-concepts",
+    "operators",
+    "code-examples"
+  ]
+}
