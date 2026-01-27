@@ -1,20 +1,20 @@
 import defaultMdxComponents from 'fumadocs-ui/mdx';
-import { DocsBody, DocsDescription, DocsPage, DocsTitle } from 'fumadocs-ui/page';
+import { DocsBody, DocsPage } from 'fumadocs-ui/page';
 import { notFound } from 'next/navigation';
 
-import { Construction, Example, Info, Note, Tip, Warning } from '@/components/InfoBox';
-import Prerequisites from '@/components/Prerequisites';
 import ArchitectureDiagram, {
 	ArchitectureOverviewDiagram,
-	ProtocolLifecycleDiagram,
-	PresignLifecycleDiagram,
-	KeyImportDiagram,
-	FutureSigningDiagram,
 	CapabilityLifecycleDiagram,
-	SigningFlowDiagram,
+	FutureSigningDiagram,
+	KeyImportDiagram,
 	MultisigFlowDiagram,
+	PresignLifecycleDiagram,
+	ProtocolLifecycleDiagram,
 	SharedDWalletFlowDiagram,
+	SigningFlowDiagram,
 } from '@/components/ArchitectureDiagram';
+import { Construction, Example, Info, Note, Tip, Warning } from '@/components/InfoBox';
+import Prerequisites from '@/components/Prerequisites';
 import { source } from '@/lib/source';
 
 export default async function Page(props: { params: Promise<{ slug?: string[] }> }) {
@@ -24,7 +24,7 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
 
 	const MDX = page.data.body;
 
-	const showDescription = page.data.description && page.data.description !== page.data.title;
+	const _showDescription = page.data.description && page.data.description !== page.data.title;
 
 	return (
 		<DocsPage toc={page.data.toc} full={page.data.full}>

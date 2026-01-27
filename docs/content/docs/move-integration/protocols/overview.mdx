@@ -18,11 +18,11 @@ This section covers the core protocols that power dWallet operations. Understand
 
 | Protocol                                                                     | Purpose                        | When to Use                             |
 | ---------------------------------------------------------------------------- | ------------------------------ | --------------------------------------- |
-| **[DKG](/docs/move-integration/protocols/dkg-protocol)**                          | Create a new dWallet           | Once per dWallet                        |
-| **[Presigning](/docs/move-integration/protocols/presigning-protocol)**            | Pre-compute signing material   | Before each signature                   |
-| **[Signing](/docs/move-integration/protocols/signing-protocol)**                  | Create a signature immediately | Direct signing without governance       |
-| **[Future Signing](/docs/move-integration/protocols/future-signing-protocol)**    | Create signature in two phases | Governance, multisig, delayed execution |
-| **[Key Importing](/docs/move-integration/protocols/key-importing-protocol)**      | Import existing private key    | When migrating existing keys            |
+| **[DKG](/docs/move-integration/protocols/dkg)**                          | Create a new dWallet           | Once per dWallet                        |
+| **[Presigning](/docs/move-integration/protocols/presigning)**            | Pre-compute signing material   | Before each signature                   |
+| **[Signing](/docs/move-integration/protocols/signing)**                  | Create a signature immediately | Direct signing without governance       |
+| **[Future Signing](/docs/move-integration/protocols/future-signing)**    | Create signature in two phases | Governance, multisig, delayed execution |
+| **[Key Importing](/docs/move-integration/protocols/key-importing)**      | Import existing private key    | When migrating existing keys            |
 | **[Converting to Shared](/docs/move-integration/protocols/converting-to-shared)** | Make user share public         | Converting zero-trust to shared mode    |
 
 ## Choosing Between Sign and Future Sign
@@ -155,6 +155,6 @@ public macro fun hash_scheme(): u32 { 0 }
 
 ## Next Steps
 
-1. Start with [DKG](/docs/move-integration/protocols/dkg-protocol) to create your first dWallet
-2. Learn [Presigning](/docs/move-integration/protocols/presigning-protocol) to prepare for signatures
-3. Choose between [Signing](/docs/move-integration/protocols/signing-protocol) or [Future Signing](/docs/move-integration/protocols/future-signing-protocol) based on your use case
+1. Start with [DKG](/docs/move-integration/protocols/dkg) to create your first dWallet
+2. Learn [Presigning](/docs/move-integration/protocols/presigning) to prepare for signatures
+3. Choose between [Signing](/docs/move-integration/protocols/signing) or [Future Signing](/docs/move-integration/protocols/future-signing) based on your use case
