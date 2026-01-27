@@ -5292,6 +5292,28 @@ public fun get_sign_signature(self: &SignSession): Option<vector<u8>> {
     }
 }
 
+/// Returns the presign ID of the unverified presign cap.
+///
+/// ### Parameters
+/// - `self`: Reference to the unverified presign cap
+///
+/// ### Returns
+/// The presign ID of the unverified presign cap
+public fun get_unverified_presign_id(self: &UnverifiedPresignCap): ID {
+    self.presign_id
+}
+
+/// Returns the presign ID of the verified presign cap.
+///
+/// ### Parameters
+/// - `self`: Reference to the verified presign cap
+///
+/// ### Returns
+/// The presign ID of the verified presign cap
+public fun get_verified_presign_id(self: &VerifiedPresignCap): ID {
+    self.presign_id
+}
+
 // === Test Functions ===
 
 #[test_only]
