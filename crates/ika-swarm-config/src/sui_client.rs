@@ -32,17 +32,18 @@ use ika_types::sui::{
 };
 use move_core_types::ident_str;
 use move_core_types::language_storage::{StructTag, TypeTag};
-use move_package::BuildConfig;
+use move_package_alt_compilation::build_config::BuildConfig as MoveBuildConfig;
 use shared_crypto::intent::Intent;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use sui::client_commands::{
-    SuiClientCommandResult, SuiClientCommands, estimate_gas_budget_from_gas_cost, execute_dry_run,
-    request_tokens_from_faucet,
+    EphemeralArgs, PublishArgs, SuiClientCommandResult, SuiClientCommands, TestPublishArgs,
+    estimate_gas_budget_from_gas_cost, execute_dry_run, request_tokens_from_faucet,
 };
 use sui_config::SUI_CLIENT_CONFIG;
+use sui_keys::key_derive::generate_new_key;
 use sui_keys::keystore::{AccountKeystore, InMemKeystore, Keystore};
 use sui_sdk::SuiClient;
 use sui_sdk::rpc_types::{ObjectChange, SuiObjectDataOptions, SuiTransactionBlockResponse};
@@ -130,15 +131,11 @@ pub async fn init_ika_on_sui(
     //let mut keystore = Keystore::from(FileBasedKeystore::new(&keystore_path)?);
     let mut keystore = Keystore::InMem(InMemKeystore::default());
     let alias = "publisher";
-    let _ = keystore.update_alias(alias, None);
-    let (publisher_address, phrase, scheme) = keystore.generate_and_add_new_key(
-        SignatureScheme::ED25519,
-        Some(alias.to_string()),
-        None,
-        None,
-    )?;
+    let (publisher_address, keypair, scheme, phrase) =
+        generate_new_key(SignatureScheme::ED25519, None, None)?;
+    keystore.import(Some(alias.to_string()), keypair).await?;
 
-    let publisher_keypair = keystore.get_key(&publisher_address)?.copy();
+    let publisher_keypair = keystore.export(&publisher_address)?.copy();
 
     println!(
         "Generated new keypair and alias for address with scheme {:?} [{alias}: {publisher_address}]",
@@ -148,11 +145,13 @@ pub async fn init_ika_on_sui(
     let active_env = "localnet";
     SuiClientConfig {
         keystore,
+        external_keys: None,
         envs: vec![SuiEnv {
             alias: active_env.to_string(),
             rpc: sui_fullnode_rpc_url.clone(),
             ws: None,
             basic_auth: None,
+            chain_id: None,
         }],
         active_address: Some(publisher_address),
         active_env: Some(active_env.to_string()),
@@ -171,10 +170,12 @@ pub async fn init_ika_on_sui(
     let mut validator_addresses = Vec::new();
     for validator_initialization_config in validator_initialization_configs {
         let alias = validator_initialization_config.name.clone().unwrap();
-        context.add_account(
-            Some(alias),
-            validator_initialization_config.account_key_pair.copy(),
-        );
+        context
+            .add_account(
+                Some(alias),
+                validator_initialization_config.account_key_pair.copy(),
+            )
+            .await;
 
         let validator_address: SuiAddress =
             (&validator_initialization_config.account_key_pair.public()).into();
@@ -443,13 +444,13 @@ pub async fn ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
     let system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version: init_system_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
     let dwallet_2pc_mpc_coordinator_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: dwallet_2pc_mpc_coordinator_id,
         initial_shared_version: dwallet_2pc_mpc_coordinator_initial_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
     let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -516,12 +517,12 @@ pub async fn set_global_presign_config(
     let system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version: init_system_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
     let coordinator_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_dwallet_coordinator_object_id,
         initial_shared_version: init_coordinator_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
     let protocol_cap_ref = client
         .transaction_builder()
@@ -601,7 +602,7 @@ pub async fn ika_system_initialize(
     let ika_system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version: init_system_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
     let pricing = ptb.programmable_move_call(
@@ -765,7 +766,7 @@ pub async fn ika_system_initialize(
     let clock_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: SUI_CLOCK_OBJECT_ID,
         initial_shared_version: SUI_CLOCK_OBJECT_SHARED_VERSION,
-        mutable: false,
+        mutability: sui_types::transaction::SharedObjectMutability::Immutable,
     }))?;
 
     let max_validator_change_count =
@@ -919,7 +920,7 @@ pub async fn ika_system_set_witness_approving_advance_epoch(
     let ika_system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version: init_system_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
     let witness_type_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&witness_type)?))?;
@@ -978,7 +979,7 @@ pub async fn ika_system_add_upgrade_cap_by_cap(
     let ika_system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version: init_system_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
     let protocol_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -1204,7 +1205,7 @@ async fn request_add_validator(
             CallArg::Object(ObjectArg::SharedObject {
                 id: ika_system_object_id,
                 initial_shared_version: init_system_shared_version,
-                mutable: true,
+                mutability: sui_types::transaction::SharedObjectMutability::Mutable,
             }),
             CallArg::Object(ObjectArg::ImmOrOwnedObject(validator_cap_ref)),
         ],
@@ -1231,7 +1232,7 @@ async fn stake_ika(
     let init_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version: init_system_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
     let client = context.get_client().await?;
@@ -1320,7 +1321,7 @@ async fn request_add_validator_candidate(
     let system_ref = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version: init_system_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
     let protocol_public_key = ptb.input(CallArg::Pure(bcs::to_bytes(
@@ -1705,37 +1706,37 @@ async fn publish_package_to_sui(
     context: &mut WalletContext,
     package_path: PathBuf,
 ) -> Result<Vec<ObjectChange>, anyhow::Error> {
-    let result = SuiClientCommands::Publish {
-        package_path,
-        build_config: BuildConfig {
-            dev_mode: false,
-            test_mode: false,
-            generate_docs: false,
-            save_disassembly: false,
-            install_dir: None,
-            force_recompilation: false,
-            lock_file: None,
-            fetch_deps_only: false,
-            skip_fetch_latest_git_deps: false,
-            default_flavor: None,
-            default_edition: None,
-            deps_as_root: false,
-            silence_warnings: false,
-            warnings_are_errors: true,
-            json_errors: false,
-            additional_named_addresses: Default::default(),
-            lint_flag: Default::default(),
-            modes: vec![],
-            implicit_dependencies: Default::default(),
-            force_lock_file: false,
+    let result = SuiClientCommands::TestPublish(TestPublishArgs {
+        publish_args: PublishArgs {
+            package_path,
+            build_config: MoveBuildConfig {
+                test_mode: false,
+                generate_docs: false,
+                save_disassembly: false,
+                install_dir: None,
+                force_recompilation: false,
+                allow_dirty: false,
+                default_flavor: None,
+                default_edition: None,
+                silence_warnings: false,
+                warnings_are_errors: true,
+                json_errors: false,
+                additional_named_addresses: Default::default(),
+                ..Default::default()
+            },
+            payment: Default::default(),
+            gas_data: Default::default(),
+            processing: Default::default(),
+            skip_dependency_verification: false,
+            verify_deps: false,
+            with_unpublished_dependencies: false,
         },
-        payment: Default::default(),
-        gas_data: Default::default(),
-        processing: Default::default(),
-        skip_dependency_verification: false,
-        verify_deps: false,
-        with_unpublished_dependencies: false,
-    }
+        ephemeral: EphemeralArgs {
+            build_env: Some("localnet".to_string()),
+            pubfile_path: None,
+        },
+        publish_unpublished_deps: false,
+    })
     .execute(context)
     .await?;
     let SuiClientCommandResult::TransactionBlock(response) = result else {
@@ -1768,11 +1769,11 @@ pub(crate) async fn create_sui_transaction(
         gas_price,
     );
 
-    let signature = context.config.keystore.sign_secure(
-        &tx_data.sender(),
-        &tx_data,
-        Intent::sui_transaction(),
-    )?;
+    let signature = context
+        .config
+        .keystore
+        .sign_secure(&tx_data.sender(), &tx_data, Intent::sui_transaction())
+        .await?;
     let sender_signed_data = SenderSignedData::new_from_sender_signature(tx_data, signature);
 
     let transaction = Transaction::new(sender_signed_data);

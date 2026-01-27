@@ -10,7 +10,6 @@ use ika_types::crypto::{NetworkKeyPair, Signer, ToFromBytes, VerifyingKey};
 use ika_types::digests::Digest;
 use ika_types::intent::IntentScope;
 use ika_types::message_envelope::{Envelope, Message, VerifiedEnvelope};
-use mysten_common::debug_fatal;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::{
@@ -26,7 +25,7 @@ use tokio::{
     sync::oneshot,
     task::{AbortHandle, JoinSet},
 };
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 const TIMEOUT: Duration = Duration::from_secs(1);
 const ONE_DAY_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
@@ -586,10 +585,15 @@ fn update_known_peers(
             continue;
         }
         let Ok(public_key) = Ed25519PublicKey::from_bytes(&peer_info.peer_id.0) else {
-            debug_fatal!(
-                // This should never happen.
-                "Failed to convert anemo PeerId {:?} to Ed25519PublicKey",
-                peer_info.peer_id
+            // debug_fatal!(
+            //     // This should never happen.
+            //     "Failed to convert anemo PeerId {:?} to Ed25519PublicKey",
+            //     peer_info.peer_id
+            // );
+            error!(
+                should_never_happen = true,
+                ?peer_info,
+                "Failed to convert anemo PeerId to Ed25519PublicKey"
             );
             continue;
         };

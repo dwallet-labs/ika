@@ -5303,3 +5303,11 @@ public fun last_processed_checkpoint_sequence_number(self: &DWalletCoordinatorIn
 public(package) fun sessions_manager(self: &DWalletCoordinatorInner): &SessionsManager {
     &self.sessions_manager
 }
+
+#[test_only]
+public fun dwallet_cap_for_testing(dwallet_id: ID, ctx: &mut TxContext): DWalletCap {
+    DWalletCap {
+        id: object::new(ctx),
+        dwallet_id,
+    }
+}

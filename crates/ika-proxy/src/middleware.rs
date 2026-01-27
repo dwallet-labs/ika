@@ -29,15 +29,6 @@ static MIDDLEWARE_OPS: Lazy<CounterVec> = Lazy::new(|| {
     .unwrap()
 });
 
-static MIDDLEWARE_HEADERS: Lazy<CounterVec> = Lazy::new(|| {
-    register_counter_vec!(
-        "middleware_headers",
-        "Operations counters and status for axum middleware.",
-        &["header", "value"]
-    )
-    .unwrap()
-});
-
 /// we expect sui-node to send us an http header content-length encoding.
 pub async fn expect_content_length(
     TypedHeader(content_length): TypedHeader<ContentLength>,
@@ -56,8 +47,6 @@ pub async fn expect_content_length(
             "Processing request with content-length header"
         );
     }
-
-    MIDDLEWARE_HEADERS.with_label_values(&["content-length", &format!("{}", content_length.0)]);
     Ok(next.run(request).await)
 }
 

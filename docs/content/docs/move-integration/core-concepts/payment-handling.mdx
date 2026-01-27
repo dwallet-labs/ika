@@ -12,18 +12,19 @@ All dWallet protocol operations require fees paid in both **IKA** (protocol fees
 
 ## Fee Structure
 
-| Operation | IKA Fee | SUI Fee |
-|-----------|---------|---------|
+| Operation            | IKA Fee          | SUI Fee   |
+| -------------------- | ---------------- | --------- |
 | DKG (Create dWallet) | Protocol-defined | Gas costs |
-| Presign | Protocol-defined | Gas costs |
-| Sign | Protocol-defined | Gas costs |
-| Future Sign | Protocol-defined | Gas costs |
+| Presign              | Protocol-defined | Gas costs |
+| Sign                 | Protocol-defined | Gas costs |
+| Future Sign          | Protocol-defined | Gas costs |
 
 Fee amounts are determined by the network and can be queried from the coordinator.
 
 ## Balance Management Pattern
 
 The recommended pattern is to:
+
 1. Store IKA and SUI balances in your contract
 2. Withdraw coins before operations
 3. Return unused coins after operations
@@ -293,4 +294,4 @@ public fun add_presign_with_auto_replenish(
 
 ## Next Steps
 
-- Continue to [Protocols](/docs/move-integration/protocols/) to learn about DKG, presigning, and signing
+- Continue to [Protocols](/docs/move-integration/protocols/overview) to learn about DKG, presigning, and signing

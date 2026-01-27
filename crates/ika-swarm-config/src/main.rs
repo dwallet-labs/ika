@@ -18,6 +18,8 @@ use std::path::PathBuf;
 use sui::client_commands::request_tokens_from_faucet;
 use sui_config::SUI_KEYSTORE_FILENAME;
 use sui_config::{Config, SUI_CLIENT_CONFIG, sui_config_dir};
+use sui_keys::key_derive::generate_new_key;
+use sui_keys::key_identity::KeyIdentity;
 use sui_keys::keystore::Keystore;
 use sui_keys::keystore::{AccountKeystore, FileBasedKeystore};
 use sui_sdk::sui_client_config::{SuiClientConfig, SuiEnv};
@@ -141,7 +143,8 @@ async fn main() -> Result<()> {
         } => {
             println!("Publishing IKA modules on network: {sui_rpc_addr}");
 
-            let (keystore, publisher_address, sui_config_path) = init_sui_keystore(sui_conf_dir)?;
+            let (keystore, publisher_address, sui_config_path) =
+                init_sui_keystore(sui_conf_dir).await?;
             inti_sui_client_conf(&sui_rpc_addr, keystore, publisher_address, &sui_config_path)?;
             request_tokens_from_faucet(publisher_address, sui_faucet_addr.clone()).await?;
 
@@ -249,7 +252,8 @@ async fn main() -> Result<()> {
         } => {
             println!("Minting IKA tokens using configuration from: {ika_config_path:?}");
 
-            let (keystore, publisher_address, sui_config_path) = init_sui_keystore(sui_conf_dir)?;
+            let (keystore, publisher_address, sui_config_path) =
+                init_sui_keystore(sui_conf_dir).await?;
             println!("Using SUI configuration from: {sui_config_path:?}");
             inti_sui_client_conf(&sui_rpc_addr, keystore, publisher_address, &sui_config_path)?;
             println!("Using SUI faucet address: {sui_faucet_addr}");
@@ -299,7 +303,8 @@ async fn main() -> Result<()> {
             let config_content = fs::read_to_string(&ika_config_path)?;
             let mut publish_config: PublishIkaConfig = serde_json::from_str(&config_content)?;
 
-            let (keystore, publisher_address, sui_config_path) = init_sui_keystore(sui_conf_dir)?;
+            let (keystore, publisher_address, sui_config_path) =
+                init_sui_keystore(sui_conf_dir).await?;
             inti_sui_client_conf(&sui_rpc_addr, keystore, publisher_address, &sui_config_path)?;
             println!("Using SUI configuration from: {sui_config_path:?}");
 
@@ -436,7 +441,8 @@ async fn main() -> Result<()> {
             })?;
 
             // Initialize the SUI configuration.
-            let (keystore, publisher_address, sui_config_path) = init_sui_keystore(sui_conf_dir)?;
+            let (keystore, publisher_address, sui_config_path) =
+                init_sui_keystore(sui_conf_dir).await?;
             inti_sui_client_conf(&sui_rpc_addr, keystore, publisher_address, &sui_config_path)?;
             println!("Using SUI configuration from: {sui_config_path:?}");
 
@@ -520,6 +526,7 @@ fn inti_sui_client_conf(
             rpc: sui_rpc_addr.to_string(),
             ws: None,
             basic_auth: None,
+            chain_id: None,
         });
     }
     config.active_address = Some(active_addr);
@@ -528,14 +535,16 @@ fn inti_sui_client_conf(
     Ok(())
 }
 
-fn init_sui_keystore(sui_conf_dir: Option<PathBuf>) -> Result<(Keystore, SuiAddress, PathBuf)> {
+async fn init_sui_keystore(
+    sui_conf_dir: Option<PathBuf>,
+) -> Result<(Keystore, SuiAddress, PathBuf)> {
     let sui_conf_dir = match sui_conf_dir {
         Some(dir) => dir,
         None => sui_config_dir()?,
     };
     let keystore_path = sui_conf_dir.join(SUI_KEYSTORE_FILENAME);
 
-    let mut keystore = Keystore::File(FileBasedKeystore::new(&keystore_path)?);
+    let mut keystore = Keystore::File(FileBasedKeystore::load_or_create(&keystore_path)?);
     let sui_client_config_path = sui_conf_dir.join(SUI_CLIENT_CONFIG);
     println!("Using SUI client configuration at: {sui_client_config_path:?}");
     println!("Using keystore at: {keystore_path:?}");
@@ -547,21 +556,24 @@ fn init_sui_keystore(sui_conf_dir: Option<PathBuf>) -> Result<(Keystore, SuiAddr
                 file_ks.create_alias(Option::from(ALIAS_PUBLISHER.to_string()))?;
             }
 
-            match file_ks.get_address_by_alias(ALIAS_PUBLISHER.to_string()) {
-                Ok(address) => *address,
+            match file_ks.get_by_identity(&KeyIdentity::Alias(ALIAS_PUBLISHER.to_string())) {
+                Ok(address) => address,
                 Err(_) => {
                     // Generate a new key if not found
-                    let (address, phrase, _) = file_ks.generate_and_add_new_key(
+                    let (address, keypair, _, phrase) = generate_new_key(
                         SignatureScheme::ED25519,
-                        Some(ALIAS_PUBLISHER.to_string()),
                         None,
                         Some("word24".to_string()),
                     )?;
 
+                    file_ks
+                        .import(Some(ALIAS_PUBLISHER.to_string()), keypair)
+                        .await?;
+
                     println!("Generated a new publisher key with address: {address}");
                     println!("Secret Recovery Phrase: {phrase}");
 
-                    let publisher_keypair = file_ks.get_key(&address)?.copy();
+                    let publisher_keypair = file_ks.export(&address)?.copy();
                     let encoded = publisher_keypair.encode_base64();
                     let publisher_key_path = sui_conf_dir.join("publisher.key");
                     let mut file = File::create(&publisher_key_path)?;
