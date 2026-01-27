@@ -365,6 +365,9 @@ export async function runCompleteDKGFlow(
 		dkgResult.userPublicOutput,
 		awaitingDWallet,
 	);
+	console.log('dwallet id:', dkgResult.dWalletID);
+	console.log('encrypted user secret key share id:', dkgResult.encryptedUserSecretKeyShareId);
+	console.log('test name:', testName);
 
 	// If there was signature we should fetch the sign object and verify the signature
 	if (signDuringDKGOptions) {

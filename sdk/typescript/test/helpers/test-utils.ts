@@ -77,7 +77,8 @@ export async function getObjectWithType<TObject>(
 export function createDeterministicSeed(testName: string): Uint8Array {
 	if (!testSeeds.has(testName)) {
 		// Generate a random seed for this test on first call
-		const randomSeed = new Uint8Array(randomBytes(32));
+		let seed = new TextEncoder().encode('seed');
+		const randomSeed = new Uint8Array(seed);
 		testSeeds.set(testName, randomSeed);
 	}
 	return testSeeds.get(testName)!;
@@ -250,6 +251,8 @@ export async function executeTestTransactionWithKeypair(
  */
 export async function generateTestKeypair(testName: string, curve: Curve = Curve.SECP256K1) {
 	const seed = createDeterministicSeed(testName);
+	// copilot log the seed
+	console.log(`Generated seed for test "${testName}":`, toHex(seed));
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
 	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve);

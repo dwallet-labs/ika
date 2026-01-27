@@ -15,6 +15,7 @@ import {
 	publicKeyFromDWalletOutput,
 	SessionsManagerModule,
 	SignatureAlgorithm,
+	UserShareEncryptionKeys,
 	ZeroTrustDWallet,
 } from '../../src';
 import { testPresign } from '../helpers/dwallet-test-helpers';
@@ -99,14 +100,14 @@ function verifySignature(
 /**
  * Setup and run complete DKG flow, returning all necessary components for signing
  */
-async function setupDKGFlow(
+export async function setupDKGFlow(
 	testName: string,
 	curve: Curve,
 ): Promise<{
 	ikaClient: IkaClient;
 	activeDWallet: ZeroTrustDWallet;
 	encryptedUserSecretKeyShareId: string;
-	userShareEncryptionKeys: any;
+	userShareEncryptionKeys: UserShareEncryptionKeys;
 	signerAddress: string;
 }> {
 	const suiClient = createTestSuiClient();
@@ -191,7 +192,7 @@ async function requestAndWaitForPresign(
 async function signAndVerify(
 	ikaClient: IkaClient,
 	activeDWallet: ZeroTrustDWallet,
-	userShareEncryptionKeys: any,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
 	presign: Presign,
 	encryptedUserSecretKeyShareId: string,
 	message: Uint8Array,
