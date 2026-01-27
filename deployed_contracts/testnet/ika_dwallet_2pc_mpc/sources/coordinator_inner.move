@@ -2750,7 +2750,7 @@ public(package) fun request_dwallet_dkg(
     dwallet
         .encrypted_user_secret_key_shares
         .add(encrypted_user_secret_key_share_id, encrypted_user_share);
-    
+
     (dwallet_cap, sign_id)
 }
 
@@ -2923,7 +2923,7 @@ public fun request_dwallet_dkg_impl(
         .join_gas_fee_reimbursement_sui_system_call_balance(
             gas_fee_reimbursement_sui_for_system_calls,
         );
-    
+
     (dwallet_cap, sign_id)
 }
 
@@ -2985,9 +2985,9 @@ public(package) fun respond_dwallet_dkg(
                             .borrow_mut(*encrypted_user_secret_key_share_id.borrow());
                         encrypted_user_share.state =
                             EncryptedUserSecretKeyShareState::NetworkVerificationCompleted;
-                        
+
                     };
-                    
+
 
                     DWalletState::AwaitingKeyHolderSignature {
                         public_output,
@@ -4197,7 +4197,7 @@ public(package) fun request_future_sign(
 
     let signature_algorithm = presign_obj.signature_algorithm;
 
-    
+
     let global_presign_config = self.global_presign_config();
     let is_global_presign = if(is_imported_key_dwallet) {
         global_presign_config.is_global_presign_for_imported_key(curve, signature_algorithm)
@@ -5281,4 +5281,12 @@ public fun last_processed_checkpoint_sequence_number(self: &DWalletCoordinatorIn
 #[test_only]
 public(package) fun sessions_manager(self: &DWalletCoordinatorInner): &SessionsManager {
     &self.sessions_manager
+}
+
+#[test_only]
+public fun dwallet_cap_for_testing(dwallet_id: ID, ctx: &mut TxContext): DWalletCap {
+    DWalletCap {
+        id: object::new(ctx),
+        dwallet_id,
+    }
 }
