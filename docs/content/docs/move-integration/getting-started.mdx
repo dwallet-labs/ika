@@ -45,11 +45,10 @@ ika = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_cont
 my_ika_project = "0x0"
 ```
 
-
 <Callout type="warn" title="Testnet Only">
-The above configuration is for **testnet**. For mainnet deployment, update the paths to use `deployed_contracts/mainnet/` when available.
+	The above configuration is for **testnet**. For mainnet deployment, update the paths to use
+	`deployed_contracts/mainnet/` when available.
 </Callout>
-
 
 ### 3. Verify Dependencies
 
@@ -124,9 +123,9 @@ const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
 
 // Create Ika client
 const ikaClient = new IkaClient({
-    suiClient,
-    config: getNetworkConfig('testnet'),
-    cache: true,
+	suiClient,
+	config: getNetworkConfig('testnet'),
+	cache: true,
 });
 
 // Initialize the client (fetches network objects)
@@ -137,10 +136,10 @@ await ikaClient.initialize();
 
 When interacting with Ika, you'll need these network objects:
 
-| Object | Description | How to Get |
-|--------|-------------|------------|
-| **DWalletCoordinator** | Shared object for all dWallet operations | `ikaClient.config.objects.dwalletCoordinatorId` |
-| **Network Encryption Key** | Current encryption key for the network | `ikaClient.getLatestNetworkEncryptionKey()` |
+| Object                     | Description                              | How to Get                                      |
+| -------------------------- | ---------------------------------------- | ----------------------------------------------- |
+| **DWalletCoordinator**     | Shared object for all dWallet operations | `ikaClient.config.objects.dwalletCoordinatorId` |
+| **Network Encryption Key** | Current encryption key for the network   | `ikaClient.getLatestNetworkEncryptionKey()`     |
 
 ## Protocol Fees
 
@@ -175,38 +174,38 @@ Ika supports multiple curves and signature algorithms:
 
 ### Curves
 
-| Curve | ID | Use Case |
-|-------|-----|----------|
-| SECP256K1 | 0 | Bitcoin, Ethereum |
-| SECP256R1 | 1 | WebAuthn, Apple Secure Enclave |
-| ED25519 | 2 | Solana, Substrate |
-| RISTRETTO | 3 | Privacy-preserving applications |
+| Curve     | ID  | Use Case                        |
+| --------- | --- | ------------------------------- |
+| SECP256K1 | 0   | Bitcoin, Ethereum               |
+| SECP256R1 | 1   | WebAuthn, Apple Secure Enclave  |
+| ED25519   | 2   | Solana, Substrate               |
+| RISTRETTO | 3   | Privacy-preserving applications |
 
 ### Signature Algorithms
 
 Signature algorithm IDs are **relative to the curve**:
 
-| Curve | Algorithm | ID |
-|-------|-----------|-----|
-| SECP256K1 | ECDSASecp256k1 | 0 |
-| SECP256K1 | Taproot | 1 |
-| SECP256R1 | ECDSASecp256r1 | 0 |
-| ED25519 | EdDSA | 0 |
-| RISTRETTO | SchnorrkelSubstrate | 0 |
+| Curve     | Algorithm           | ID  |
+| --------- | ------------------- | --- |
+| SECP256K1 | ECDSASecp256k1      | 0   |
+| SECP256K1 | Taproot             | 1   |
+| SECP256R1 | ECDSASecp256r1      | 0   |
+| ED25519   | EdDSA               | 0   |
+| RISTRETTO | SchnorrkelSubstrate | 0   |
 
 ### Hash Schemes
 
 Hash scheme IDs are **relative to the curve + signature algorithm**:
 
-| Curve | Algorithm | Hash | ID |
-|-------|-----------|------|-----|
-| SECP256K1 | ECDSASecp256k1 | KECCAK256 (Ethereum) | 0 |
-| SECP256K1 | ECDSASecp256k1 | SHA256 | 1 |
-| SECP256K1 | ECDSASecp256k1 | DoubleSHA256 (Bitcoin) | 2 |
-| SECP256K1 | Taproot | SHA256 | 0 |
-| SECP256R1 | ECDSASecp256r1 | SHA256 | 0 |
-| ED25519 | EdDSA | SHA512 | 0 |
-| RISTRETTO | SchnorrkelSubstrate | Merlin | 0 |
+| Curve     | Algorithm           | Hash                   | ID  |
+| --------- | ------------------- | ---------------------- | --- |
+| SECP256K1 | ECDSASecp256k1      | KECCAK256 (Ethereum)   | 0   |
+| SECP256K1 | ECDSASecp256k1      | SHA256                 | 1   |
+| SECP256K1 | ECDSASecp256k1      | DoubleSHA256 (Bitcoin) | 2   |
+| SECP256K1 | Taproot             | SHA256                 | 0   |
+| SECP256R1 | ECDSASecp256r1      | SHA256                 | 0   |
+| ED25519   | EdDSA               | SHA512                 | 0   |
+| RISTRETTO | SchnorrkelSubstrate | Merlin                 | 0   |
 
 ## Next Steps
 
