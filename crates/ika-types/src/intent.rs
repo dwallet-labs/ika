@@ -32,7 +32,9 @@ impl TryFrom<u8> for IntentVersion {
 /// valid signature for an (any) intent in app_2.
 #[derive(Serialize_repr, Deserialize_repr, Copy, Clone, PartialEq, Eq, Debug, Hash)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum AppId {
+    #[default]
     Ika = 0,
 }
 
@@ -41,12 +43,6 @@ impl TryFrom<u8> for AppId {
     type Error = eyre::Report;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         bcs::from_bytes(&[value]).map_err(|_| eyre!("Invalid AppId"))
-    }
-}
-
-impl Default for AppId {
-    fn default() -> Self {
-        Self::Ika
     }
 }
 

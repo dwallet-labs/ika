@@ -132,7 +132,7 @@ pub async fn request_add_validator_candidate(
     let system_ref = ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
     let protocol_public_key = ptb.input(CallArg::Pure(bcs::to_bytes(
@@ -797,11 +797,11 @@ pub async fn execute_transaction(
 ) -> anyhow::Result<SuiTransactionBlockResponse> {
     let sender = context.active_address()?;
 
-    let signature =
-        context
-            .config
-            .keystore
-            .sign_secure(&sender, &tx_data, Intent::sui_transaction())?;
+    let signature = context
+        .config
+        .keystore
+        .sign_secure(&sender, &tx_data, Intent::sui_transaction())
+        .await?;
     let transaction = Transaction::from_data(tx_data, vec![signature]);
     let sui_client = context.get_client().await?;
     sui_client
@@ -812,7 +812,7 @@ pub async fn execute_transaction(
                 .with_input()
                 .with_effects()
                 .with_object_changes(),
-            Some(sui_types::quorum_driver_types::ExecuteTransactionRequestType::WaitForLocalExecution),
+            Some(sui_types::transaction_driver_types::ExecuteTransactionRequestType::WaitForLocalExecution),
         )
         .await
         .map_err(|err| anyhow::anyhow!(err.to_string()))
@@ -1663,7 +1663,7 @@ pub(crate) async fn get_dwallet_2pc_mpc_coordinator_call_arg(
     Ok(CallArg::Object(ObjectArg::SharedObject {
         id: ika_dwallet_2pc_mpc_coordinator_object_id,
         initial_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))
 }
 
@@ -1696,7 +1696,7 @@ pub async fn add_ika_system_command_to_ptb(
     let mut args = vec![ptb.input(CallArg::Object(ObjectArg::SharedObject {
         id: ika_system_object_id,
         initial_shared_version,
-        mutable: true,
+        mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?];
 
     args.extend(call_args);

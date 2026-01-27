@@ -33,6 +33,7 @@ Move.lock
 !deployed_contracts/mainnet/ika_system/Move.lock
 .trace
 .coverage_map.mvcov
+Pub.localnet.toml
 
 # Thumbnails
 ._*
