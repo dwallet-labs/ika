@@ -1,0 +1,290 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import 'fumadocs-ui/style.css';
+
+/* Modern fonts - Geist for that clean, technical look */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap');
+
+/* ===== LIGHT MODE - Clean Pink ===== */
+:root {
+  /* Primary - Modern pink */
+  --fd-primary: 330 80% 60%;
+  --fd-primary-foreground: 0 0% 100%;
+
+  /* Backgrounds */
+  --fd-background: 0 0% 100%;
+  --fd-foreground: 0 0% 9%;
+
+  /* Muted */
+  --fd-muted: 330 10% 96%;
+  --fd-muted-foreground: 0 0% 45%;
+
+  /* Cards & Popovers */
+  --fd-card: 0 0% 100%;
+  --fd-card-foreground: 0 0% 9%;
+  --fd-popover: 0 0% 100%;
+  --fd-popover-foreground: 0 0% 9%;
+
+  /* Borders */
+  --fd-border: 0 0% 90%;
+
+  /* Accents */
+  --fd-accent: 330 20% 96%;
+  --fd-accent-foreground: 330 80% 50%;
+
+  /* Ring */
+  --fd-ring: 330 80% 60%;
+
+  /* Code */
+  --fd-code-highlight: rgba(236, 72, 153, 0.08);
+
+  /* Custom */
+  --accent-gradient: linear-gradient(135deg, #ec4899 0%, #f472b6 100%);
+  --surface-elevated: 0 0% 100%;
+}
+
+/* ===== DARK MODE - Deep Pink ===== */
+.dark {
+  --fd-primary: 330 80% 65%;
+  --fd-primary-foreground: 0 0% 9%;
+
+  --fd-background: 0 0% 4%;
+  --fd-foreground: 0 0% 93%;
+
+  --fd-muted: 0 0% 10%;
+  --fd-muted-foreground: 0 0% 55%;
+
+  --fd-card: 0 0% 7%;
+  --fd-card-foreground: 0 0% 93%;
+  --fd-popover: 0 0% 8%;
+  --fd-popover-foreground: 0 0% 90%;
+
+  --fd-border: 0 0% 14%;
+
+  --fd-accent: 330 15% 12%;
+  --fd-accent-foreground: 330 80% 70%;
+
+  --fd-ring: 330 80% 65%;
+
+  --fd-code-highlight: rgba(244, 114, 182, 0.12);
+
+  --accent-gradient: linear-gradient(135deg, #f472b6 0%, #fb7185 100%);
+  --surface-elevated: 0 0% 9%;
+}
+
+/* ===== BASE TYPOGRAPHY ===== */
+html {
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'kern' 1, 'liga' 1;
+}
+
+body {
+  font-size: 15px;
+  line-height: 1.6;
+  letter-spacing: -0.011em;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+}
+
+h1 { font-weight: 700; letter-spacing: -0.035em; }
+h2 { letter-spacing: -0.03em; }
+
+p {
+  line-height: 1.7;
+  color: hsl(var(--fd-muted-foreground));
+}
+
+strong {
+  font-weight: 600;
+  color: hsl(var(--fd-foreground));
+}
+
+/* ===== CODE ===== */
+code, pre, kbd {
+  font-family: 'DM Mono', 'SF Mono', Monaco, monospace;
+}
+
+:not(pre) > code {
+  background: hsl(var(--fd-muted)) !important;
+  color: hsl(var(--fd-accent-foreground)) !important;
+  border: none !important;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 0.875em;
+  font-weight: 500;
+}
+
+pre {
+  border-radius: 10px !important;
+  border: 1px solid hsl(var(--fd-border)) !important;
+  background: hsl(var(--fd-card)) !important;
+}
+
+.dark pre {
+  background: hsl(240 6% 6%) !important;
+}
+
+/* ===== LINKS ===== */
+a {
+  color: hsl(var(--fd-accent-foreground));
+  text-decoration: none;
+  font-weight: 500;
+  transition: opacity 0.15s ease;
+}
+
+a:hover {
+  opacity: 0.8;
+}
+
+/* ===== SIDEBAR ===== */
+#nd-sidebar {
+  background: hsl(var(--fd-background)) !important;
+}
+
+.dark #nd-sidebar {
+  background: hsl(240 6% 5%) !important;
+}
+
+[data-active="true"] {
+  background: hsl(var(--fd-accent)) !important;
+  border-left: 2px solid hsl(var(--fd-primary));
+  font-weight: 500;
+}
+
+/* Sidebar tabs trigger */
+#nd-sidebar > div > button[data-state] {
+  border: 1px solid hsl(var(--fd-border));
+  background: hsl(var(--fd-card));
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0 0 12px 0;
+  transition: all 0.15s ease;
+}
+
+#nd-sidebar > div > button[data-state]:hover {
+  background: hsl(var(--fd-accent));
+  border-color: hsl(var(--fd-border));
+}
+
+#nd-sidebar > div > button[data-state] svg:last-child {
+  opacity: 0.4;
+  transition: transform 0.2s ease;
+}
+
+#nd-sidebar > div > button[data-state="open"] svg:last-child {
+  transform: rotate(180deg);
+}
+
+/* Dropdown popover */
+[data-radix-popper-content-wrapper] [data-side] {
+  border: 1px solid hsl(var(--fd-border));
+  border-radius: 12px !important;
+  background: hsl(var(--fd-popover));
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+  padding: 6px !important;
+}
+
+.dark [data-radix-popper-content-wrapper] [data-side] {
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+}
+
+[data-radix-popper-content-wrapper] a {
+  border-radius: 8px !important;
+  padding: 10px 12px !important;
+  transition: background 0.1s ease;
+}
+
+[data-radix-popper-content-wrapper] a:hover {
+  background: hsl(var(--fd-accent)) !important;
+}
+
+[data-radix-popper-content-wrapper] a.bg-fd-accent {
+  background: hsl(var(--fd-accent)) !important;
+}
+
+[data-radix-popper-content-wrapper] a p.text-sm {
+  font-weight: 500;
+}
+
+[data-radix-popper-content-wrapper] a p.text-xs {
+  opacity: 0.6;
+}
+
+/* ===== TABLES ===== */
+table {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid hsl(var(--fd-border));
+  font-size: 14px;
+}
+
+th {
+  background: hsl(var(--fd-muted));
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: hsl(var(--fd-muted-foreground));
+}
+
+tbody tr {
+  transition: background 0.1s ease;
+}
+
+tbody tr:hover {
+  background: hsl(var(--fd-muted) / 0.5);
+}
+
+/* ===== CALLOUTS ===== */
+[data-callout] {
+  border-radius: 10px !important;
+  border-left-width: 3px !important;
+  background: hsl(var(--fd-muted)) !important;
+}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--fd-border));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--fd-muted-foreground) / 0.3);
+}
+
+/* ===== SELECTION ===== */
+::selection {
+  background: hsl(var(--fd-primary) / 0.2);
+}
+
+/* ===== FOCUS ===== */
+*:focus-visible {
+  outline: 2px solid hsl(var(--fd-primary));
+  outline-offset: 2px;
+}
+
+/* ===== UTILITIES ===== */
+.gradient-text {
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
