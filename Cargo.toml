@@ -152,7 +152,7 @@ insta = { version = "1.21.1", features = ["redactions", "yaml", "json"] }
 itertools = "0.14.0"
 tikv-jemalloc-ctl = "0.5.4"
 jsonrpsee = { version = "0.26.0", features = ["server", "macros", "ws-client", "http-client", "jsonrpsee-core"] }
-lru = "0.16.0"
+lru = "0.16.3"
 merlin = { version = "3", default-features = false }
 miette = { version = "7", features = ["fancy"] }
 mockall = "0.14.0"
