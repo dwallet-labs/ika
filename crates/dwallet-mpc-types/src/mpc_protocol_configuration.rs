@@ -320,7 +320,8 @@ mod tests {
         );
 
         // Validate Secp256k1 curve / no invalid signature algorithm
-        let all_signature_algorithm_keys: Vec<_> = secp256k1_entry.keys().copied().collect();
+        let mut all_signature_algorithm_keys: Vec<_> = secp256k1_entry.keys().copied().collect();
+        all_signature_algorithm_keys.sort();
         assert_eq!(
             all_signature_algorithm_keys,
             vec![0, 1],
