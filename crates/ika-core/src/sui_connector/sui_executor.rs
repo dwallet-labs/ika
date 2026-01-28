@@ -212,19 +212,14 @@ where
         }
 
         if clock.timestamp_ms > mid_epoch_time
-            && coordinator_inner
+            && let Some(calculation_votes) = coordinator_inner
                 .pricing_and_fee_management
                 .calculation_votes
-                .is_some()
+                .as_ref()
             && coordinator_inner.next_epoch_active_committee.is_some()
             && !epoch_switch_state.calculated_protocol_pricing
         {
             info!("Running calculating protocol pricing");
-
-            let calculation_votes = coordinator_inner
-                .pricing_and_fee_management
-                .calculation_votes
-                .unwrap();
 
             let default_pricing_keys = calculation_votes
                 .default_pricing

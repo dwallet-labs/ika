@@ -1016,10 +1016,10 @@ impl SuiClientInner for SuiSdkClient {
         for validator in validators {
             let info = validator.verified_validator_info();
             let mpc_data_id = if read_next_mpc_data
-                && info.next_epoch_mpc_data_bytes.is_some()
+                && let Some(next_epoch_mpc_data_bytes) = info.next_epoch_mpc_data_bytes.as_ref()
                 && info.previous_mpc_data_bytes.is_none()
             {
-                info.next_epoch_mpc_data_bytes.as_ref().unwrap().contents.id
+                next_epoch_mpc_data_bytes.contents.id
             } else {
                 if info.next_epoch_mpc_data_bytes.is_some()
                     && info.previous_mpc_data_bytes.is_some()
