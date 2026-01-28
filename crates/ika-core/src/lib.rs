@@ -31,6 +31,8 @@ pub mod storage;
 pub mod system_checkpoints;
 
 pub mod dwallet_mpc;
+pub mod signature_cache;
+pub mod signature_store;
 pub mod sui_connector;
 
 mod dwallet_session_request;
