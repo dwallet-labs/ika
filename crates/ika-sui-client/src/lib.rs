@@ -1025,8 +1025,9 @@ impl SuiClientInner for SuiSdkClient {
                     && info.previous_mpc_data_bytes.is_some()
                 {
                     error!(
+                        should_never_happen=true,
                         validator_id=?validator.id,
-                        "This should never happen, validator can't have both previous and next epoch MPC data bytes, using current data from epoch",
+                        "Validator can't have both previous and next epoch MPC data bytes, using current data from epoch",
                     );
                 }
 
