@@ -28,8 +28,8 @@ use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, SessionIdentifier,
-    SessionType,
+    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
+    InternalSessionsStatusUpdate, SessionIdentifier, SessionType,
 };
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -38,6 +38,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tracing::{debug, error, info};
+
+/// Result of majority voting on status updates.
+#[derive(Debug, Clone)]
+pub struct AgreedStatusUpdate {
+    /// Whether the majority of validators are idle.
+    pub is_idle: bool,
+    /// The presign session requests that reached quorum agreement.
+    pub global_presign_requests: Vec<GlobalPresignRequest>,
+}
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -85,6 +94,27 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) schnorr_presign_second_round_delay: u64,
     sui_data_receivers: SuiDataReceivers,
     pub(crate) protocol_config: ProtocolConfig,
+
+    /// Tracks the idle status of each party, overwritten on each status update.
+    /// At the end of processing status updates for a consensus round, we majority vote
+    /// to determine the network's idle status.
+    idle_status_by_party: HashMap<PartyID, bool>,
+
+    /// Tracks which parties have seen each presign request.
+    /// When a presign request reaches majority, it's moved to `completed_presign_session_identifiers`.
+    user_requests_of_internal_resources: HashMap<SessionIdentifier, HashSet<PartyID>>,
+
+    /// Session identifiers of presign requests that have reached majority vote.
+    /// Once completed, we don't record new votes for these requests.
+    completed_presign_session_identifiers: HashSet<SessionIdentifier>,
+
+    /// Global presign requests collected from Sui events, to be broadcast in status updates.
+    pub(crate) global_presign_requests: Vec<GlobalPresignRequest>,
+
+    /// Session identifiers of presign requests that have already been sent through consensus.
+    /// When we receive our own status update back from consensus, we mark those requests as sent.
+    /// This prevents sending the same request multiple times.
+    sent_presign_requests: HashSet<SessionIdentifier>,
 }
 
 impl DWalletMPCManager {
@@ -171,6 +201,11 @@ impl DWalletMPCManager {
             decryption_key_reconfiguration_third_round_delay,
             schnorr_presign_second_round_delay,
             protocol_config,
+            idle_status_by_party: HashMap::new(),
+            user_requests_of_internal_resources: HashMap::new(),
+            completed_presign_session_identifiers: HashSet::new(),
+            global_presign_requests: Vec::new(),
+            sent_presign_requests: HashSet::new(),
         })
     }
 
@@ -238,6 +273,144 @@ impl DWalletMPCManager {
         }
 
         (checkpoint_messages, completed_sessions)
+    }
+
+    /// Handle status updates for a consensus round.
+    ///
+    /// For each status update:
+    /// - Override the sender's idle status in `idle_status_by_party`
+    /// - For each presign request, add the sender to `user_requests_of_internal_resources`
+    ///   and immediately check if majority is reached
+    ///
+    /// At the end, perform majority vote on idle status using `idle_status_by_party`.
+    pub fn handle_status_updates(
+        &mut self,
+        consensus_round: u64,
+        status_updates: Vec<InternalSessionsStatusUpdate>,
+    ) -> Option<AgreedStatusUpdate> {
+        let mut agreed_presign_requests = Vec::new();
+
+        for status_update in status_updates {
+            let sender_authority = status_update.authority;
+
+            let Ok(sender_party_id) =
+                authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
+            else {
+                error!(
+                    sender_authority=?sender_authority,
+                    consensus_round,
+                    should_never_happen =? true,
+                    "got a status update for an authority without party ID",
+                );
+                continue;
+            };
+
+            // When we receive our own status update back from consensus,
+            // mark the presign requests as sent to avoid re-sending them.
+            if sender_authority == self.validator_name {
+                for request in &status_update.global_presign_requests {
+                    self.sent_presign_requests
+                        .insert(request.session_identifier);
+                }
+            }
+
+            // Override the idle status for this party.
+            self.idle_status_by_party
+                .insert(sender_party_id, status_update.is_idle);
+
+            // Process each presign request and check for majority immediately.
+            for request in status_update.global_presign_requests {
+                let session_identifier = request.session_identifier;
+
+                // Skip if this presign request has already reached majority.
+                if self
+                    .completed_presign_session_identifiers
+                    .contains(&session_identifier)
+                {
+                    continue;
+                }
+
+                // Add this party's vote for this presign request.
+                let parties = self
+                    .user_requests_of_internal_resources
+                    .entry(session_identifier)
+                    .or_default();
+                parties.insert(sender_party_id);
+
+                // Check if the parties that voted form an authorized subset.
+                if self.access_structure.is_authorized_subset(parties).is_ok() {
+                    // Majority reached - mark as completed and add to result.
+                    self.completed_presign_session_identifiers
+                        .insert(session_identifier);
+                    agreed_presign_requests.push(request);
+                    info!(
+                        ?session_identifier,
+                        consensus_round, "Presign request has been agreed upon"
+                    );
+                }
+            }
+        }
+
+        // Perform majority vote on idle status at the end of processing.
+        let network_is_idle = self.compute_idle_status_majority_vote();
+
+        Some(AgreedStatusUpdate {
+            is_idle: network_is_idle,
+            global_presign_requests: agreed_presign_requests,
+        })
+    }
+
+    /// Compute majority vote for idle status using the accumulated `idle_status_by_party`.
+    fn compute_idle_status_majority_vote(&self) -> bool {
+        if self.idle_status_by_party.is_empty() {
+            return false;
+        }
+
+        match self
+            .idle_status_by_party
+            .clone()
+            .weighted_majority_vote(&self.access_structure)
+        {
+            Ok((_, majority_vote)) => majority_vote,
+            Err(mpc::Error::ThresholdNotReached) => false,
+            Err(e) => {
+                error!(
+                    error = %e,
+                    "Failed to compute idle status majority vote"
+                );
+                false
+            }
+        }
+    }
+
+    /// Returns presign requests that haven't been sent through consensus yet.
+    pub(crate) fn get_unsent_presign_requests(&self) -> Vec<GlobalPresignRequest> {
+        self.global_presign_requests
+            .iter()
+            .filter(|request| {
+                !self
+                    .sent_presign_requests
+                    .contains(&request.session_identifier)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Returns the number of currently running computations.
+    pub fn running_computation_count(&self) -> usize {
+        self.cryptographic_computations_orchestrator
+            .currently_running_cryptographic_computations
+            .len()
+    }
+
+    /// Computes whether this validator is idle based on the number of ready-to-run
+    /// sessions plus currently running computations, compared to the threshold.
+    pub fn compute_is_idle(&self, number_of_ready_to_advance_sessions: usize) -> bool {
+        let number_of_executing_sessions = self.running_computation_count();
+        let total_session_count =
+            number_of_ready_to_advance_sessions + number_of_executing_sessions;
+        let threshold = self.protocol_config.idle_session_count_threshold();
+        total_session_count < threshold as usize
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.
@@ -360,11 +533,14 @@ impl DWalletMPCManager {
     /// The messages to advance with are built on the spot, assuming they satisfy required conditions.
     /// They are put on a `ComputationRequest` and forwarded to the `orchestrator` for execution.
     ///
-    /// Returns the completed computation results.
+    /// Returns the completed computation results and whether the validator is idle.
     pub(crate) async fn perform_cryptographic_computation(
         &mut self,
         last_read_consensus_round: u64,
-    ) -> HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>> {
+    ) -> (
+        HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>>,
+        bool,
+    ) {
         let mut ready_to_advance_sessions: Vec<_> = self
             .sessions
             .iter()
@@ -395,6 +571,8 @@ impl DWalletMPCManager {
 
         ready_to_advance_sessions
             .sort_by(|(_, request), (_, other_request)| request.cmp(other_request));
+
+        let number_of_ready_to_advance_sessions = ready_to_advance_sessions.len();
 
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
@@ -449,6 +627,9 @@ impl DWalletMPCManager {
         let completed_computation_results = self
             .cryptographic_computations_orchestrator
             .receive_completed_computations(self.dwallet_mpc_metrics.clone());
+
+        let is_idle = self.compute_is_idle(number_of_ready_to_advance_sessions);
+
         for (computation_id, computation_request) in computation_requests {
             let spawned_computation = self
                 .cryptographic_computations_orchestrator
@@ -460,11 +641,11 @@ impl DWalletMPCManager {
                 .await;
 
             if !spawned_computation {
-                return completed_computation_results;
+                return (completed_computation_results, is_idle);
             }
         }
 
-        completed_computation_results
+        (completed_computation_results, is_idle)
     }
 
     pub(crate) fn try_receiving_next_active_committee(&mut self) -> bool {

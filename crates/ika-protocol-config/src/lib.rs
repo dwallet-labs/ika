@@ -268,6 +268,11 @@ pub struct ProtocolConfig {
 
     checkpoint_signing_curve: Option<DWalletCurve>,
     checkpoint_signing_algorithm: Option<DWalletSignatureAlgorithm>,
+
+    /// The threshold for determining if a validator is idle based on the number
+    /// of ready-to-run MPC sessions plus currently running computations.
+    /// If the total session count is below this threshold, the validator is considered idle.
+    idle_session_count_threshold: Option<u64>,
 }
 
 // feature flags
@@ -489,6 +494,9 @@ impl ProtocolConfig {
 
             checkpoint_signing_curve: Some(DWalletCurve::Curve25519),
             checkpoint_signing_algorithm: Some(DWalletSignatureAlgorithm::EdDSA),
+
+            // Idle threshold for MPC session management
+            idle_session_count_threshold: Some(10),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);

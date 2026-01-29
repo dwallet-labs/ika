@@ -42,7 +42,9 @@ use ika_types::message::{
     SignOutput,
 };
 use ika_types::messages_consensus::ConsensusTransaction;
-use ika_types::messages_dwallet_mpc::{SessionIdentifier, UserSecretKeyShareEventType};
+use ika_types::messages_dwallet_mpc::{
+    InternalSessionsStatusUpdate, SessionIdentifier, UserSecretKeyShareEventType,
+};
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
@@ -77,6 +79,8 @@ pub struct DWalletMPCService {
     pub epoch: EpochId,
     pub protocol_config: ProtocolConfig,
     pub committee: Arc<Committee>,
+    /// Tracks the last sent idle status to avoid sending duplicate updates.
+    last_sent_idle_status: Option<bool>,
 }
 
 impl DWalletMPCService {
@@ -138,6 +142,7 @@ impl DWalletMPCService {
             epoch: epoch_id,
             protocol_config,
             committee,
+            last_sent_idle_status: None,
         }
     }
 
@@ -179,6 +184,7 @@ impl DWalletMPCService {
             epoch: 1,
             protocol_config: ProtocolConfig::get_for_min_version(),
             committee: Arc::new(committee),
+            last_sent_idle_status: None,
         }
     }
 
@@ -285,13 +291,54 @@ impl DWalletMPCService {
             return;
         };
 
-        let completed_computation_results = self
+        let (computation_results, is_idle) = self
             .dwallet_mpc_manager
             .perform_cryptographic_computation(last_read_consensus_round)
             .await;
 
-        self.handle_computation_results_and_submit_to_consensus(completed_computation_results)
+        self.handle_computation_results_and_submit_to_consensus(computation_results)
             .await;
+
+        // Send status update to consensus using the result from cryptographic computations.
+        self.send_status_update_to_consensus(is_idle).await;
+    }
+
+    /// Send status update to consensus if there are unsent presign requests or idle status changed.
+    async fn send_status_update_to_consensus(&mut self, is_idle: bool) {
+        let Some(consensus_round) = self.last_read_consensus_round else {
+            return;
+        };
+
+        // Only include presign requests that haven't been sent yet.
+        let unsent_presign_requests = self.dwallet_mpc_manager.get_unsent_presign_requests();
+
+        // Check if there's anything new to send.
+        let has_unsent_requests = !unsent_presign_requests.is_empty();
+        let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
+
+        if !has_unsent_requests && !idle_status_changed {
+            return;
+        }
+
+        let status_update =
+            InternalSessionsStatusUpdate::new(self.name, is_idle, unsent_presign_requests);
+
+        let consensus_tx = ConsensusTransaction::new_internal_sessions_status_update(status_update);
+
+        if let Err(e) = self
+            .dwallet_submit_to_consensus
+            .submit_to_consensus(&[consensus_tx])
+            .await
+        {
+            error!(
+                error = ?e,
+                consensus_round,
+                "Failed to submit status update to consensus"
+            );
+        } else {
+            // Update last sent idle status.
+            self.last_sent_idle_status = Some(is_idle);
+        }
     }
 
     async fn handle_new_requests(&mut self) -> DwalletMPCResult<Vec<DWalletSessionRequest>> {
@@ -448,6 +495,37 @@ impl DWalletMPCService {
                 }
             };
 
+            let status_updates = self
+                .epoch_store
+                .next_internal_sessions_status_update(self.last_read_consensus_round);
+            let status_updates = match status_updates {
+                Ok(Some((status_updates_round, updates))) => {
+                    if status_updates_round != mpc_messages_consensus_round {
+                        error!(
+                            ?status_updates_round,
+                            ?mpc_messages_consensus_round,
+                            "status updates consensus round does not match MPC messages consensus round"
+                        );
+                        panic!(
+                            "status updates consensus round does not match MPC messages consensus round"
+                        );
+                    }
+                    updates
+                }
+                Ok(None) => {
+                    // No status updates for this round - use empty list.
+                    Vec::new()
+                }
+                Err(e) => {
+                    error!(
+                        error=?e,
+                        last_read_consensus_round=self.last_read_consensus_round,
+                        "failed to load status updates from the local DB"
+                    );
+                    panic!("failed to load status updates from the local DB");
+                }
+            };
+
             if mpc_messages_consensus_round != mpc_outputs_consensus_round
                 || mpc_messages_consensus_round
                     != verified_dwallet_checkpoint_messages_consensus_round
@@ -485,6 +563,11 @@ impl DWalletMPCService {
             let (mut checkpoint_messages, completed_sessions) = self
                 .dwallet_mpc_manager
                 .handle_consensus_round_outputs(consensus_round, mpc_outputs);
+
+            // Process the status updates for the current round.
+            let _agreed_status = self
+                .dwallet_mpc_manager
+                .handle_status_updates(consensus_round, status_updates);
 
             // Add messages from the consensus output such as EndOfPublish.
             checkpoint_messages.extend(verified_dwallet_checkpoint_messages);
