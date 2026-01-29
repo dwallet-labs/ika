@@ -642,11 +642,7 @@ impl DWalletMPCService {
                 }
             };
 
-            if mpc_messages_consensus_round != external_mpc_outputs_consensus_round
-                || mpc_messages_consensus_round
-                    != verified_dwallet_checkpoint_messages_consensus_round
-                || mpc_messages_consensus_round != internal_mpc_outputs_consensus_round
-            {
+            if mpc_messages_consensus_round != external_mpc_outputs_consensus_round {
                 error!(
                     ?mpc_messages_consensus_round,
                     ?external_mpc_outputs_consensus_round,
