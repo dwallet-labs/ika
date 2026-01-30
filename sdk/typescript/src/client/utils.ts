@@ -1,46 +1,71 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { DynamicFieldInfo, SuiClient, SuiObjectResponse } from '@mysten/sui/client';
+import type { ClientWithCoreApi, SuiClientTypes } from '@mysten/sui/client';
+import { toBase64 } from '@mysten/sui/utils';
 
 import { InvalidObjectError } from './errors.js';
+
+/**
+ * Dynamic field info type for v2 SDK
+ */
+export interface DynamicFieldInfo {
+	fieldId: string;
+	type: string;
+	name: SuiClientTypes.DynamicFieldName;
+	valueType: string;
+}
+
+/**
+ * Object response type with BCS for v2 SDK
+ */
+export type ObjectWithBcs = SuiClientTypes.Object<{ objectBcs: true }>;
 
 /**
  * Extract BCS (Binary Canonical Serialization) bytes from a Sui object response.
  * This function validates the response and extracts the serialized object data.
  *
- * @param resp - The Sui object response from a blockchain query
- * @returns The BCS-encoded bytes of the object
+ * @param obj - The Sui object from a blockchain query (with objectBcs included)
+ * @returns The BCS-encoded bytes of the object as base64 string
  * @throws {InvalidObjectError} If the response doesn't contain valid BCS data
  */
-export function objResToBcs(resp: SuiObjectResponse): string {
-	if (resp.data?.bcs?.dataType !== 'moveObject') {
+export function objResToBcs(
+	obj:
+		| ObjectWithBcs
+		| SuiClientTypes.Object<{ objectBcs: true }>
+		| { object: SuiClientTypes.Object<{ objectBcs: true }> },
+): string {
+	// Handle both direct object and wrapped object response
+	const actualObj = 'object' in obj ? obj.object : obj;
+
+	if (!actualObj.objectBcs) {
 		throw new InvalidObjectError(
-			`Response bcs missing: ${JSON.stringify(resp.data?.type, null, 2)}`,
+			`Response objectBcs missing: ${JSON.stringify(actualObj.type, null, 2)}`,
 		);
 	}
 
-	return resp.data.bcs.bcsBytes;
+	// Convert Uint8Array to base64 for compatibility with fromBase64 parsing
+	return toBase64(actualObj.objectBcs);
 }
 
 export async function fetchAllDynamicFields(
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	parentId: string,
 ): Promise<DynamicFieldInfo[]> {
-	const allFields: any[] = [];
+	const allFields: DynamicFieldInfo[] = [];
 	let cursor: string | null = null;
 
 	// eslint-disable-next-line no-constant-condition
 	while (true) {
-		const response = await suiClient.getDynamicFields({
+		const response = await suiClient.core.listDynamicFields({
 			parentId,
 			cursor,
 		});
-		allFields.push(...response.data);
-		if (response.nextCursor === cursor) {
+		allFields.push(...response.dynamicFields);
+		if (!response.hasNextPage || response.cursor === cursor) {
 			break;
 		}
-		cursor = response.nextCursor;
+		cursor = response.cursor;
 	}
 
 	return allFields;

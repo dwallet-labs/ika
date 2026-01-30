@@ -1,5 +1,5 @@
 import { bcs } from '@mysten/sui/bcs';
-import { SuiClient } from '@mysten/sui/client';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { expect } from 'vitest';
 
@@ -20,7 +20,7 @@ import {
 	createEmptyTestIkaToken,
 	createTestIkaClient,
 	createTestIkaTransaction,
-	createTestSuiClient,
+	createTestClientWithCoreApi,
 	destroyEmptyTestIkaToken,
 	executeTestTransaction,
 	generateTestKeypair,
@@ -31,7 +31,7 @@ import {
 const PublicKeyBCS = bcs.vector(bcs.u8());
 
 export interface DKGTestSetup {
-	suiClient: SuiClient;
+	suiClient: ClientWithCoreApi;
 	ikaClient: IkaClient;
 	userShareEncryptionKeys: UserShareEncryptionKeys;
 	signerAddress: string;
@@ -54,7 +54,7 @@ export interface DKGExecuteResult {
 }
 
 export async function setupDKGTest(testName: string, curve: Curve): Promise<DKGTestSetup> {
-	const suiClient = createTestSuiClient();
+	const suiClient = createTestClientWithCoreApi();
 	const ikaClient = createTestIkaClient(suiClient);
 	await ikaClient.initialize();
 
@@ -567,7 +567,7 @@ export async function runGlobalPresignTest(
 	curve: Curve,
 	signatureAlgorithm: SignatureAlgorithm,
 ): Promise<void> {
-	const suiClient = createTestSuiClient();
+	const suiClient = createTestClientWithCoreApi();
 	const ikaClient = createTestIkaClient(suiClient);
 	await ikaClient.initialize();
 

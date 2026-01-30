@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { SuiClient } from '@mysten/sui/client';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import {
@@ -47,7 +47,7 @@ import {
  */
 export async function createCompleteDWallet(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	testName: string,
 	registerEncryptionKey: boolean = true,
 ): Promise<{
@@ -156,7 +156,7 @@ export async function createCompleteDWallet(
  */
 export async function createCompleteDWalletV2(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	testName: string,
 	registerEncryptionKey: boolean = true,
 ): Promise<{
@@ -281,7 +281,7 @@ export async function createCompleteDWalletV2(
  */
 export async function requestTestDKGFirstRound(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	signerAddress: string,
 	testName: string,
 ): Promise<{
@@ -336,7 +336,7 @@ export async function requestTestDKGFirstRound(
  */
 export async function registerTestEncryptionKey(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 ) {
@@ -367,7 +367,7 @@ export async function registerTestEncryptionKey(
  */
 export async function requestTestDkgSecondRound(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: DWallet,
 	dkgSecondRoundRequestInput: DKGRequestInput,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
@@ -423,7 +423,7 @@ function numberToCurve(curve: number): Curve {
  */
 export async function requestTestDkg(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dkgSecondRoundRequestInput: DKGRequestInput,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
@@ -469,7 +469,7 @@ export async function requestTestDkg(
  */
 export async function requestTestDkgWithPublicUserShare(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	testName: string,
 	sessionIdentifier: TransactionObjectArgument,
@@ -529,7 +529,7 @@ interface PublicShare {
  */
 export async function acceptTestEncryptedUserShare(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	userPublicOutput: Uint8Array,
 	secondRoundMoveResponse: {
@@ -559,7 +559,7 @@ export async function acceptTestEncryptedUserShare(
  */
 export async function acceptTestEncryptedUserShareForTransferredDWallet(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	destinationUserShareEncryptionKeys: UserShareEncryptionKeys,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
@@ -589,7 +589,7 @@ export async function acceptTestEncryptedUserShareForTransferredDWallet(
  */
 export async function makeTestDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	secretShare: Uint8Array,
 	testName: string,
@@ -616,7 +616,7 @@ export async function makeTestDWalletUserSecretKeySharesPublic(
  */
 export async function makeTestImportedKeyDWalletUserSecretKeySharesPublic(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	secretShare: Uint8Array,
 	testName: string,
@@ -643,7 +643,7 @@ export async function makeTestImportedKeyDWalletUserSecretKeySharesPublic(
  */
 export async function testPresign(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: DWallet,
 	curve: Curve,
 	signatureAlgorithm: SignatureAlgorithm,
@@ -702,7 +702,7 @@ export async function testPresign(
  */
 export async function testSign(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
 	presign: Presign,
@@ -772,7 +772,7 @@ export async function testSign(
  */
 export async function testSignPublicUserShare(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: SharedDWallet | ImportedSharedDWallet,
 	presign: Presign,
 	message: Uint8Array,
@@ -838,7 +838,7 @@ export async function testSignPublicUserShare(
  */
 export async function requestTestFutureSign(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	presign: Presign,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
@@ -916,7 +916,7 @@ export async function requestTestFutureSign(
  */
 export async function testFutureSign(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: DWallet,
 	partialUserSignature: PartialUserSignature,
 	userShareEncryptionKeys: UserShareEncryptionKeys,
@@ -954,7 +954,7 @@ export async function testFutureSign(
  */
 export async function requestTestImportedKeyDWalletVerification(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	importDWalletVerificationRequestInput: ImportDWalletVerificationRequestInput,
 	curve: Curve,
 	signerPublicKey: Uint8Array,
@@ -1001,7 +1001,7 @@ export async function requestTestImportedKeyDWalletVerification(
  */
 export async function testSignWithImportedKeyDWallet(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: ImportedKeyDWallet,
 	presign: Presign,
 	message: Uint8Array,
@@ -1049,7 +1049,7 @@ export async function testSignWithImportedKeyDWallet(
  */
 export async function testSignWithImportedKeyDWalletPublic(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: ImportedSharedDWallet,
 	presign: Presign,
 	message: Uint8Array,
@@ -1094,7 +1094,7 @@ export async function testSignWithImportedKeyDWalletPublic(
  */
 export async function testTransferEncryptedUserShare(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	dWallet: ZeroTrustDWallet | ImportedKeyDWallet,
 	destinationEncryptionKeyAddress: string,
 	sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
@@ -1132,7 +1132,7 @@ export async function testTransferEncryptedUserShare(
  */
 export async function createTestSessionIdentifier(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	receiver: string,
 	testName: string,
 ) {

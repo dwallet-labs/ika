@@ -3,7 +3,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import * as TOML from '@iarna/toml';
 import { bcs } from '@mysten/bcs';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, it } from 'vitest';
@@ -16,7 +17,7 @@ describe('Upgrade twopc_mpc Move package', () => {
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
 		await createIkaGenesis();
 		const signer = await getPublisherKeypair();
-		const suiClient = new SuiClient({ url: getFullnodeUrl('localnet') });
+		const suiClient = new SuiJsonRpcClient({ url: getJsonRpcFullnodeUrl('localnet'), network: 'localnet' });
 		const ikaClient = createTestIkaClient(suiClient);
 		await ikaClient.initialize();
 
@@ -81,23 +82,23 @@ export async function getPublisherKeypair(): Promise<Ed25519Keypair> {
 }
 
 export async function getProtocolCapID(
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	publisherAddress: string,
 	ikaClient: IkaClient,
 ): Promise<string> {
-	const protocolCapID = (
-		await suiClient.getOwnedObjects({
-			owner: publisherAddress,
-			filter: {
-				StructType: `${ikaClient.ikaConfig.packages.ikaCommonPackage}::protocol_cap::ProtocolCap`,
-			},
-		})
-	).data.at(0).data.objectId;
-	return protocolCapID;
+	const response = await suiClient.core.listOwnedObjects({
+		owner: publisherAddress,
+		type: `${ikaClient.ikaConfig.packages.ikaCommonPackage}::protocol_cap::ProtocolCap`,
+	});
+	const firstObject = response.objects.at(0);
+	if (!firstObject || firstObject instanceof Error) {
+		throw new Error('Protocol cap not found');
+	}
+	return firstObject.objectId;
 }
 
 export async function deployUpgradedPackage(
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	signer: Ed25519Keypair,
 	packagePath: string,
 	ikaClient: IkaClient,
@@ -157,19 +158,22 @@ export async function deployUpgradedPackage(
 		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::finalize_upgrade`,
 		arguments: [systemStateArg, upgradeApprover],
 	});
-	const result = await suiClient.signAndExecuteTransaction({
-		signer,
+	const result = await suiClient.core.signAndExecuteTransaction({
 		transaction: tx,
-		options: {
-			showEffects: true,
-			showObjectChanges: true,
+		signer,
+		include: {
+			effects: true,
 		},
 	});
-	return result.effects.created.at(0).reference.objectId;
+	const txData = result.Transaction ?? result.FailedTransaction;
+	const createdObject = txData?.effects?.changedObjects?.find(
+		(obj) => obj.idOperation === 'Created',
+	);
+	return createdObject?.objectId ?? '';
 }
 
 export async function migrateCoordinator(
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	signer: Ed25519Keypair,
 	ikaClient: IkaClient,
 	protocolCapID: string,
@@ -197,12 +201,11 @@ export async function migrateCoordinator(
 		target: `${new2PCMPCPackageID}::coordinator::try_migrate_by_cap`,
 		arguments: [coordinatorStateArg, verifiedProtocolCap],
 	});
-	await suiClient.signAndExecuteTransaction({
-		signer,
+	await suiClient.core.signAndExecuteTransaction({
 		transaction: tx,
-		options: {
-			showEffects: true,
-			showObjectChanges: true,
+		signer,
+		include: {
+			effects: true,
 		},
 	});
 }

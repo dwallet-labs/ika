@@ -1,7 +1,8 @@
-import { SuiClient } from '@mysten/sui/client';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 
+import * as CoordinatorInnerModule from '../../src/generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import { requestDwalletNetworkEncryptionKeyDkgByCap } from '../../src/tx/coordinator';
 import { verifyProtocolCap } from '../../src/tx/system';
 import {
@@ -18,7 +19,7 @@ interface ActiveNetworkKey {
 }
 
 export async function testCreateNetworkKey(
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	protocolCapID: string,
 	publisherKeypair: Ed25519Keypair,
 ): Promise<string> {
@@ -49,35 +50,26 @@ export async function testCreateNetworkKey(
 		tx,
 	);
 	const result = await executeTestTransactionWithKeypair(suiClient, tx, publisherKeypair);
-	const startDKGEvent = result.events?.at(0)?.parsedJson;
-	if (!isStartNetworkDKGEvent(startDKGEvent)) {
+	const dkgEvent = result.events?.find((event) =>
+		event.type.includes('DWalletNetworkDKGEncryptionKeyRequestEvent'),
+	);
+	if (!dkgEvent) {
 		throw new Error(
-			`Unexpected event type: ${JSON.stringify(startDKGEvent)}. Expected StartNetworkDKGEvent.`,
+			`DWalletNetworkDKGEncryptionKeyRequestEvent not found in events: ${JSON.stringify(result.events)}`,
 		);
 	}
+	const startDKGEvent =
+		CoordinatorInnerModule.DWalletNetworkDKGEncryptionKeyRequestEvent.fromBase64(dkgEvent.bcs);
 	console.log('Start DKG Event:', startDKGEvent);
-	console.log('Network Key ID:', startDKGEvent.event_data.dwallet_network_encryption_key_id);
+	console.log('Network Key ID:', startDKGEvent.dwallet_network_encryption_key_id);
 	await getObjectWithType(
 		suiClient,
-		startDKGEvent.event_data.dwallet_network_encryption_key_id,
+		startDKGEvent.dwallet_network_encryption_key_id,
 		isActiveNetworkKey,
 	);
-	return startDKGEvent.event_data.dwallet_network_encryption_key_id;
-}
-
-function isStartNetworkDKGEvent(obj: any): obj is StartNetworkDKGEvent {
-	return (
-		!!obj?.event_data?.dwallet_network_encryption_key_id && !!obj?.event_data.params_for_network
-	);
+	return startDKGEvent.dwallet_network_encryption_key_id;
 }
 
 function isActiveNetworkKey(obj: any): obj is ActiveNetworkKey {
 	return obj?.state?.variant === 'NetworkDKGCompleted';
-}
-
-interface StartNetworkDKGEvent {
-	event_data: {
-		dwallet_network_encryption_key_id: string;
-		params_for_network: string;
-	};
 }

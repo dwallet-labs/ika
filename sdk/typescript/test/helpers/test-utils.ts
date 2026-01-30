@@ -5,8 +5,9 @@ import fs from 'fs';
 import path from 'path';
 import { dwallet_version } from '@ika.xyz/ika-wasm';
 import { toHex } from '@mysten/bcs';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
@@ -37,7 +38,7 @@ import {
 const testSeeds = new Map<string, Uint8Array>();
 
 export async function getObjectWithType<TObject>(
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	objectID: string,
 	isObject: (obj: any) => obj is TObject,
 ): Promise<TObject> {
@@ -47,14 +48,14 @@ export async function getObjectWithType<TObject>(
 		// Wait for a bit before polling again, objects might not be available immediately.
 		const interval = 1;
 		await delay(interval);
-		const res = await suiClient.getObject({
-			id: objectID,
-			options: { showContent: true },
+		const res = await suiClient.core.getObject({
+			objectId: objectID,
+			include: { json: true },
 		});
 
 		const objectData =
-			res.data?.content?.dataType === 'moveObject' && isObject(res.data.content.fields)
-				? (res.data.content.fields as TObject)
+			res.object.json && isObject(res.object.json)
+				? (res.object.json as TObject)
 				: null;
 
 		if (objectData) {
@@ -100,9 +101,10 @@ export function clearAllTestSeeds(): void {
 /**
  * Creates a SuiClient for testing
  */
-export function createTestSuiClient(): SuiClient {
-	return new SuiClient({
-		url: process.env.SUI_TESTNET_URL || getFullnodeUrl('localnet'),
+export function createTestSuiClient(): SuiJsonRpcClient {
+	return new SuiJsonRpcClient({
+		url: process.env.SUI_TESTNET_URL || getJsonRpcFullnodeUrl('localnet'),
+		network: 'localnet',
 	});
 }
 
@@ -187,7 +189,7 @@ export function findIkaConfigFile(): string {
 /**
  * Creates an IkaClient for testing
  */
-export function createTestIkaClient(suiClient: SuiClient): IkaClient {
+export function createTestIkaClient(suiClient: ClientWithCoreApi): IkaClient {
 	const configPath = findIkaConfigFile();
 	const parsedJson = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
@@ -218,7 +220,7 @@ export function createTestIkaClient(suiClient: SuiClient): IkaClient {
  * Executes a transaction with deterministic signing
  */
 export async function executeTestTransaction(
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	transaction: Transaction,
 	testName: string,
 ) {
@@ -229,20 +231,73 @@ export async function executeTestTransaction(
 }
 
 /**
+ * Transaction result type for test utilities.
+ * This flattens the v2 SDK's union type for easier access.
+ */
+export interface TestTransactionResult {
+	digest: string;
+	events?: {
+		packageId: string;
+		module: string;
+		sender: string;
+		type: string; // Mapped from eventType for compatibility
+		bcs: string; // Converted to base64 for compatibility with existing BCS parsing
+	}[];
+	effects?: {
+		status: { success: boolean };
+		created?: { objectId: string }[];
+	};
+}
+
+/**
  * Executes a transaction with deterministic signing using a provided keypair.
+ * Returns a flattened result compatible with existing test code.
  */
 export async function executeTestTransactionWithKeypair(
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	transaction: Transaction,
 	signerKeypair: Ed25519Keypair,
-) {
-	return suiClient.signAndExecuteTransaction({
+): Promise<TestTransactionResult> {
+	// Use client.core.signAndExecuteTransaction to get events included
+	const result = await suiClient.core.signAndExecuteTransaction({
 		transaction,
 		signer: signerKeypair,
-		options: {
-			showEvents: true,
+		include: {
+			events: true,
+			effects: true,
 		},
 	});
+
+	// Flatten the union type and convert event format for compatibility
+	const txData = result.Transaction ?? result.FailedTransaction;
+	if (!txData) {
+		throw new Error('Transaction result missing transaction data');
+	}
+
+	// Convert events to v1-compatible format
+	const events = txData.events?.map((event) => ({
+		packageId: event.packageId,
+		module: event.module,
+		sender: event.sender,
+		type: event.eventType, // Map eventType to type for compatibility
+		bcs: Buffer.from(event.bcs).toString('base64'), // Convert Uint8Array to base64
+	}));
+
+	// Convert effects to include created objects
+	const createdObjects = txData.effects?.changedObjects
+		?.filter((obj) => obj.idOperation === 'Created')
+		.map((obj) => ({ objectId: obj.objectId }));
+
+	return {
+		digest: txData.digest,
+		events,
+		effects: txData.effects
+			? {
+					status: txData.effects.status,
+					created: createdObjects,
+				}
+			: undefined,
+	};
 }
 
 /**
@@ -388,7 +443,7 @@ export function delay(seconds: number): Promise<void> {
 
 export async function runSignFullFlowWithDWallet(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	createDWalletResponse: {
 		dWallet: DWallet;
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
@@ -447,7 +502,7 @@ export async function runSignFullFlowWithDWallet(
 
 export async function runSignFullFlowWithV1Dwallet(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	testName: string,
 	registerEncryptionKey: boolean = true,
 ) {
@@ -501,7 +556,7 @@ export async function runSignFullFlowWithV1Dwallet(
 
 export async function runSignFullFlowWithV2Dwallet(
 	ikaClient: IkaClient,
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	testName: string,
 	registerEncryptionKey: boolean = true,
 ) {

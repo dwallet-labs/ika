@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { SuiClient } from '@mysten/sui/client';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { toHex } from '@mysten/sui/utils';
 
@@ -63,7 +63,7 @@ export class IkaClient {
 	public encryptionKeyOptions: EncryptionKeyOptions;
 
 	/** The underlying Sui client for blockchain interactions */
-	private client: SuiClient;
+	private client: ClientWithCoreApi;
 	/** Whether to enable caching of network objects and parameters */
 	private cache: boolean;
 	/** Cached network public parameters by encryption key ID and curve to avoid repeated fetching */
@@ -301,13 +301,13 @@ export class IkaClient {
 	async getDWallet(dwalletID: string): Promise<DWallet> {
 		await this.ensureInitialized();
 
-		return this.client
+		return this.client.core
 			.getObject({
-				id: dwalletID,
-				options: { showBcs: true },
+				objectId: dwalletID,
+				include: { objectBcs: true },
 			})
-			.then((obj) => {
-				const dWallet = CoordinatorInnerModule.DWallet.fromBase64(objResToBcs(obj));
+			.then((resp) => {
+				const dWallet = CoordinatorInnerModule.DWallet.fromBase64(objResToBcs(resp));
 
 				return {
 					...dWallet,
@@ -374,13 +374,13 @@ export class IkaClient {
 	async getPresign(presignID: string): Promise<Presign> {
 		await this.ensureInitialized();
 
-		return this.client
+		return this.client.core
 			.getObject({
-				id: presignID,
-				options: { showBcs: true },
+				objectId: presignID,
+				include: { objectBcs: true },
 			})
-			.then((obj) => {
-				return CoordinatorInnerModule.PresignSession.fromBase64(objResToBcs(obj));
+			.then((resp) => {
+				return CoordinatorInnerModule.PresignSession.fromBase64(objResToBcs(resp));
 			});
 	}
 
@@ -444,13 +444,13 @@ export class IkaClient {
 	): Promise<EncryptedUserSecretKeyShare> {
 		await this.ensureInitialized();
 
-		return this.client
+		return this.client.core
 			.getObject({
-				id: encryptedUserSecretKeyShareID,
-				options: { showBcs: true },
+				objectId: encryptedUserSecretKeyShareID,
+				include: { objectBcs: true },
 			})
-			.then((obj) => {
-				return CoordinatorInnerModule.EncryptedUserSecretKeyShare.fromBase64(objResToBcs(obj));
+			.then((resp) => {
+				return CoordinatorInnerModule.EncryptedUserSecretKeyShare.fromBase64(objResToBcs(resp));
 			});
 	}
 
@@ -513,13 +513,13 @@ export class IkaClient {
 	): Promise<PartialUserSignature> {
 		await this.ensureInitialized();
 
-		return this.client
+		return this.client.core
 			.getObject({
-				id: partialCentralizedSignedMessageID,
-				options: { showBcs: true },
+				objectId: partialCentralizedSignedMessageID,
+				include: { objectBcs: true },
 			})
-			.then((obj) => {
-				return CoordinatorInnerModule.PartialUserSignature.fromBase64(objResToBcs(obj));
+			.then((resp) => {
+				return CoordinatorInnerModule.PartialUserSignature.fromBase64(objResToBcs(resp));
 			});
 	}
 
@@ -573,9 +573,9 @@ export class IkaClient {
 
 		validateCurveSignatureAlgorithm(curve, signatureAlgorithm);
 
-		const unparsedSign = await this.client.getObject({
-			id: signID,
-			options: { showBcs: true },
+		const unparsedSign = await this.client.core.getObject({
+			objectId: signID,
+			include: { objectBcs: true },
 		});
 
 		const sign = CoordinatorInnerModule.SignSession.fromBase64(objResToBcs(unparsedSign));
@@ -658,13 +658,16 @@ export class IkaClient {
 	async getMultipleDWallets(dwalletIDs: string[]): Promise<DWallet[]> {
 		await this.ensureInitialized();
 
-		return this.client
-			.multiGetObjects({
-				ids: dwalletIDs,
-				options: { showBcs: true },
+		return this.client.core
+			.getObjects({
+				objectIds: dwalletIDs,
+				include: { objectBcs: true },
 			})
-			.then((objs) => {
-				return objs.map((obj) => {
+			.then((resp) => {
+				return resp.objects.map((obj) => {
+					if (obj instanceof Error) {
+						throw obj;
+					}
 					const dWallet = CoordinatorInnerModule.DWallet.fromBase64(objResToBcs(obj));
 
 					return {
@@ -697,23 +700,19 @@ export class IkaClient {
 	}> {
 		await this.ensureInitialized();
 
-		const response = await this.client.getOwnedObjects({
+		const response = await this.client.core.listOwnedObjects({
 			owner: address,
-			filter: {
-				StructType: `${this.ikaConfig.packages.ikaDwallet2pcMpcOriginalPackage}::coordinator_inner::DWalletCap`,
-			},
-			options: {
-				showBcs: true,
-			},
+			type: `${this.ikaConfig.packages.ikaDwallet2pcMpcOriginalPackage}::coordinator_inner::DWalletCap`,
+			include: { objectBcs: true },
 			cursor,
 			limit,
 		});
 
 		return {
-			dWalletCaps: response.data.map((obj) =>
+			dWalletCaps: response.objects.map((obj) =>
 				CoordinatorInnerModule.DWalletCap.fromBase64(objResToBcs(obj)),
 			),
-			cursor: response.nextCursor,
+			cursor: response.cursor,
 			hasNextPage: response.hasNextPage,
 		};
 	}
@@ -876,6 +875,7 @@ export class IkaClient {
 		await this.ensureInitialized();
 
 		const tx = new Transaction();
+		tx.setSender(address);
 
 		getActiveEncryptionKeyFromCoordinator(
 			this.ikaConfig,
@@ -888,17 +888,26 @@ export class IkaClient {
 			tx,
 		);
 
-		const res = await this.client.devInspectTransactionBlock({
-			sender: address,
-			transactionBlock: tx,
+		const res = await this.client.core.simulateTransaction({
+			transaction: tx,
+			include: { commandResults: true },
 		});
 
-		const objIDArray = new Uint8Array(res.results?.at(0)?.returnValues?.at(0)?.at(0) as number[]);
-		const objID = toHex(objIDArray);
+		const simResult = res.Transaction ?? res.FailedTransaction;
+		if (!simResult) {
+			throw new NetworkError('Failed to simulate transaction');
+		}
 
-		const obj = await this.client.getObject({
-			id: objID,
-			options: { showBcs: true },
+		const returnValue = res.commandResults?.at(0)?.returnValues?.at(0)?.bcs;
+		if (!returnValue) {
+			throw new NetworkError('No return value from simulation');
+		}
+
+		const objID = toHex(returnValue);
+
+		const obj = await this.client.core.getObject({
+			objectId: objID,
+			include: { objectBcs: true },
 		});
 
 		return CoordinatorInnerModule.EncryptionKey.fromBase64(objResToBcs(obj));
@@ -963,13 +972,17 @@ export class IkaClient {
 	 */
 	async #fetchObjectsFromNetwork() {
 		try {
-			const [coordinator, system] = await this.client.multiGetObjects({
-				ids: [
+			const objectsResp = await this.client.core.getObjects({
+				objectIds: [
 					this.ikaConfig.objects.ikaDWalletCoordinator.objectID,
 					this.ikaConfig.objects.ikaSystemObject.objectID,
 				],
-				options: { showBcs: true, showOwner: true },
+				include: { objectBcs: true },
 			});
+
+			const [coordinator, system] = objectsResp.objects;
+			if (coordinator instanceof Error) throw coordinator;
+			if (system instanceof Error) throw system;
 
 			const coordinatorParsed = CoordinatorModule.DWalletCoordinator.fromBase64(
 				objResToBcs(coordinator),
@@ -977,40 +990,46 @@ export class IkaClient {
 			const systemParsed = SystemModule.System.fromBase64(objResToBcs(system));
 
 			const [coordinatorDFs, systemDFs] = await Promise.all([
-				this.client.getDynamicFields({
+				this.client.core.listDynamicFields({
 					parentId: coordinatorParsed.id.id,
 				}),
-				this.client.getDynamicFields({
+				this.client.core.listDynamicFields({
 					parentId: systemParsed.id.id,
 				}),
 			]);
 
-			if (!coordinatorDFs.data?.length || !systemDFs.data?.length) {
+			if (!coordinatorDFs.dynamicFields?.length || !systemDFs.dynamicFields?.length) {
 				throw new ObjectNotFoundError('Dynamic fields for coordinator or system');
 			}
 
-			const coordinatorInnerDF = coordinatorDFs.data[coordinatorDFs.data.length - 1];
-			const systemInnerDF = systemDFs.data[systemDFs.data.length - 1];
+			const coordinatorInnerDF =
+				coordinatorDFs.dynamicFields[coordinatorDFs.dynamicFields.length - 1];
+			const systemInnerDF = systemDFs.dynamicFields[systemDFs.dynamicFields.length - 1];
 
-			const [coordinatorInner, systemInner] = await this.client.multiGetObjects({
-				ids: [coordinatorInnerDF.objectId, systemInnerDF.objectId],
-				options: { showBcs: true },
+			const innerObjectsResp = await this.client.core.getObjects({
+				objectIds: [coordinatorInnerDF.fieldId, systemInnerDF.fieldId],
+				include: { objectBcs: true },
 			});
 
+			const [coordinatorInnerObj, systemInnerObj] = innerObjectsResp.objects;
+			if (coordinatorInnerObj instanceof Error) throw coordinatorInnerObj;
+			if (systemInnerObj instanceof Error) throw systemInnerObj;
+
 			const coordinatorInnerParsed = CoordinatorInnerDynamicField.fromBase64(
-				objResToBcs(coordinatorInner),
+				objResToBcs(coordinatorInnerObj),
 			).value;
 
-			const systemInnerParsed = SystemInnerDynamicField.fromBase64(objResToBcs(systemInner)).value;
+			const systemInnerParsed = SystemInnerDynamicField.fromBase64(
+				objResToBcs(systemInnerObj),
+			).value;
 
 			this.ikaConfig.packages.ikaSystemPackage = systemParsed.package_id;
 			this.ikaConfig.packages.ikaDwallet2pcMpcPackage = coordinatorParsed.package_id;
 
 			this.ikaConfig.objects.ikaSystemObject.initialSharedVersion =
-				(system.data?.owner as unknown as SharedObjectOwner)?.Shared?.initial_shared_version ?? 0;
+				(system.owner as unknown as SharedObjectOwner)?.Shared?.initial_shared_version ?? 0;
 			this.ikaConfig.objects.ikaDWalletCoordinator.initialSharedVersion =
-				(coordinator.data?.owner as unknown as SharedObjectOwner)?.Shared?.initial_shared_version ??
-				0;
+				(coordinator.owner as unknown as SharedObjectOwner)?.Shared?.initial_shared_version ?? 0;
 
 			return {
 				coordinatorInner: coordinatorInnerParsed,
@@ -1056,21 +1075,22 @@ export class IkaClient {
 	async #fetchEncryptionKeysFromNetwork(): Promise<NetworkEncryptionKey[]> {
 		try {
 			const objects = await this.ensureInitialized();
-			const keysDFs = await this.client.getDynamicFields({
+			const keysDFs = await this.client.core.listDynamicFields({
 				parentId: objects.coordinatorInner.dwallet_network_encryption_keys.id.id,
 			});
 
-			if (!keysDFs.data?.length) {
+			if (!keysDFs.dynamicFields?.length) {
 				throw new ObjectNotFoundError('Network encryption keys');
 			}
 
 			const encryptionKeys: NetworkEncryptionKey[] = [];
 
-			for (const keyDF of keysDFs.data) {
-				const keyName = keyDF.name.value as string;
-				const keyObject = await this.client.getObject({
-					id: keyDF.objectId,
-					options: { showBcs: true },
+			for (const keyDF of keysDFs.dynamicFields) {
+				// Parse the key name from BCS - it's a string type
+				const keyName = new TextDecoder().decode(keyDF.name.bcs);
+				const keyObject = await this.client.core.getObject({
+					objectId: keyDF.fieldId,
+					include: { objectBcs: true },
 				});
 
 				const keyParsed = CoordinatorInnerModule.DWalletNetworkEncryptionKey.fromBase64(
@@ -1085,10 +1105,11 @@ export class IkaClient {
 				const lastReconfigOutput = (
 					await Promise.all(
 						reconfigOutputsDFs.map(async (df) => {
-							const name = df.name.value as string;
-							const reconfigObject = await this.client.getObject({
-								id: df.objectId,
-								options: { showBcs: true },
+							// Parse the name from BCS
+							const name = new TextDecoder().decode(df.name.bcs);
+							const reconfigObject = await this.client.core.getObject({
+								objectId: df.fieldId,
+								include: { objectBcs: true },
 							});
 
 							const parsedValue = DynamicField(TableVec).fromBase64(objResToBcs(reconfigObject));
@@ -1142,23 +1163,23 @@ export class IkaClient {
 	async readTableVecAsRawBytes(tableID: string): Promise<Uint8Array> {
 		try {
 			let cursor: string | null = null;
-			const allTableRows: { objectId: string }[] = [];
+			const allTableRows: { fieldId: string }[] = [];
 
 			do {
-				const dynamicFieldPage = await this.client.getDynamicFields({
+				const dynamicFieldPage = await this.client.core.listDynamicFields({
 					parentId: tableID,
 					cursor,
 				});
 
-				if (!dynamicFieldPage?.data?.length) {
+				if (!dynamicFieldPage?.dynamicFields?.length) {
 					if (allTableRows.length === 0) {
 						throw new ObjectNotFoundError('Dynamic fields', tableID);
 					}
 					break;
 				}
 
-				allTableRows.push(...dynamicFieldPage.data);
-				cursor = dynamicFieldPage.nextCursor;
+				allTableRows.push(...dynamicFieldPage.dynamicFields);
+				cursor = dynamicFieldPage.cursor;
 
 				if (!dynamicFieldPage.hasNextPage) {
 					break;
@@ -1167,7 +1188,7 @@ export class IkaClient {
 
 			const dataMap = new Map<number, Uint8Array>();
 
-			const objectIds = new Set(allTableRows.map((tableRowResult) => tableRowResult.objectId));
+			const objectIds = new Set(allTableRows.map((tableRowResult) => tableRowResult.fieldId));
 
 			await this.#processBatchedObjects([...objectIds], ({ objectId, fields }) => {
 				const tableIndex = parseInt(fields.name);
@@ -1239,27 +1260,23 @@ export class IkaClient {
 			for (let i = 0; i < objectIds.length; i += batchSize) {
 				const batchIds = objectIds.slice(i, i + batchSize);
 
-				const dynFields = await this.client.multiGetObjects({
-					ids: batchIds,
-					options: { showContent: true },
+				const response = await this.client.core.getObjects({
+					objectIds: batchIds,
+					include: { json: true },
 				});
 
-				for (const dynField of dynFields) {
-					if (dynField.error) {
-						const errorInfo =
-							'object_id' in dynField.error
-								? `object ${dynField.error.object_id}`
-								: 'unknown object';
-						throw new NetworkError(`Failed to fetch ${errorInfo}: ${dynField.error.code}`);
+				for (const dynField of response.objects) {
+					if (dynField instanceof Error) {
+						throw new NetworkError(`Failed to fetch object: ${dynField.message}`);
 					}
 
-					const objectIdForError = dynField.data?.objectId;
-					const content = dynField.data?.content;
-					if (!content || content.dataType !== 'moveObject') {
-						throw new InvalidObjectError('Object content (expected moveObject)', objectIdForError);
+					const objectIdForError = dynField.objectId;
+					const content = dynField.json;
+					if (!content) {
+						throw new InvalidObjectError('Object json content missing', objectIdForError);
 					}
 					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					const fields = (content as any).fields as { name?: unknown; value?: unknown } | undefined;
+					const fields = content as { name?: unknown; value?: unknown } | undefined;
 					if (!fields) {
 						throw new InvalidObjectError('Object content.fields missing', objectIdForError);
 					}
