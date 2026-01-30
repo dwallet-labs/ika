@@ -100,7 +100,7 @@ jobs:
           chmod +x "$outdir/ika" "$outdir/ika-node"
 
       - name: Upload binary artifact (one per arch)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: linux-${{ matrix.arch }}
           path: artifacts/linux-${{ matrix.arch }}
@@ -116,7 +116,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           path: artifacts/
 
