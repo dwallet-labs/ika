@@ -19,6 +19,117 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+/// The mode in which an Ika node operates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeMode {
+    /// Validator mode: participates in consensus and MPC operations.
+    /// Requires `consensus_config` to be set in NodeConfig.
+    Validator,
+    /// Fullnode mode: syncs state via P2P but doesn't participate in consensus.
+    /// Requires `consensus_config` to be None and `notifier_client_key_pair` to be None.
+    Fullnode,
+    /// Notifier mode: submits certified checkpoints to Sui chain.
+    /// Requires `notifier_client_key_pair` to be set in SuiConnectorConfig.
+    Notifier,
+}
+
+impl NodeMode {
+    /// Detects the node mode from the configuration.
+    /// Returns the appropriate mode based on the config settings.
+    pub fn detect_from_config(config: &ika_config::NodeConfig) -> Self {
+        if config.consensus_config().is_some() {
+            NodeMode::Validator
+        } else if config.sui_connector_config.notifier_client_key_pair.is_some() {
+            NodeMode::Notifier
+        } else {
+            NodeMode::Fullnode
+        }
+    }
+
+    /// Validates that the configuration matches the expected mode.
+    /// Returns an error if the configuration is incompatible with the mode.
+    pub fn validate_config(&self, config: &ika_config::NodeConfig) -> Result<()> {
+        match self {
+            NodeMode::Validator => {
+                if config.consensus_config().is_none() {
+                    return Err(anyhow!(
+                        "Validator mode requires consensus_config to be set in NodeConfig"
+                    ));
+                }
+                if config.sui_connector_config.notifier_client_key_pair.is_some() {
+                    return Err(anyhow!(
+                        "Validator mode should not have notifier_client_key_pair set"
+                    ));
+                }
+                Ok(())
+            }
+            NodeMode::Fullnode => {
+                if config.consensus_config().is_some() {
+                    return Err(anyhow!(
+                        "Fullnode mode requires consensus_config to be None. \
+                         Use ika-validator binary for validator nodes."
+                    ));
+                }
+                if config.sui_connector_config.notifier_client_key_pair.is_some() {
+                    return Err(anyhow!(
+                        "Fullnode mode should not have notifier_client_key_pair set. \
+                         Use ika-notifier binary for notifier nodes."
+                    ));
+                }
+                Ok(())
+            }
+            NodeMode::Notifier => {
+                if config.consensus_config().is_some() {
+                    return Err(anyhow!(
+                        "Notifier mode requires consensus_config to be None. \
+                         Notifiers should not participate in consensus."
+                    ));
+                }
+                if config.sui_connector_config.notifier_client_key_pair.is_none() {
+                    return Err(anyhow!(
+                        "Notifier mode requires notifier_client_key_pair to be set in SuiConnectorConfig"
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Returns true if this mode participates in consensus.
+    pub fn is_validator(&self) -> bool {
+        matches!(self, NodeMode::Validator)
+    }
+
+    /// Returns true if this mode is a notifier.
+    pub fn is_notifier(&self) -> bool {
+        matches!(self, NodeMode::Notifier)
+    }
+
+    /// Returns true if this mode is a fullnode.
+    pub fn is_fullnode(&self) -> bool {
+        matches!(self, NodeMode::Fullnode)
+    }
+
+    /// Returns the uptime metric label for this mode.
+    pub fn uptime_metric_label(&self) -> &'static str {
+        match self {
+            NodeMode::Validator => "validator",
+            NodeMode::Fullnode => "fullnode",
+            NodeMode::Notifier => "notifier",
+        }
+    }
+}
+
+impl fmt::Display for NodeMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeMode::Validator => write!(f, "validator"),
+            NodeMode::Fullnode => write!(f, "fullnode"),
+            NodeMode::Notifier => write!(f, "notifier"),
+        }
+    }
+}
+
 use ika_core::consensus_adapter::ConsensusClient;
 use ika_core::consensus_manager::UpdatableConsensusClient;
 
@@ -87,6 +198,9 @@ use crate::metrics::IkaNodeMetrics;
 pub mod admin;
 mod handle;
 pub mod metrics;
+mod node_runner;
+
+pub use node_runner::{run_node, run_node_with_name, NodeArgs};
 
 pub struct ValidatorComponents {
     consensus_manager: Arc<ConsensusManager>,
@@ -129,36 +243,6 @@ mod simulator {
                 _leak_detector: ika_simulator::NodeLeakDetector::new(),
             }
         }
-    }
-
-    type JwkInjector = dyn Fn(AuthorityName, &OIDCProvider) -> IkaResult<Vec<(JwkId, JWK)>>
-        + Send
-        + Sync
-        + 'static;
-
-    fn default_fetch_jwks(
-        _authority: AuthorityName,
-        _provider: &OIDCProvider,
-    ) -> IkaResult<Vec<(JwkId, JWK)>> {
-        use fastcrypto_zkp::bn254::zk_login::parse_jwks;
-        // Just load a default Twitch jwk for testing.
-        parse_jwks(
-            ika_types::zk_login_util::DEFAULT_JWK_BYTES,
-            &OIDCProvider::Twitch,
-        )
-        .map_err(|_| IkaError::JWKRetrievalError)
-    }
-
-    thread_local! {
-        static JWK_INJECTOR: std::cell::RefCell<Arc<JwkInjector>> = std::cell::RefCell::new(Arc::new(default_fetch_jwks));
-    }
-
-    pub(super) fn get_jwk_injector() -> Arc<JwkInjector> {
-        JWK_INJECTOR.with(|injector| injector.borrow().clone())
-    }
-
-    pub fn set_jwk_injector(injector: Arc<JwkInjector>) {
-        JWK_INJECTOR.with(|cell| *cell.borrow_mut() = injector);
     }
 }
 
@@ -234,11 +318,28 @@ impl IkaNode {
         Self::start_async(config, registry_service, "unknown").await
     }
 
+    /// Start the node with automatic mode detection from config.
     pub async fn start_async(
         config: NodeConfig,
         registry_service: RegistryService,
-        _software_version: &'static str,
+        software_version: &'static str,
     ) -> Result<Arc<IkaNode>> {
+        let mode = NodeMode::detect_from_config(&config);
+        Self::start_with_mode(config, registry_service, software_version, mode).await
+    }
+
+    /// Start the node in a specific mode with validation.
+    /// This method validates that the configuration matches the expected mode.
+    pub async fn start_with_mode(
+        config: NodeConfig,
+        registry_service: RegistryService,
+        _software_version: &'static str,
+        mode: NodeMode,
+    ) -> Result<Arc<IkaNode>> {
+        // Validate the configuration matches the expected mode
+        mode.validate_config(&config)?;
+
+        info!("Starting Ika node in {} mode", mode);
         NodeConfigMetrics::new(&registry_service.default_registry()).record_metrics(&config);
         let mut config = config.clone();
         if config.supported_protocol_versions.is_none() {
