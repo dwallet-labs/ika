@@ -125,6 +125,7 @@ impl DWalletMPCService {
             dwallet_mpc_metrics.clone(),
             sui_data_receivers.clone(),
             protocol_config.clone(),
+            epoch_store.clone(),
         );
 
         Self {
@@ -175,6 +176,7 @@ impl DWalletMPCService {
                 DWalletMPCMetrics::new(&Registry::new()),
                 sui_data_receivers.clone(),
                 ProtocolConfig::get_for_min_version(),
+                epoch_store,
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
