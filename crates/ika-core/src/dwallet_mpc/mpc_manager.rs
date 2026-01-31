@@ -693,8 +693,9 @@ impl DWalletMPCManager {
         };
 
         // Try to get a presign from the internal presign pool
-        let presign = match self.epoch_store.pop_presign(signature_algorithm) {
-            Ok(Some(presign)) => presign,
+        let (presign_session_id, presign) = match self.epoch_store.pop_presign(signature_algorithm)
+        {
+            Ok(Some((session_id, presign))) => (session_id, presign),
             Ok(None) => {
                 warn!(
                     checkpoint_sequence_number,
@@ -713,6 +714,17 @@ impl DWalletMPCManager {
                 return false;
             }
         };
+
+        // Mark the presign as used to prevent double-spending
+        if let Err(e) = self.epoch_store.mark_presign_as_used(presign_session_id) {
+            error!(
+                checkpoint_sequence_number,
+                ?presign_session_id,
+                error = ?e,
+                "Failed to mark presign as used"
+            );
+            return false;
+        }
 
         let request = DWalletSessionRequest::new_internal_sign(
             self.epoch_id,
