@@ -156,17 +156,6 @@ pub enum DWalletMPCOutputKind {
     },
 }
 
-impl DWalletMPCOutput {
-    // TODO: delete
-    pub fn rejected(&self) -> Option<bool> {
-        if let [output] = &self.output[..] {
-            output.rejected()
-        } else {
-            None
-        }
-    }
-}
-
 impl DWalletMPCOutputKind {
     /// Instantiates a new internal MPC output.
     pub fn new_internal(output: DWalletInternalMPCOutputKind) -> Self {

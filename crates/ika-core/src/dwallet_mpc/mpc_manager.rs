@@ -502,6 +502,266 @@ impl DWalletMPCManager {
         session.add_message(consensus_round, sender_party_id, message);
     }
 
+    pub(super) fn session_status_from_request(
+        &self,
+        request: DWalletSessionRequest,
+        is_internal: bool,
+    ) -> SessionStatus {
+        match session_input_from_request(
+            &request,
+            &self.access_structure,
+            &self.committee,
+            &self.network_keys,
+            self.next_active_committee.clone(),
+            self.validators_class_groups_public_keys_and_proofs.clone(),
+        ) {
+            Ok((public_input, private_input)) => SessionStatus::Active {
+                public_input,
+                private_input,
+                request,
+            },
+            Err(e) => {
+                if is_internal {
+                    error!(                        should_never_happen =? true, error=?e, ?request, "create internal session input from dWallet request with error");
+                } else {
+                    error!(error=?e, ?request, "create session input from dWallet request with error");
+                }
+                SessionStatus::Failed
+            }
+        }
+    }
+
+    // TODO: how to do this
+    fn get_supported_curve_to_signature_algorithm()
+    -> Vec<(DWalletCurve, Vec<DWalletSignatureAlgorithm>)> {
+        vec![
+            (
+                DWalletCurve::Secp256k1,
+                vec![
+                    DWalletSignatureAlgorithm::ECDSASecp256k1,
+                    DWalletSignatureAlgorithm::Taproot,
+                ],
+            ),
+            (
+                DWalletCurve::Secp256r1,
+                vec![DWalletSignatureAlgorithm::ECDSASecp256r1],
+            ),
+            (
+                DWalletCurve::Curve25519,
+                vec![DWalletSignatureAlgorithm::EdDSA],
+            ),
+            (
+                DWalletCurve::Ristretto,
+                vec![DWalletSignatureAlgorithm::SchnorrkelSubstrate],
+            ),
+        ]
+    }
+
+    /// Instantiates internal presign sessions based on predefined logic that is
+    /// synced with the consensus and thus with the other validators.
+    pub(super) fn instantiate_internal_presign_sessions(
+        &mut self,
+        consensus_round: u64,
+        number_of_consensus_rounds: u64,
+        network_is_idle: bool,
+    ) {
+        if let Some((dwallet_network_encryption_key_id, _)) = self
+            .network_keys
+            .network_encryption_keys
+            .iter()
+            .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
+        {
+            let dwallet_network_encryption_key_id = *dwallet_network_encryption_key_id;
+            for (curve, signature_algorithms) in Self::get_supported_curve_to_signature_algorithm()
+            {
+                for signature_algorithm in signature_algorithms {
+                    let current_pool_size = self.internal_presign_pool_size(
+                        dwallet_network_encryption_key_id,
+                        curve,
+                        signature_algorithm,
+                    );
+                    let minimal_pool_size = self
+                        .protocol_config
+                        .get_internal_presign_pool_minimum_size(curve, signature_algorithm);
+                    let consensus_round_delay = self
+                        .protocol_config
+                        .get_internal_presign_consensus_round_delay(curve, signature_algorithm);
+                    let sessions_to_instantiate = self
+                        .protocol_config
+                        .get_internal_presign_sessions_to_instantiate(curve, signature_algorithm);
+
+                    if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
+                        && current_pool_size < minimal_pool_size)
+                        || network_is_idle
+                    {
+                        for _ in 1..=sessions_to_instantiate {
+                            self.instantiate_internal_presign_session(
+                                consensus_round,
+                                dwallet_network_encryption_key_id,
+                                curve,
+                                signature_algorithm,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Instantiates an internal presign sessions.
+    fn instantiate_internal_presign_session(
+        &mut self,
+        consensus_round: u64,
+        dwallet_network_encryption_key_id: ObjectID,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) {
+        let session_sequence_number = self.next_internal_presign_sequence_number;
+        let request = DWalletSessionRequest::new_internal_presign(
+            self.epoch_id,
+            consensus_round,
+            session_sequence_number,
+            curve,
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+        );
+
+        let session_identifier = request.session_identifier;
+        let status = self.session_status_from_request(request, true);
+
+        let session_computation_type = SessionComputationType::MPC {
+            messages_by_consensus_round: HashMap::new(),
+        };
+
+        info!(
+            status=?status,
+            consensus_round,
+            ?curve,
+            ?signature_algorithm,
+            ?session_sequence_number,
+            ?session_identifier,
+            "instantiating new internal presign session",
+        );
+
+        self.new_session(&session_identifier, status, session_computation_type);
+
+        self.next_internal_presign_sequence_number += 1;
+    }
+
+    /// Instantiates an internal sign session for signing a checkpoint message.
+    ///
+    /// This is called when a checkpoint is created and needs to be signed using
+    /// the internal checkpoint dWallet (with emulated centralized party).
+    ///
+    /// # Arguments
+    /// * `checkpoint_sequence_number` - The sequence number of the checkpoint to sign
+    /// * `checkpoint_message` - The serialized checkpoint message to sign
+    ///
+    /// The network encryption key ID and signature algorithm are determined internally,
+    /// using the same approach as internal presign sessions.
+    pub(super) fn instantiate_internal_sign_session_for_checkpoint(
+        &mut self,
+        checkpoint_sequence_number: u64,
+        checkpoint_message: Vec<u8>,
+    ) -> bool {
+        // Get the network encryption key ID (same as internal presign sessions)
+        let dwallet_network_encryption_key_id = match self
+            .network_keys
+            .network_encryption_keys
+            .iter()
+            .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
+        {
+            Some((key_id, _)) => *key_id,
+            None => {
+                warn!(
+                    checkpoint_sequence_number,
+                    "No network encryption key available for internal checkpoint signing"
+                );
+                return false;
+            }
+        };
+
+        // Get the checkpoint signing algorithm and curve from protocol config
+        let signature_algorithm = self.protocol_config.checkpoint_signing_algorithm();
+        let curve = self.protocol_config.checkpoint_signing_curve();
+
+        // Get the hash scheme for the signature algorithm
+        let hash_scheme = match signature_algorithm {
+            DWalletSignatureAlgorithm::EdDSA
+            | DWalletSignatureAlgorithm::SchnorrkelSubstrate
+            | DWalletSignatureAlgorithm::ECDSASecp256k1
+            | DWalletSignatureAlgorithm::ECDSASecp256r1
+            | DWalletSignatureAlgorithm::Taproot => HashScheme::Keccak256,
+        };
+
+        // Try to get a presign from the internal presign pool
+        let presign = match self.epoch_store.pop_presign(signature_algorithm) {
+            Ok(Some(presign)) => presign,
+            Ok(None) => {
+                warn!(
+                    checkpoint_sequence_number,
+                    ?signature_algorithm,
+                    "No presign available in internal pool for checkpoint signing"
+                );
+                return false;
+            }
+            Err(e) => {
+                error!(
+                    checkpoint_sequence_number,
+                    ?signature_algorithm,
+                    error = ?e,
+                    "Failed to get presign from internal pool for checkpoint signing"
+                );
+                return false;
+            }
+        };
+
+        let request = DWalletSessionRequest::new_internal_sign(
+            self.epoch_id,
+            checkpoint_sequence_number,
+            curve,
+            signature_algorithm,
+            hash_scheme,
+            dwallet_network_encryption_key_id,
+            checkpoint_message.clone(),
+            presign,
+        );
+
+        let session_identifier = request.session_identifier;
+        let status = self.session_status_from_request(request, true);
+
+        let session_computation_type = SessionComputationType::MPC {
+            messages_by_consensus_round: HashMap::new(),
+        };
+
+        info!(
+            checkpoint_sequence_number,
+            ?curve,
+            ?signature_algorithm,
+            ?session_identifier,
+            message_length = checkpoint_message.len(),
+            "instantiating internal sign session for checkpoint",
+        );
+
+        self.new_session(&session_identifier, status, session_computation_type);
+        true
+    }
+
+    fn internal_presign_pool_size(
+        &self,
+        _dwallet_network_encryption_key_id: ObjectID,
+        _curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        // todo: use dwallet_network_encryption_key_id
+        self.epoch_store
+            .presign_pool_size(signature_algorithm)
+            .unwrap_or_else(|e| {
+                error!(error=?e, ?signature_algorithm, "Failed to get presign pool size");
+                0
+            })
+    }
+
     /// Creates a new session with SID `session_identifier`,
     /// and insert it into the MPC session map `self.mpc_sessions`.
     pub(super) fn new_session(
@@ -980,242 +1240,12 @@ impl DWalletMPCManager {
             },
             Err(e) => {
                 if is_internal {
-                    error!(should_never_happen =? true, error=?e, ?request, "create internal session input from dWallet request with error");
+                    error!(                        should_never_happen =? true, error=?e, ?request, "create internal session input from dWallet request with error");
                 } else {
                     error!(error=?e, ?request, "create session input from dWallet request with error");
                 }
                 SessionStatus::Failed
             }
         }
-    }
-
-    fn get_supported_curve_to_signature_algorithm()
-    -> Vec<(DWalletCurve, Vec<DWalletSignatureAlgorithm>)> {
-        vec![
-            (
-                DWalletCurve::Secp256k1,
-                vec![
-                    DWalletSignatureAlgorithm::ECDSASecp256k1,
-                    DWalletSignatureAlgorithm::Taproot,
-                ],
-            ),
-            (
-                DWalletCurve::Secp256r1,
-                vec![DWalletSignatureAlgorithm::ECDSASecp256r1],
-            ),
-            (
-                DWalletCurve::Curve25519,
-                vec![DWalletSignatureAlgorithm::EdDSA],
-            ),
-            (
-                DWalletCurve::Ristretto,
-                vec![DWalletSignatureAlgorithm::SchnorrkelSubstrate],
-            ),
-        ]
-    }
-
-    /// Instantiates internal presign sessions based on predefined logic that is
-    /// synced with the consensus and thus with the other validators.
-    pub(super) fn instantiate_internal_presign_sessions(
-        &mut self,
-        consensus_round: u64,
-        number_of_consensus_rounds: u64,
-        network_is_idle: bool,
-    ) {
-        if let Some((dwallet_network_encryption_key_id, _)) = self
-            .network_keys
-            .network_encryption_keys
-            .iter()
-            .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
-        {
-            let dwallet_network_encryption_key_id = *dwallet_network_encryption_key_id;
-            for (curve, signature_algorithms) in Self::get_supported_curve_to_signature_algorithm()
-            {
-                for signature_algorithm in signature_algorithms {
-                    let current_pool_size = self.internal_presign_pool_size(
-                        dwallet_network_encryption_key_id,
-                        curve,
-                        signature_algorithm,
-                    );
-                    let minimal_pool_size = self
-                        .protocol_config
-                        .get_internal_presign_pool_minimum_size(curve, signature_algorithm);
-                    let consensus_round_delay = self
-                        .protocol_config
-                        .get_internal_presign_consensus_round_delay(curve, signature_algorithm);
-                    let sessions_to_instantiate = self
-                        .protocol_config
-                        .get_internal_presign_sessions_to_instantiate(curve, signature_algorithm);
-
-                    if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
-                        && current_pool_size < minimal_pool_size)
-                        || network_is_idle
-                    {
-                        for _ in 1..=sessions_to_instantiate {
-                            self.instantiate_internal_presign_session(
-                                consensus_round,
-                                dwallet_network_encryption_key_id,
-                                curve,
-                                signature_algorithm,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Instantiates an internal presign sessions.
-    fn instantiate_internal_presign_session(
-        &mut self,
-        consensus_round: u64,
-        dwallet_network_encryption_key_id: ObjectID,
-        curve: DWalletCurve,
-        signature_algorithm: DWalletSignatureAlgorithm,
-    ) {
-        let session_sequence_number = self.next_internal_presign_sequence_number;
-        let request = DWalletSessionRequest::new_internal_presign(
-            self.epoch_id,
-            consensus_round,
-            session_sequence_number,
-            curve,
-            signature_algorithm,
-            dwallet_network_encryption_key_id,
-        );
-
-        let session_identifier = request.session_identifier;
-        let status = self.session_status_from_request(request, true);
-
-        let session_computation_type = SessionComputationType::MPC {
-            messages_by_consensus_round: HashMap::new(),
-        };
-
-        info!(
-            status=?status,
-            consensus_round,
-            ?curve,
-            ?signature_algorithm,
-            ?session_sequence_number,
-            ?session_identifier,
-            "instantiating new internal presign session",
-        );
-
-        self.new_session(&session_identifier, status, session_computation_type);
-
-        self.next_internal_presign_sequence_number += 1;
-    }
-
-    /// Instantiates an internal sign session for signing a checkpoint message.
-    ///
-    /// This is called when a checkpoint is created and needs to be signed using
-    /// the internal checkpoint dWallet (with emulated centralized party).
-    ///
-    /// # Arguments
-    /// * `checkpoint_sequence_number` - The sequence number of the checkpoint to sign
-    /// * `checkpoint_message` - The serialized checkpoint message to sign
-    ///
-    /// The network encryption key ID and signature algorithm are determined internally,
-    /// using the same approach as internal presign sessions.
-    pub(super) fn instantiate_internal_sign_session_for_checkpoint(
-        &mut self,
-        checkpoint_sequence_number: u64,
-        checkpoint_message: Vec<u8>,
-    ) -> bool {
-        // Get the network encryption key ID (same as internal presign sessions)
-        let dwallet_network_encryption_key_id = match self
-            .network_keys
-            .network_encryption_keys
-            .iter()
-            .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
-        {
-            Some((key_id, _)) => *key_id,
-            None => {
-                warn!(
-                    checkpoint_sequence_number,
-                    "No network encryption key available for internal checkpoint signing"
-                );
-                return false;
-            }
-        };
-
-        // Get the checkpoint signing algorithm and curve from protocol config
-        let signature_algorithm = self.protocol_config.checkpoint_signing_algorithm();
-        let curve = self.protocol_config.checkpoint_signing_curve();
-
-        // Get the hash scheme for the signature algorithm
-        let hash_scheme = match signature_algorithm {
-            DWalletSignatureAlgorithm::EdDSA
-            | DWalletSignatureAlgorithm::SchnorrkelSubstrate
-            | DWalletSignatureAlgorithm::ECDSASecp256k1
-            | DWalletSignatureAlgorithm::ECDSASecp256r1
-            | DWalletSignatureAlgorithm::Taproot => HashScheme::Keccak256,
-        };
-
-        // Try to get a presign from the internal presign pool
-        let presign = match self.epoch_store.pop_presign(signature_algorithm) {
-            Ok(Some(presign)) => presign,
-            Ok(None) => {
-                warn!(
-                    checkpoint_sequence_number,
-                    ?signature_algorithm,
-                    "No presign available in internal pool for checkpoint signing"
-                );
-                return false;
-            }
-            Err(e) => {
-                error!(
-                    checkpoint_sequence_number,
-                    ?signature_algorithm,
-                    error = ?e,
-                    "Failed to get presign from internal pool for checkpoint signing"
-                );
-                return false;
-            }
-        };
-
-        let request = DWalletSessionRequest::new_internal_sign(
-            self.epoch_id,
-            checkpoint_sequence_number,
-            curve,
-            signature_algorithm,
-            hash_scheme,
-            dwallet_network_encryption_key_id,
-            checkpoint_message.clone(),
-            presign,
-        );
-
-        let session_identifier = request.session_identifier;
-        let status = self.session_status_from_request(request, true);
-
-        let session_computation_type = SessionComputationType::MPC {
-            messages_by_consensus_round: HashMap::new(),
-        };
-
-        info!(
-            checkpoint_sequence_number,
-            ?curve,
-            ?signature_algorithm,
-            ?session_identifier,
-            message_length = checkpoint_message.len(),
-            "instantiating internal sign session for checkpoint",
-        );
-
-        self.new_session(&session_identifier, status, session_computation_type);
-        true
-    }
-
-    fn internal_presign_pool_size(
-        &self,
-        _dwallet_network_encryption_key_id: ObjectID,
-        _curve: DWalletCurve,
-        signature_algorithm: DWalletSignatureAlgorithm,
-    ) -> u64 {
-        // todo: use dwallet_network_encryption_key_id
-        self.epoch_store
-            .presign_pool_size(signature_algorithm)
-            .unwrap_or_else(|e| {
-                error!(error=?e, ?signature_algorithm, "Failed to get presign pool size");
-                0
-            })
     }
 }

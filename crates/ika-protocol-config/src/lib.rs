@@ -246,6 +246,11 @@ pub struct ProtocolConfig {
     /// above 33 (f) will not be allowed.
     consensus_bad_nodes_stake_threshold: Option<u64>,
 
+    /// The threshold for determining if a validator is idle based on the number
+    /// of ready-to-run MPC sessions plus currently running computations.
+    /// If the total session count is below this threshold, the validator is considered idle.
+    idle_session_count_threshold: Option<u64>,
+
     // === Used at Sui consensus for current ProtocolConfig version (MAX 84) ===
     /// The maximum serialised transaction size (in bytes) accepted by consensus. That should be bigger than the
     /// `max_tx_size_bytes` with some additional headroom.
@@ -268,11 +273,6 @@ pub struct ProtocolConfig {
 
     checkpoint_signing_curve: Option<DWalletCurve>,
     checkpoint_signing_algorithm: Option<DWalletSignatureAlgorithm>,
-
-    /// The threshold for determining if a validator is idle based on the number
-    /// of ready-to-run MPC sessions plus currently running computations.
-    /// If the total session count is below this threshold, the validator is considered idle.
-    idle_session_count_threshold: Option<u64>,
 
     // === Internal Presign Configuration ===
     internal_secp256k1_ecdsa_presign_pool_minimum_size: Option<u64>,
@@ -493,6 +493,9 @@ impl ProtocolConfig {
             // higher confidence.
             consensus_bad_nodes_stake_threshold: Some(30),
 
+            // Idle threshold for MPC session management
+            idle_session_count_threshold: Some(10),
+
             // TODO (#873): Implement a production grade configuration upgrade mechanism
             // We use the `_for_testing` functions because they are currently the only way
             // to modify Sui's protocol configuration from external crates.
@@ -513,9 +516,6 @@ impl ProtocolConfig {
 
             checkpoint_signing_curve: Some(DWalletCurve::Curve25519),
             checkpoint_signing_algorithm: Some(DWalletSignatureAlgorithm::EdDSA),
-
-            // Idle threshold for MPC session management
-            idle_session_count_threshold: Some(10),
 
             // === Internal Presign Configuration ===
             // Pool minimum sizes
@@ -584,6 +584,8 @@ impl ProtocolConfig {
         })
     }
 
+    /// Get the minimum size of the internal presign.
+    /// We should continue instantiating internal presign sessions until reaching this size.
     pub fn get_internal_presign_pool_minimum_size(
         &self,
         _curve: DWalletCurve,
