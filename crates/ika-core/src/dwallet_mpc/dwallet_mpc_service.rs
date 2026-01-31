@@ -81,6 +81,12 @@ pub struct DWalletMPCService {
     pub committee: Arc<Committee>,
     /// Tracks the last sent idle status to avoid sending duplicate updates.
     last_sent_idle_status: Option<bool>,
+    /// The number of consensus rounds since epoch started.
+    /// Needed because the consensus rounds themselves might not be consecutive.
+    number_of_consensus_rounds: u64,
+    /// Is the network considered in an idle state?
+    /// If so, we can process more internal presign sessions to make use of resources.
+    network_is_idle: bool,
 }
 
 impl DWalletMPCService {
@@ -144,6 +150,8 @@ impl DWalletMPCService {
             protocol_config,
             committee,
             last_sent_idle_status: None,
+            number_of_consensus_rounds: 0,
+            network_is_idle: false,
         }
     }
 
@@ -187,6 +195,8 @@ impl DWalletMPCService {
             protocol_config: ProtocolConfig::get_for_min_version(),
             committee: Arc::new(committee),
             last_sent_idle_status: None,
+            number_of_consensus_rounds: 0,
+            network_is_idle: false,
         }
     }
 
@@ -425,6 +435,8 @@ impl DWalletMPCService {
         };
 
         while Some(last_consensus_round) > self.last_read_consensus_round {
+            self.number_of_consensus_rounds += 1;
+
             let mpc_messages = self
                 .epoch_store
                 .next_dwallet_mpc_message(self.last_read_consensus_round);
@@ -557,6 +569,14 @@ impl DWalletMPCService {
                 panic!("consensus round must be in a ascending order");
             }
 
+            // Instantiate internal presign sessions based on consensus round and idle status.
+            self.dwallet_mpc_manager
+                .instantiate_internal_presign_sessions(
+                    consensus_round,
+                    self.number_of_consensus_rounds,
+                    self.network_is_idle,
+                );
+
             // Let's start processing the MPC messages for the current round.
             self.dwallet_mpc_manager
                 .handle_consensus_round_messages(consensus_round, mpc_messages);
@@ -567,9 +587,19 @@ impl DWalletMPCService {
                 .handle_consensus_round_outputs(consensus_round, mpc_outputs);
 
             // Process the status updates for the current round.
-            let _agreed_status = self
+            if let Some(agreed_status) = self
                 .dwallet_mpc_manager
-                .handle_status_updates(consensus_round, status_updates);
+                .handle_status_updates(consensus_round, status_updates)
+            {
+                if self.network_is_idle != agreed_status.is_idle {
+                    info!(
+                        consensus_round,
+                        is_idle = agreed_status.is_idle,
+                        "Network idle status changed"
+                    );
+                    self.network_is_idle = agreed_status.is_idle;
+                }
+            }
 
             // Add messages from the consensus output such as EndOfPublish.
             checkpoint_messages.extend(verified_dwallet_checkpoint_messages);

@@ -274,7 +274,6 @@ impl DWalletMPCManager {
                         consensus_round,
                         ?session_identifier,
                         ?malicious_authorities,
-                        rejected = output.rejected(),
                         "MPC output reached quorum"
                     );
                 }
@@ -283,7 +282,6 @@ impl DWalletMPCManager {
                         consensus_round,
                         ?session_identifier,
                         ?output,
-                        rejected = output.rejected(),
                         "MPC output yet to reach quorum"
                     );
                 }
@@ -1218,34 +1216,5 @@ impl DWalletMPCManager {
                 );
             }
         };
-    }
-
-    pub(super) fn session_status_from_request(
-        &self,
-        request: DWalletSessionRequest,
-        is_internal: bool,
-    ) -> SessionStatus {
-        match session_input_from_request(
-            &request,
-            &self.access_structure,
-            &self.committee,
-            &self.network_keys,
-            self.next_active_committee.clone(),
-            self.validators_class_groups_public_keys_and_proofs.clone(),
-        ) {
-            Ok((public_input, private_input)) => SessionStatus::Active {
-                public_input,
-                private_input,
-                request,
-            },
-            Err(e) => {
-                if is_internal {
-                    error!(                        should_never_happen =? true, error=?e, ?request, "create internal session input from dWallet request with error");
-                } else {
-                    error!(error=?e, ?request, "create session input from dWallet request with error");
-                }
-                SessionStatus::Failed
-            }
-        }
     }
 }
