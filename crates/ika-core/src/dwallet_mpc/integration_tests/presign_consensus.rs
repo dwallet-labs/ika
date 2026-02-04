@@ -56,11 +56,13 @@ async fn test_global_presign_requests_tracked_and_reported() {
 
     // Pre-populate presign pool for global presign requests
     let mock_presign_data = vec![1, 2, 3, 4, 5];
+    let mock_session_identifier = SessionIdentifier::new(SessionType::InternalPresign, [0u8; 32]);
     for epoch_store in &test_state.epoch_stores {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
                 1,
+                mock_session_identifier,
                 vec![mock_presign_data.clone(); 5],
             )
             .expect("Failed to insert presigns");
@@ -179,11 +181,13 @@ async fn test_partial_visibility_consensus_and_pool_retrieval() {
 
     // Pre-populate presign pool for ALL validators
     let mock_presign_data = vec![1, 2, 3, 4, 5];
+    let mock_session_identifier = SessionIdentifier::new(SessionType::InternalPresign, [1u8; 32]);
     for epoch_store in &test_state.epoch_stores {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
                 1,
+                mock_session_identifier,
                 vec![mock_presign_data.clone(); 10],
             )
             .expect("Failed to insert presigns");

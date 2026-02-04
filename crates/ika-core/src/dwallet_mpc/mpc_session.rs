@@ -224,7 +224,6 @@ impl DWalletSession {
             output=?output,
             consensus_round,
             status =? self.status,
-            rejected=output.rejected(),
             "Received a dWallet MPC output",
         );
 

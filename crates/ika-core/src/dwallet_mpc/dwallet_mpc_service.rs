@@ -89,7 +89,7 @@ pub struct DWalletMPCService {
     /// Needed because the consensus rounds themselves might not be consecutive.
     number_of_consensus_rounds: u64,
     /// Is the network considered in an idle state?
-    /// if so, we can process more internal presign sessions to make use of resources.
+    /// If so, we can process more internal presign sessions to make use of resources.
     network_is_idle: bool,
     agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
     processed_global_presign_requests_session_identifiers: HashSet<SessionIdentifier>,
@@ -669,6 +669,7 @@ impl DWalletMPCService {
 
             // TODO: add to db internal presign session ids that was used, never use again.
             // TODO: check protocol version here
+            // Instantiate internal presign sessions based on consensus round and idle status.
             self.dwallet_mpc_manager
                 .instantiate_internal_presign_sessions(
                     consensus_round,
@@ -747,7 +748,35 @@ impl DWalletMPCService {
                 let mut global_presign_checkpoint_messages = Vec::new();
                 for request in self.agreed_global_presign_requests_queue.clone() {
                     match self.epoch_store.pop_presign(request.signature_algorithm) {
-                        Ok(Some(presign)) => {
+                        Ok(Some((presign_session_id, presign))) => {
+                            // Check if this presign has already been used (safety check)
+                            if self
+                                .epoch_store
+                                .is_presign_used(presign_session_id)
+                                .unwrap_or(false)
+                            {
+                                error!(
+                                    ?presign_session_id,
+                                    presign_id = ?request.presign_id,
+                                    "Presign has already been used - this should not happen"
+                                );
+                                unprocessed_requests.push(request);
+                                continue;
+                            }
+
+                            // Mark the presign as used to prevent double-spending
+                            if let Err(e) =
+                                self.epoch_store.mark_presign_as_used(presign_session_id)
+                            {
+                                error!(
+                                    ?presign_session_id,
+                                    error = ?e,
+                                    "Failed to mark presign as used"
+                                );
+                                unprocessed_requests.push(request);
+                                continue;
+                            }
+
                             self.processed_global_presign_requests_session_identifiers
                                 .insert(request.session_identifier);
 

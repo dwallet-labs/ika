@@ -4,7 +4,7 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use ika_types::committee::Committee;
-use ika_types::messages_dwallet_mpc::SessionType;
+use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use tracing::info;
 
 /// Test that presign pool state is preserved when a validator processes
@@ -49,6 +49,7 @@ async fn test_presign_pool_state_preserved() {
     // Pre-populate presign pools to simulate existing state
     let mock_presign_data = vec![1, 2, 3, 4, 5, 6, 7, 8];
     let num_presigns = 5;
+    let mock_session_identifier = SessionIdentifier::new(SessionType::InternalPresign, [0u8; 32]);
 
     for epoch_store in &test_state.epoch_stores {
         let presigns: Vec<Vec<u8>> = (0..num_presigns)
@@ -60,7 +61,12 @@ async fn test_presign_pool_state_preserved() {
             .collect();
 
         epoch_store
-            .insert_presigns(DWalletSignatureAlgorithm::ECDSASecp256k1, 1, presigns)
+            .insert_presigns(
+                DWalletSignatureAlgorithm::ECDSASecp256k1,
+                1,
+                mock_session_identifier,
+                presigns,
+            )
             .expect("Failed to insert presigns");
     }
 
@@ -347,6 +353,9 @@ async fn test_epoch_store_presign_pool_operations() {
 
     // Test presign pool operations on epoch store
     let test_epoch_store = &epoch_stores[0];
+    let test_session_id_one = SessionIdentifier::new(SessionType::InternalPresign, [1u8; 32]);
+    let test_session_id_two = SessionIdentifier::new(SessionType::InternalPresign, [2u8; 32]);
+    let test_session_id_three = SessionIdentifier::new(SessionType::InternalPresign, [3u8; 32]);
 
     // Test inserting presigns
     let presigns: Vec<Vec<u8>> = (0..10).map(|i| vec![i as u8; 32]).collect();
@@ -355,6 +364,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .insert_presigns(
             DWalletSignatureAlgorithm::ECDSASecp256k1,
             1,
+            test_session_id_one,
             presigns.clone(),
         )
         .expect("Failed to insert presigns");
@@ -372,7 +382,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .expect("Failed to pop presign");
 
     assert!(consumed.is_some(), "Should have consumed a presign");
-    info!("Consumed presign: {:?}", consumed.map(|p| p.len()));
+    info!("Consumed presign: {:?}", consumed.map(|(_, p)| p.len()));
 
     let pool_size_after_consume = test_epoch_store
         .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
@@ -388,7 +398,12 @@ async fn test_epoch_store_presign_pool_operations() {
     let more_presigns: Vec<Vec<u8>> = (10..15).map(|i| vec![i as u8; 32]).collect();
 
     test_epoch_store
-        .insert_presigns(DWalletSignatureAlgorithm::ECDSASecp256k1, 1, more_presigns)
+        .insert_presigns(
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+            2,
+            test_session_id_two,
+            more_presigns,
+        )
         .expect("Failed to insert more presigns");
 
     let final_pool_size = test_epoch_store
@@ -403,6 +418,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .insert_presigns(
             DWalletSignatureAlgorithm::EdDSA,
             1,
+            test_session_id_three,
             vec![vec![100u8; 32]; 5],
         )
         .expect("Failed to insert EdDSA presigns");

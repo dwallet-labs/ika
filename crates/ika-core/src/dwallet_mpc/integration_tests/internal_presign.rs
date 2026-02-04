@@ -4,7 +4,7 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use ika_types::committee::Committee;
-use ika_types::messages_dwallet_mpc::SessionType;
+use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use tracing::info;
 
 /// Test that internal presign sessions are instantiated at the correct consensus rounds
@@ -179,6 +179,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     info!("Minimum pool size for ECDSASecp256k1: {}", min_pool_size);
 
     // Insert enough presigns to reach the minimum pool size
+    let mock_session_identifier = SessionIdentifier::new(SessionType::InternalPresign, [0u8; 32]);
     for epoch_store in &test_state.epoch_stores {
         let presigns: Vec<Vec<u8>> = (0..min_pool_size)
             .map(|i| {
@@ -189,7 +190,12 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             .collect();
 
         epoch_store
-            .insert_presigns(DWalletSignatureAlgorithm::ECDSASecp256k1, 1, presigns)
+            .insert_presigns(
+                DWalletSignatureAlgorithm::ECDSASecp256k1,
+                1,
+                mock_session_identifier,
+                presigns,
+            )
             .expect("Failed to insert presigns");
     }
 

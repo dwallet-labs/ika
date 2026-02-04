@@ -486,11 +486,13 @@ async fn global_presign_request_uses_correct_metadata_test() {
 
     // Pre-populate the presign pool with a mock presign for all epoch stores
     let mock_presign_data = vec![1, 2, 3, 4, 5];
+    let mock_session_identifier = SessionIdentifier::new(SessionType::InternalPresign, [0u8; 32]);
     for epoch_store in &test_state.epoch_stores {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
                 1, // session_sequence_number for internal presigns
+                mock_session_identifier,
                 vec![mock_presign_data.clone()],
             )
             .expect("Failed to insert presign into pool");

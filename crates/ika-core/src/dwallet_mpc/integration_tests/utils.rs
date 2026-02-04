@@ -161,6 +161,7 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         &self,
         _signature_algorithm: DWalletSignatureAlgorithm,
         _session_sequence_number: u64,
+        _session_identifier: SessionIdentifier,
         _presigns: Vec<Vec<u8>>,
     ) -> IkaResult<()> {
         Ok(())
@@ -173,8 +174,16 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
     fn pop_presign(
         &self,
         _signature_algorithm: DWalletSignatureAlgorithm,
-    ) -> IkaResult<Option<Vec<u8>>> {
+    ) -> IkaResult<Option<(SessionIdentifier, Vec<u8>)>> {
         Ok(None)
+    }
+
+    fn mark_presign_as_used(&self, _presign_session_id: SessionIdentifier) -> IkaResult<()> {
+        Ok(())
+    }
+
+    fn is_presign_used(&self, _presign_session_id: SessionIdentifier) -> IkaResult<bool> {
+        Ok(false)
     }
 
     fn next_internal_sessions_status_update(

@@ -679,8 +679,9 @@ impl DWalletMPCManager {
         };
 
         // Try to get a presign from the internal presign pool
-        let presign = match self.epoch_store.pop_presign(signature_algorithm) {
-            Ok(Some(presign)) => presign,
+        let (presign_session_id, presign) = match self.epoch_store.pop_presign(signature_algorithm)
+        {
+            Ok(Some((session_id, presign))) => (session_id, presign),
             Ok(None) => {
                 warn!(
                     checkpoint_sequence_number,
@@ -699,6 +700,31 @@ impl DWalletMPCManager {
                 return false;
             }
         };
+
+        // Check if this presign has already been used (safety check)
+        if self
+            .epoch_store
+            .is_presign_used(presign_session_id)
+            .unwrap_or(false)
+        {
+            error!(
+                checkpoint_sequence_number,
+                ?presign_session_id,
+                "Presign has already been used - this should not happen"
+            );
+            return false;
+        }
+
+        // Mark the presign as used to prevent double-spending
+        if let Err(e) = self.epoch_store.mark_presign_as_used(presign_session_id) {
+            error!(
+                checkpoint_sequence_number,
+                ?presign_session_id,
+                error = ?e,
+                "Failed to mark presign as used"
+            );
+            return false;
+        }
 
         let request = DWalletSessionRequest::new_internal_sign(
             self.epoch_id,
@@ -1112,7 +1138,7 @@ impl DWalletMPCManager {
 
             match majority_vote.clone() {
                 DWalletMPCOutputKind::Internal { output } => {
-                    self.handle_mpc_internal_output(output);
+                    self.handle_mpc_internal_output(session_identifier, output);
                 }
                 DWalletMPCOutputKind::External { .. } => {}
             }
@@ -1123,7 +1149,11 @@ impl DWalletMPCManager {
         }
     }
 
-    fn handle_mpc_internal_output(&mut self, output: DWalletInternalMPCOutputKind) {
+    fn handle_mpc_internal_output(
+        &mut self,
+        session_identifier: SessionIdentifier,
+        output: DWalletInternalMPCOutputKind,
+    ) {
         match output {
             DWalletInternalMPCOutputKind::InternalPresign {
                 output,
@@ -1135,6 +1165,7 @@ impl DWalletMPCManager {
                     self.record_internal_presign_output::<Secp256k1ECDSAProtocol>(
                         signature_algorithm,
                         session_sequence_number,
+                        session_identifier,
                         output,
                     );
                 }
@@ -1142,6 +1173,7 @@ impl DWalletMPCManager {
                     self.record_internal_presign_output::<Secp256r1ECDSAProtocol>(
                         signature_algorithm,
                         session_sequence_number,
+                        session_identifier,
                         output,
                     );
                 }
@@ -1149,6 +1181,7 @@ impl DWalletMPCManager {
                     self.record_internal_presign_output::<Curve25519EdDSAProtocol>(
                         signature_algorithm,
                         session_sequence_number,
+                        session_identifier,
                         output,
                     );
                 }
@@ -1156,6 +1189,7 @@ impl DWalletMPCManager {
                     self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateProtocol>(
                         signature_algorithm,
                         session_sequence_number,
+                        session_identifier,
                         output,
                     );
                 }
@@ -1163,6 +1197,7 @@ impl DWalletMPCManager {
                     self.record_internal_presign_output::<Secp256k1TaprootProtocol>(
                         signature_algorithm,
                         session_sequence_number,
+                        session_identifier,
                         output,
                     );
                 }
@@ -1190,6 +1225,7 @@ impl DWalletMPCManager {
         &mut self,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_sequence_number: u64,
+        session_identifier: SessionIdentifier,
         public_output: Vec<u8>,
     ) {
         let presigns = match bcs::from_bytes::<Vec<P::Presign>>(&public_output) {
@@ -1226,6 +1262,7 @@ impl DWalletMPCManager {
         if let Err(e) = self.epoch_store.insert_presigns(
             signature_algorithm,
             session_sequence_number,
+            session_identifier,
             serialized_presigns,
         ) {
             error!(
