@@ -10,7 +10,7 @@ use crate::system_checkpoints::SystemCheckpointStore;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use futures::{StreamExt, future};
-use ika_config::node::{RunWithRange, SuiChainIdentifier, SuiConnectorConfig};
+use ika_config::node::{NodeMode, RunWithRange, SuiChainIdentifier, SuiConnectorConfig};
 use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId};
 use ika_types::error::IkaResult;
@@ -65,7 +65,7 @@ impl SuiConnectorService {
         sui_client: Arc<SuiClient<SuiSdkClient>>,
         sui_connector_config: SuiConnectorConfig,
         sui_connector_metrics: Arc<SuiConnectorMetrics>,
-        is_validator: bool,
+        mode: NodeMode,
         next_epoch_committee_sender: Sender<Committee>,
         new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
         end_of_publish_sender: Sender<Option<u64>>,
@@ -106,7 +106,7 @@ impl SuiConnectorService {
         .run(
             Duration::from_secs(2),
             next_epoch_committee_sender,
-            is_validator,
+            mode,
             system_object_receiver,
             dwallet_coordinator_receiver,
             network_keys_sender,

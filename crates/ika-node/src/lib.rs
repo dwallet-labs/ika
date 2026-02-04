@@ -7,8 +7,7 @@ use anemo_tower::callback::CallbackLayer;
 use anemo_tower::trace::DefaultMakeSpan;
 use anemo_tower::trace::DefaultOnFailure;
 use anemo_tower::trace::TraceLayer;
-use anyhow::Result;
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use prometheus::Registry;
 use std::collections::HashMap;
@@ -19,116 +18,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-/// The mode in which an Ika node operates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeMode {
-    /// Validator mode: participates in consensus and MPC operations.
-    /// Requires `consensus_config` to be set in NodeConfig.
-    Validator,
-    /// Fullnode mode: syncs state via P2P but doesn't participate in consensus.
-    /// Requires `consensus_config` to be None and `notifier_client_key_pair` to be None.
-    Fullnode,
-    /// Notifier mode: submits certified checkpoints to Sui chain.
-    /// Requires `notifier_client_key_pair` to be set in SuiConnectorConfig.
-    Notifier,
-}
-
-impl NodeMode {
-    /// Detects the node mode from the configuration.
-    /// Returns the appropriate mode based on the config settings.
-    pub fn detect_from_config(config: &ika_config::NodeConfig) -> Self {
-        if config.consensus_config().is_some() {
-            NodeMode::Validator
-        } else if config.sui_connector_config.notifier_client_key_pair.is_some() {
-            NodeMode::Notifier
-        } else {
-            NodeMode::Fullnode
-        }
-    }
-
-    /// Validates that the configuration matches the expected mode.
-    /// Returns an error if the configuration is incompatible with the mode.
-    pub fn validate_config(&self, config: &ika_config::NodeConfig) -> Result<()> {
-        match self {
-            NodeMode::Validator => {
-                if config.consensus_config().is_none() {
-                    return Err(anyhow!(
-                        "Validator mode requires consensus_config to be set in NodeConfig"
-                    ));
-                }
-                if config.sui_connector_config.notifier_client_key_pair.is_some() {
-                    return Err(anyhow!(
-                        "Validator mode should not have notifier_client_key_pair set"
-                    ));
-                }
-                Ok(())
-            }
-            NodeMode::Fullnode => {
-                if config.consensus_config().is_some() {
-                    return Err(anyhow!(
-                        "Fullnode mode requires consensus_config to be None. \
-                         Use ika-validator binary for validator nodes."
-                    ));
-                }
-                if config.sui_connector_config.notifier_client_key_pair.is_some() {
-                    return Err(anyhow!(
-                        "Fullnode mode should not have notifier_client_key_pair set. \
-                         Use ika-notifier binary for notifier nodes."
-                    ));
-                }
-                Ok(())
-            }
-            NodeMode::Notifier => {
-                if config.consensus_config().is_some() {
-                    return Err(anyhow!(
-                        "Notifier mode requires consensus_config to be None. \
-                         Notifiers should not participate in consensus."
-                    ));
-                }
-                if config.sui_connector_config.notifier_client_key_pair.is_none() {
-                    return Err(anyhow!(
-                        "Notifier mode requires notifier_client_key_pair to be set in SuiConnectorConfig"
-                    ));
-                }
-                Ok(())
-            }
-        }
-    }
-
-    /// Returns true if this mode participates in consensus.
-    pub fn is_validator(&self) -> bool {
-        matches!(self, NodeMode::Validator)
-    }
-
-    /// Returns true if this mode is a notifier.
-    pub fn is_notifier(&self) -> bool {
-        matches!(self, NodeMode::Notifier)
-    }
-
-    /// Returns true if this mode is a fullnode.
-    pub fn is_fullnode(&self) -> bool {
-        matches!(self, NodeMode::Fullnode)
-    }
-
-    /// Returns the uptime metric label for this mode.
-    pub fn uptime_metric_label(&self) -> &'static str {
-        match self {
-            NodeMode::Validator => "validator",
-            NodeMode::Fullnode => "fullnode",
-            NodeMode::Notifier => "notifier",
-        }
-    }
-}
-
-impl fmt::Display for NodeMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            NodeMode::Validator => write!(f, "validator"),
-            NodeMode::Fullnode => write!(f, "fullnode"),
-            NodeMode::Notifier => write!(f, "notifier"),
-        }
-    }
-}
+// Re-export NodeMode from ika-config
+pub use ika_config::NodeMode;
 
 use ika_core::consensus_adapter::ConsensusClient;
 use ika_core::consensus_manager::UpdatableConsensusClient;
@@ -621,7 +512,7 @@ impl IkaNode {
             sui_client.clone(),
             config.sui_connector_config.clone(),
             sui_connector_metrics,
-            state.is_validator(&epoch_store),
+            mode,
             next_epoch_committee_sender,
             new_requests_sender,
             end_of_publish_sender.clone(),
