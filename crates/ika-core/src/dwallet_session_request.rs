@@ -1,10 +1,16 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
-use crate::request_protocol_data::ProtocolData;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use crate::request_protocol_data::{
+    ProtocolData, internal_presign_protocol_data, internal_sign_protocol_data,
+};
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, DWalletSignatureAlgorithm, SerializedWrappedMPCPublicOutput,
+};
 use group::HashScheme;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use merlin::Transcript;
 use std::cmp::Ordering;
 use std::fmt;
+use sui_types::base_types::ObjectID;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequest {
@@ -19,6 +25,127 @@ pub struct DWalletSessionRequest {
     // True when the event was pulled from the state of the object,
     // and False when it was pushed as an event.
     pub pulled: bool,
+}
+
+impl DWalletSessionRequest {
+    pub fn new_internal_presign(
+        epoch: u64,
+        consensus_round: u64,
+        session_sequence_number: u64,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> Self {
+        let mut transcript = Transcript::new(b"Internal Presign session identifier preimage");
+        transcript.append_message(b"epoch", &epoch.to_be_bytes());
+        transcript.append_message(b"consensus round", &consensus_round.to_be_bytes());
+        transcript.append_message(
+            b"session sequence number",
+            &session_sequence_number.to_be_bytes(),
+        );
+        transcript.append_message(b"curve", curve.to_string().as_bytes());
+        transcript.append_message(
+            b"signature algorithm",
+            signature_algorithm.to_string().as_bytes(),
+        );
+
+        // TODO: key id or other network identifier
+        // TODO: take random suggestions from validators?
+
+        // Generate a session identifier preimage in a deterministic way
+        // (internally, it uses a hash function to pseudo-randomly generate it).
+        let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =
+            [0; SessionIdentifier::LENGTH];
+        transcript.challenge_bytes(
+            b"session idetnifier preimage",
+            &mut session_identifier_preimage,
+        );
+
+        let session_type = SessionType::InternalPresign;
+        let session_identifier = SessionIdentifier::new(session_type, session_identifier_preimage);
+
+        let protocol_data = internal_presign_protocol_data(
+            curve,
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+        );
+
+        Self {
+            session_type,
+            session_identifier,
+            session_sequence_number,
+            protocol_data,
+            epoch,
+            requires_network_key_data: true,
+            requires_next_active_committee: false,
+            pulled: false,
+        }
+    }
+
+    /// Creates a new internal sign session request for signing checkpoint data.
+    ///
+    /// The session identifier is derived deterministically from the epoch and
+    /// checkpoint sequence number, ensuring all validators create the same session.
+    pub fn new_internal_sign(
+        epoch: u64,
+        checkpoint_sequence_number: u64,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        hash_scheme: HashScheme,
+        dwallet_network_encryption_key_id: ObjectID,
+        message: Vec<u8>,
+        presign: SerializedWrappedMPCPublicOutput,
+    ) -> Self {
+        let mut transcript = Transcript::new(b"Internal Sign session identifier preimage");
+        transcript.append_message(b"epoch", &epoch.to_be_bytes());
+        transcript.append_message(
+            b"checkpoint sequence number",
+            &checkpoint_sequence_number.to_be_bytes(),
+        );
+        transcript.append_message(b"curve", curve.to_string().as_bytes());
+        transcript.append_message(
+            b"signature algorithm",
+            signature_algorithm.to_string().as_bytes(),
+        );
+
+        // Generate a session identifier preimage in a deterministic way
+        let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =
+            [0; SessionIdentifier::LENGTH];
+        transcript.challenge_bytes(
+            b"session identifier preimage",
+            &mut session_identifier_preimage,
+        );
+
+        let session_type = SessionType::InternalSign;
+        let session_identifier = SessionIdentifier::new(session_type, session_identifier_preimage);
+
+        let protocol_data = internal_sign_protocol_data(
+            curve,
+            signature_algorithm,
+            hash_scheme,
+            dwallet_network_encryption_key_id,
+            message,
+            presign,
+        );
+
+        Self {
+            session_type,
+            session_identifier,
+            session_sequence_number: checkpoint_sequence_number,
+            protocol_data,
+            epoch,
+            requires_network_key_data: true,
+            requires_next_active_committee: false,
+            pulled: false,
+        }
+    }
+
+    /// Checking this request belongs to the current epoch.
+    /// We only pull uncompleted events, so we skip the check for those,
+    /// but pushed events might be completed.
+    pub fn should_run_in_current_epoch(&self, current_epoch: u64) -> bool {
+        self.pulled || self.epoch == current_epoch
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
