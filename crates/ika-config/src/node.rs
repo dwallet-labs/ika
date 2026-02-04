@@ -54,7 +54,11 @@ impl NodeMode {
     pub fn detect_from_config(config: &NodeConfig) -> Self {
         if config.consensus_config().is_some() {
             NodeMode::Validator
-        } else if config.sui_connector_config.notifier_client_key_pair.is_some() {
+        } else if config
+            .sui_connector_config
+            .notifier_client_key_pair
+            .is_some()
+        {
             NodeMode::Notifier
         } else {
             NodeMode::Fullnode
@@ -71,7 +75,11 @@ impl NodeMode {
                         "Validator mode requires consensus_config to be set in NodeConfig"
                     ));
                 }
-                if config.sui_connector_config.notifier_client_key_pair.is_some() {
+                if config
+                    .sui_connector_config
+                    .notifier_client_key_pair
+                    .is_some()
+                {
                     return Err(anyhow!(
                         "Validator mode should not have notifier_client_key_pair set"
                     ));
@@ -85,7 +93,11 @@ impl NodeMode {
                          Use ika-validator binary for validator nodes."
                     ));
                 }
-                if config.sui_connector_config.notifier_client_key_pair.is_some() {
+                if config
+                    .sui_connector_config
+                    .notifier_client_key_pair
+                    .is_some()
+                {
                     return Err(anyhow!(
                         "Fullnode mode should not have notifier_client_key_pair set. \
                          Use ika-notifier binary for notifier nodes."
@@ -100,7 +112,11 @@ impl NodeMode {
                          Notifiers should not participate in consensus."
                     ));
                 }
-                if config.sui_connector_config.notifier_client_key_pair.is_none() {
+                if config
+                    .sui_connector_config
+                    .notifier_client_key_pair
+                    .is_none()
+                {
                     return Err(anyhow!(
                         "Notifier mode requires notifier_client_key_pair to be set in SuiConnectorConfig"
                     ));

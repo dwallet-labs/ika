@@ -91,7 +91,7 @@ mod handle;
 pub mod metrics;
 mod node_runner;
 
-pub use node_runner::{run_node, run_node_with_name, NodeArgs};
+pub use node_runner::{NodeArgs, run_node, run_node_with_name};
 
 pub struct ValidatorComponents {
     consensus_manager: Arc<ConsensusManager>,

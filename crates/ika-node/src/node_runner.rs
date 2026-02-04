@@ -101,7 +101,10 @@ pub fn run_node_with_name(mode: Option<NodeMode>, version: &'static str, bin_nam
         Some(explicit_mode) => {
             // Validate the config matches the expected mode
             if let Err(e) = explicit_mode.validate_config(&config) {
-                eprintln!("Configuration validation failed for {} mode: {}", explicit_mode, e);
+                eprintln!(
+                    "Configuration validation failed for {} mode: {}",
+                    explicit_mode, e
+                );
                 std::process::exit(1);
             }
             explicit_mode
