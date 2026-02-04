@@ -715,6 +715,20 @@ impl DWalletMPCManager {
             }
         };
 
+        // Check if this presign has already been used (safety check)
+        if self
+            .epoch_store
+            .is_presign_used(presign_session_id)
+            .unwrap_or(false)
+        {
+            error!(
+                checkpoint_sequence_number,
+                ?presign_session_id,
+                "Presign has already been used - this should not happen"
+            );
+            return false;
+        }
+
         // Mark the presign as used to prevent double-spending
         if let Err(e) = self.epoch_store.mark_presign_as_used(presign_session_id) {
             error!(
