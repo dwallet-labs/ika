@@ -12,7 +12,7 @@ pub mod node_config_metrics;
 pub mod p2p;
 pub mod validator_info;
 
-pub use node::{ConsensusConfig, NodeConfig};
+pub use node::{ConsensusConfig, NodeConfig, NodeMode};
 pub use sui_config::object_storage_config;
 pub use sui_config::{Config, PersistedConfig};
 use sui_types::multiaddr::Multiaddr;

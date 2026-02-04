@@ -7,8 +7,7 @@ use anemo_tower::callback::CallbackLayer;
 use anemo_tower::trace::DefaultMakeSpan;
 use anemo_tower::trace::DefaultOnFailure;
 use anemo_tower::trace::TraceLayer;
-use anyhow::Result;
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use prometheus::Registry;
 use std::collections::HashMap;
@@ -18,6 +17,9 @@ use std::sync::Arc;
 #[cfg(msim)]
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+
+// Re-export NodeMode from ika-config
+pub use ika_config::NodeMode;
 
 use ika_core::consensus_adapter::ConsensusClient;
 use ika_core::consensus_manager::UpdatableConsensusClient;
@@ -87,6 +89,9 @@ use crate::metrics::IkaNodeMetrics;
 pub mod admin;
 mod handle;
 pub mod metrics;
+mod node_runner;
+
+pub use node_runner::{NodeArgs, run_node, run_node_with_name};
 
 pub struct ValidatorComponents {
     consensus_manager: Arc<ConsensusManager>,
@@ -129,36 +134,6 @@ mod simulator {
                 _leak_detector: ika_simulator::NodeLeakDetector::new(),
             }
         }
-    }
-
-    type JwkInjector = dyn Fn(AuthorityName, &OIDCProvider) -> IkaResult<Vec<(JwkId, JWK)>>
-        + Send
-        + Sync
-        + 'static;
-
-    fn default_fetch_jwks(
-        _authority: AuthorityName,
-        _provider: &OIDCProvider,
-    ) -> IkaResult<Vec<(JwkId, JWK)>> {
-        use fastcrypto_zkp::bn254::zk_login::parse_jwks;
-        // Just load a default Twitch jwk for testing.
-        parse_jwks(
-            ika_types::zk_login_util::DEFAULT_JWK_BYTES,
-            &OIDCProvider::Twitch,
-        )
-        .map_err(|_| IkaError::JWKRetrievalError)
-    }
-
-    thread_local! {
-        static JWK_INJECTOR: std::cell::RefCell<Arc<JwkInjector>> = std::cell::RefCell::new(Arc::new(default_fetch_jwks));
-    }
-
-    pub(super) fn get_jwk_injector() -> Arc<JwkInjector> {
-        JWK_INJECTOR.with(|injector| injector.borrow().clone())
-    }
-
-    pub fn set_jwk_injector(injector: Arc<JwkInjector>) {
-        JWK_INJECTOR.with(|cell| *cell.borrow_mut() = injector);
     }
 }
 
@@ -234,11 +209,28 @@ impl IkaNode {
         Self::start_async(config, registry_service, "unknown").await
     }
 
+    /// Start the node with automatic mode detection from config.
     pub async fn start_async(
         config: NodeConfig,
         registry_service: RegistryService,
-        _software_version: &'static str,
+        software_version: &'static str,
     ) -> Result<Arc<IkaNode>> {
+        let mode = NodeMode::detect_from_config(&config);
+        Self::start_with_mode(config, registry_service, software_version, mode).await
+    }
+
+    /// Start the node in a specific mode with validation.
+    /// This method validates that the configuration matches the expected mode.
+    pub async fn start_with_mode(
+        config: NodeConfig,
+        registry_service: RegistryService,
+        _software_version: &'static str,
+        mode: NodeMode,
+    ) -> Result<Arc<IkaNode>> {
+        // Validate the configuration matches the expected mode
+        mode.validate_config(&config)?;
+
+        info!("Starting Ika node in {} mode", mode);
         NodeConfigMetrics::new(&registry_service.default_registry()).record_metrics(&config);
         let mut config = config.clone();
         if config.supported_protocol_versions.is_none() {
@@ -520,7 +512,7 @@ impl IkaNode {
             sui_client.clone(),
             config.sui_connector_config.clone(),
             sui_connector_metrics,
-            state.is_validator(&epoch_store),
+            mode,
             next_epoch_committee_sender,
             new_requests_sender,
             end_of_publish_sender.clone(),

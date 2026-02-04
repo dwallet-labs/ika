@@ -7,6 +7,7 @@ use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
+use ika_config::node::NodeMode;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
@@ -58,7 +59,7 @@ where
         self,
         query_interval: Duration,
         next_epoch_committee_sender: Sender<Committee>,
-        is_validator: bool,
+        mode: NodeMode,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         dwallet_coordinator_object_receiver: Receiver<
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
@@ -69,10 +70,11 @@ where
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
         uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
-        info!("Starting SuiSyncer");
+        info!(?mode, "Starting SuiSyncer");
         let mut task_handles = vec![];
         let sui_client_clone = self.sui_client.clone();
-        // The notifier needs the network keys, not only on the validator nodes.
+
+        // All modes need network keys (for mid-epoch reconfiguration)
         info!("Starting network keys sync task");
         tokio::spawn(Self::sync_dwallet_network_keys(
             sui_client_clone.clone(),
@@ -80,7 +82,9 @@ where
             dwallet_coordinator_object_receiver.clone(),
             network_keys_sender,
         ));
-        if is_validator {
+
+        // Validator-only tasks: committee sync, end of publish, session tracking, uncompleted events
+        if mode.is_validator() {
             info!("Starting next epoch committee sync task");
             tokio::spawn(Self::sync_next_committee(
                 sui_client_clone.clone(),
@@ -106,38 +110,44 @@ where
             ));
         }
 
-        let ika_dwallet_2pc_mpc_package_id = self
-            .sui_client
-            .ika_network_config
-            .packages
-            .ika_dwallet_2pc_mpc_package_id;
-        let ika_dwallet_2pc_mpc_package_id_v2 = self
-            .sui_client
-            .ika_network_config
-            .packages
-            .ika_dwallet_2pc_mpc_package_id_v2;
-        let mut package_ids = vec![ika_dwallet_2pc_mpc_package_id];
-        if let Some(ika_dwallet_2pc_mpc_package_id_v2) = ika_dwallet_2pc_mpc_package_id_v2 {
-            package_ids.push(ika_dwallet_2pc_mpc_package_id_v2);
-        }
-        for package_id in package_ids {
-            for module in self.modules.clone() {
-                let metrics = self.metrics.clone();
-                let sui_client_clone = self.sui_client.clone();
-                let new_requests_sender_clone = new_requests_sender.clone();
-                let system_object_receiver_clone = system_object_receiver.clone();
-                task_handles.push(spawn_logged_monitored_task!(
-                    Self::run_event_listening_task(
-                        system_object_receiver_clone,
-                        module,
-                        package_id,
-                        sui_client_clone,
-                        query_interval,
-                        metrics,
-                        new_requests_sender_clone,
-                    )
-                ));
+        // Event listening: only validators need to listen to events to process MPC sessions
+        // Fullnodes sync state via P2P, notifiers only submit checkpoints
+        if mode.is_validator() {
+            let ika_dwallet_2pc_mpc_package_id = self
+                .sui_client
+                .ika_network_config
+                .packages
+                .ika_dwallet_2pc_mpc_package_id;
+            let ika_dwallet_2pc_mpc_package_id_v2 = self
+                .sui_client
+                .ika_network_config
+                .packages
+                .ika_dwallet_2pc_mpc_package_id_v2;
+            let mut package_ids = vec![ika_dwallet_2pc_mpc_package_id];
+            if let Some(ika_dwallet_2pc_mpc_package_id_v2) = ika_dwallet_2pc_mpc_package_id_v2 {
+                package_ids.push(ika_dwallet_2pc_mpc_package_id_v2);
             }
+            for package_id in package_ids {
+                for module in self.modules.clone() {
+                    let metrics = self.metrics.clone();
+                    let sui_client_clone = self.sui_client.clone();
+                    let new_requests_sender_clone = new_requests_sender.clone();
+                    let system_object_receiver_clone = system_object_receiver.clone();
+                    task_handles.push(spawn_logged_monitored_task!(
+                        Self::run_event_listening_task(
+                            system_object_receiver_clone,
+                            module,
+                            package_id,
+                            sui_client_clone,
+                            query_interval,
+                            metrics,
+                            new_requests_sender_clone,
+                        )
+                    ));
+                }
+            }
+        } else {
+            info!(?mode, "Skipping event listening task");
         }
 
         Ok(task_handles)
