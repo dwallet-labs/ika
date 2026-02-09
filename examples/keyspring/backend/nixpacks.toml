@@ -1,0 +1,12 @@
+# Use only Bun, don't auto-detect Node.js
+providers = []
+
+[phases.setup]
+nixPkgs = ["bun"]
+
+[phases.install]
+cmds = ["bun install"]
+
+[start]
+cmd = "bun run src/index.ts"
+
