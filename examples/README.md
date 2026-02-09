@@ -51,6 +51,46 @@ npm run dev
 
 ---
 
+### 🔑 KeySpring - Cross-Chain Wallet Demo
+
+**Location:** `keyspring/`
+
+A cross-chain wallet demo that creates an Ethereum wallet from any browser wallet or passkey and sends ETH on Base Sepolia — all non-custodially using Ika's distributed key generation.
+
+**Features:**
+
+- Create Ethereum wallets using any existing wallet (MetaMask, Phantom, etc.) or passkeys (Face ID, Touch ID, Windows Hello)
+- Send ETH transactions on Base Sepolia testnet
+- Non-custodial — secret key share never leaves the browser
+- Cross-chain — use a Solana wallet to control an Ethereum address
+- Passkey authentication via WebAuthn PRF extension
+
+**Tech Stack:**
+
+- **Backend:** Bun, TypeScript, Ika SDK
+- **Frontend:** Next.js, TypeScript, Tailwind CSS
+- **Integration:** Ika 2PC-MPC protocol for distributed key generation
+
+**Quick Start:**
+
+```bash
+# Backend
+cd keyspring/backend
+bun install
+export SUI_ADMIN_SECRET_KEY="your-base64-encoded-key"
+export IKA_COIN_ID="your-ika-coin-id"
+bun run dev
+
+# Frontend
+cd keyspring/frontend
+bun install
+bun run dev
+```
+
+[View detailed documentation →](keyspring/README.md)
+
+---
+
 ## Getting Help
 
 - **Documentation:** See individual example README files

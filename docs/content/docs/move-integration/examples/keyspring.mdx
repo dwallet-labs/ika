@@ -1,0 +1,172 @@
+---
+id: keyspring-example
+title: KeySpring Cross-Chain Wallet
+description: A cross-chain wallet demo using Ika's distributed key generation with wallet or passkey authentication
+sidebar_position: 3
+sidebar_label: KeySpring
+---
+
+# KeySpring Cross-Chain Wallet
+
+This example demonstrates a cross-chain wallet that creates an Ethereum address from any browser wallet or passkey, using Ika's distributed key generation.
+
+## Overview
+
+KeySpring enables:
+- Creating Ethereum wallets using any existing wallet (MetaMask, Phantom, etc.) or passkeys
+- Sending ETH transactions on Base Sepolia testnet
+- Non-custodial key management — secret key share never leaves the browser
+- Cross-chain control — use a Solana wallet to get an Ethereum address
+- Passkey authentication via WebAuthn PRF extension (Face ID, Touch ID, Windows Hello)
+
+**Source Code**: `examples/keyspring/`
+
+## Architecture
+
+```
+Your Wallet                    Ika Network                   Base Sepolia
+    │                              │                              │
+    │  1. Sign message             │                              │
+    │─────────────────────────────▶│                              │
+    │                              │                              │
+    │  2. DKG creates dWallet      │                              │
+    │◀─────────────────────────────│                              │
+    │                              │                              │
+    │  3. You get ETH address      │                              │
+    │  (derived from dWallet)      │                              │
+    │                              │                              │
+    │  4. Sign tx locally          │                              │
+    │  (secret never leaves)       │                              │
+    │─────────────────────────────▶│                              │
+    │                              │                              │
+    │  5. Ika completes signature  │  6. Broadcast tx             │
+    │                              │─────────────────────────────▶│
+    │                              │                              │
+    │  7. TX confirmed!            │◀─────────────────────────────│
+    │◀─────────────────────────────│                              │
+```
+
+## Key Concepts
+
+### Cross-Chain Wallet Creation
+
+The core idea is simple: use any authentication method to derive encryption keys, then let Ika's DKG create a new Ethereum wallet:
+
+- Connect with a **Solana** wallet → get an **Ethereum** address
+- Connect with **MetaMask** → get a **new, separate** Ethereum address
+- Use a **Passkey** (Face ID, Touch ID, Windows Hello) → get an **Ethereum** address with no wallet needed
+
+### Passkey Authentication
+
+When using a passkey instead of a wallet:
+
+1. **Registration**: A passkey is created with the WebAuthn PRF extension enabled
+2. **Authentication**: The PRF extension derives a deterministic 32-byte secret from your passkey
+3. **Key Derivation**: This secret is used as the seed for encryption keys (same as a wallet signature would be)
+4. **DKG**: The rest of the flow is identical — Ika's DKG creates your new Ethereum wallet
+
+> **Important**: If you delete your passkey, you lose access to the wallet permanently. There is no recovery option.
+
+### Non-Custodial Design
+
+- Your secret key share is computed in your browser and never sent to any server
+- Based on Ika's [Zero-Trust dWallet](https://docs.ika.xyz/sdk/ika-transaction/zero-trust-dwallet) model
+- The backend only facilitates the DKG process and transaction broadcasting
+
+## Supported Authentication Methods
+
+| Method               | Type     | Notes                                      |
+| -------------------- | -------- | ------------------------------------------ |
+| **Passkey**          | WebAuthn | Face ID, Touch ID, Windows Hello, YubiKey  |
+| MetaMask             | Ethereum |                                            |
+| Phantom (Ethereum)   | Ethereum |                                            |
+| Phantom (Solana)     | Solana   |                                            |
+| Other Solana wallets | Solana   |                                            |
+
+### Passkey Browser Support
+
+| Platform   | Browser          | Platform Passkey | Hardware Key |
+| ---------- | ---------------- | ---------------- | ------------ |
+| macOS 15+  | Chrome/Safari 18+| Yes              | Chrome only  |
+| Windows 11 | Chrome/Edge      | Yes              | Yes          |
+| iOS 18+    | Safari           | Yes              | No           |
+| Android    | Chrome           | Yes              | USB only     |
+
+> Passkey support requires the WebAuthn PRF extension for deterministic key derivation.
+
+## File Structure
+
+```
+examples/keyspring/
+├── README.md
+├── backend/
+│   ├── src/           # Bun/TypeScript backend server
+│   ├── package.json
+│   └── tsconfig.json
+└── frontend/
+    ├── src/           # Next.js frontend application
+    ├── package.json
+    ├── tailwind.config.js
+    └── tsconfig.json
+```
+
+## Quick Start
+
+### 1. Start the Backend
+
+```bash
+cd examples/keyspring/backend
+bun install
+
+# Set your Sui admin key
+export SUI_ADMIN_SECRET_KEY="your-base64-encoded-key"
+export IKA_COIN_ID="your-ika-coin-id"
+
+bun run dev
+```
+
+### 2. Start the Frontend
+
+```bash
+cd examples/keyspring/frontend
+bun install
+bun run dev
+```
+
+### 3. Use the Demo
+
+1. Open `http://localhost:3000`
+2. Connect your wallet (MetaMask, Phantom, etc.) or create a passkey wallet
+3. Click **"Create Wallet"** and sign the message (or authenticate with your passkey)
+4. Wait for your new Ethereum address to be generated
+5. Fund it with [Base Sepolia testnet ETH](https://www.alchemy.com/faucets/base-sepolia)
+6. Send a transaction!
+
+## Configuration
+
+### Backend Environment
+
+| Variable               | Description                | Default   |
+| ---------------------- | -------------------------- | --------- |
+| `PORT`                 | Server port                | `3001`    |
+| `SUI_ADMIN_SECRET_KEY` | Base64-encoded Ed25519 key | Required  |
+| `SUI_NETWORK`          | `testnet` or `mainnet`     | `testnet` |
+
+### Frontend Environment
+
+| Variable                    | Description               | Default                 |
+| --------------------------- | ------------------------- | ----------------------- |
+| `NEXT_PUBLIC_API_URL`       | Backend URL               | `http://localhost:5153` |
+| `NEXT_PUBLIC_ADMIN_ADDRESS` | Sui admin address for DKG | Required                |
+
+## Security Considerations
+
+1. **Non-custodial**: Secret key shares are computed client-side and never transmitted
+2. **Passkey permanence**: Deleting a passkey means permanent loss of wallet access
+3. **Testnet only**: This demo is configured for Base Sepolia testnet
+
+## Next Steps
+
+- Review the [full source code](https://github.com/dwallet-labs/ika/tree/main/examples/keyspring)
+- Check [Core Concepts](/docs/move-integration/core-concepts/overview) for fundamentals
+- See [Integration Patterns](/docs/move-integration/integration-patterns/overview) for more patterns
