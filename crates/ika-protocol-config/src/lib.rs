@@ -147,6 +147,10 @@ struct FeatureFlags {
     // If true, enforces checkpoint timestamps are non-decreasing.
     #[serde(skip_serializing_if = "is_false")]
     enforce_checkpoint_timestamp_monotonicity: bool,
+
+    // If true, enables internal presign session instantiation.
+    #[serde(skip_serializing_if = "is_false")]
+    internal_presign_sessions: bool,
 }
 
 #[allow(unused)]
@@ -307,6 +311,10 @@ impl ProtocolConfig {
     //         )))
     //     }
     // }
+
+    pub fn internal_presign_sessions_enabled(&self) -> bool {
+        self.feature_flags.internal_presign_sessions
+    }
 
     pub fn consensus_round_prober(&self) -> bool {
         self.feature_flags.consensus_round_prober

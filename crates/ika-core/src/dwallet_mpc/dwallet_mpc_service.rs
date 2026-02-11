@@ -569,14 +569,15 @@ impl DWalletMPCService {
                 panic!("consensus round must be in a ascending order");
             }
 
-            // TODO: check protocol version here
             // Instantiate internal presign sessions based on consensus round and idle status.
-            self.dwallet_mpc_manager
-                .instantiate_internal_presign_sessions(
-                    consensus_round,
-                    self.number_of_consensus_rounds,
-                    self.network_is_idle,
-                );
+            if self.protocol_config.internal_presign_sessions_enabled() {
+                self.dwallet_mpc_manager
+                    .instantiate_internal_presign_sessions(
+                        consensus_round,
+                        self.number_of_consensus_rounds,
+                        self.network_is_idle,
+                    );
+            }
 
             // Let's start processing the MPC messages for the current round.
             self.dwallet_mpc_manager
